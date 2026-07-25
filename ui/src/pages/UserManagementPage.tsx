@@ -1,5 +1,8 @@
 import { useState, useEffect } from 'react';
 import { api } from '@/api/client';
+import { useToast } from '@/components/shared/Toast';
+import { Skeleton } from '@/components/shared/Skeleton';
+import { EmptyState } from '@/components/shared/EmptyState';
 import type { User, TenantInfo } from '@/api/types';
 
 export default function UserManagementPage() {
@@ -51,7 +54,9 @@ export default function UserManagementPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
-            {users.map(u => (
+            {users.length === 0 ? (
+              <tr><td colSpan={6} className="px-4 py-8"><EmptyState icon="👤" title="No users" description="Create your first user to get started" action={{ label: '+ Create User', onClick: () => setShowCreate(true) }} /></td></tr>
+            ) : users.map(u => (
               <tr key={u.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
                 <td className="px-4 py-3 font-medium">{u.email}</td>
                 <td className="px-4 py-3 capitalize">{u.role}</td>
@@ -130,8 +135,9 @@ function TenantScoper({ userId, user, customers, onSave }: {
     try {
       await api.updateUserTenants(userId, selected);
       onSave();
+      showToast('success', 'User tenant access updated');
     } catch (e) {
-      alert('Failed to update: ' + (e instanceof Error ? e.message : 'unknown'));
+      showToast('error', 'Failed to update: ' + (e instanceof Error ? e.message : 'unknown'));
     } finally {
       setSaving(false);
     }

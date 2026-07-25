@@ -1,9 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '@/api/client';
+import { useToast } from '@/components/shared/Toast';
+import { Skeleton } from '@/components/shared/Skeleton';
 import type { CustomerSummary } from '@/api/types';
 
 export default function CustomersPage() {
+  const { showToast } = useToast();
   const [customers, setCustomers] = useState<CustomerSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
@@ -42,7 +45,7 @@ export default function CustomersPage() {
     }
   };
 
-  if (loading) return <div className="text-center py-12 text-slate-500">Loading...</div>;
+  if (loading) return <Skeleton type="table" rows={5} count={7} />;
 
   return (
     <div className="space-y-6">

@@ -1,177 +1,270 @@
-# Strata RMM Orchestrator
+# Strata RMM
 
-A horizontally-scalable, multi-tenant Remote Monitoring & Management platform with cross-platform agents (Go), supporting both SaaS and self-hosted deployments.
+A horizontally-scalable, multi-tenant Remote Monitoring & Management platform with cross-platform agents (Go), supporting both SaaS and self-hosted deployments. Built to match the capabilities of Kaseya VSA, Datto RMM, and NinjaRMM.
 
 ## Quick Start
 
 ```bash
-# Prerequisites: Go 1.25+, Docker, NATS 2.10+, TimescaleDB 2.15+
+# Docker (recommended)
+curl -O https://raw.githubusercontent.com/Strata-Development-Platform/Strata-RMM-Orchestrator/main/deploy/docker/docker-compose.yml
+docker compose up -d
 
-# Build everything
-make build
+# Verify
+curl http://localhost:8080/health
 
-# Start local dev environment
-docker compose -f deploy/docker/docker-compose.yml up -d nats postgres
-
-# Start orchestrator
-make run-orch
-
-# In another terminal - run an agent
-TENANT_ID="00000000-0000-0000-0000-000000000001" ENROLLMENT_TOKEN="dev-token" make run-agent
+# Create first customer
+curl -X POST http://localhost:8080/api/v1/admin/customers \
+  -H 'Content-Type: application/json' \
+  -d '{"name": "My Company", "admin_email": "admin@example.com"}'
+# Returns deployment_id → use to install agents
 ```
+
+See [docs/INSTALL.md](docs/INSTALL.md) for full installation guide (bare metal, Docker, Kubernetes).
+
+## Architecture
+
+```
+┌──────────────────────────────────────────────────────────┐
+│                   Strata RMM Platform                     │
+├──────────────────────────────────────────────────────────┤
+│  Agent (Go) ──NATS──► Orchestrator ──► TimescaleDB      │
+│    │                        │              │             │
+│    │                    PostgreSQL (RLS)  Grafana       │
+│    │                        │                          │
+│    │                    MinIO / S3 (recordings)         │
+│    │                        │                          │
+│  Probe (SNMP/Flow) ──NATS──┘                            │
+└──────────────────────────────────────────────────────────┘
+```
+
+- **Agent**: Cross-platform Go binary (Windows/Linux/macOS), ~15MB, BBolt offline queue
+- **Orchestrator**: Go stdlib `net/http`, NATS consumer, TimescaleDB batch writer, alerting, patching, scripting, remote control
+- **NATS**: Message bus with tenant subject isolation (`tenant.{id}.*`)
+- **TimescaleDB**: Hypertables with compression + continuous aggregates for metrics
+- **PostgreSQL**: Row-Level Security for multi-tenant data isolation
+- **MinIO/S3**: Object storage for session recordings and PDF reports
 
 ## CLI Commands
 
 | Command | Description |
 |---------|-------------|
-| `strata-rmm version` | Print version information (supports `--output=json`) |
-| `strata-rmm agent` | Cross-platform monitoring agent |
-| `strata-rmm probe` | Agentless network probe (SNMP, flow, discovery) |
-| `strata-rmm orchestrator` | Platform services (API, ingestion, alerting, patching, tunnels) |
-
-## Architecture
-
-```
-Agent (Go) ──NATS──► Orchestrator ──► TimescaleDB (metrics)
-  │                        │                    │
-  │                    PostgreSQL (RLS)      Grafana
-  │                        │
-  │                    MinIO / S3 (recordings)
-  │                        │
-Probe (SNMP/Flow) ──NATS──┘
-```
-
-- **Messaging**: NATS Core with tenant subject isolation (`tenant.{id}.agent.{id}.{metrics,events,heartbeat,cmd}`)
-- **Time-Series**: TimescaleDB hypertables with compression (7d) + continuous aggregates (1m, 1h)
-- **Relational**: PostgreSQL with Row-Level Security for tenant isolation
-- **Storage**: Abstract `Backend` interface supporting MinIO, S3, and local filesystem for session recordings
-- **API**: Go 1.25 stdlib `net/http` (method-based routing, no framework)
+| `strata-rmm version` | Print version info (`--output=json`) |
+| `strata-rmm agent [--deployment-id X]` | Monitoring agent |
+| `strata-rmm orchestrator` | Platform services |
+| `strata-rmm orchestrator update` | Self-update orchestrator |
+| `strata-rmm probe` | Network probe (SNMP, flow) |
 
 ## Features
 
-### ✅ Phase 1 — Foundation
-- Go cross-platform agent (Linux/Windows/macOS, single binary ~15MB)
-- NATS communication with reconnect backoff + store-and-forward (BBolt)
-- Metrics ingestion pipeline (NATS → TimescaleDB batch writer)
-- JWT auth + enrollment tokens
-- REST API (health, metrics query, heartbeat, enrollment)
-- PostgreSQL relational schema with RLS (tenants, devices, users, audit)
-- Docker + Makefile for local dev
+**Agent Management**
+- Cross-platform (Windows MSI, Linux systemd, macOS binary)
+- Deployment ID onboarding — one ID per customer, auto-registers on first check-in
+- Agent auto-update with staged rollout, canary %, rollback, cosign verification
+- ECDSA P256 identity + JWT authentication
 
-### ✅ Phase 2 — Monitoring Core
-- **Alerting Engine**: Threshold rules (gt/gte/lt/lte/eq/neq), heartbeat monitoring, cooldowns, auto-resolution
-- **Notifications**: Slack, webhook, email/teams/pagerduty (pluggable)
-- **Network Probe**: SNMP v1/v2c/v3 polling, NetFlow v9/IPFIX/sFlow, ARP/SNMP discovery
-- **Patch Management**: Windows (PowerShell/WU API) + Linux (apt/dnf/zypper), policy CRUD, deployment scheduling
-- **Remote Access**: NATS-relayed RDP/SSH/VNC tunnels with bidirectional streaming + session recording
-
-### ✅ Phase 3 — Advanced Features
+**Remote Monitoring**
+- CPU: percent, cores, load average (1/5/15)
+- Memory: total/used/available/percent, swap
+- Disk: per-partition total/used/free/percent, I/O counters
+- Network: per-interface bytes/packets/errors
+- System: uptime, hostname, OS, platform version
+- Process: top CPU/memory consumers
 - Software inventory (dpkg/Win32_Product)
-- CVE vulnerability correlation (10 seeded CVEs, automatic device matching, 6h scan loop)
+- 60s collection interval (configurable)
 
-### ✅ Sprint 2 — Security & Automation
-- **CVE Feed Sync**: Automated OSV.dev batch sync for 17 tracked packages, optional NVD API, auto-upsert with CVSS scoring
-- **Vulnerability Remediation**: Auto-close CVEs when devices patch, manual resolve/ignore, tenant summary API
-- **Per-Tenant Encryption Keys**: AES-256-GCM key lifecycle (create/rotate/revoke), local & cloud KMS providers
-- **Access Review API**: Audit log, user list, RBAC permission review endpoints
-- **Rate Limiting**: Per-IP token bucket (10 req/s), security headers, 10MB body limit
+**Alerting Engine**
+- Threshold rules (GT/GTE/LT/LTE/EQ/NEQ)
+- Heartbeat monitoring with configurable timeout
+- Alert state machine: OK → Firing → Resolved
+- Cooldowns to prevent alert storms
+- Auto-resolution on metric recovery
+- Notifications: Slack, webhook, email, Teams, PagerDuty
 
-### ✅ Sprint 1 — Hardening
-- **Agent Auto-Update**: Manifest-based updates with cosign verification, staged rollout (canary %), rollback, NATS-controlled pause/resume
-- **Session Recording**: Raw session capture with SHA256 verification, MinIO/S3 storage, presigned URL playback, retention cleanup
-- **MFA/TOTP**: RFC 6238 two-factor authentication with QR enrollment, playback gating
-- **GoReleaser + Cosign CI**: Keyless signing, SPDX SBOM, multi-arch Docker images
-- **AgentUpdateChannel CRD**: Kubernetes custom resource for agent rollout management
+**Remote Access**
+- Built-in remote control (agent-side screen capture + input injection)
+- NATS-relayed RDP/SSH/VNC tunnels
+- Session recording with SHA256 verification
+- Presigned URL playback with MFA gate
+- Configurable retention (default 90d)
 
-### ✅ Phase 5 — Platform Hardening
-- Helm chart (deployment, HPA, PDB, network policies, ingress, air-gapped, multi-region)
-- Load testing script (vegeta API + NATS agent simulation, 500 agents)
+**Scripting Engine**
+- PowerShell, Bash, Python, Batch execution
+- Parameter interpolation (`{{param}}` syntax)
+- Timeout enforcement, stdout/stderr capture
+- Execution history with full output viewer
+- Run on-demand or scheduled
 
-## Multi-Tenancy
+**Patch Management**
+- Windows OS updates (PowerShell/WU API)
+- Linux OS updates (apt/dnf/zypper/pacman)
+- Patch policies with approval modes (auto/manual)
+- Deployment scheduling with device targeting
+- Patch compliance tracking per device
 
-- **Default**: Shared schema with RLS + NATS subject isolation
-- **Premium**: Dedicated schema/database per tenant
-- Tenant onboarding: Create tenant → run migrations → generate enrollment token
+**Software Deployment**
+- Package library: MSI, EXE, DEB, RPM, AppImage
+- SHA256 checksum verification
+- Silent install with custom arguments
+- Per-device deployment status tracking
+- Install and uninstall support
 
-## Deployment Models
+**Third-Party Patching**
+- 10 pre-configured apps: Chrome, Firefox, Adobe Reader, 7-Zip, VLC, Teams, Zoom, Notepad++, LibreOffice
+- Auto-version discovery from vendor APIs
+- Auto-creates deployable packages
+- 24h automatic sync cycle
 
-1. **SaaS**: Multi-region K8s via Helm, GitOps (ArgoCD/Flux), NATS supercluster
-2. **Self-Hosted**: Helm charts, air-gapped bundles, license validation
-3. **Hybrid**: SaaS control plane + customer-hosted agents/probes
+**Vulnerability Management**
+- CVE correlation against software inventory
+- OSV.dev batch API (17 tracked packages)
+- Optional NVD API sync
+- Auto-remediation on version updates
+- Manual resolve/ignore workflow
+- Per-device vulnerability state tracking
 
-## Security
+**Network Monitoring (SNMP)**
+- SNMP v1/v2c/v3 polling
+- Network device discovery (ARP/SNMP)
+- NetFlow v9/IPFIX/sFlow collection
+- Interface status and bandwidth tracking
+- Standalone probe binary
 
-- **Agent ↔ Platform**: mTLS or JWT enrollment → short-lived certs
-- **Data**: AES-256 at rest, TLS 1.3 in transit, optional SSE-KMS/SSE-S3 for recordings
-- **MFA**: TOTP-based two-factor authentication for sensitive operations (playback)
-- **RBAC**: Admin/Technician/Viewer roles per tenant
-- **Audit**: Immutable append-only log
-- **Supply Chain**: Cosign keyless signing + SPDX SBOM for all releases
+**Security & Compliance**
+- Multi-factor authentication (TOTP/RFC 6238)
+- Row-Level Security for all tables
+- NATS subject isolation per tenant
+- Per-tenant AES-256-GCM encryption keys
+- Immutable audit log
+- Rate limiting per endpoint
+- Security headers (CSP, nosniff, X-Frame-Options)
+- Request body size limits (10MB)
+- Cosign keyless signing for releases
+- SPDX SBOM for all artifacts
+
+**Reporting**
+- PDF report generation with executive summary
+- Configurable sections: alerts, CVEs, patches
+- Scheduled delivery (daily/weekly/monthly)
+- On-demand generation
+- Storage to MinIO/S3
+
+**Web UI**
+- Dark mode with theme toggle
+- Platform overview dashboard
+- Priority issues widget
+- Per-customer drill-down (devices, alerts, CVEs, recordings, settings)
+- User management with tenant scoping
+- Script library with execution history
+- Software package library + deployment
+- Third-party patching management
+- Report schedules + generated reports
+- MFA enrollment flow
+- Collapsible sidebar with icons
+- Toast notifications, skeleton loaders
+- Responsive design
+
+**Administration**
+- User authentication (email/password + JWT)
+- RBAC: admin, technician, viewer roles
+- Team/tenant scoping for users
+- Customer onboarding with deployment ID
+- Orchestrator self-update from GitHub
+- User management with create/scope/delete
+- Audit log with access review
+- Platform overview with aggregate stats
+
+**Deployment Options**
+- Docker Compose (recommended for single-server)
+- Bare metal Linux (systemd service)
+- Kubernetes (Helm chart)
+- KOTS (self-hosted marketplace)
+- Air-gapped deployments
+- Multi-region support
+
+## API
+
+The platform exposes 60+ REST endpoints. Key categories:
+- Auth: login, me, MFA enrollment
+- Platform: overview, customers, update
+- Admin: users, customers, update
+- Alerts: active, history, rules CRUD, acknowledge
+- Vulnerabilities: per-device, per-tenant, summary, resolve/ignore
+- CVE: stats, sync, packages, package detail
+- Scripts: CRUD, run, executions, result detail
+- Software: packages CRUD, deployments CRUD
+- Third-party: apps list, sync, packages
+- Recordings: list, playback, delete
+- Keys: CRUD, rotate, revoke
+- Access: audit log, users, permissions
+- Remote: session start/stop
 
 ## Project Structure
 
 ```
-├── cmd/
-│   ├── agent/          # Agent CLI
-│   ├── probe/          # Network probe CLI
-│   └── orchestrator/   # Platform services CLI
+├── cmd/                    # CLI commands
+│   ├── agent/              # Agent startup + update + scripts + software + remote
+│   ├── probe/              # SNMP/flow network probe
+│   └── orchestrator/       # Platform services + update
 ├── internal/
-│   ├── agent/
-│   │   ├── core/       # Config, identity, BBolt store, lifecycle
-│   │   ├── collectors/ # System collectors (gopsutil)
-│   │   ├── comms/      # NATS client
-│   │   └── update/     # Auto-update: manifest, rollout, rollback
-│   ├── alerting/       # Alert engine + notifications
-│   ├── collectors/     # Software inventory collector
-│   ├── monitoring/     # Metrics/events/heartbeat ingestion
-│   ├── inventory/      # Device CRUD + vulnerability engine
-│   ├── patch/          # Patch management + executors
-│   ├── platform/       # API server + routes
-│   ├── probe/          # SNMP, flow, discovery
-│   └── remote/         # Tunnel relay, recording, cleanup
+│   ├── agent/              # Agent core, collectors, comms, update, scripts, software, remote
+│   ├── alerting/           # Alert engine + notifications
+│   ├── inventory/          # Device CRUD, CVE sync, vulnerability, third-party
+│   ├── monitoring/         # Metrics/events/heartbeat ingestion
+│   ├── patch/              # Patch management + executors
+│   ├── platform/           # API server + all route handlers
+│   ├── probe/              # SNMP, flow, discovery
+│   ├── remote/             # Tunnel relay, recording, cleanup
+│   ├── reporting/          # PDF report engine
+│   └── update/             # Agent + orchestrator update clients
 ├── pkg/
-│   ├── auth/           # JWT, enrollment, TOTP/MFA
-│   ├── postgres/       # Relational schema migrations
-│   ├── storage/        # StorageBackend (MinIO, S3, Local, Mock)
-│   └── timescale/      # TimescaleDB client + migrations
+│   ├── auth/               # JWT, enrollment, TOTP/MFA, rate limiting
+│   ├── encrypt/            # Per-tenant AES-256-GCM keys
+│   ├── postgres/           # Schema migrations (1-24)
+│   ├── storage/            # Backend interface: MinIO, S3, Local, Mock
+│   └── timescale/          # TimescaleDB client + migrations
 ├── deploy/
-│   ├── docker/         # Docker Compose local dev
-│   ├── grafana/        # Provisioned dashboards
-│   └── helm/           # K8s Helm chart (incl. AgentUpdateChannel CRD)
+│   ├── docker/             # Docker Compose (NATS, TimescaleDB, MinIO, Grafana)
+│   ├── helm/               # K8s Helm chart + AgentUpdateChannel CRD
+│   ├── grafana/            # Provisioned dashboards
+│   └── kots/               # KOTS integration config
 ├── docs/
-│   ├── ARCHITECTURE.md # Full architecture plan
-│   ├── RUNBOOK.md      # Operations runbook
-│   └── SECURITY.md     # Security architecture
-├── .github/
-│   ├── workflows/      # CI + release pipelines
-│   └── ISSUE_TEMPLATE/ # Bug, feature, sprint, security templates
-├── .goreleaser.yml     # GoReleaser config with cosign + SBOM
-└── scripts/
-    ├── install.sh      # Linux agent installer
-    └── loadtest.sh     # Performance test suite
+│   ├── ARCHITECTURE.md     # Architecture plan
+│   ├── INSTALL.md          # Installation guide
+│   ├── RUNBOOK.md          # Operations runbook
+│   ├── SECURITY.md         # Security architecture
+│   └── SOC2.md             # SOC 2 compliance evidence
+├── scripts/
+│   ├── install.sh          # Linux agent installer
+│   ├── build-msi.sh        # Windows MSI builder
+│   ├── smoke_test.sh       # End-to-end smoke test
+│   └── loadtest.sh         # Performance load test
+├── ui/                     # React 18 + TypeScript + Tailwind web UI
+└── .github/workflows/      # CI + release pipelines
 ```
 
 ## Development
 
 ```bash
-# Build with version info
-make build              # All platforms
-make build-linux        # Linux amd64
-make build-windows      # Windows amd64
-make build-arm64        # Linux arm64
-
-# Test
-make test
-make lint
-make coverage
-
-# Release
-make goreleaser         # Run GoReleaser (requires GITHUB_TOKEN)
-
-# Local dev
+# Prerequisites: Go 1.25+, Docker, Node 20+
+make build              # Build all binaries
+make test               # Run all tests
+make lint               # Go vet
+make coverage           # Test coverage report
 make dev                # Start services + orchestrator
-make docker-up          # Start all containers
-make docker-down        # Stop all containers
+make smoke-test         # Run end-to-end smoke test
 ```
 
-See [docs/RUNBOOK.md](docs/RUNBOOK.md) for operations guide and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full plan.
+## Deployment
+
+| Method | Docs |
+|--------|------|
+| Docker Compose | `docker compose up -d` |
+| Bare Metal Linux | `docs/INSTALL.md` |
+| Kubernetes Helm | `deploy/helm/strata-rmm/` |
+| KOTS | `deploy/kots/` |
+
+See [docs/INSTALL.md](docs/INSTALL.md) for detailed instructions.
+
+## License
+
+See [LICENSE](LICENSE) file.

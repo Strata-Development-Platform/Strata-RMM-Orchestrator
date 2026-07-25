@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { api } from '@/api/client';
+import { useToast } from '@/components/shared/Toast';
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
+import { Skeleton } from '@/components/shared/Skeleton';
 
 export default function SoftwarePage() {
   const { user } = useAuth();
@@ -14,6 +17,7 @@ export default function SoftwarePage() {
   const [showDetail, setShowDetail] = useState<string | null>(null);
   const [detailData, setDetailData] = useState<Record<string, unknown> | null>(null);
   const [devices, setDevices] = useState<Record<string, unknown>[]>([]);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   const load = async () => {
     if (!tenantID) return;
@@ -33,9 +37,13 @@ export default function SoftwarePage() {
 
   useEffect(() => { load(); }, [tenantID]);
 
-  const handleDeletePkg = async (id: string) => {
-    if (!confirm('Delete this package?')) return;
-    await api.deletePackage(tenantID, id);
+  const confirmPkgDelete = (id: string) => setConfirmDelete(id);
+
+  const doDeletePkg = async () => {
+    if (!confirmDelete) return;
+    await api.deletePackage(tenantID, confirmDelete);
+    setConfirmDelete(null);
+    showToast('success', 'Package deleted');
     load();
   };
 
@@ -44,10 +52,10 @@ export default function SoftwarePage() {
       const d = await api.getDeployment(tenantID, id);
       setDetailData(d);
       setShowDetail(id);
-    } catch { alert('Failed to load'); }
+    } catch { showToast('error', 'Failed to load'); }
   };
 
-  if (loading) return <div className="text-center py-12 text-slate-500">Loading...</div>;
+  if (loading) return <Skeleton type="table" rows={5} count={6} />;
 
   return (
     <div className="space-y-6">
@@ -99,7 +107,7 @@ export default function SoftwarePage() {
                 <div className="flex items-center gap-2">
                   <button onClick={() => setShowDeploy(p.id as string)}
                     className="px-3 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700">Deploy</button>
-                  <button onClick={() => handleDeletePkg(p.id as string)}
+                  <button onClick={() => confirmPkgDelete(p.id as string)}
                     className="px-3 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700">Delete</button>
                 </div>
               </div>
@@ -168,6 +176,14 @@ export default function SoftwarePage() {
           onDeploy={load}
         />
       )}
+
+      <ConfirmDialog
+        open={confirmDelete !== null}
+        title="Delete Package"
+        message="Are you sure you want to delete this package? Deployments using it will be orphaned."
+        onConfirm={doDeletePkg}
+        onCancel={() => setConfirmDelete(null)}
+      />
 
       {/* Deployment Detail */}
       {showDetail && detailData && (

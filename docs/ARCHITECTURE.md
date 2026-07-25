@@ -430,7 +430,13 @@ FROM metrics GROUP BY bucket, tenant_id, device_id, metric_name;
 | Vulnerability scan | 6h interval per device | Matches installed packages against CVE DB, auto-remediates on patch |
 | Encryption Keys | Per-tenant AES-256-GCM | Local key material or cloud KMS (AWS/GCP/Azure), key rotation |
 | Access Review | PostgreSQL audit_log queries | Immutable audit table, user/permission review endpoints |
-| Rate Limiting | In-memory token bucket (per-IP) | 10 req/s, 20 burst, 10min stale cleanup |
+| Rate Limiting | In-memory token bucket (per-IP) | Per-endpoint limits, 10min stale cleanup |
+| Remote Control | Agent-side JPEG capture + NATS | Platform-agnostic, 5-10 FPS, MFA-gated sessions |
+| Scripting | Agent execution (PS/Bash/Python/Batch) | NATS dispatch, timeout, output capture |
+| Software Deployment | Agent download + install | MSI/EXE/DEB/RPM, SHA256 verify, silent install |
+| Third-Party Patching | Vendor API version discovery | 10 apps, auto-package creation, 24h sync |
+| Reporting | gofpdf v2 PDF generation | Scheduled delivery, MinIO/S3 storage |
+| Orchestrator Update | GitHub releases API + atomic swap | Bare metal: auto-update, Docker/K8s: instructions |
 | CI/CD | GoReleaser + cosign + Docker Buildx | Keyless signing, SPDX SBOM, multi-arch images |
 
 ---

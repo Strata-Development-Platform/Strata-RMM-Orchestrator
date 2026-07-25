@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '@/api/client';
 import { useAuth } from '@/hooks/useAuth';
+import { Skeleton } from '@/components/shared/Skeleton';
+import { EmptyState } from '@/components/shared/EmptyState';
 import type { PlatformOverview, CustomerSummary } from '@/api/types';
 
 function StatCard({ label, value, color = 'text-slate-900 dark:text-white' }: { label: string; value: number | string; color?: string }) {
@@ -82,7 +84,9 @@ export default function DashboardPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
-              {customers.map(c => (
+              {customers.length === 0 ? (
+                <tr><td colSpan={7} className="px-4 py-8"><EmptyState icon="🏢" title="No customers yet" description="Create your first customer to get started" /></td></tr>
+              ) : customers.map(c => (
                 <tr key={c.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer"
                     onClick={() => navigate(`/customers/${c.id}`)}>
                   <td className="px-4 py-3 font-medium text-slate-900 dark:text-white">{c.name}</td>

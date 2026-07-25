@@ -1,5 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/hooks/useAuth';
+import { useToast } from '@/components/shared/Toast';
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
+import { Skeleton } from '@/components/shared/Skeleton';
 
 export default function ReportsPage() {
   const { user } = useAuth();
@@ -9,6 +12,7 @@ export default function ReportsPage() {
   const [schedules, setSchedules] = useState<Record<string, unknown>[]>([]);
   const [loading, setLoading] = useState(true);
   const [showSchedule, setShowSchedule] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   const load = async () => {
     if (!tenantID) return;
@@ -108,7 +112,7 @@ export default function ReportsPage() {
                 <span className={`ml-2 text-xs ${s.enabled ? 'text-green-600' : 'text-slate-400'}`}>{s.enabled ? 'Active' : 'Paused'}</span>
                 {s.last_sent && <span className="ml-2 text-xs text-slate-400">Last: {new Date(s.last_sent as string).toLocaleDateString()}</span>}
               </div>
-              <button onClick={() => handleDeleteSchedule(s.id as string)} className="text-red-600 hover:underline text-xs">Delete</button>
+              <button onClick={() => confirmScheduleDelete(s.id as string)} className="text-red-600 hover:underline text-xs">Delete</button>
             </div>
           ))}
         </div>
@@ -117,6 +121,14 @@ export default function ReportsPage() {
       {showSchedule && (
         <CreateScheduleModal tenantID={tenantID} onClose={() => setShowSchedule(false)} onCreated={load} />
       )}
+
+      <ConfirmDialog
+        open={confirmDelete !== null}
+        title="Delete Schedule"
+        message="Are you sure you want to delete this report schedule?"
+        onConfirm={doDeleteSchedule}
+        onCancel={() => setConfirmDelete(null)}
+      />
     </div>
   );
 }

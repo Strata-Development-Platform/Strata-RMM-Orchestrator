@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { api } from '@/api/client';
+import { useToast } from '@/components/shared/Toast';
+import { Skeleton } from '@/components/shared/Skeleton';
+import { StatusBadge } from '@/components/shared/StatusBadge';
 import type { CustomerSummary } from '@/api/types';
 
 type Tab = 'devices' | 'alerts' | 'vulnerabilities' | 'recordings' | 'settings';
@@ -30,7 +33,7 @@ export default function CustomerDetailPage() {
     }).catch(console.error).finally(() => setLoading(false));
   }, [tenantID]);
 
-  if (loading) return <div className="text-center py-12 text-slate-500">Loading customer...</div>;
+  if (loading) return <Skeleton type="card" count={4} />;
   if (!customer) return <div className="text-center py-12 text-red-500">Customer not found</div>;
 
   const tabs: { key: Tab; label: string; badge?: number }[] = [

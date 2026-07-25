@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import { api } from '@/api/client';
+import { useToast } from '@/components/shared/Toast';
+import { Skeleton } from '@/components/shared/Skeleton';
 import type { PlatformOverview } from '@/api/types';
 
 export default function AdminSettingsPage() {
@@ -16,10 +18,9 @@ export default function AdminSettingsPage() {
   const handleCVESync = async () => {
     try {
       const res = await fetch('/api/v1/cve/sync', { method: 'POST' });
-      const data = await res.json();
-      alert(data.status || 'Sync triggered');
+      showToast('success', 'Sync triggered');
     } catch {
-      alert('Failed to trigger sync');
+      showToast('error', 'Failed to trigger sync');
     }
   };
 
@@ -27,13 +28,13 @@ export default function AdminSettingsPage() {
     const token = localStorage.getItem('strata_auth_token');
     if (token) {
       navigator.clipboard.writeText(token);
-      alert('Auth token copied to clipboard');
+      showToast('success', 'Auth token copied to clipboard');
     } else {
-      alert('No auth token found');
+      showToast('error', 'No auth token found');
     }
   };
 
-  if (loading) return <div className="text-center py-12 text-slate-500">Loading...</div>;
+  if (loading) return <Skeleton type="card" count={4} />;
 
   return (
     <div className="space-y-8">
