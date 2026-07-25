@@ -3,6 +3,7 @@ package auth
 import (
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -36,18 +37,29 @@ func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 			ip = r.RemoteAddr
 		}
 
+		rate, burst := rl.rate, rl.burst
+		if strings.HasPrefix(r.URL.Path, "/health") {
+			rate, burst = 100, 200
+		} else if strings.HasPrefix(r.URL.Path, "/api/v1/enroll") {
+			rate, burst = 5, 10
+		} else if strings.HasPrefix(r.URL.Path, "/api/v1/mfa") {
+			rate, burst = 10, 20
+		} else if strings.HasPrefix(r.URL.Path, "/api/v1/recordings") {
+			rate, burst = 20, 40
+		}
+
 		rl.mu.Lock()
 		v, exists := rl.visitors[ip]
 		if !exists {
-			v = &visitor{tokens: rl.burst}
+			v = &visitor{tokens: burst}
 			rl.visitors[ip] = v
 		}
 
 		elapsed := time.Since(v.lastSeen)
 		v.lastSeen = time.Now()
-		v.tokens += int(elapsed.Seconds()) * rl.rate
-		if v.tokens > rl.burst {
-			v.tokens = rl.burst
+		v.tokens += int(elapsed.Seconds()) * rate
+		if v.tokens > burst {
+			v.tokens = burst
 		}
 
 		if v.tokens <= 0 {
@@ -56,6 +68,11 @@ func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 			return
 		}
 		v.tokens--
+
+		if v.tokens < burst/4 {
+			w.Header().Set("X-RateLimit-Warning", "approaching limit")
+		}
+
 		rl.mu.Unlock()
 
 		next.ServeHTTP(w, r)

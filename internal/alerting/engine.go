@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -368,6 +369,58 @@ func (e *Engine) cleanupLoop(ctx context.Context) {
 	}
 			e.mu.Unlock()
 		}
+	}
+}
+
+func (e *Engine) FireCVEAlert(tenantID, deviceID, cveID, packageName, severity, currentVersion, fixedVersion string) {
+	alert := &Alert{
+		ID:         fmt.Sprintf("cve-%s-%s-%d", cveID, deviceID, time.Now().UnixNano()),
+		RuleID:     "cve-detector",
+		TenantID:   tenantID,
+		DeviceID:   deviceID,
+		MetricName: "cve_count",
+		Severity:   Severity(severity),
+		Message:    fmt.Sprintf("[%s] %s in %s %s — upgrade to %s on device %s", strings.ToUpper(severity), cveID, packageName, currentVersion, fixedVersion, deviceID),
+		Status:     AlertFiring,
+		FiredAt:    time.Now(),
+	}
+	e.logger.Warn("CVE alert fired",
+		zap.String("cve", cveID),
+		zap.String("device", deviceID),
+		zap.String("package", packageName),
+		zap.String("severity", severity),
+	)
+	if err := e.store.SaveAlert(context.Background(), alert); err != nil {
+		e.logger.Error("save CVE alert", zap.Error(err))
+		return
+	}
+	if err := e.notifier.Send(context.Background(), alert); err != nil {
+		e.logger.Warn("send CVE notification", zap.Error(err))
+	}
+	subject := fmt.Sprintf("tenant.%s.alert.%s", tenantID, deviceID)
+	data, _ := json.Marshal(alert)
+	if err := e.nats.Publish(subject, data); err != nil {
+		e.logger.Warn("publish CVE alert", zap.Error(err))
+	}
+}
+
+func (e *Engine) ResolveCVEAlert(deviceID, cveID string) {
+	now := time.Now()
+	alert := &Alert{
+		ID:         fmt.Sprintf("cve-%s-%s-%d", cveID, deviceID, now.UnixNano()),
+		RuleID:     "cve-detector",
+		DeviceID:   deviceID,
+		Message:    fmt.Sprintf("Resolved: %s on device %s — package patched", cveID, deviceID),
+		Status:     AlertResolved,
+		ResolvedAt: &now,
+	}
+	if err := e.store.SaveAlert(context.Background(), alert); err != nil {
+		e.logger.Error("save CVE resolution", zap.Error(err))
+	}
+	subject := fmt.Sprintf("tenant.%s.alert.%s", "", deviceID)
+	data, _ := json.Marshal(alert)
+	if err := e.nats.Publish(subject, data); err != nil {
+		e.logger.Warn("publish CVE resolution", zap.Error(err))
 	}
 }
 

@@ -91,7 +91,13 @@ func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 			defer alertEngine.Stop()
 			logger.Info("alerting engine started")
 
-			vulnEngine := inventory.NewVulnerabilityEngine(tsdb.DB(), logger)
+			vulnEngine := inventory.NewVulnerabilityEngine(tsdb.DB(), logger).
+				WithAlertCallback(func(tenantID, deviceID, cveID, pkg, severity, currentVer, fixedVer string) {
+					alertEngine.FireCVEAlert(tenantID, deviceID, cveID, pkg, severity, currentVer, fixedVer)
+				}).
+				WithResolveCallback(func(deviceID, cveID string) {
+					alertEngine.ResolveCVEAlert(deviceID, cveID)
+				})
 			if err := vulnEngine.Start(ctx); err != nil {
 				logger.Warn("starting vulnerability engine", zap.Error(err))
 			} else {
