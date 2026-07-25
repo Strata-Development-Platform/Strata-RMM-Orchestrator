@@ -192,6 +192,134 @@ helm upgrade --install strata-rmm ./deploy/helm/strata-rmm \
 helm uninstall strata-rmm --namespace strata-rmm
 ```
 
+## CVE Management
+
+### Trigger a sync
+```bash
+curl -X POST localhost:8080/api/v1/cve/sync
+```
+
+### Check CVE database stats
+```bash
+curl localhost:8080/api/v1/cve/stats
+```
+
+### View sync status
+```bash
+curl localhost:8080/api/v1/cve/sync/status
+```
+
+### List tracked packages
+```bash
+curl localhost:8080/api/v1/cve/packages
+```
+
+### Add a package to track
+```bash
+curl -X POST localhost:8080/api/v1/cve/packages \
+  -H 'Content-Type: application/json' \
+  -d '{"name": "libssl", "ecosystem": "Debian"}'
+```
+
+### Remove a tracked package
+```bash
+curl -X DELETE localhost:8080/api/v1/cve/packages/libssl/Debian
+```
+
+### View CVEs for a package
+```bash
+curl localhost:8080/api/v1/cve/package/openssh
+```
+
+## Vulnerability Remediation
+
+### View device vulnerabilities
+```bash
+curl localhost:8080/api/v1/vulnerabilities/device/DEVICE_ID
+```
+
+### View tenant vulnerabilities
+```bash
+curl localhost:8080/api/v1/vulnerabilities/tenant/TENANT_ID
+```
+
+### View remediation summary
+```bash
+curl localhost:8080/api/v1/vulnerabilities/tenant/TENANT_ID/summary
+```
+
+### Resolve a vulnerability
+```bash
+curl -X POST localhost:8080/api/v1/vulnerabilities/VULN_ID/resolve
+```
+
+### Ignore a vulnerability
+```bash
+curl -X POST localhost:8080/api/v1/vulnerabilities/VULN_ID/ignore
+```
+
+### SQL queries
+```sql
+-- Open vulnerabilities by severity
+SELECT dv.cve_id, dv.severity, dv.package_name, d.hostname, dv.detected_at
+FROM device_vulnerabilities dv
+JOIN devices d ON dv.device_id = d.id
+WHERE dv.status = 'open'
+ORDER BY dv.severity DESC;
+
+-- Remediation history
+SELECT cve_id, package_name, status, detected_at, resolved_at
+FROM device_vulnerabilities
+WHERE resolved_at IS NOT NULL
+ORDER BY resolved_at DESC LIMIT 20;
+```
+
+## Encryption Keys
+
+### Create a tenant encryption key
+```bash
+curl -X POST localhost:8080/api/v1/keys/TENANT_ID \
+  -H 'Content-Type: application/json' \
+  -d '{"kms_type": "local", "encryption": "aes-256-gcm"}'
+```
+
+### List tenant keys
+```bash
+curl localhost:8080/api/v1/keys/TENANT_ID
+```
+
+### Get active key
+```bash
+curl localhost:8080/api/v1/keys/TENANT_ID/active
+```
+
+### Rotate key
+```bash
+curl -X POST localhost:8080/api/v1/keys/TENANT_ID/rotate
+```
+
+### Revoke a key
+```bash
+curl -X DELETE localhost:8080/api/v1/keys/TENANT_ID/KEY_ID
+```
+
+## Access Review
+
+### View audit log
+```bash
+curl localhost:8080/api/v1/access/audit/TENANT_ID
+```
+
+### View tenant users
+```bash
+curl localhost:8080/api/v1/access/users/TENANT_ID
+```
+
+### View tenant permissions
+```bash
+curl localhost:8080/api/v1/access/permissions/TENANT_ID
+```
+
 ## Performance Testing
 
 ### Quick API check

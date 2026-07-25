@@ -4,6 +4,26 @@ All notable changes to this project should be documented here.
 
 The format follows Keep a Changelog principles, and releases should use semantic versioning where applicable.
 
+## [0.3.0] - 2026-07-25
+
+### Added
+- **CVE Feed Sync** (`internal/inventory/cve_sync.go`): OSV.dev batch API for 17 tracked packages, optional NVD sync, auto-upsert with CVSS scoring and fixed versions, sync state tracking
+- **Vulnerability Remediation** (`internal/inventory/vulnerability.go`): Auto-close CVEs when device patches, manual resolve/ignore endpoints, tenant vulnerability summary
+- **Per-Tenant Encryption Keys** (`pkg/encrypt/keys.go`): AES-256-GCM key management with create/list/rotate/revoke lifecycle, supports local/aws_kms/gcp_kms/azure_kv providers
+- **Access Review API**: `GET /api/v1/access/audit/{tenantID}`, `GET /api/v1/access/users/{tenantID}`, `GET /api/v1/access/permissions/{tenantID}`
+- **Rate Limiting & Security Headers** (`pkg/auth/ratelimit.go`): Per-IP token bucket (10 req/s), CSP, nosniff, X-Frame-Options, 10MB body limit
+- **Auto-update wired into agent**: Update client + rollout manager initialized in agent startup, periodic check loop with auto-download/apply/rollback
+- **Config-driven storage backend**: `--storage-backend` flag / `STORAGE_BACKEND` env var selects MinIO/S3/Local/none at startup
+- **Database migration 18**: `cve_sync_state`, `cve_package_ecosystem`, `source` + `fixed_in_versions` on `cve_database`
+- **Database migration 19**: `tenant_encryption_keys` table with RLS
+- **CVE API endpoints**: stats, trigger sync, manage tracked packages, sync status, package CVEs
+
+### Changed
+- `cmd/agent/agent.go`: Wired update.Store, update.Client, RolloutManager into startup
+- `cmd/orchestrator/orchestrator.go`: Storage backend flags, recording init, CVE sync engine
+- `internal/agent/core/config.go`: Added `ManifestURL` field to UpdateConfig
+- `internal/platform/api.go`: CVE sync, encryption key, access review routes + security middleware
+
 ## [0.2.0] - 2026-07-25
 
 ### Added

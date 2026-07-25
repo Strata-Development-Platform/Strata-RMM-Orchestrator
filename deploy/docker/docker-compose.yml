@@ -24,6 +24,23 @@ services:
       timeout: 3s
       retries: 5
 
+  minio:
+    image: minio/minio:latest
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: ["server", "/data", "--console-address", ":9001"]
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   orchestrator:
     build: .
     ports:
@@ -37,7 +54,13 @@ services:
       STRATA_RMM_NATS_URL: nats://nats:4222
       STRATA_RMM_TIMESCALE_DSN: postgres://strata:strata_dev@postgres:5432/strata_rmm?sslmode=disable
       STRATA_RMM_API_ADDR: :8080
-    command: ["orchestrator", "--nats-url", "nats://nats:4222", "--timescale-dsn", "postgres://strata:strata_dev@postgres:5432/strata_rmm?sslmode=disable", "--api-addr", ":8080"]
+      STORAGE_BACKEND: minio
+      STORAGE_BUCKET: strata-recordings
+      STORAGE_ENDPOINT: minio:9000
+      STORAGE_ACCESS_KEY: minioadmin
+      STORAGE_SECRET_KEY: minioadmin
+      STORAGE_USE_SSL: "false"
+    command: ["orchestrator", "--nats-url", "nats://nats:4222", "--timescale-dsn", "postgres://strata:strata_dev@postgres:5432/strata_rmm?sslmode=disable", "--api-addr", ":8080", "--storage-backend", "minio", "--storage-bucket", "strata-recordings", "--storage-endpoint", "minio:9000"]
 
   agent:
     build: .
@@ -67,3 +90,4 @@ services:
 volumes:
   pgdata:
   grafana_data:
+  minio_data:

@@ -454,6 +454,9 @@ func (e *CVESyncEngine) updateSyncState(ctx context.Context, source string, last
 }
 
 func (e *CVESyncEngine) loadTrackedPackages(ctx context.Context) []PackageEntry {
+	if e.db == nil {
+		return nil
+	}
 	rows, err := e.db.QueryContext(ctx, `SELECT package_name, ecosystem FROM cve_package_ecosystem`)
 	if err != nil {
 		return nil

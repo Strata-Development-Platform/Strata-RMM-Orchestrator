@@ -48,6 +48,18 @@ spec:
             - {{ include "strata-rmm.timescale-dsn" . | quote }}
             - --api-addr
             - "{{ .Values.orchestrator.env.STRATA_RMM_API_ADDR }}"
+            - --storage-backend
+            - {{ .Values.orchestrator.storage.backend | quote }}
+            - --storage-bucket
+            - {{ .Values.orchestrator.storage.bucket | quote }}
+            {{- if .Values.orchestrator.storage.region }}
+            - --storage-region
+            - {{ .Values.orchestrator.storage.region | quote }}
+            {{- end }}
+            {{- if .Values.orchestrator.storage.endpoint }}
+            - --storage-endpoint
+            - {{ .Values.orchestrator.storage.endpoint | quote }}
+            {{- end }}
           env:
             - name: POSTGRES_PASSWORD
               valueFrom:
@@ -55,6 +67,16 @@ spec:
                   name: {{ .Release.Name }}-postgres
                   key: password
                   optional: true
+            - name: STORAGE_ACCESS_KEY
+              value: {{ .Values.orchestrator.storage.accessKey | quote }}
+            - name: STORAGE_SECRET_KEY
+              value: {{ .Values.orchestrator.storage.secretKey | quote }}
+            - name: STORAGE_USE_SSL
+              value: {{ .Values.orchestrator.storage.useSSL | toString | quote }}
+            {{- if .Values.orchestrator.storage.kmsKeyId }}
+            - name: STORAGE_KMS_KEY_ID
+              value: {{ .Values.orchestrator.storage.kmsKeyId | quote }}
+            {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.orchestrator.service.port }}

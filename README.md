@@ -69,6 +69,13 @@ Probe (SNMP/Flow) ──NATS──┘
 - Software inventory (dpkg/Win32_Product)
 - CVE vulnerability correlation (10 seeded CVEs, automatic device matching, 6h scan loop)
 
+### ✅ Sprint 2 — Security & Automation
+- **CVE Feed Sync**: Automated OSV.dev batch sync for 17 tracked packages, optional NVD API, auto-upsert with CVSS scoring
+- **Vulnerability Remediation**: Auto-close CVEs when devices patch, manual resolve/ignore, tenant summary API
+- **Per-Tenant Encryption Keys**: AES-256-GCM key lifecycle (create/rotate/revoke), local & cloud KMS providers
+- **Access Review API**: Audit log, user list, RBAC permission review endpoints
+- **Rate Limiting**: Per-IP token bucket (10 req/s), security headers, 10MB body limit
+
 ### ✅ Sprint 1 — Hardening
 - **Agent Auto-Update**: Manifest-based updates with cosign verification, staged rollout (canary %), rollback, NATS-controlled pause/resume
 - **Session Recording**: Raw session capture with SHA256 verification, MinIO/S3 storage, presigned URL playback, retention cleanup

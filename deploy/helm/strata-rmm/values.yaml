@@ -20,6 +20,19 @@ orchestrator:
     url: "nats://nats:4222"
   timescale:
     dsn: "postgres://strata:${POSTGRES_PASSWORD}@timescaledb:5432/strata_rmm?sslmode=disable"
+  storage:
+    backend: "minio"          # minio, s3, local, none
+    bucket: "strata-recordings"
+    region: ""
+    endpoint: "minio:9000"
+    accessKey: "minioadmin"
+    secretKey: "minioadmin"
+    useSSL: false
+    kmsKeyId: ""
+  cveSync:
+    enabled: true
+    interval: "6h"
+    nvdApiKey: ""
   service:
     type: ClusterIP
     port: 8080

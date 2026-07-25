@@ -426,6 +426,11 @@ FROM metrics GROUP BY bucket, tenant_id, device_id, metric_name;
 | Object Storage | MinIO (self-hosted) / S3 (SaaS) | Abstracted via `Backend` interface, SSE-KMS optional |
 | Session Recording | Raw byte capture + MinIO/S3 | SHA256 verification, presigned URL playback, retention policies |
 | Agent Update | Manifest-based + cosign | Sigstore keyless signing, staged rollout, automatic rollback |
+| CVE Feed | OSV.dev batch API (primary) + NVD API (optional) | Free, no auth, broad OSS coverage. NVD for enterprise |
+| Vulnerability scan | 6h interval per device | Matches installed packages against CVE DB, auto-remediates on patch |
+| Encryption Keys | Per-tenant AES-256-GCM | Local key material or cloud KMS (AWS/GCP/Azure), key rotation |
+| Access Review | PostgreSQL audit_log queries | Immutable audit table, user/permission review endpoints |
+| Rate Limiting | In-memory token bucket (per-IP) | 10 req/s, 20 burst, 10min stale cleanup |
 | CI/CD | GoReleaser + cosign + Docker Buildx | Keyless signing, SPDX SBOM, multi-arch images |
 
 ---
