@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/inventory"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/remote"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/auth"
+	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/encrypt"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/storage"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/timescale"
 )
@@ -30,6 +32,8 @@ type APIServer struct {
 	server         *http.Server
 	alertEngine    *alerting.Engine
 	vulnEngine     *inventory.VulnerabilityEngine
+	cveSync        *inventory.CVESyncEngine
+	keyStore       *encrypt.KeyStore
 	recordingStore *remote.RecordingStore
 	storageBackend storage.Backend
 }
@@ -46,6 +50,7 @@ func NewAPIServer(addr string, db *timescale.Client, nc *nats.Conn, logger *zap.
 	}
 	if db != nil {
 		s.mfaStore = auth.NewMFAStore(db.DB())
+		s.keyStore = encrypt.NewKeyStore(db.DB())
 	}
 	return s
 }
@@ -57,6 +62,11 @@ func (s *APIServer) WithAlertEngine(e *alerting.Engine) *APIServer {
 
 func (s *APIServer) WithVulnEngine(e *inventory.VulnerabilityEngine) *APIServer {
 	s.vulnEngine = e
+	return s
+}
+
+func (s *APIServer) WithCVESyncEngine(e *inventory.CVESyncEngine) *APIServer {
+	s.cveSync = e
 	return s
 }
 
@@ -90,6 +100,28 @@ func (s *APIServer) Start(ctx context.Context) error {
 
 	mux.HandleFunc("GET /api/v1/vulnerabilities/device/{deviceID}", s.handleDeviceVulnerabilities)
 	mux.HandleFunc("GET /api/v1/vulnerabilities/tenant/{tenantID}", s.handleTenantVulnerabilities)
+	mux.HandleFunc("GET /api/v1/vulnerabilities/tenant/{tenantID}/summary", s.handleVulnerabilitySummary)
+	mux.HandleFunc("POST /api/v1/vulnerabilities/{vulnID}/resolve", s.handleResolveVulnerability)
+	mux.HandleFunc("POST /api/v1/vulnerabilities/{vulnID}/ignore", s.handleIgnoreVulnerability)
+
+	mux.HandleFunc("GET /api/v1/cve/stats", s.handleCVEDBStats)
+	mux.HandleFunc("POST /api/v1/cve/sync", s.handleCVESync)
+	mux.HandleFunc("GET /api/v1/cve/packages", s.handleCVEPackages)
+	mux.HandleFunc("POST /api/v1/cve/packages", s.handleCVEAddPackage)
+	mux.HandleFunc("DELETE /api/v1/cve/packages/{name}/{ecosystem}", s.handleCVEDeletePackage)
+	mux.HandleFunc("GET /api/v1/cve/sync/status", s.handleCVESyncStatus)
+	mux.HandleFunc("GET /api/v1/cve/package/{name}", s.handleCVEPackage)
+
+	mux.HandleFunc("POST /api/v1/keys/{tenantID}", s.handleCreateKey)
+	mux.HandleFunc("GET /api/v1/keys/{tenantID}", s.handleListKeys)
+	mux.HandleFunc("GET /api/v1/keys/{tenantID}/active", s.handleGetActiveKey)
+	mux.HandleFunc("POST /api/v1/keys/{tenantID}/rotate", s.handleRotateKey)
+	mux.HandleFunc("DELETE /api/v1/keys/{tenantID}/{keyID}", s.handleRevokeKey)
+
+	mux.HandleFunc("GET /api/v1/access/audit/{tenantID}", s.handleAuditLog)
+	mux.HandleFunc("GET /api/v1/access/users/{tenantID}", s.handleTenantUsers)
+	mux.HandleFunc("GET /api/v1/access/permissions/{tenantID}", s.handleTenantPermissions)
+
 	mux.HandleFunc("POST /api/v1/mfa/enroll/{userID}", s.handleMFAEnroll)
 	mux.HandleFunc("POST /api/v1/mfa/verify/{userID}", s.handleMFAVerify)
 	mux.HandleFunc("GET /api/v1/mfa/status/{userID}", s.handleMFAStatus)
@@ -99,9 +131,17 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /api/v1/recordings/{id}/playback", s.handlePlaybackRecording)
 	mux.HandleFunc("DELETE /api/v1/recordings/{id}", s.handleDeleteRecording)
 
+	rateLimiter := auth.NewRateLimiter(10, 20)
+
+	handler := rateLimiter.Middleware(
+		auth.SecurityHeaders(
+			withLogging(mux, s.logger),
+		),
+	)
+
 	s.server = &http.Server{
 		Addr:         s.addr,
-		Handler:      withLogging(mux, s.logger),
+		Handler:      auth.MaxBodySize(10 << 20)(handler),
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  60 * time.Second,
@@ -432,6 +472,54 @@ func (s *APIServer) handleTenantVulnerabilities(w http.ResponseWriter, r *http.R
 	writeJSON(w, http.StatusOK, map[string]interface{}{"vulnerabilities": vulns})
 }
 
+func (s *APIServer) handleVulnerabilitySummary(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.PathValue("tenantID")
+	if s.vulnEngine == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "vulnerability engine not enabled"})
+		return
+	}
+	count, err := s.vulnEngine.GetOpenVulnerabilityCount(r.Context(), tenantID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	summary, err := s.vulnEngine.GetRemediationSummary(r.Context(), tenantID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"open_count": count,
+		"summary":    summary,
+	})
+}
+
+func (s *APIServer) handleResolveVulnerability(w http.ResponseWriter, r *http.Request) {
+	vulnID := r.PathValue("vulnID")
+	if s.vulnEngine == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "vulnerability engine not enabled"})
+		return
+	}
+	if err := s.vulnEngine.ResolveVulnerability(r.Context(), vulnID); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "resolved"})
+}
+
+func (s *APIServer) handleIgnoreVulnerability(w http.ResponseWriter, r *http.Request) {
+	vulnID := r.PathValue("vulnID")
+	if s.vulnEngine == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "vulnerability engine not enabled"})
+		return
+	}
+	if err := s.vulnEngine.IgnoreVulnerability(r.Context(), vulnID); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ignored"})
+}
+
 func (s *APIServer) handleDeviceInventory(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.PathValue("deviceID")
 	if s.db == nil {
@@ -515,6 +603,327 @@ func (s *APIServer) handlePlaybackRecording(w http.ResponseWriter, r *http.Reque
 		"recording":    rec,
 		"playback_url": url,
 	})
+}
+
+func (s *APIServer) handleCVEDBStats(w http.ResponseWriter, r *http.Request) {
+	if s.cveSync == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "CVE sync not available"})
+		return
+	}
+	count, err := s.cveSync.GetCVECount(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"cve_count": count})
+}
+
+func (s *APIServer) handleCVESync(w http.ResponseWriter, r *http.Request) {
+	if s.cveSync == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "CVE sync not available"})
+		return
+	}
+	go s.cveSync.Sync(r.Context())
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": "sync triggered"})
+}
+
+func (s *APIServer) handleCVEPackages(w http.ResponseWriter, r *http.Request) {
+	if s.cveSync == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "CVE sync not available"})
+		return
+	}
+	packages, err := s.cveSync.ListTrackedPackages(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"packages": packages})
+}
+
+func (s *APIServer) handleCVEAddPackage(w http.ResponseWriter, r *http.Request) {
+	if s.cveSync == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "CVE sync not available"})
+		return
+	}
+	var req struct {
+		Name      string `json:"name"`
+		Ecosystem string `json:"ecosystem"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name required"})
+		return
+	}
+	if req.Ecosystem == "" {
+		req.Ecosystem = "Debian"
+	}
+	if err := s.cveSync.AddTrackedPackage(r.Context(), req.Name, req.Ecosystem); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "added"})
+}
+
+func (s *APIServer) handleCVEDeletePackage(w http.ResponseWriter, r *http.Request) {
+	if s.cveSync == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "CVE sync not available"})
+		return
+	}
+	name := r.PathValue("name")
+	ecosystem := r.PathValue("ecosystem")
+	if err := s.cveSync.RemoveTrackedPackage(r.Context(), name, ecosystem); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+func (s *APIServer) handleCVESyncStatus(w http.ResponseWriter, r *http.Request) {
+	if s.cveSync == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "CVE sync not available"})
+		return
+	}
+	states, err := s.cveSync.GetSyncState(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"sync_states": states})
+}
+
+func (s *APIServer) handleCVEPackage(w http.ResponseWriter, r *http.Request) {
+	if s.cveSync == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "CVE sync not available"})
+		return
+	}
+	name := r.PathValue("name")
+	cves, err := s.cveSync.GetCVEByPackage(r.Context(), name)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"cves": cves})
+}
+
+func (s *APIServer) handleCreateKey(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.PathValue("tenantID")
+	if s.keyStore == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "key store not available"})
+		return
+	}
+	var req struct {
+		KeyAlias    string `json:"key_alias"`
+		KMSProvider string `json:"kms_type"`
+		Encryption  string `json:"encryption"`
+		Region      string `json:"region"`
+		Endpoint    string `json:"endpoint"`
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+
+	key, err := s.keyStore.CreateKey(r.Context(), tenantID, encrypt.CreateKeyOptions{
+		KeyAlias:    req.KeyAlias,
+		KMSProvider: encrypt.KMSProvider(req.KMSProvider),
+		Encryption:  encrypt.EncryptionScheme(req.Encryption),
+		Region:      req.Region,
+		Endpoint:    req.Endpoint,
+	})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, key)
+}
+
+func (s *APIServer) handleListKeys(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.PathValue("tenantID")
+	if s.keyStore == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "key store not available"})
+		return
+	}
+	keys, err := s.keyStore.ListKeys(r.Context(), tenantID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"keys": keys})
+}
+
+func (s *APIServer) handleGetActiveKey(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.PathValue("tenantID")
+	if s.keyStore == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "key store not available"})
+		return
+	}
+	key, err := s.keyStore.GetActiveKey(r.Context(), tenantID)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+	key.KeyMaterial = nil
+	writeJSON(w, http.StatusOK, key)
+}
+
+func (s *APIServer) handleRotateKey(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.PathValue("tenantID")
+	if s.keyStore == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "key store not available"})
+		return
+	}
+	key, err := s.keyStore.RotateKey(r.Context(), tenantID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, key)
+}
+
+func (s *APIServer) handleRevokeKey(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.PathValue("tenantID")
+	keyID := r.PathValue("keyID")
+	if s.keyStore == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "key store not available"})
+		return
+	}
+	if err := s.keyStore.RevokeKey(r.Context(), keyID, tenantID); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "revoked"})
+}
+
+func (s *APIServer) handleAuditLog(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.PathValue("tenantID")
+	if s.db == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "database not available"})
+		return
+	}
+
+	limit := 50
+	offset := 0
+
+	rows, err := s.db.DB().QueryContext(r.Context(), `
+		SELECT id, tenant_id, user_id, action, resource, details, ip_address, created_at
+		FROM audit_log
+		WHERE tenant_id = $1
+		ORDER BY created_at DESC
+		LIMIT $2 OFFSET $3
+	`, tenantID, limit, offset)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	type AuditEntry struct {
+		ID        string          `json:"id"`
+		TenantID  string          `json:"tenant_id"`
+		UserID    *string         `json:"user_id,omitempty"`
+		Action    string          `json:"action"`
+		Resource  string          `json:"resource"`
+		Details   json.RawMessage `json:"details,omitempty"`
+		IPAddress string          `json:"ip_address,omitempty"`
+		CreatedAt time.Time       `json:"created_at"`
+	}
+
+	var entries []AuditEntry
+	for rows.Next() {
+		var e AuditEntry
+		var userID sql.NullString
+		var ipAddr sql.NullString
+		var details sql.NullString
+
+		if err := rows.Scan(&e.ID, &e.TenantID, &userID, &e.Action, &e.Resource, &details, &ipAddr, &e.CreatedAt); err != nil {
+			continue
+		}
+		if userID.Valid {
+			e.UserID = &userID.String
+		}
+		if ipAddr.Valid {
+			e.IPAddress = ipAddr.String
+		}
+		if details.Valid {
+			e.Details = json.RawMessage(details.String)
+		}
+		entries = append(entries, e)
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"audit_entries": entries})
+}
+
+func (s *APIServer) handleTenantUsers(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.PathValue("tenantID")
+	if s.db == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "database not available"})
+		return
+	}
+
+	rows, err := s.db.DB().QueryContext(r.Context(), `
+		SELECT id, email, role, is_active, last_login, created_at
+		FROM users WHERE tenant_id = $1
+		ORDER BY created_at DESC
+	`, tenantID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	var users []map[string]interface{}
+	for rows.Next() {
+		var id, email, role string
+		var isActive bool
+		var createdAt time.Time
+		var lastLoginNull sql.NullTime
+
+		if err := rows.Scan(&id, &email, &role, &isActive, &lastLoginNull, &createdAt); err != nil {
+			continue
+		}
+		user := map[string]interface{}{
+			"id":         id,
+			"email":      email,
+			"role":       role,
+			"is_active":  isActive,
+			"created_at": createdAt,
+		}
+		if lastLoginNull.Valid {
+			user["last_login"] = lastLoginNull.Time
+		}
+		users = append(users, user)
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"users": users})
+}
+
+func (s *APIServer) handleTenantPermissions(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.PathValue("tenantID")
+	if s.db == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "database not available"})
+		return
+	}
+
+	rows, err := s.db.DB().QueryContext(r.Context(), `
+		SELECT id, tenant_id, role, resource, action
+		FROM permissions
+		WHERE tenant_id = $1
+		ORDER BY role, resource
+	`, tenantID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	var perms []map[string]interface{}
+	for rows.Next() {
+		var id, tenantIDStr, role, resource, action string
+		if err := rows.Scan(&id, &tenantIDStr, &role, &resource, &action); err != nil {
+			continue
+		}
+		perms = append(perms, map[string]interface{}{
+			"id":       id,
+			"role":     role,
+			"resource": resource,
+			"action":   action,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"permissions": perms})
 }
 
 func (s *APIServer) handleMFAEnroll(w http.ResponseWriter, r *http.Request) {

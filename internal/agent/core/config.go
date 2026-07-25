@@ -54,6 +54,7 @@ type UpdateConfig struct {
 	Enabled       bool          `yaml:"enabled"`
 	CheckInterval time.Duration `yaml:"check_interval"`
 	Channel       string        `yaml:"channel"`
+	ManifestURL   string        `yaml:"manifest_url"`
 	VerifyKey     string        `yaml:"verify_key"`
 }
 
@@ -84,6 +85,7 @@ func DefaultConfig() *Config {
 			Enabled:       true,
 			CheckInterval: 24 * time.Hour,
 			Channel:       "stable",
+			ManifestURL:   "https://releases.strata-rmm.io",
 		},
 	}
 }

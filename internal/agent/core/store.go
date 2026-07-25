@@ -148,6 +148,10 @@ func (s *Store) QueueSize() (int, error) {
 	return count, err
 }
 
+func (s *Store) DB() *bbolt.DB {
+	return s.db
+}
+
 func (s *Store) Close() error {
 	return s.db.Close()
 }

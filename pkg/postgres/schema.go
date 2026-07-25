@@ -417,6 +417,63 @@ func Migrations() []Migration {
 			`,
 			Down: `DROP TABLE IF EXISTS session_recordings CASCADE;`,
 		},
+		{
+			ID:   18,
+			Name: "extend_cve_database",
+			Up: `
+				ALTER TABLE cve_database ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'manual';
+				ALTER TABLE cve_database ADD COLUMN IF NOT EXISTS fixed_in_versions TEXT[] DEFAULT '{}';
+
+				CREATE TABLE IF NOT EXISTS cve_sync_state (
+					id          TEXT PRIMARY KEY,
+					source      TEXT NOT NULL,
+					last_synced TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					status      TEXT NOT NULL DEFAULT 'idle',
+					error       TEXT DEFAULT '',
+					records_new INT DEFAULT 0,
+					records_updated INT DEFAULT 0
+				);
+
+				CREATE TABLE IF NOT EXISTS cve_package_ecosystem (
+					package_name TEXT NOT NULL,
+					ecosystem    TEXT NOT NULL DEFAULT 'Debian',
+					PRIMARY KEY (package_name, ecosystem)
+				);
+			`,
+			Down: `
+				ALTER TABLE cve_database DROP COLUMN IF EXISTS source;
+				ALTER TABLE cve_database DROP COLUMN IF EXISTS fixed_in_versions;
+				DROP TABLE IF EXISTS cve_sync_state;
+				DROP TABLE IF EXISTS cve_package_ecosystem;
+			`,
+		},
+		{
+			ID:   19,
+			Name: "create_tenant_encryption_keys_table",
+			Up: `
+				CREATE TABLE IF NOT EXISTS tenant_encryption_keys (
+					id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					tenant_id    UUID UNIQUE NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+					key_alias    TEXT NOT NULL DEFAULT 'primary',
+					kms_type     TEXT NOT NULL DEFAULT 'local' CHECK (kms_type IN ('local', 'aws_kms', 'gcp_kms', 'azure_kv')),
+					kms_key_id   TEXT DEFAULT '',
+					encryption   TEXT NOT NULL DEFAULT 'aes-256-gcm' CHECK (encryption IN ('aes-256-gcm', 'aes-256-cbc', 'sse-s3', 'sse-kms')),
+					key_material BYTEA DEFAULT '',
+					region       TEXT DEFAULT '',
+					endpoint     TEXT DEFAULT '',
+					status       TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'rotating', 'compromised', 'disabled')),
+					rotated_at   TIMESTAMPTZ,
+					expires_at   TIMESTAMPTZ,
+					created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+				CREATE INDEX IF NOT EXISTS idx_tenant_encryption_keys_tenant ON tenant_encryption_keys(tenant_id);
+				ALTER TABLE tenant_encryption_keys ENABLE ROW LEVEL SECURITY;
+				CREATE POLICY tenant_isolation_encryption_keys ON tenant_encryption_keys
+					USING (tenant_id = current_setting('app.tenant_id')::UUID);
+			`,
+			Down: `DROP TABLE IF EXISTS tenant_encryption_keys CASCADE;`,
+		},
 	}
 }
 

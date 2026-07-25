@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -10,6 +11,7 @@ import (
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/agent/collectors"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/agent/comms"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/agent/core"
+	"github.com/strata-rmm/strata-rmm-orchestrator/internal/agent/update"
 )
 
 func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
@@ -55,6 +57,83 @@ func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 				return fmt.Errorf("starting comms: %w", err)
 			}
 			defer commsHandler.Stop()
+
+			updateStore := update.NewStore(agent.Store().DB())
+			if err := updateStore.Init(); err != nil {
+				return fmt.Errorf("init update store: %w", err)
+			}
+
+			manifestURL := cfg.Update.ManifestURL
+			if manifestURL == "" {
+				manifestURL = "https://releases.strata-rmm.io"
+			}
+
+			updateClient := update.NewClient(update.ClientOptions{
+				ManifestURL:   manifestURL,
+				Store:         updateStore,
+				DataDir:       cfg.Agent.DataDir,
+				Channel:       update.Channel(cfg.Update.Channel),
+				CheckInterval: cfg.Update.CheckInterval,
+			})
+
+			if cfg.Update.Enabled {
+				ident := agent.Identity()
+				rolloutMgr := update.NewRolloutManager(natsClient.Conn(), updateStore, updateClient, ident.AgentID, ident.TenantID)
+				if err := rolloutMgr.SubscribeCommands(ctx); err != nil {
+					return fmt.Errorf("subscribe rollout commands: %w", err)
+				}
+
+				go func() {
+					ticker := time.NewTicker(cfg.Update.CheckInterval)
+					defer ticker.Stop()
+
+					state, _ := updateStore.GetState()
+					if updateClient.ShouldCheck(state.LastCheck) {
+						manifest, err := updateClient.Check(ctx)
+						if err == nil && manifest != nil && rolloutMgr.ShouldApply(manifest.Version) {
+							binaryPath, dlErr := updateClient.Download(ctx, manifest)
+							if dlErr == nil {
+								if applyErr := updateClient.Apply(binaryPath); applyErr == nil {
+									updateClient.VerifyAndSwitch()
+									logger.Info("agent auto-updated", zap.String("version", manifest.Version))
+								}
+							}
+						}
+						updateStore.SetLastCheck(time.Now())
+					}
+
+					for {
+						select {
+						case <-ticker.C:
+							manifest, err := updateClient.Check(ctx)
+							if err != nil || manifest == nil {
+								continue
+							}
+							if !rolloutMgr.ShouldApply(manifest.Version) {
+								continue
+							}
+							binaryPath, dlErr := updateClient.Download(ctx, manifest)
+							if dlErr != nil {
+								logger.Warn("update download failed", zap.Error(dlErr))
+								continue
+							}
+							if applyErr := updateClient.Apply(binaryPath); applyErr != nil {
+								logger.Warn("update apply failed", zap.Error(applyErr))
+								continue
+							}
+							if verifyErr := updateClient.VerifyAndSwitch(); verifyErr != nil {
+								logger.Warn("update verify failed, rolling back", zap.Error(verifyErr))
+								updateClient.Rollback()
+								continue
+							}
+							logger.Info("agent auto-updated", zap.String("version", manifest.Version))
+							updateStore.SetLastCheck(time.Now())
+						case <-ctx.Done():
+							return
+						}
+					}
+				}()
+			}
 
 			sysCollector := collectors.NewSystemCollector(cfg.Collect.Interval)
 			sysCollector.Start(ctx)
