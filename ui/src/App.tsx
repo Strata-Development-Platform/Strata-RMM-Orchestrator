@@ -11,6 +11,7 @@ import SettingsPage from '@/pages/SettingsPage';
 import ScriptsPage from '@/pages/ScriptsPage';
 import SoftwarePage from '@/pages/SoftwarePage';
 import ThirdPartyPage from '@/pages/ThirdPartyPage';
+import ReportsPage from '@/pages/ReportsPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
