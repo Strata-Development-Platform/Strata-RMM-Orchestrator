@@ -89,6 +89,24 @@ class ApiClient {
   getTenantKeys = (tenantID: string) =>
     this.request<{ keys: Record<string, unknown>[] }>('GET', `/api/v1/keys/${tenantID}`);
 
+  // Scripts
+  getScripts = (tenantID: string) =>
+    this.request<{ scripts: Record<string, unknown>[] }>('GET', `/api/v1/scripts/${tenantID}`);
+  getScript = (tenantID: string, scriptID: string) =>
+    this.request<Record<string, unknown>>('GET', `/api/v1/scripts/${tenantID}/${scriptID}`);
+  createScript = (tenantID: string, data: Record<string, unknown>) =>
+    this.request<Record<string, unknown>>('POST', `/api/v1/scripts/${tenantID}`, data);
+  deleteScript = (tenantID: string, scriptID: string) =>
+    this.request<{ status: string }>('DELETE', `/api/v1/scripts/${tenantID}/${scriptID}`);
+  runScript = (tenantID: string, scriptID: string, deviceIDs: string[], params?: Record<string, string>) =>
+    this.request<{ script: string; executions: Record<string, unknown>[]; count: number }>(
+      'POST', `/api/v1/scripts/${tenantID}/${scriptID}/run`, { device_ids: deviceIDs, parameters: params || {} }
+    );
+  getScriptExecutions = (tenantID: string) =>
+    this.request<{ executions: Record<string, unknown>[] }>('GET', `/api/v1/scripts/${tenantID}/executions`);
+  getScriptExecution = (tenantID: string, execID: string) =>
+    this.request<Record<string, unknown>>('GET', `/api/v1/scripts/${tenantID}/executions/${execID}`);
+
   // Access
   getTenantUsers = (tenantID: string) =>
     this.request<{ users: Record<string, unknown>[] }>('GET', `/api/v1/access/users/${tenantID}`);
