@@ -1,0 +1,188 @@
+package alerting
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"time"
+)
+
+type Store struct {
+	db *sql.DB
+}
+
+func NewStore(db *sql.DB) *Store {
+	return &Store{db: db}
+}
+
+func (s *Store) LoadRules(ctx context.Context) ([]*Rule, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, tenant_id, name, type, enabled, severity,
+		       COALESCE(metric_name, ''), COALESCE(condition, ''), COALESCE(threshold, 0),
+		       COALESCE(EXTRACT(EPOCH FROM timeout), 0), COALESCE(device_id, ''),
+		       COALESCE(EXTRACT(EPOCH FROM cooldown), 0),
+		       COALESCE(channels, '[]'::jsonb), COALESCE(template, ''),
+		       created_at, updated_at
+		FROM alert_rules
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("query rules: %w", err)
+	}
+	defer rows.Close()
+
+	var rules []*Rule
+	for rows.Next() {
+		var r Rule
+		var channelsJSON []byte
+		var timeoutSecs, cooldownSecs float64
+
+		err := rows.Scan(
+			&r.ID, &r.TenantID, &r.Name, &r.Type, &r.Enabled, &r.Severity,
+			&r.MetricName, &r.Condition, &r.Threshold,
+			&timeoutSecs, &r.DeviceID,
+			&cooldownSecs,
+			&channelsJSON, &r.Template,
+			&r.CreatedAt, &r.UpdatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scan rule: %w", err)
+		}
+
+		r.Timeout = time.Duration(timeoutSecs) * time.Second
+		r.Cooldown = time.Duration(cooldownSecs) * time.Second
+
+		rules = append(rules, &r)
+	}
+	return rules, nil
+}
+
+func (s *Store) SaveRule(ctx context.Context, rule *Rule) error {
+	now := time.Now()
+	if rule.CreatedAt.IsZero() {
+		rule.CreatedAt = now
+	}
+	rule.UpdatedAt = now
+
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO alert_rules (id, tenant_id, name, type, enabled, severity, metric_name, condition, threshold, timeout, device_id, cooldown, channels, template, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+		ON CONFLICT (id) DO UPDATE SET
+			name = EXCLUDED.name, enabled = EXCLUDED.enabled, severity = EXCLUDED.severity,
+			metric_name = EXCLUDED.metric_name, condition = EXCLUDED.condition,
+			threshold = EXCLUDED.threshold, timeout = EXCLUDED.timeout,
+			device_id = EXCLUDED.device_id, cooldown = EXCLUDED.cooldown,
+			channels = EXCLUDED.channels, template = EXCLUDED.template,
+			updated_at = EXCLUDED.updated_at
+	`, rule.ID, rule.TenantID, rule.Name, rule.Type, rule.Enabled, rule.Severity,
+		rule.MetricName, rule.Condition, rule.Threshold,
+		int64(rule.Timeout.Seconds()), rule.DeviceID, int64(rule.Cooldown.Seconds()),
+		"{}", rule.Template, rule.CreatedAt, rule.UpdatedAt,
+	)
+	return err
+}
+
+func (s *Store) DeleteRule(ctx context.Context, ruleID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM alert_rules WHERE id = $1`, ruleID)
+	return err
+}
+
+func (s *Store) ListRules(ctx context.Context, tenantID string) ([]*Rule, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, tenant_id, name, type, enabled, severity, metric_name,
+		       condition, threshold, timeout, device_id, cooldown, channels, template,
+		       created_at, updated_at
+		FROM alert_rules WHERE tenant_id = $1 ORDER BY created_at DESC
+	`, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var rules []*Rule
+	for rows.Next() {
+		var r Rule
+		if err := rows.Scan(&r.ID, &r.TenantID, &r.Name, &r.Type, &r.Enabled, &r.Severity,
+			&r.MetricName, &r.Condition, &r.Threshold, &r.Timeout, &r.DeviceID,
+			&r.Cooldown, &r.Channels, &r.Template, &r.CreatedAt, &r.UpdatedAt); err != nil {
+			return nil, err
+		}
+		rules = append(rules, &r)
+	}
+	return rules, nil
+}
+
+func (s *Store) SaveAlert(ctx context.Context, alert *Alert) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO alerts (id, rule_id, tenant_id, device_id, metric_name, value, severity, message, status, fired_at, resolved_at, acknowledged_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status, resolved_at = EXCLUDED.resolved_at, acknowledged_at = EXCLUDED.acknowledged_at
+	`, alert.ID, alert.RuleID, alert.TenantID, alert.DeviceID, alert.MetricName, alert.Value,
+		alert.Severity, alert.Message, alert.Status, alert.FiredAt, alert.ResolvedAt, alert.AcknowledgedAt)
+	return err
+}
+
+func (s *Store) GetActiveAlerts(ctx context.Context, tenantID string) ([]*Alert, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, rule_id, tenant_id, device_id, COALESCE(metric_name, ''),
+		       COALESCE(value, 0), severity, message, status, fired_at, resolved_at, acknowledged_at
+		FROM alerts
+		WHERE tenant_id = $1 AND status = 'firing'
+		ORDER BY fired_at DESC
+	`, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var alerts []*Alert
+	for rows.Next() {
+		var a Alert
+		if err := rows.Scan(&a.ID, &a.RuleID, &a.TenantID, &a.DeviceID, &a.MetricName,
+			&a.Value, &a.Severity, &a.Message, &a.Status, &a.FiredAt, &a.ResolvedAt, &a.AcknowledgedAt); err != nil {
+			return nil, err
+		}
+		alerts = append(alerts, &a)
+	}
+	return alerts, nil
+}
+
+func (s *Store) GetAlertHistory(ctx context.Context, tenantID string, limit, offset int) ([]*Alert, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, rule_id, tenant_id, device_id, COALESCE(metric_name, ''),
+		       COALESCE(value, 0), severity, message, status, fired_at, resolved_at, acknowledged_at
+		FROM alerts
+		WHERE tenant_id = $1
+		ORDER BY fired_at DESC LIMIT $2 OFFSET $3
+	`, tenantID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var alerts []*Alert
+	for rows.Next() {
+		var a Alert
+		if err := rows.Scan(&a.ID, &a.RuleID, &a.TenantID, &a.DeviceID, &a.MetricName,
+			&a.Value, &a.Severity, &a.Message, &a.Status, &a.FiredAt, &a.ResolvedAt, &a.AcknowledgedAt); err != nil {
+			return nil, err
+		}
+		alerts = append(alerts, &a)
+	}
+	return alerts, nil
+}
+
+func (s *Store) UpdateAlertStatus(ctx context.Context, alertID string, status AlertStatus) error {
+	now := time.Now()
+	var q string
+	if status == AlertAcknowledged {
+		q = `UPDATE alerts SET status = $1, acknowledged_at = $2 WHERE id = $3`
+	} else {
+		q = `UPDATE alerts SET status = $1 WHERE id = $2`
+		now = time.Time{}
+	}
+	_, err := s.db.ExecContext(ctx, q, status, now, alertID)
+	return err
+}

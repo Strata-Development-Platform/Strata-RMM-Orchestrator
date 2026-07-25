@@ -358,7 +358,20 @@ FROM metrics GROUP BY bucket, tenant_id, device_id, metric_name;
 - [x] Uninstall support (service stop/remove, data cleanup)
 - [x] Multi-platform detection (linux amd64/arm64)
 
-#### 1.7 Next Phase Foundation
+#### 1.7 PostgreSQL Relational Schema (Months 3.5-4) ✅
+- [x] Schema migration system with version tracking
+- [x] Tenants table (shared schema with dedicated tenant option)
+- [x] Devices table (agent linking, status tracking, hardware info)
+- [x] Users table (tenant-scoped, role-based: admin/technician/viewer)
+- [x] Permissions table (role-resource-action grants)
+- [x] Enrollment tokens table (time-bound, single-use)
+- [x] Audit log table (immutable, tenant-scoped)
+- [x] Row-Level Security policies on all tenant-scoped tables
+- [x] Inventory store: CRUD for tenants, devices, agent linking
+- [x] Dev tenant seed (UUID-based, enterprise plan)
+- [x] Wire relational schema migration into orchestrator startup
+
+#### 1.8 Next Phase Foundation
 - [ ] Alerting engine (threshold rules, notification channels)
 - [ ] Agentless SNMP/ICMP Network Probe (Go)
 - [ ] Dashboard/visualization layer

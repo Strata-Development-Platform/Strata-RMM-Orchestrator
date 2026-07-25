@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
+	"github.com/strata-rmm/strata-rmm-orchestrator/internal/alerting"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/monitoring"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/platform"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/postgres"
@@ -72,7 +73,16 @@ func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 			defer ingest.Stop()
 			logger.Info("metrics ingestion started")
 
-			api := platform.NewAPIServer(apiAddr, tsdb, nc, logger)
+			alertStore := alerting.NewStore(tsdb.DB())
+			alertNotifier := alerting.NewNotifier()
+			alertEngine := alerting.NewEngine(nc, tsdb, alertStore, alertNotifier, logger)
+			if err := alertEngine.Start(ctx); err != nil {
+				return fmt.Errorf("starting alerting engine: %w", err)
+			}
+			defer alertEngine.Stop()
+			logger.Info("alerting engine started")
+
+			api := platform.NewAPIServer(apiAddr, tsdb, nc, logger).WithAlertEngine(alertEngine)
 			if err := api.Start(ctx); err != nil {
 				return fmt.Errorf("starting API server: %w", err)
 			}

@@ -3,23 +3,26 @@ package platform
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/nats-io/nats.go"
 	"go.uber.org/zap"
 
+	"github.com/strata-rmm/strata-rmm-orchestrator/internal/alerting"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/auth"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/timescale"
 )
 
 type APIServer struct {
-	addr    string
-	db      *timescale.Client
-	nats    *nats.Conn
-	auth    *auth.EnrollmentManager
-	logger  *zap.Logger
-	server  *http.Server
+	addr        string
+	db          *timescale.Client
+	nats        *nats.Conn
+	auth        *auth.EnrollmentManager
+	logger      *zap.Logger
+	server      *http.Server
+	alertEngine *alerting.Engine
 }
 
 func NewAPIServer(addr string, db *timescale.Client, nc *nats.Conn, logger *zap.Logger) *APIServer {
@@ -33,6 +36,11 @@ func NewAPIServer(addr string, db *timescale.Client, nc *nats.Conn, logger *zap.
 	}
 }
 
+func (s *APIServer) WithAlertEngine(e *alerting.Engine) *APIServer {
+	s.alertEngine = e
+	return s
+}
+
 func (s *APIServer) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
 
@@ -42,6 +50,14 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /api/v1/metrics", s.handleQueryMetrics)
 	mux.HandleFunc("GET /api/v1/devices/{tenantID}/{deviceID}/metrics/{metricName}", s.handleDeviceMetrics)
 	mux.HandleFunc("GET /api/v1/heartbeat/{tenantID}/{deviceID}", s.handleGetHeartbeat)
+
+	mux.HandleFunc("GET /api/v1/alerts/{tenantID}", s.handleListActiveAlerts)
+	mux.HandleFunc("GET /api/v1/alerts/{tenantID}/history", s.handleAlertHistory)
+	mux.HandleFunc("POST /api/v1/alerts/{alertID}/acknowledge", s.handleAcknowledgeAlert)
+
+	mux.HandleFunc("POST /api/v1/rules/{tenantID}", s.handleCreateRule)
+	mux.HandleFunc("GET /api/v1/rules/{tenantID}", s.handleListRules)
+	mux.HandleFunc("DELETE /api/v1/rules/{tenantID}/{ruleID}", s.handleDeleteRule)
 
 	s.server = &http.Server{
 		Addr:         s.addr,
@@ -232,4 +248,116 @@ func (s *APIServer) AuthMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+// --- Alert API Handlers ---
+
+func (s *APIServer) handleListActiveAlerts(w http.ResponseWriter, r *http.Request) {
+	if s.alertEngine == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "alerting not enabled"})
+		return
+	}
+	tenantID := r.PathValue("tenantID")
+	alerts, err := s.alertEngine.GetActiveAlerts(r.Context(), tenantID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if alerts == nil {
+		alerts = []*alerting.Alert{}
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"alerts": alerts, "count": len(alerts)})
+}
+
+func (s *APIServer) handleAlertHistory(w http.ResponseWriter, r *http.Request) {
+	if s.alertEngine == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "alerting not enabled"})
+		return
+	}
+	tenantID := r.PathValue("tenantID")
+	limit := intQueryParam(r, "limit", 50)
+	offset := intQueryParam(r, "offset", 0)
+	alerts, err := s.alertEngine.GetAlertHistory(r.Context(), tenantID, limit, offset)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if alerts == nil {
+		alerts = []*alerting.Alert{}
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"alerts": alerts, "count": len(alerts)})
+}
+
+func (s *APIServer) handleAcknowledgeAlert(w http.ResponseWriter, r *http.Request) {
+	if s.alertEngine == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "alerting not enabled"})
+		return
+	}
+	alertID := r.PathValue("alertID")
+	if err := s.alertEngine.AcknowledgeAlert(r.Context(), alertID); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "acknowledged"})
+}
+
+func (s *APIServer) handleCreateRule(w http.ResponseWriter, r *http.Request) {
+	if s.alertEngine == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "alerting not enabled"})
+		return
+	}
+	tenantID := r.PathValue("tenantID")
+	var rule alerting.Rule
+	if err := json.NewDecoder(r.Body).Decode(&rule); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid rule"})
+		return
+	}
+	rule.TenantID = tenantID
+	if err := s.alertEngine.AddRule(r.Context(), &rule); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusCreated, rule)
+}
+
+func (s *APIServer) handleListRules(w http.ResponseWriter, r *http.Request) {
+	if s.alertEngine == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "alerting not enabled"})
+		return
+	}
+	tenantID := r.PathValue("tenantID")
+	rules, err := s.alertEngine.ListRules(r.Context(), tenantID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if rules == nil {
+		rules = []*alerting.Rule{}
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"rules": rules, "count": len(rules)})
+}
+
+func (s *APIServer) handleDeleteRule(w http.ResponseWriter, r *http.Request) {
+	if s.alertEngine == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "alerting not enabled"})
+		return
+	}
+	ruleID := r.PathValue("ruleID")
+	if err := s.alertEngine.RemoveRule(r.Context(), ruleID); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+func intQueryParam(r *http.Request, name string, defaultVal int) int {
+	v := r.URL.Query().Get(name)
+	if v == "" {
+		return defaultVal
+	}
+	var n int
+	if _, err := fmt.Sscanf(v, "%d", &n); err != nil {
+		return defaultVal
+	}
+	return n
 }

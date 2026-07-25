@@ -162,6 +162,78 @@ func Migrations() []Migration {
 			`,
 			Down: `DROP TABLE IF EXISTS audit_log CASCADE;`,
 		},
+		{
+			ID:   8,
+			Name: "create_alert_rules_table",
+			Up: `
+				CREATE TABLE IF NOT EXISTS alert_rules (
+					id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					tenant_id     UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+					name          TEXT NOT NULL,
+					type          TEXT NOT NULL CHECK (type IN ('threshold', 'heartbeat')),
+					enabled       BOOLEAN NOT NULL DEFAULT true,
+					severity      TEXT NOT NULL DEFAULT 'warning' CHECK (severity IN ('critical', 'warning', 'info')),
+					metric_name   TEXT,
+					condition     TEXT CHECK (condition IN ('gt', 'gte', 'lt', 'lte', 'eq', 'neq')),
+					threshold     DOUBLE PRECISION,
+					timeout       INTERVAL DEFAULT '5 minutes',
+					device_id     UUID,
+					cooldown      INTERVAL DEFAULT '5 minutes',
+					channels      JSONB DEFAULT '["slack"]',
+					template      TEXT,
+					created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+				CREATE INDEX IF NOT EXISTS idx_alert_rules_tenant ON alert_rules(tenant_id);
+				ALTER TABLE alert_rules ENABLE ROW LEVEL SECURITY;
+				CREATE POLICY tenant_isolation_alert_rules ON alert_rules
+					USING (tenant_id = current_setting('app.tenant_id')::UUID);
+			`,
+			Down: `DROP TABLE IF EXISTS alert_rules CASCADE;`,
+		},
+		{
+			ID:   9,
+			Name: "create_notification_channels_table",
+			Up: `
+				CREATE TABLE IF NOT EXISTS notification_channels (
+					id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					tenant_id  UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+					name       TEXT NOT NULL,
+					type       TEXT NOT NULL CHECK (type IN ('slack', 'teams', 'webhook', 'pagerduty', 'email')),
+					config     JSONB NOT NULL DEFAULT '{}',
+					enabled    BOOLEAN NOT NULL DEFAULT true,
+					created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+				CREATE INDEX IF NOT EXISTS idx_notification_channels_tenant ON notification_channels(tenant_id);
+				ALTER TABLE notification_channels ENABLE ROW LEVEL SECURITY;
+				CREATE POLICY tenant_isolation_notification_channels ON notification_channels
+					USING (tenant_id = current_setting('app.tenant_id')::UUID);
+			`,
+			Down: `DROP TABLE IF EXISTS notification_channels CASCADE;`,
+		},
+		{
+			ID:   10,
+			Name: "create_schedule_maintenance_tables",
+			Up: `
+				CREATE TABLE IF NOT EXISTS maintenance_windows (
+					id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					tenant_id   UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+					name        TEXT NOT NULL,
+					start_time  TIMESTAMPTZ NOT NULL,
+					end_time    TIMESTAMPTZ NOT NULL,
+					device_ids  UUID[] DEFAULT '{}',
+					tags        JSONB DEFAULT '{}',
+					created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					created_by  UUID REFERENCES users(id)
+				);
+				CREATE INDEX IF NOT EXISTS idx_maintenance_tenant_time ON maintenance_windows(tenant_id, start_time);
+				ALTER TABLE maintenance_windows ENABLE ROW LEVEL SECURITY;
+				CREATE POLICY tenant_isolation_maintenance ON maintenance_windows
+					USING (tenant_id = current_setting('app.tenant_id')::UUID);
+			`,
+			Down: `DROP TABLE IF EXISTS maintenance_windows CASCADE;`,
+		},
 	}
 }
 
