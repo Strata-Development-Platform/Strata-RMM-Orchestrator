@@ -507,6 +507,34 @@ func Migrations() []Migration {
 				ALTER TABLE users DROP COLUMN IF EXISTS password_hash_updated;
 			`,
 		},
+		{
+			ID:   21,
+			Name: "add_deployment_id_to_tenants",
+			Up: `
+				ALTER TABLE tenants ADD COLUMN IF NOT EXISTS deployment_id TEXT UNIQUE;
+				CREATE INDEX IF NOT EXISTS idx_tenants_deployment_id ON tenants(deployment_id);
+
+				CREATE TABLE IF NOT EXISTS agent_registrations (
+					id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					deployment_id TEXT NOT NULL,
+					device_id     UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+					agent_id      TEXT NOT NULL,
+					public_key    BYTEA NOT NULL,
+					hostname      TEXT NOT NULL,
+					os            TEXT DEFAULT '',
+					arch          TEXT DEFAULT '',
+					ip_address    TEXT DEFAULT '',
+					approved      BOOLEAN NOT NULL DEFAULT false,
+					registered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					approved_at   TIMESTAMPTZ
+				);
+				CREATE INDEX IF NOT EXISTS idx_agent_registrations_deployment ON agent_registrations(deployment_id);
+			`,
+			Down: `
+				DROP TABLE IF EXISTS agent_registrations CASCADE;
+				ALTER TABLE tenants DROP COLUMN IF EXISTS deployment_id;
+			`,
+		},
 	}
 }
 

@@ -24,8 +24,13 @@ func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg := core.DefaultConfig()
 
+			deploymentID, _ := cmd.Flags().GetString("deployment-id")
 			cfg.Agent.TenantID, _ = cmd.Flags().GetString("tenant-id")
 			cfg.Agent.EnrollmentToken, _ = cmd.Flags().GetString("enrollment-token")
+
+			if deploymentID != "" && cfg.Agent.TenantID == "" {
+				cfg.Agent.DeploymentID = deploymentID
+			}
 
 			natsURLs, _ := cmd.Flags().GetStringSlice("nats-url")
 			if len(natsURLs) > 0 {
@@ -39,6 +44,21 @@ func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 			}
 
 			cl := &zapLogger{logger: logger}
+
+			identMgr := core.NewIdentityManager(cfg.Agent.DataDir)
+			if cfg.Agent.DeploymentID != "" && cfg.Agent.TenantID == "" {
+				registerURL := cfg.Agent.RegisterURL
+				if registerURL == "" {
+					registerURL = "http://localhost:8080/api/v1/agent/register"
+				}
+				ident, err := identMgr.RegisterWithDeploymentID(registerURL, cfg.Agent.DeploymentID)
+				if err != nil {
+					return fmt.Errorf("registering with deployment ID: %w", err)
+				}
+				cfg.Agent.TenantID = ident.TenantID
+				cfg.Agent.AgentID = ident.AgentID
+				logger.Info("registered with deployment ID", zap.String("tenant_id", ident.TenantID), zap.String("agent_id", ident.AgentID))
+			}
 
 			agent := core.New(cfg, cl)
 			if err := agent.Start(ctx); err != nil {
@@ -153,7 +173,8 @@ func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&configPath, "config", "", "Path to agent config file (YAML)")
-	cmd.Flags().String("tenant-id", "", "Tenant ID (required)")
+	cmd.Flags().String("tenant-id", "", "Tenant ID")
+	cmd.Flags().String("deployment-id", "", "Customer deployment ID (alternative to tenant-id)")
 	cmd.Flags().String("enrollment-token", "", "Agent enrollment token")
 	cmd.Flags().StringSlice("nats-url", []string{"nats://localhost:4222"}, "NATS server URL(s)")
 	cmd.Flags().Bool("install-service", false, "Install as system service")

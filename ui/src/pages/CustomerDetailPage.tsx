@@ -243,6 +243,21 @@ function SettingsTab({ tenantID, customer }: { tenantID: string; customer: Custo
           <div className="flex justify-between"><dt className="text-slate-500">Active</dt><dd>{customer.is_active ? 'Yes' : 'No'}</dd></div>
           <div className="flex justify-between"><dt className="text-slate-500">Created</dt><dd>{new Date(customer.created_at).toLocaleDateString()}</dd></div>
         </dl>
+        {customer.deployment_id && (
+          <div className="mt-3 pt-3 border-t border-slate-200 dark:border-slate-700">
+            <label className="text-sm font-medium text-slate-500">Deployment ID</label>
+            <div className="flex items-center gap-2 mt-1">
+              <code className="flex-1 text-sm bg-slate-100 dark:bg-slate-800 px-3 py-1.5 rounded font-mono">
+                {customer.deployment_id}
+              </code>
+              <button
+                onClick={() => { navigator.clipboard.writeText(customer.deployment_id); alert('Copied!'); }}
+                className="text-xs px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
+              >Copy</button>
+            </div>
+            <p className="text-xs text-slate-400 mt-1">Use this ID when installing agents for this customer</p>
+          </div>
+        )}
       </div>
 
       <div className="bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700 p-4">

@@ -1,9 +1,14 @@
 package platform
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -214,6 +219,61 @@ func (s *APIServer) handleAdminCreateUser(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusCreated, map[string]interface{}{"id": userID, "status": "created"})
 }
 
+func (s *APIServer) handleAdminCreateCustomer(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name       string   `json:"name"`
+		Slug       string   `json:"slug"`
+		Plan       string   `json:"plan"`
+		AdminEmail string   `json:"admin_email"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+		return
+	}
+	if req.Name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name required"})
+		return
+	}
+
+	db := s.db.DB()
+	deploymentID := generateDeploymentID(req.Name)
+	slug := req.Slug
+	if slug == "" {
+		slug = strings.ToLower(strings.ReplaceAll(req.Name, " ", "-"))
+	}
+	if req.Plan == "" {
+		req.Plan = "free"
+	}
+
+	var tenantID string
+	err := db.QueryRowContext(r.Context(), `
+		INSERT INTO tenants (name, slug, plan, deployment_id)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id
+	`, req.Name, slug, req.Plan, deploymentID).Scan(&tenantID)
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "slug already exists"})
+		return
+	}
+
+	if req.AdminEmail != "" {
+		hash, _ := bcrypt.GenerateFromPassword([]byte("changeme123"), bcrypt.DefaultCost)
+		db.ExecContext(r.Context(), `
+			INSERT INTO users (tenant_id, email, password_hash, role)
+			VALUES ($1, $2, $3, 'admin')
+		`, tenantID, req.AdminEmail, string(hash))
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]interface{}{
+		"id":            tenantID,
+		"name":          req.Name,
+		"slug":          slug,
+		"plan":          req.Plan,
+		"deployment_id": deploymentID,
+		"status":        "created",
+	})
+}
+
 func (s *APIServer) handleAdminUpdateUserTenants(w http.ResponseWriter, r *http.Request) {
 	userID := r.PathValue("userID")
 	var req struct {
@@ -275,8 +335,9 @@ func (s *APIServer) handlePlatformOverview(w http.ResponseWriter, r *http.Reques
 
 func (s *APIServer) handlePlatformCustomers(w http.ResponseWriter, r *http.Request) {
 	db := s.db.DB()
-	rows, err := db.QueryContext(r.Context(), `
+		rows, err := db.QueryContext(r.Context(), `
 		SELECT t.id, t.name, t.slug, t.plan, t.is_active, t.created_at,
+		       COALESCE(t.deployment_id, '') as deployment_id,
 		       (SELECT COUNT(*) FROM devices d WHERE d.tenant_id = t.id) as device_count,
 		       (SELECT COUNT(*) FROM devices d WHERE d.tenant_id = t.id AND d.status = 'online') as online_count,
 		       (SELECT COUNT(*) FROM alerts a WHERE a.tenant_id = t.id AND a.status = 'firing') as alert_count,
@@ -299,20 +360,22 @@ func (s *APIServer) handlePlatformCustomers(w http.ResponseWriter, r *http.Reque
 		var createdAt time.Time
 		var deviceCount, onlineCount, alertCount, cveCount int
 
-		if err := rows.Scan(&id, &name, &slug, &plan, &isActive, &createdAt, &deviceCount, &onlineCount, &alertCount, &cveCount); err != nil {
+		var deploymentID string
+		if err := rows.Scan(&id, &name, &slug, &plan, &isActive, &createdAt, &deploymentID, &deviceCount, &onlineCount, &alertCount, &cveCount); err != nil {
 			continue
 		}
 		customers = append(customers, map[string]interface{}{
-			"id":           id,
-			"name":         name,
-			"slug":         slug,
-			"plan":         plan,
-			"is_active":    isActive,
-			"device_count": deviceCount,
-			"online_count": onlineCount,
-			"alert_count":  alertCount,
-			"cve_count":    cveCount,
-			"created_at":   createdAt,
+			"id":            id,
+			"name":          name,
+			"slug":          slug,
+			"plan":          plan,
+			"is_active":     isActive,
+			"device_count":  deviceCount,
+			"online_count":  onlineCount,
+			"alert_count":   alertCount,
+			"cve_count":     cveCount,
+			"deployment_id": deploymentID,
+			"created_at":    createdAt,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"customers": customers})
@@ -352,6 +415,81 @@ func (s *APIServer) getAccessibleTenants(ctx interface{}, userID, role, tenantID
 		tenants = append(tenants, t)
 	}
 	return tenants, nil
+}
+
+func (s *APIServer) handleAgentRegister(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DeploymentID string `json:"deployment_id"`
+		Hostname     string `json:"hostname"`
+		OS           string `json:"os"`
+		Arch         string `json:"arch"`
+		PublicKey    string `json:"public_key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+		return
+	}
+	if req.DeploymentID == "" || req.Hostname == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "deployment_id and hostname required"})
+		return
+	}
+
+	db := s.db.DB()
+
+	var tenantID string
+	err := db.QueryRowContext(r.Context(),
+		`SELECT id FROM tenants WHERE deployment_id = $1 AND is_active = true`, req.DeploymentID).Scan(&tenantID)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "invalid deployment_id"})
+		return
+	}
+
+	h := sha256.Sum256([]byte(req.Hostname + tenantID + time.Now().String()))
+	agentID := fmt.Sprintf("agent-%s-%x", req.DeploymentID, h[:8])
+
+	pubKey, _ := hex.DecodeString(req.PublicKey)
+
+	var deviceID string
+	err = db.QueryRowContext(r.Context(), `
+		INSERT INTO devices (tenant_id, hostname, os, arch, status, enrolled_at)
+		VALUES ($1, $2, $3, $4, 'online', NOW())
+		RETURNING id
+	`, tenantID, req.Hostname, req.OS, req.Arch).Scan(&deviceID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create device failed"})
+		return
+	}
+
+	db.ExecContext(r.Context(), `
+		INSERT INTO agent_registrations (deployment_id, device_id, agent_id, public_key, hostname, os, arch, ip_address, approved)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true)
+	`, req.DeploymentID, deviceID, agentID, pubKey, req.Hostname, req.OS, req.Arch, r.RemoteAddr)
+
+	tokenGen := auth.NewTokenGenerator("strata-rmm-dev-secret")
+	token, _ := tokenGen.GenerateAgentToken(tenantID, agentID, 720*time.Hour)
+
+	writeJSON(w, http.StatusCreated, map[string]interface{}{
+		"device_id":   deviceID,
+		"agent_id":    agentID,
+		"tenant_id":   tenantID,
+		"token":       token,
+		"nats_urls":   []string{s.nats.ConnectedUrl()},
+		"interval":    60,
+	})
+}
+
+func generateDeploymentID(name string) string {
+	b := make([]byte, 4)
+	rand.Read(b)
+	suffix := hex.EncodeToString(b)
+	slug := strings.ToLower(strings.ReplaceAll(name, " ", "-"))
+	for _, c := range []string{".", "_", "'", "\"", "/", "\\"} {
+		slug = strings.ReplaceAll(slug, c, "")
+	}
+	if len(slug) > 20 {
+		slug = slug[:20]
+	}
+	return fmt.Sprintf("%s-%s", slug, suffix)
 }
 
 func (s *APIServer) logAuditAuth(userID, email, ip string, success bool, details string) {

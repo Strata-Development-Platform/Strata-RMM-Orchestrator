@@ -1,17 +1,21 @@
 package core
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"math/big"
+	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/google/uuid"
@@ -42,6 +46,74 @@ func (im *IdentityManager) LoadOrCreate(tenantID, enrollmentToken string) (*Iden
 	}
 
 	return im.enroll(tenantID, enrollmentToken)
+}
+
+func (im *IdentityManager) RegisterWithDeploymentID(registerURL, deploymentID string) (*Identity, error) {
+	os.MkdirAll(im.dir, 0700)
+
+	ident, err := im.load()
+	if err == nil && ident != nil {
+		return ident, nil
+	}
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, fmt.Errorf("generating key: %w", err)
+	}
+
+	keyBytes, _ := x509.MarshalECPrivateKey(key)
+	pubKeyBytes := elliptic.Marshal(elliptic.P256(), key.PublicKey.X, key.PublicKey.Y)
+
+	hostname, _ := os.Hostname()
+
+	body, _ := json.Marshal(map[string]string{
+		"deployment_id": deploymentID,
+		"hostname":      hostname,
+		"os":            runtime.GOOS,
+		"arch":          runtime.GOARCH,
+		"public_key":    hex.EncodeToString(pubKeyBytes),
+	})
+
+	resp, err := http.Post(registerURL, "application/json", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("register request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		return nil, fmt.Errorf("registration failed: %d", resp.StatusCode)
+	}
+
+	var regResp struct {
+		DeviceID  string `json:"device_id"`
+		AgentID   string `json:"agent_id"`
+		TenantID  string `json:"tenant_id"`
+		Token     string `json:"token"`
+		NatsURLs  []string `json:"nats_urls"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&regResp); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+
+	ident = &Identity{
+		AgentID:  regResp.AgentID,
+		TenantID: regResp.TenantID,
+		KeyPEM:   pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyBytes}),
+	}
+
+	certDER, _ := x509.CreateCertificate(rand.Reader, &x509.Certificate{
+		SerialNumber: big.NewInt(time.Now().Unix()),
+		Subject:      pkix.Name{CommonName: regResp.AgentID, Organization: []string{regResp.TenantID}},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
+	}, &x509.Certificate{}, &key.PublicKey, key)
+	ident.CertPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+
+	if err := im.save(ident); err != nil {
+		return nil, fmt.Errorf("saving identity: %w", err)
+	}
+
+	return ident, nil
 }
 
 func (im *IdentityManager) load() (*Identity, error) {

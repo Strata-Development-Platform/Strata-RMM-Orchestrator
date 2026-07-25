@@ -30,6 +30,7 @@ export type CustomerSummary = {
   slug: string;
   plan: string;
   is_active: boolean;
+  deployment_id: string;
   device_count: number;
   online_count: number;
   alert_count: number;
