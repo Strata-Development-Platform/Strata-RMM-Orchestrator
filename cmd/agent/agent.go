@@ -8,6 +8,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/agent/collectors"
+	"github.com/strata-rmm/strata-rmm-orchestrator/internal/agent/comms"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/agent/core"
 )
 
@@ -42,6 +43,18 @@ func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 				return fmt.Errorf("starting agent: %w", err)
 			}
 			defer agent.Stop()
+
+			natsClient := comms.NewClient(&cfg.NATS, agent.Identity(), cl)
+			if err := natsClient.Connect(ctx); err != nil {
+				return fmt.Errorf("connecting to NATS: %w", err)
+			}
+			defer natsClient.Close()
+
+			commsHandler := comms.NewCommsHandler(natsClient, agent.Store(), cl)
+			if err := commsHandler.Start(ctx); err != nil {
+				return fmt.Errorf("starting comms: %w", err)
+			}
+			defer commsHandler.Stop()
 
 			sysCollector := collectors.NewSystemCollector(cfg.Collect.Interval)
 			sysCollector.Start(ctx)
