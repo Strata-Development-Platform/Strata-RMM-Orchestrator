@@ -33,6 +33,7 @@ type APIServer struct {
 	alertEngine    *alerting.Engine
 	vulnEngine     *inventory.VulnerabilityEngine
 	cveSync        *inventory.CVESyncEngine
+	thirdParty     *inventory.ThirdPartyEngine
 	keyStore       *encrypt.KeyStore
 	recordingStore *remote.RecordingStore
 	storageBackend storage.Backend
@@ -67,6 +68,11 @@ func (s *APIServer) WithVulnEngine(e *inventory.VulnerabilityEngine) *APIServer 
 
 func (s *APIServer) WithCVESyncEngine(e *inventory.CVESyncEngine) *APIServer {
 	s.cveSync = e
+	return s
+}
+
+func (s *APIServer) WithThirdPartyEngine(e *inventory.ThirdPartyEngine) *APIServer {
+	s.thirdParty = e
 	return s
 }
 
@@ -125,6 +131,11 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("DELETE /api/v1/cve/packages/{name}/{ecosystem}", s.handleCVEDeletePackage)
 	mux.HandleFunc("GET /api/v1/cve/sync/status", s.handleCVESyncStatus)
 	mux.HandleFunc("GET /api/v1/cve/package/{name}", s.handleCVEPackage)
+
+	mux.HandleFunc("GET /api/v1/thirdparty/apps", s.handleThirdPartyApps)
+	mux.HandleFunc("GET /api/v1/thirdparty/packages", s.handleThirdPartyPackages)
+	mux.HandleFunc("POST /api/v1/thirdparty/sync", s.handleThirdPartySync)
+	mux.HandleFunc("POST /api/v1/thirdparty/sync/{app}", s.handleThirdPartySyncApp)
 
 	mux.HandleFunc("POST /api/v1/keys/{tenantID}", s.handleCreateKey)
 	mux.HandleFunc("GET /api/v1/keys/{tenantID}", s.handleListKeys)
@@ -665,6 +676,50 @@ func (s *APIServer) handlePlaybackRecording(w http.ResponseWriter, r *http.Reque
 		"recording":    rec,
 		"playback_url": url,
 	})
+}
+
+func (s *APIServer) handleThirdPartyApps(w http.ResponseWriter, _ *http.Request) {
+	if s.thirdParty == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "third-party engine not available"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"apps": s.thirdParty.ListApps()})
+}
+
+func (s *APIServer) handleThirdPartyPackages(w http.ResponseWriter, r *http.Request) {
+	if s.thirdParty == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "third-party engine not available"})
+		return
+	}
+	pkgs, err := s.thirdParty.GetPackages(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"packages": pkgs})
+}
+
+func (s *APIServer) handleThirdPartySync(w http.ResponseWriter, r *http.Request) {
+	if s.thirdParty == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "third-party engine not available"})
+		return
+	}
+	go s.thirdParty.SyncAll(r.Context())
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": "sync triggered"})
+}
+
+func (s *APIServer) handleThirdPartySyncApp(w http.ResponseWriter, r *http.Request) {
+	app := r.PathValue("app")
+	if s.thirdParty == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "third-party engine not available"})
+		return
+	}
+	result, err := s.thirdParty.SyncApp(r.Context(), app)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"result": result})
 }
 
 func (s *APIServer) handleCVEDBStats(w http.ResponseWriter, r *http.Request) {

@@ -115,7 +115,8 @@ func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 			api := platform.NewAPIServer(apiAddr, tsdb, nc, logger).
 				WithAlertEngine(alertEngine).
 				WithVulnEngine(vulnEngine).
-				WithCVESyncEngine(cveSync)
+				WithCVESyncEngine(cveSync).
+				WithThirdPartyEngine(thirdParty)
 
 			if storageBackend != "" && storageBackend != "none" {
 				storageCfg := storage.Config{
