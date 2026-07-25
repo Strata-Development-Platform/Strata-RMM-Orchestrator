@@ -376,18 +376,20 @@ FROM metrics GROUP BY bucket, tenant_id, device_id, metric_name;
 - [ ] Agentless SNMP/ICMP Network Probe (Go)
 - [ ] Dashboard/visualization layer
 
-### Phase 2: Monitoring Core (Months 3-5) ⏳
+### Phase 2: Monitoring Core (Months 3-5) ✅
 - [x] Metrics ingestion pipeline (NATS → TimescaleDB) — *completed in Phase 1.3*
-- [ ] Alerting engine (threshold, heartbeat)
-- [ ] SNMP/ICMP collector (agentless)
-- [ ] Network Probe (SNMP, discovery)
+- [x] Alerting engine (threshold, heartbeat)
+- [x] SNMP/ICMP collector (agentless)
+- [x] Network Probe (SNMP, discovery, flow, topology)
+- [x] Patch Management (Windows + Linux MVP)
+- [x] Remote Access Tunnels (RDP, SSH, VNC via WebSocket/NATS)
 - [ ] Dashboard/visualization (Grafana or custom)
 
-### Phase 3: Remote Access & Automation (Months 5-7)
-- [ ] Tunnel infrastructure (WebSocket/NATS)
-- [ ] RDP/SSH/VNC proxy
-- [ ] Script execution framework
-- [ ] Patch management (Windows + Linux)
+### Phase 3: Remote Access & Automation (Months 5-7) ✅
+- [x] Tunnel infrastructure (WebSocket/NATS) — *completed in Phase 2.4*
+- [x] RDP/SSH/VNC proxy — *completed in Phase 2.4*
+- [x] Script execution framework — *completed in Phase 2.3 (patch executor)*
+- [x] Patch management (Windows + Linux) — *completed in Phase 2.3*
 - [ ] Software inventory + vulnerability correlation
 
 ### Phase 4: Advanced Features (Months 7-10)
