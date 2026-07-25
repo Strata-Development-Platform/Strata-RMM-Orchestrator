@@ -8,13 +8,17 @@ DATA_DIR="/var/lib/strata-rmm"
 SERVICE_NAME="strata-rmm-agent"
 DEPLOYMENT_ID=""
 
+RELEASE_URL="${RELEASE_URL:-https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/releases/latest/download}"
+VERSION="${VERSION:-latest}"
+
 # Parse args
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --deployment-id) DEPLOYMENT_ID="$2"; shift 2 ;;
     --tenant-id) TENANT_ID="$2"; shift 2 ;;
     --nats-url) NATS_URL="$2"; shift 2 ;;
-    --help|-h) echo "Usage: install.sh [--deployment-id ID] [--tenant-id ID] [--nats-url URL]"; exit 0 ;;
+    --version) VERSION="$2"; shift 2 ;;
+    --help|-h) echo "Usage: install.sh [--deployment-id ID] [--tenant-id ID] [--nats-url URL] [--version X.Y.Z]"; exit 0 ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
@@ -52,13 +56,27 @@ install_binary() {
 		return 0
 	fi
 
-	if [ ! -f "./bin/$BINARY_NAME" ]; then
-		log_warn "Binary not found at ./bin/$BINARY_NAME"
-		log_info "Building from source..."
-		go build -o "./bin/$BINARY_NAME" .
+	BINARY_URL="$RELEASE_URL/strata-agent-linux-$ARCH"
+	if [ "$VERSION" != "latest" ]; then
+		BINARY_URL="https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/releases/download/v$VERSION/strata-agent-linux-$ARCH"
 	fi
 
-	cp "./bin/$BINARY_NAME" "$INSTALL_DIR/$BINARY_NAME"
+	log_info "Downloading agent from $BINARY_URL..."
+	if command -v curl &>/dev/null; then
+		curl -sL -o "$INSTALL_DIR/$BINARY_NAME" "$BINARY_URL" || {
+			log_warn "Download failed, falling back to local build"
+			go build -o "/tmp/$BINARY_NAME" . && cp "/tmp/$BINARY_NAME" "$INSTALL_DIR/$BINARY_NAME"
+		}
+	elif command -v wget &>/dev/null; then
+		wget -q -O "$INSTALL_DIR/$BINARY_NAME" "$BINARY_URL" || {
+			log_warn "Download failed, falling back to local build"
+			go build -o "/tmp/$BINARY_NAME" . && cp "/tmp/$BINARY_NAME" "$INSTALL_DIR/$BINARY_NAME"
+		}
+	else
+		log_info "No download tool found, building from source..."
+		go build -o "$INSTALL_DIR/$BINARY_NAME" .
+	fi
+
 	chmod 755 "$INSTALL_DIR/$BINARY_NAME"
 	log_info "Installed binary to $INSTALL_DIR/$BINARY_NAME"
 }
