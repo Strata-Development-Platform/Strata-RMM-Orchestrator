@@ -12,6 +12,7 @@ import (
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/agent/comms"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/agent/core"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/agent/scripts"
+	"github.com/strata-rmm/strata-rmm-orchestrator/internal/agent/software"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/agent/update"
 )
 
@@ -85,6 +86,13 @@ func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 			}
 			defer scriptExec.Stop()
 			logger.Info("script executor started")
+
+			swInstaller := software.NewInstaller(natsClient.Conn(), logger, agent.Identity().TenantID, agent.Identity().AgentID)
+			if err := swInstaller.Start(ctx); err != nil {
+				logger.Warn("starting software installer", zap.Error(err))
+			}
+			defer swInstaller.Stop()
+			logger.Info("software installer started")
 
 			updateStore := update.NewStore(agent.Store().DB())
 			if err := updateStore.Init(); err != nil {

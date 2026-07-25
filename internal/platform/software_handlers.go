@@ -1,0 +1,344 @@
+package platform
+
+import (
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"time"
+
+	"github.com/nats-io/nats.go"
+	"go.uber.org/zap"
+)
+
+type SoftwareEngine struct {
+	nc     *nats.Conn
+	db     *sql.DB
+	logger *zap.Logger
+}
+
+func NewSoftwareEngine(nc *nats.Conn, db *sql.DB, logger *zap.Logger) *SoftwareEngine {
+	return &SoftwareEngine{nc: nc, db: db, logger: logger}
+}
+
+func (s *APIServer) handleCreatePackage(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.PathValue("tenantID")
+	var req struct {
+		Name         string `json:"name"`
+		Version      string `json:"version"`
+		Description  string `json:"description"`
+		Platform     string `json:"platform"`
+		PackageType  string `json:"package_type"`
+		SourceURL    string `json:"source_url"`
+		Checksum     string `json:"checksum"`
+		InstallArgs  string `json:"install_args"`
+		UninstallArgs string `json:"uninstall_args"`
+		DetectCommand string `json:"detect_command"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" || req.SourceURL == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name and source_url required"})
+		return
+	}
+	if req.Platform == "" {
+		req.Platform = "all"
+	}
+	if req.PackageType == "" {
+		req.PackageType = "other"
+	}
+
+	var pkgID string
+	var createdAt time.Time
+	err := s.db.DB().QueryRowContext(r.Context(), `
+		INSERT INTO software_packages (tenant_id, name, version, description, platform, package_type, source_url, checksum, install_args, uninstall_args, detect_command)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		RETURNING id, created_at
+	`, tenantID, req.Name, req.Version, req.Description, req.Platform, req.PackageType,
+		req.SourceURL, req.Checksum, req.InstallArgs, req.UninstallArgs, req.DetectCommand).Scan(&pkgID, &createdAt)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]interface{}{
+		"id": pkgID, "name": req.Name, "version": req.Version,
+		"package_type": req.PackageType, "created_at": createdAt,
+	})
+}
+
+func (s *APIServer) handleListPackages(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.PathValue("tenantID")
+	rows, err := s.db.DB().QueryContext(r.Context(), `
+		SELECT id, name, version, description, platform, package_type, source_url, checksum, install_args, created_at, updated_at
+		FROM software_packages WHERE tenant_id = $1
+		ORDER BY created_at DESC
+	`, tenantID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	var pkgs []map[string]interface{}
+	for rows.Next() {
+		var id, name, version, desc, platform, pkgType, srcURL, checksum, installArgs string
+		var createdAt, updatedAt time.Time
+
+		if err := rows.Scan(&id, &name, &version, &desc, &platform, &pkgType, &srcURL, &checksum, &installArgs, &createdAt, &updatedAt); err != nil {
+			continue
+		}
+		pkgs = append(pkgs, map[string]interface{}{
+			"id": id, "name": name, "version": version, "description": desc,
+			"platform": platform, "package_type": pkgType, "source_url": srcURL,
+			"checksum": checksum, "install_args": installArgs,
+			"created_at": createdAt, "updated_at": updatedAt,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"packages": pkgs})
+}
+
+func (s *APIServer) handleDeletePackage(w http.ResponseWriter, r *http.Request) {
+	pkgID := r.PathValue("pkgID")
+	_, err := s.db.DB().ExecContext(r.Context(), `DELETE FROM software_packages WHERE id = $1`, pkgID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+func (s *APIServer) handleCreateDeployment(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.PathValue("tenantID")
+	var req struct {
+		PackageID   string   `json:"package_id"`
+		Name        string   `json:"name"`
+		DeviceIDs   []string `json:"device_ids"`
+		Action      string   `json:"action"`
+		ScheduleType string  `json:"schedule_type"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.PackageID == "" || len(req.DeviceIDs) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "package_id and device_ids required"})
+		return
+	}
+	if req.Action == "" {
+		req.Action = "install"
+	}
+	if req.ScheduleType == "" {
+		req.ScheduleType = "now"
+	}
+
+	var pkg struct {
+		Name       string `json:"name"`
+		SourceURL  string `json:"source_url"`
+		Checksum   string `json:"checksum"`
+		PkgType    string `json:"package_type"`
+		InstallArgs string `json:"install_args"`
+		UninstallArgs string `json:"uninstall_args"`
+	}
+	err := s.db.DB().QueryRowContext(r.Context(), `
+		SELECT name, source_url, checksum, package_type, install_args, uninstall_args
+		FROM software_packages WHERE id = $1
+	`, req.PackageID).Scan(&pkg.Name, &pkg.SourceURL, &pkg.Checksum, &pkg.PkgType, &pkg.InstallArgs, &pkg.UninstallArgs)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "package not found"})
+		return
+	}
+
+	deployName := req.Name
+	if deployName == "" {
+		deployName = fmt.Sprintf("Deploy %s", pkg.Name)
+	}
+
+	var deployID string
+	err = s.db.DB().QueryRowContext(r.Context(), `
+		INSERT INTO software_deployments (package_id, tenant_id, name, schedule_type, status)
+		VALUES ($1, $2, $3, $4, 'deploying')
+		RETURNING id
+	`, req.PackageID, tenantID, deployName, req.ScheduleType).Scan(&deployID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	var targets []map[string]interface{}
+	for _, deviceID := range req.DeviceIDs {
+		_, err := s.db.DB().ExecContext(r.Context(), `
+			INSERT INTO software_deployment_targets (deployment_id, device_id, status)
+			VALUES ($1, $2, 'pending')
+		`, deployID, deviceID)
+		if err != nil {
+			continue
+		}
+
+		cmdPayload, _ := json.Marshal(map[string]interface{}{
+			"type":          fmt.Sprintf("software_%s", req.Action),
+			"deployment_id": deployID,
+			"action":        req.Action,
+			"source_url":    pkg.SourceURL,
+			"checksum":      pkg.Checksum,
+			"install_args":  pkg.InstallArgs,
+			"uninstall_args": pkg.UninstallArgs,
+			"package_type":  pkg.PkgType,
+			"timeout":       600,
+		})
+
+		subject := fmt.Sprintf("tenant.%s.cmd.%s", tenantID, deviceID)
+		if err := s.nats.Publish(subject, cmdPayload); err != nil {
+			s.logger.Warn("publish software command", zap.Error(err))
+			s.db.DB().ExecContext(r.Context(),
+				`UPDATE software_deployment_targets SET status = 'failed', error_message = 'NATS publish failed' WHERE deployment_id = $1 AND device_id = $2`,
+				deployID, deviceID)
+		}
+
+		targets = append(targets, map[string]interface{}{
+			"device_id": deviceID,
+			"status":    "pending",
+		})
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]interface{}{
+		"deployment_id": deployID,
+		"name":          deployName,
+		"package":       pkg.Name,
+		"action":        req.Action,
+		"targets":       len(targets),
+	})
+}
+
+func (s *APIServer) handleListDeployments(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.PathValue("tenantID")
+	rows, err := s.db.DB().QueryContext(r.Context(), `
+		SELECT d.id, d.name, sp.name as package_name, d.status, d.schedule_type, d.scheduled_for, d.created_at, d.completed_at,
+		       (SELECT COUNT(*) FROM software_deployment_targets t WHERE t.deployment_id = d.id) as total,
+		       (SELECT COUNT(*) FROM software_deployment_targets t WHERE t.deployment_id = d.id AND t.status = 'success') as success_count,
+		       (SELECT COUNT(*) FROM software_deployment_targets t WHERE t.deployment_id = d.id AND t.status = 'failed') as fail_count
+		FROM software_deployments d
+		JOIN software_packages sp ON d.package_id = sp.id
+		WHERE d.tenant_id = $1
+		ORDER BY d.created_at DESC
+	`, tenantID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	var deployments []map[string]interface{}
+	for rows.Next() {
+		var id, name, pkgName, status, schedType string
+		var createdAt time.Time
+		var scheduledNull, completedNull sql.NullTime
+		var total, successCount, failCount int
+
+		if err := rows.Scan(&id, &name, &pkgName, &status, &schedType, &scheduledNull, &createdAt, &completedNull, &total, &successCount, &failCount); err != nil {
+			continue
+		}
+		d := map[string]interface{}{
+			"id": id, "name": name, "package_name": pkgName, "status": status,
+			"schedule_type": schedType, "total": total,
+			"success_count": successCount, "fail_count": failCount,
+			"created_at": createdAt,
+		}
+		if scheduledNull.Valid {
+			d["scheduled_for"] = scheduledNull.Time
+		}
+		if completedNull.Valid {
+			d["completed_at"] = completedNull.Time
+		}
+		deployments = append(deployments, d)
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"deployments": deployments})
+}
+
+func (s *APIServer) handleGetDeployment(w http.ResponseWriter, r *http.Request) {
+	deployID := r.PathValue("deployID")
+	var deploy struct {
+		ID, Name, Status, SchedType string
+		ScheduledFor, CompletedAt   sql.NullTime
+		CreatedAt                   time.Time
+	}
+	err := s.db.DB().QueryRowContext(r.Context(), `
+		SELECT id, name, status, schedule_type, scheduled_for, completed_at, created_at
+		FROM software_deployments WHERE id = $1
+	`, deployID).Scan(&deploy.ID, &deploy.Name, &deploy.Status, &deploy.SchedType,
+		&deploy.ScheduledFor, &deploy.CompletedAt, &deploy.CreatedAt)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "deployment not found"})
+		return
+	}
+
+	rows, err := s.db.DB().QueryContext(r.Context(), `
+		SELECT t.device_id, d.hostname, t.status, t.error_message, t.duration_ms, t.started_at, t.completed_at
+		FROM software_deployment_targets t
+		JOIN devices d ON t.device_id = d.id
+		WHERE t.deployment_id = $1
+	`, deployID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	var targets []map[string]interface{}
+	for rows.Next() {
+		var devID, hostname, status, errMsg string
+		var duration int
+		var startedAt, completedAt sql.NullTime
+		if err := rows.Scan(&devID, &hostname, &status, &errMsg, &duration, &startedAt, &completedAt); err != nil {
+			continue
+		}
+		t := map[string]interface{}{
+			"device_id": devID, "hostname": hostname, "status": status,
+			"error_message": errMsg, "duration_ms": duration,
+		}
+		if startedAt.Valid {
+			t["started_at"] = startedAt.Time
+		}
+		if completedAt.Valid {
+			t["completed_at"] = completedAt.Time
+		}
+		targets = append(targets, t)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"id": deploy.ID, "name": deploy.Name, "status": deploy.Status,
+		"targets": targets,
+	})
+}
+
+func (s *APIServer) handleSoftwareResultNATS(msg *nats.Msg) {
+	var result struct {
+		Type         string `json:"type"`
+		DeploymentID string `json:"deployment_id"`
+		Action       string `json:"action"`
+		Status       string `json:"status"`
+		ErrorMessage string `json:"error_message"`
+		DurationMs   int64  `json:"duration_ms"`
+	}
+	if err := json.Unmarshal(msg.Data, &result); err != nil {
+		return
+	}
+	if result.Type != "software_result" || result.DeploymentID == "" {
+		return
+	}
+
+	now := time.Now()
+	var deviceID string
+	subject := msg.Subject
+	fmt.Sscanf(subject, "tenant.%s.agent.%s.software.result", &deviceID, &deviceID)
+
+	dbStatus := result.Status
+	if dbStatus == "success" {
+		dbStatus = "success"
+	} else {
+		dbStatus = "failed"
+	}
+
+	_, err := s.db.DB().Exec(`
+		UPDATE software_deployment_targets
+		SET status = $1, error_message = $2, duration_ms = $3, completed_at = $4
+		WHERE deployment_id = $5 AND status = 'pending'
+	`, dbStatus, result.ErrorMessage, result.DurationMs, now, result.DeploymentID)
+	if err != nil {
+		s.logger.Error("update deployment target", zap.Error(err))
+	}
+}

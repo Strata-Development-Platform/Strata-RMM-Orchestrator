@@ -581,6 +581,64 @@ func Migrations() []Migration {
 				DROP TABLE IF EXISTS scripts CASCADE;
 			`,
 		},
+		{
+			ID:   23,
+			Name: "create_software_deployment_tables",
+			Up: `
+				CREATE TABLE IF NOT EXISTS software_packages (
+					id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					tenant_id   UUID REFERENCES tenants(id) ON DELETE CASCADE,
+					name        TEXT NOT NULL,
+					version     TEXT NOT NULL,
+					description TEXT DEFAULT '',
+					platform    TEXT NOT NULL CHECK (platform IN ('windows', 'linux', 'macos', 'all')),
+					package_type TEXT NOT NULL CHECK (package_type IN ('msi', 'exe', 'deb', 'rpm', 'appimage', 'script', 'other')),
+					source_url  TEXT NOT NULL,
+					checksum    TEXT DEFAULT '',
+					checksum_type TEXT DEFAULT 'sha256',
+					install_args TEXT DEFAULT '',
+					uninstall_args TEXT DEFAULT '',
+					detect_command TEXT DEFAULT '',
+					is_third_party BOOLEAN NOT NULL DEFAULT false,
+					created_by  UUID REFERENCES users(id),
+					created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+				CREATE INDEX IF NOT EXISTS idx_software_packages_tenant ON software_packages(tenant_id);
+
+				CREATE TABLE IF NOT EXISTS software_deployments (
+					id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					package_id     UUID NOT NULL REFERENCES software_packages(id) ON DELETE CASCADE,
+					tenant_id      UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+					name           TEXT NOT NULL,
+					status         TEXT NOT NULL DEFAULT 'pending'
+					               CHECK (status IN ('pending', 'approved', 'deploying', 'completed', 'failed', 'cancelled')),
+					schedule_type  TEXT NOT NULL DEFAULT 'now' CHECK (schedule_type IN ('now', 'maintenance_window', 'scheduled')),
+					scheduled_for  TIMESTAMPTZ,
+					created_by     UUID REFERENCES users(id),
+					created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					completed_at   TIMESTAMPTZ
+				);
+				CREATE INDEX IF NOT EXISTS idx_software_deployments_tenant ON software_deployments(tenant_id);
+
+				CREATE TABLE IF NOT EXISTS software_deployment_targets (
+					deployment_id UUID NOT NULL REFERENCES software_deployments(id) ON DELETE CASCADE,
+					device_id     UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+					status        TEXT NOT NULL DEFAULT 'pending'
+					              CHECK (status IN ('pending', 'downloading', 'installing', 'success', 'failed', 'skipped')),
+					error_message TEXT DEFAULT '',
+					duration_ms   INT DEFAULT 0,
+					started_at    TIMESTAMPTZ,
+					completed_at  TIMESTAMPTZ,
+					PRIMARY KEY (deployment_id, device_id)
+				);
+			`,
+			Down: `
+				DROP TABLE IF EXISTS software_deployment_targets CASCADE;
+				DROP TABLE IF EXISTS software_deployments CASCADE;
+				DROP TABLE IF EXISTS software_packages CASCADE;
+			`,
+		},
 	}
 }
 

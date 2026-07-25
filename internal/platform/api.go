@@ -144,6 +144,13 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /api/v1/scripts/{tenantID}/executions", s.handleScriptExecutions)
 	mux.HandleFunc("GET /api/v1/scripts/{tenantID}/executions/{execID}", s.handleGetExecution)
 
+	mux.HandleFunc("GET /api/v1/software/packages/{tenantID}", s.handleListPackages)
+	mux.HandleFunc("POST /api/v1/software/packages/{tenantID}", s.handleCreatePackage)
+	mux.HandleFunc("DELETE /api/v1/software/packages/{tenantID}/{pkgID}", s.handleDeletePackage)
+	mux.HandleFunc("POST /api/v1/software/deployments/{tenantID}", s.handleCreateDeployment)
+	mux.HandleFunc("GET /api/v1/software/deployments/{tenantID}", s.handleListDeployments)
+	mux.HandleFunc("GET /api/v1/software/deployments/{tenantID}/{deployID}", s.handleGetDeployment)
+
 	mux.HandleFunc("POST /api/v1/mfa/enroll/{userID}", s.handleMFAEnroll)
 	mux.HandleFunc("POST /api/v1/mfa/verify/{userID}", s.handleMFAVerify)
 	mux.HandleFunc("GET /api/v1/mfa/status/{userID}", s.handleMFAStatus)
@@ -168,6 +175,14 @@ func (s *APIServer) Start(ctx context.Context) error {
 		} else {
 			s.logger.Info("subscribed to script results")
 			defer sub.Unsubscribe()
+		}
+
+		swSub, err := s.nats.Subscribe("tenant.>.agent.>.software.result", s.handleSoftwareResultNATS)
+		if err != nil {
+			s.logger.Warn("subscribe software results", zap.Error(err))
+		} else {
+			s.logger.Info("subscribed to software results")
+			defer swSub.Unsubscribe()
 		}
 	}
 
