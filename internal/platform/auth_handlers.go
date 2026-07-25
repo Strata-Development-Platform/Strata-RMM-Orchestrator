@@ -1,0 +1,372 @@
+package platform
+
+import (
+	"database/sql"
+	"encoding/json"
+	"net/http"
+	"time"
+
+	"golang.org/x/crypto/bcrypt"
+
+	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/auth"
+)
+
+type loginRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+type loginResponse struct {
+	Token          string        `json:"token"`
+	UserID         string        `json:"user_id"`
+	Email          string        `json:"email"`
+	Role           string        `json:"role"`
+	AccessibleTenants []tenantInfo `json:"accessible_tenants"`
+	ExpiresAt      time.Time     `json:"expires_at"`
+}
+
+type tenantInfo struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Slug string `json:"slug"`
+}
+
+func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
+	var req loginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+		return
+	}
+	if req.Email == "" || req.Password == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "email and password required"})
+		return
+	}
+
+	db := s.db.DB()
+	var userID, tenantID, role, passwordHash string
+	err := db.QueryRowContext(r.Context(), `
+		SELECT id, tenant_id, email, role, password_hash
+		FROM users WHERE email = $1 AND is_active = true
+	`, req.Email).Scan(&userID, &tenantID, &req.Email, &role, &passwordHash)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			s.logAuditAuth("", req.Email, r.RemoteAddr, false, "user not found")
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "database error"})
+		return
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(req.Password)); err != nil {
+		s.logAuditAuth(userID, req.Email, r.RemoteAddr, false, "wrong password")
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
+		return
+	}
+
+	tokenGen := auth.NewTokenGenerator("strata-rmm-dev-secret")
+	ttl := 8 * time.Hour
+	token, err := tokenGen.GenerateUserToken(tenantID, []string{role}, ttl)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "token generation failed"})
+		return
+	}
+
+	accessibleTenants, _ := s.getAccessibleTenants(r.Context(), userID, role, tenantID)
+
+	db.ExecContext(r.Context(), `UPDATE users SET last_login = NOW() WHERE id = $1`, userID)
+	s.logAuditAuth(userID, req.Email, r.RemoteAddr, true, "login")
+
+	writeJSON(w, http.StatusOK, loginResponse{
+		Token:          token,
+		UserID:         userID,
+		Email:          req.Email,
+		Role:           role,
+		AccessibleTenants: accessibleTenants,
+		ExpiresAt:      time.Now().Add(ttl),
+	})
+}
+
+func (s *APIServer) handleMe(w http.ResponseWriter, r *http.Request) {
+	db := s.db.DB()
+	token := r.Header.Get("Authorization")
+	if token == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "no auth token"})
+		return
+	}
+
+	tokenGen := auth.NewTokenGenerator("strata-rmm-dev-secret")
+	claims, err := tokenGen.Validate(token)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid token"})
+		return
+	}
+
+	var userID, email, role string
+	err = db.QueryRowContext(r.Context(), `
+		SELECT id, email, role FROM users WHERE tenant_id = $1 AND is_active = true LIMIT 1
+	`, claims.TenantID).Scan(&userID, &email, &role)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
+		return
+	}
+
+	accessibleTenants, _ := s.getAccessibleTenants(r.Context(), userID, claims.Roles[0], claims.TenantID)
+
+	writeJSON(w, http.StatusOK, loginResponse{
+		Token:          token,
+		UserID:         userID,
+		Email:          email,
+		Role:           role,
+		AccessibleTenants: accessibleTenants,
+	})
+}
+
+func (s *APIServer) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
+	db := s.db.DB()
+	rows, err := db.QueryContext(r.Context(), `
+		SELECT u.id, u.email, u.role, u.is_active, u.last_login, u.created_at,
+		       COALESCE(json_agg(json_build_object('id', t.id, 'name', t.name, 'slug', t.slug))
+		                FILTER (WHERE t.id IS NOT NULL), '[]') as accessible_tenants
+		FROM users u
+		LEFT JOIN user_tenant_access uta ON u.id = uta.user_id
+		LEFT JOIN tenants t ON uta.tenant_id = t.id
+		GROUP BY u.id
+		ORDER BY u.created_at DESC
+	`)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	var users []map[string]interface{}
+	for rows.Next() {
+		var id, email, role string
+		var isActive bool
+		var createdAt time.Time
+		var lastLoginNull sql.NullTime
+		var tenantsJSON []byte
+
+		if err := rows.Scan(&id, &email, &role, &isActive, &lastLoginNull, &createdAt, &tenantsJSON); err != nil {
+			continue
+		}
+		user := map[string]interface{}{
+			"id":         id,
+			"email":      email,
+			"role":       role,
+			"is_active":  isActive,
+			"created_at": createdAt,
+		}
+		if lastLoginNull.Valid {
+			user["last_login"] = lastLoginNull.Time
+		}
+		if len(tenantsJSON) > 0 {
+			var tenants []map[string]interface{}
+			json.Unmarshal(tenantsJSON, &tenants)
+			user["accessible_tenants"] = tenants
+		}
+		users = append(users, user)
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"users": users})
+}
+
+func (s *APIServer) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Email    string   `json:"email"`
+		Password string   `json:"password"`
+		Role     string   `json:"role"`
+		TenantIDs []string `json:"tenant_ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+		return
+	}
+	if req.Email == "" || req.Password == "" || req.Role == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "email, password, role required"})
+		return
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "hash failed"})
+		return
+	}
+
+	db := s.db.DB()
+	var userID string
+	err = db.QueryRowContext(r.Context(), `
+		INSERT INTO users (email, password_hash, role)
+		VALUES ($1, $2, $3)
+		RETURNING id
+	`, req.Email, string(hash), req.Role).Scan(&userID)
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "email already exists"})
+		return
+	}
+
+	for _, tenantID := range req.TenantIDs {
+		db.ExecContext(r.Context(), `
+			INSERT INTO user_tenant_access (user_id, tenant_id) VALUES ($1, $2) ON CONFLICT DO NOTHING
+		`, userID, tenantID)
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]interface{}{"id": userID, "status": "created"})
+}
+
+func (s *APIServer) handleAdminUpdateUserTenants(w http.ResponseWriter, r *http.Request) {
+	userID := r.PathValue("userID")
+	var req struct {
+		TenantIDs []string `json:"tenant_ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+		return
+	}
+
+	db := s.db.DB()
+	tx, err := db.BeginTx(r.Context(), nil)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "tx failed"})
+		return
+	}
+	defer tx.Rollback()
+
+	tx.ExecContext(r.Context(), `DELETE FROM user_tenant_access WHERE user_id = $1`, userID)
+	for _, tenantID := range req.TenantIDs {
+		tx.ExecContext(r.Context(), `INSERT INTO user_tenant_access (user_id, tenant_id) VALUES ($1, $2)`, userID, tenantID)
+	}
+	tx.Commit()
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}
+
+func (s *APIServer) handlePlatformOverview(w http.ResponseWriter, r *http.Request) {
+	db := s.db.DB()
+
+	var totalDevices, onlineDevices, activeAlerts, openCVEs int
+	db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM devices`).Scan(&totalDevices)
+	db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM devices WHERE status = 'online'`).Scan(&onlineDevices)
+
+	var criticalAlerts int
+	db.QueryRowContext(r.Context(), `
+		SELECT COUNT(*) FROM alerts WHERE status = 'firing' AND severity = 'critical'
+	`).Scan(&criticalAlerts)
+	db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM alerts WHERE status = 'firing'`).Scan(&activeAlerts)
+
+	db.QueryRowContext(r.Context(), `
+		SELECT COUNT(*) FROM device_vulnerabilities WHERE status = 'open' AND severity IN ('critical', 'high')
+	`).Scan(&openCVEs)
+
+	var totalCustomers int
+	db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM tenants`).Scan(&totalCustomers)
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"total_devices":    totalDevices,
+		"online_devices":   onlineDevices,
+		"offline_devices":  totalDevices - onlineDevices,
+		"active_alerts":    activeAlerts,
+		"critical_alerts":  criticalAlerts,
+		"open_cves":        openCVEs,
+		"total_customers":  totalCustomers,
+		"timestamp":        time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
+func (s *APIServer) handlePlatformCustomers(w http.ResponseWriter, r *http.Request) {
+	db := s.db.DB()
+	rows, err := db.QueryContext(r.Context(), `
+		SELECT t.id, t.name, t.slug, t.plan, t.is_active, t.created_at,
+		       (SELECT COUNT(*) FROM devices d WHERE d.tenant_id = t.id) as device_count,
+		       (SELECT COUNT(*) FROM devices d WHERE d.tenant_id = t.id AND d.status = 'online') as online_count,
+		       (SELECT COUNT(*) FROM alerts a WHERE a.tenant_id = t.id AND a.status = 'firing') as alert_count,
+		       (SELECT COUNT(*) FROM device_vulnerabilities dv
+		        JOIN devices d ON dv.device_id = d.id
+		        WHERE d.tenant_id = t.id AND dv.status = 'open') as cve_count
+		FROM tenants t
+		ORDER BY t.name ASC
+	`)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	var customers []map[string]interface{}
+	for rows.Next() {
+		var id, name, slug, plan string
+		var isActive bool
+		var createdAt time.Time
+		var deviceCount, onlineCount, alertCount, cveCount int
+
+		if err := rows.Scan(&id, &name, &slug, &plan, &isActive, &createdAt, &deviceCount, &onlineCount, &alertCount, &cveCount); err != nil {
+			continue
+		}
+		customers = append(customers, map[string]interface{}{
+			"id":           id,
+			"name":         name,
+			"slug":         slug,
+			"plan":         plan,
+			"is_active":    isActive,
+			"device_count": deviceCount,
+			"online_count": onlineCount,
+			"alert_count":  alertCount,
+			"cve_count":    cveCount,
+			"created_at":   createdAt,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"customers": customers})
+}
+
+func (s *APIServer) getAccessibleTenants(ctx interface{}, userID, role, tenantID string) ([]tenantInfo, error) {
+	db := s.db.DB()
+	if role == "admin" {
+		rows, err := db.Query(`SELECT id, name, slug FROM tenants ORDER BY name`)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var tenants []tenantInfo
+		for rows.Next() {
+			var t tenantInfo
+			rows.Scan(&t.ID, &t.Name, &t.Slug)
+			tenants = append(tenants, t)
+		}
+		return tenants, nil
+	}
+
+	rows, err := db.Query(`
+		SELECT t.id, t.name, t.slug FROM tenants t
+		JOIN user_tenant_access uta ON t.id = uta.tenant_id
+		WHERE uta.user_id = $1
+		ORDER BY t.name
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var tenants []tenantInfo
+	for rows.Next() {
+		var t tenantInfo
+		rows.Scan(&t.ID, &t.Name, &t.Slug)
+		tenants = append(tenants, t)
+	}
+	return tenants, nil
+}
+
+func (s *APIServer) logAuditAuth(userID, email, ip string, success bool, details string) {
+	if s.db == nil {
+		return
+	}
+	db := s.db.DB()
+	detailsJSON, _ := json.Marshal(map[string]string{"email": email, "detail": details})
+	db.Exec(`INSERT INTO audit_auth (user_id, action, ip_address, success, details) VALUES ($1, $2, $3, $4, $5)`,
+		nullIfEmpty(userID), "login", ip, success, string(detailsJSON))
+}
+
+func nullIfEmpty(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
+}

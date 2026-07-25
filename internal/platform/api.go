@@ -86,6 +86,16 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("POST /api/v1/enroll", s.handleEnroll)
 
+	mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
+	mux.HandleFunc("GET /api/v1/auth/me", s.handleMe)
+
+	mux.HandleFunc("GET /api/v1/platform/overview", s.handlePlatformOverview)
+	mux.HandleFunc("GET /api/v1/platform/customers", s.handlePlatformCustomers)
+
+	mux.HandleFunc("GET /api/v1/admin/users", s.handleAdminUsers)
+	mux.HandleFunc("POST /api/v1/admin/users", s.handleAdminCreateUser)
+	mux.HandleFunc("PUT /api/v1/admin/users/{userID}/tenants", s.handleAdminUpdateUserTenants)
+
 	mux.HandleFunc("GET /api/v1/metrics", s.handleQueryMetrics)
 	mux.HandleFunc("GET /api/v1/devices/{tenantID}/{deviceID}/metrics/{metricName}", s.handleDeviceMetrics)
 	mux.HandleFunc("GET /api/v1/heartbeat/{tenantID}/{deviceID}", s.handleGetHeartbeat)

@@ -474,6 +474,39 @@ func Migrations() []Migration {
 			`,
 			Down: `DROP TABLE IF EXISTS tenant_encryption_keys CASCADE;`,
 		},
+		{
+			ID:   20,
+			Name: "create_user_tenant_access_and_auth",
+			Up: `
+				ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash_updated TEXT DEFAULT '';
+
+				CREATE TABLE IF NOT EXISTS user_tenant_access (
+					user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+					tenant_id  UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+					granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					granted_by UUID REFERENCES users(id),
+					PRIMARY KEY (user_id, tenant_id)
+				);
+				CREATE INDEX IF NOT EXISTS idx_user_tenant_access_user ON user_tenant_access(user_id);
+				CREATE INDEX IF NOT EXISTS idx_user_tenant_access_tenant ON user_tenant_access(tenant_id);
+
+				CREATE TABLE IF NOT EXISTS audit_auth (
+					id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					user_id    UUID REFERENCES users(id),
+					action     TEXT NOT NULL,
+					ip_address TEXT DEFAULT '',
+					success    BOOLEAN NOT NULL DEFAULT true,
+					details    JSONB DEFAULT '{}',
+					created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+				CREATE INDEX IF NOT EXISTS idx_audit_auth_user_time ON audit_auth(user_id, created_at DESC);
+			`,
+			Down: `
+				DROP TABLE IF EXISTS user_tenant_access CASCADE;
+				DROP TABLE IF EXISTS audit_auth CASCADE;
+				ALTER TABLE users DROP COLUMN IF EXISTS password_hash_updated;
+			`,
+		},
 	}
 }
 
