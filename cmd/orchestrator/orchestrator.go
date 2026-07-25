@@ -16,12 +16,13 @@ import (
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/platform"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/remote"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/reporting"
+	"github.com/strata-rmm/strata-rmm-orchestrator/internal/update"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/postgres"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/storage"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/timescale"
 )
 
-func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
+func NewCommand(ctx context.Context, version string, logger *zap.Logger) *cobra.Command {
 	var (
 		natsURL         string
 		timescaleDSN    string
@@ -113,11 +114,14 @@ func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 			go thirdParty.Start(ctx)
 			logger.Info("third-party patching engine started")
 
+			updateMgr := platform.NewUpdateManager(version, "Strata-Development-Platform", "Strata-RMM-Orchestrator", apiAddr, logger)
+
 			api := platform.NewAPIServer(apiAddr, tsdb, nc, logger).
 				WithAlertEngine(alertEngine).
 				WithVulnEngine(vulnEngine).
 				WithCVESyncEngine(cveSync).
-				WithThirdPartyEngine(thirdParty)
+				WithThirdPartyEngine(thirdParty).
+				WithUpdateManager(updateMgr)
 
 			if storageBackend != "" && storageBackend != "none" {
 				storageCfg := storage.Config{
@@ -181,6 +185,78 @@ func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 	cmd.Flags().StringVar(&storageRegion, "storage-region", envOrDefault("STORAGE_REGION", ""), "Storage region")
 	cmd.Flags().StringVar(&storageEndpoint, "storage-endpoint", envOrDefault("STORAGE_ENDPOINT", ""), "Storage endpoint (for MinIO/S3-compatible)")
 
+	cmd.AddCommand(NewUpdateCommand(ctx, version, logger))
+
+	return cmd
+}
+
+func NewUpdateCommand(ctx context.Context, version string, logger *zap.Logger) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "update",
+		Short: "Check and apply orchestrator updates",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			checkOnly, _ := cmd.Flags().GetBool("check")
+
+			updater := update.NewOrchestratorUpdater(version, "Strata-Development-Platform", "Strata-RMM-Orchestrator")
+			logger.Info("checking for updates", zap.String("current", version))
+
+			release, err := updater.Check(ctx)
+			if err != nil {
+				return fmt.Errorf("check failed: %w", err)
+			}
+
+			if release == nil {
+				logger.Info("already up to date", zap.String("version", version))
+				return nil
+			}
+
+			logger.Info("update available",
+				zap.String("current", version),
+				zap.String("latest", release.Version),
+			)
+
+			if checkOnly {
+				return nil
+			}
+
+			mode := updater.DetectMode()
+			logger.Info("deployment mode", zap.String("mode", mode))
+
+			switch mode {
+			case "docker":
+				logger.Info("run: docker compose pull && docker compose up -d")
+				return nil
+			case "kubernetes":
+				logger.Info("run: helm upgrade strata-rmm ...")
+				return nil
+			}
+
+			logger.Info("downloading update", zap.String("version", release.Version))
+			binaryPath, err := updater.Download(ctx, release)
+			if err != nil {
+				return fmt.Errorf("download failed: %w", err)
+			}
+
+			logger.Info("applying update")
+			if err := updater.Apply(binaryPath); err != nil {
+				updater.Rollback()
+				return fmt.Errorf("apply failed: %w", err)
+			}
+
+			logger.Info("verifying health")
+			healthURL := fmt.Sprintf("http://localhost:%s/health", "8080")
+			if err := updater.Verify(ctx, healthURL); err != nil {
+				updater.Rollback()
+				return fmt.Errorf("verification failed, rolled back: %w", err)
+			}
+
+			updater.Cleanup()
+			logger.Info("update successful, restarting")
+			return updater.TriggerRestart()
+		},
+	}
+
+	cmd.Flags().Bool("check", false, "Only check for updates, don't apply")
 	return cmd
 }
 

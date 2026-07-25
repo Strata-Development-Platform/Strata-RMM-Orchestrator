@@ -34,6 +34,7 @@ type APIServer struct {
 	vulnEngine     *inventory.VulnerabilityEngine
 	cveSync        *inventory.CVESyncEngine
 	thirdParty     *inventory.ThirdPartyEngine
+	updateMgr      *UpdateManager
 	keyStore       *encrypt.KeyStore
 	recordingStore *remote.RecordingStore
 	storageBackend storage.Backend
@@ -73,6 +74,11 @@ func (s *APIServer) WithCVESyncEngine(e *inventory.CVESyncEngine) *APIServer {
 
 func (s *APIServer) WithThirdPartyEngine(e *inventory.ThirdPartyEngine) *APIServer {
 	s.thirdParty = e
+	return s
+}
+
+func (s *APIServer) WithUpdateManager(mgr *UpdateManager) *APIServer {
+	s.updateMgr = mgr
 	return s
 }
 
@@ -145,6 +151,9 @@ func (s *APIServer) Start(ctx context.Context) error {
 
 	mux.HandleFunc("POST /api/v1/remote/{tenantID}/session", s.handleRemoteSessionStart)
 	mux.HandleFunc("DELETE /api/v1/remote/{tenantID}/session/{sessionID}", s.handleRemoteSessionStop)
+
+	mux.HandleFunc("GET /api/v1/admin/update/check", s.handleUpdateCheck)
+	mux.HandleFunc("POST /api/v1/admin/update/apply", s.handleUpdateApply)
 
 	mux.HandleFunc("POST /api/v1/keys/{tenantID}", s.handleCreateKey)
 	mux.HandleFunc("GET /api/v1/keys/{tenantID}", s.handleListKeys)
