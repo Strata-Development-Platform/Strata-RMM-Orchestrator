@@ -107,6 +107,20 @@ class ApiClient {
   getScriptExecution = (tenantID: string, execID: string) =>
     this.request<Record<string, unknown>>('GET', `/api/v1/scripts/${tenantID}/executions/${execID}`);
 
+  // Software
+  getPackages = (tenantID: string) =>
+    this.request<{ packages: Record<string, unknown>[] }>('GET', `/api/v1/software/packages/${tenantID}`);
+  createPackage = (tenantID: string, data: Record<string, unknown>) =>
+    this.request<Record<string, unknown>>('POST', `/api/v1/software/packages/${tenantID}`, data);
+  deletePackage = (tenantID: string, pkgID: string) =>
+    this.request<{ status: string }>('DELETE', `/api/v1/software/packages/${tenantID}/${pkgID}`);
+  createDeployment = (tenantID: string, data: Record<string, unknown>) =>
+    this.request<Record<string, unknown>>('POST', `/api/v1/software/deployments/${tenantID}`, data);
+  getDeployments = (tenantID: string) =>
+    this.request<{ deployments: Record<string, unknown>[] }>('GET', `/api/v1/software/deployments/${tenantID}`);
+  getDeployment = (tenantID: string, deployID: string) =>
+    this.request<Record<string, unknown>>('GET', `/api/v1/software/deployments/${tenantID}/${deployID}`);
+
   // Access
   getTenantUsers = (tenantID: string) =>
     this.request<{ users: Record<string, unknown>[] }>('GET', `/api/v1/access/users/${tenantID}`);

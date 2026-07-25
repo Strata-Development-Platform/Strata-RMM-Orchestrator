@@ -9,6 +9,7 @@ import UserManagementPage from '@/pages/UserManagementPage';
 import AdminSettingsPage from '@/pages/AdminSettingsPage';
 import SettingsPage from '@/pages/SettingsPage';
 import ScriptsPage from '@/pages/ScriptsPage';
+import SoftwarePage from '@/pages/SoftwarePage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();

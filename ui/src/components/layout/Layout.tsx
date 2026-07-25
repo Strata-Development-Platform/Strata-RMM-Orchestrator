@@ -7,6 +7,7 @@ const navItems = [
   { path: '/customers', label: 'Customers', icon: '🏢' },
   { path: '/admin/users', label: 'Users', icon: '👤' },
   { path: '/scripts', label: 'Scripts', icon: '▶' },
+  { path: '/software', label: 'Software', icon: '📦' },
   { path: '/admin/settings', label: 'Settings', icon: '⚙' },
 ];
 
