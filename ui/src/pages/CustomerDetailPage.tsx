@@ -86,45 +86,79 @@ export default function CustomerDetailPage() {
   );
 }
 
-function DevicesTab({ devices }: { devices: Record<string, unknown>[] }) {
+function DevicesTab({ devices, tenantID, showToast: st }: { devices: Record<string, unknown>[]; tenantID: string; showToast?: (t: string, m: string) => void }) {
   return (
-    <div className="bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
-      <table className="w-full text-sm">
-        <thead className="bg-slate-50 dark:bg-slate-800">
-          <tr>
-            <th className="text-left px-4 py-3 font-medium text-slate-500">Hostname</th>
-            <th className="text-left px-4 py-3 font-medium text-slate-500">OS</th>
-            <th className="text-center px-4 py-3 font-medium text-slate-500">Status</th>
-            <th className="text-right px-4 py-3 font-medium text-slate-500">Last Heartbeat</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
-          {devices.length === 0 ? (
-            <tr><td colSpan={4} className="px-4 py-8 text-center text-slate-400">No devices enrolled</td></tr>
-          ) : devices.map((d: Record<string, unknown>) => (
-            <tr key={d.id as string} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
-              <td className="px-4 py-3 font-medium">{d.hostname as string}</td>
-              <td className="px-4 py-3 text-slate-600">{(d.os as string) || '-'} {(d.os_version as string) || ''}</td>
-              <td className="px-4 py-3 text-center">
-                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
-                  d.status === 'online' ? 'bg-green-100 text-green-800' :
-                  d.status === 'offline' ? 'bg-red-100 text-red-800' :
-                  'bg-slate-100 text-slate-600'
-                }`}>
-                  <span className={`w-1.5 h-1.5 rounded-full ${
-                    d.status === 'online' ? 'bg-green-500' :
-                    d.status === 'offline' ? 'bg-red-500' : 'bg-slate-400'
-                  }`} />
-                  {d.status as string}
-                </span>
-              </td>
-              <td className="px-4 py-3 text-right text-slate-500">
-                {d.last_heartbeat ? new Date(d.last_heartbeat as string).toLocaleString() : '-'}
-              </td>
+    <div className="space-y-3">
+      {devices.length > 0 && <DeviceUpdateBar devices={devices} tenantID={tenantID} showToast={st} />}
+      <div className="bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 dark:bg-slate-800">
+            <tr>
+              <th className="text-left px-4 py-3 font-medium text-slate-500">Hostname</th>
+              <th className="text-left px-4 py-3 font-medium text-slate-500">OS</th>
+              <th className="text-center px-4 py-3 font-medium text-slate-500">Agent Version</th>
+              <th className="text-center px-4 py-3 font-medium text-slate-500">Status</th>
+              <th className="text-right px-4 py-3 font-medium text-slate-500">Last Heartbeat</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
+            {devices.length === 0 ? (
+              <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-400">No devices enrolled</td></tr>
+            ) : devices.map((d: Record<string, unknown>) => (
+              <tr key={d.id as string} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                <td className="px-4 py-3 font-medium">{d.hostname as string}</td>
+                <td className="px-4 py-3 text-slate-600">{(d.os as string) || '-'} {(d.os_version as string) || ''}</td>
+                <td className="px-4 py-3 text-center">
+                  <span className="font-mono text-xs">{(d.agent_version as string) || 'unknown'}</span>
+                </td>
+                <td className="px-4 py-3 text-center">
+                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
+                    d.status === 'online' ? 'bg-green-100 text-green-800' :
+                    d.status === 'offline' ? 'bg-red-100 text-red-800' :
+                    'bg-slate-100 text-slate-600'
+                  }`}>
+                    <span className={`w-1.5 h-1.5 rounded-full ${
+                      d.status === 'online' ? 'bg-green-500' :
+                      d.status === 'offline' ? 'bg-red-500' : 'bg-slate-400'
+                    }`} />
+                    {d.status as string}
+                  </span>
+                </td>
+                <td className="px-4 py-3 text-right text-slate-500">
+                  {d.last_heartbeat ? new Date(d.last_heartbeat as string).toLocaleString() : '-'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function DeviceUpdateBar({ devices, tenantID, showToast: st }: { devices: Record<string, unknown>[]; tenantID: string; showToast?: (t: string, m: string) => void }) {
+  const [updating, setUpdating] = useState(false);
+  const showToast = st || ((_t: string, _m: string) => {});
+
+  const handleUpdateAll = async () => {
+    setUpdating(true);
+    try {
+      const res = await fetch(`/api/v1/platform/customers/${tenantID}/devices/update-all`, { method: 'POST' });
+      const data = await res.json();
+      showToast('success', `Update triggered for ${data.count} devices`);
+    } catch {
+      showToast('error', 'Failed to trigger updates');
+    }
+    setUpdating(false);
+  };
+
+  return (
+    <div className="flex items-center justify-between text-sm bg-slate-50 dark:bg-slate-800/50 px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700">
+      <span className="text-slate-500">{devices.length} device{devices.length !== 1 ? 's' : ''}</span>
+      <button onClick={handleUpdateAll} disabled={updating}
+        className="px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 disabled:opacity-50">
+        {updating ? 'Updating...' : 'Update All'}
+      </button>
     </div>
   );
 }
@@ -261,6 +295,30 @@ function SettingsTab({ tenantID, customer }: { tenantID: string; customer: Custo
             <p className="text-xs text-slate-400 mt-1">Use this ID when installing agents for this customer</p>
           </div>
         )}
+
+        <div className="mt-3 pt-3 border-t border-slate-200 dark:border-slate-700">
+          <label className="text-sm font-medium text-slate-500">Agent Update Source</label>
+          <div className="flex items-center gap-2 mt-1">
+            <select
+              defaultValue="server"
+              onChange={async (e) => {
+                try {
+                  await fetch(`/api/v1/platform/customers/${tenantID}/update-source`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ update_source: e.target.value, update_channel: 'stable' }),
+                  });
+                  alert('Update source updated');
+                } catch { alert('Failed to update'); }
+              }}
+              className="flex-1 px-3 py-1.5 border rounded-md dark:bg-slate-800 text-sm"
+            >
+              <option value="server">Management Server</option>
+              <option value="github">GitHub Releases</option>
+            </select>
+          </div>
+          <p className="text-xs text-slate-400 mt-1">Choose where agents check for updates</p>
+        </div>
       </div>
 
       <div className="bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700 p-4">

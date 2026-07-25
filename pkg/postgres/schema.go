@@ -678,6 +678,23 @@ func Migrations() []Migration {
 				DROP TABLE IF EXISTS report_schedules CASCADE;
 			`,
 		},
+		{
+			ID:   25,
+			Name: "add_agent_version_and_update_source",
+			Up: `
+				ALTER TABLE devices ADD COLUMN IF NOT EXISTS agent_version TEXT DEFAULT '';
+				ALTER TABLE tenants ADD COLUMN IF NOT EXISTS update_source TEXT NOT NULL DEFAULT 'server'
+					CHECK (update_source IN ('github', 'server'));
+				ALTER TABLE tenants ADD COLUMN IF NOT EXISTS update_channel TEXT NOT NULL DEFAULT 'stable'
+					CHECK (update_channel IN ('stable', 'beta', 'alpha'));
+				CREATE INDEX IF NOT EXISTS idx_devices_agent_version ON devices(agent_version);
+			`,
+			Down: `
+				ALTER TABLE devices DROP COLUMN IF EXISTS agent_version;
+				ALTER TABLE tenants DROP COLUMN IF EXISTS update_source;
+				ALTER TABLE tenants DROP COLUMN IF EXISTS update_channel;
+			`,
+		},
 	}
 }
 

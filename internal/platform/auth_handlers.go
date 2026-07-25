@@ -423,6 +423,7 @@ func (s *APIServer) handleAgentRegister(w http.ResponseWriter, r *http.Request) 
 		Hostname     string `json:"hostname"`
 		OS           string `json:"os"`
 		Arch         string `json:"arch"`
+		Version      string `json:"version"`
 		PublicKey    string `json:"public_key"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -450,11 +451,16 @@ func (s *APIServer) handleAgentRegister(w http.ResponseWriter, r *http.Request) 
 	pubKey, _ := hex.DecodeString(req.PublicKey)
 
 	var deviceID string
+	agentVersion := req.Version
+	if agentVersion == "" {
+		agentVersion = "0.0.0"
+	}
+
 	err = db.QueryRowContext(r.Context(), `
-		INSERT INTO devices (tenant_id, hostname, os, arch, status, enrolled_at)
-		VALUES ($1, $2, $3, $4, 'online', NOW())
+		INSERT INTO devices (tenant_id, hostname, os, arch, agent_version, status, enrolled_at)
+		VALUES ($1, $2, $3, $4, $5, 'online', NOW())
 		RETURNING id
-	`, tenantID, req.Hostname, req.OS, req.Arch).Scan(&deviceID)
+	`, tenantID, req.Hostname, req.OS, req.Arch, agentVersion).Scan(&deviceID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create device failed"})
 		return
@@ -476,6 +482,170 @@ func (s *APIServer) handleAgentRegister(w http.ResponseWriter, r *http.Request) 
 		"nats_urls":   []string{s.nats.ConnectedUrl()},
 		"interval":    60,
 	})
+}
+
+func (s *APIServer) handleAgentConfig(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DeploymentID string `json:"deployment_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.DeploymentID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "deployment_id required"})
+		return
+	}
+
+	var source, channel string
+	err := s.db.DB().QueryRowContext(r.Context(), `
+		SELECT update_source, update_channel FROM tenants WHERE deployment_id = $1 AND is_active = true
+	`, req.DeploymentID).Scan(&source, &channel)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "invalid deployment_id"})
+		return
+	}
+
+	manifestURL := "https://releases.strata-rmm.io"
+	if source == "server" {
+		manifestURL = fmt.Sprintf("http://%s", r.Host)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"update_source":  source,
+		"update_channel": channel,
+		"manifest_url":   manifestURL,
+		"check_interval": 86400,
+		"server_time":    time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
+func (s *APIServer) handleDeviceUpdate(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.PathValue("tenantID")
+	deviceID := r.PathValue("deviceID")
+
+	var source, channel string
+	err := s.db.DB().QueryRowContext(r.Context(), `
+		SELECT update_source, update_channel FROM tenants WHERE id = $1
+	`, tenantID).Scan(&source, &channel)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "tenant not found"})
+		return
+	}
+
+	cmdPayload, _ := json.Marshal(map[string]interface{}{
+		"type":    "update",
+		"action":  "check",
+		"channel": channel,
+		"source":  source,
+	})
+
+	subject := fmt.Sprintf("tenant.%s.cmd.%s", tenantID, deviceID)
+	if err := s.nats.Publish(subject, cmdPayload); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "dispatch failed"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "update_triggered"})
+}
+
+func (s *APIServer) handleDeviceUpdateAll(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.PathValue("tenantID")
+
+	var source, channel string
+	err := s.db.DB().QueryRowContext(r.Context(), `
+		SELECT update_source, update_channel FROM tenants WHERE id = $1
+	`, tenantID).Scan(&source, &channel)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "tenant not found"})
+		return
+	}
+
+	rows, err := s.db.DB().QueryContext(r.Context(), `SELECT id FROM devices WHERE tenant_id = $1 AND status = 'online'`, tenantID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	count := 0
+	cmdPayload, _ := json.Marshal(map[string]interface{}{
+		"type":    "update",
+		"action":  "check",
+		"channel": channel,
+		"source":  source,
+	})
+
+	for rows.Next() {
+		var deviceID string
+		rows.Scan(&deviceID)
+		subject := fmt.Sprintf("tenant.%s.cmd.%s", tenantID, deviceID)
+		s.nats.Publish(subject, cmdPayload)
+		count++
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status": "update_triggered",
+		"count":  fmt.Sprintf("%d", count),
+	})
+}
+
+func (s *APIServer) handleSetUpdateSource(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.PathValue("tenantID")
+	var req struct {
+		Source  string `json:"update_source"`
+		Channel string `json:"update_channel"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+		return
+	}
+	if req.Source != "github" && req.Source != "server" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "source must be github or server"})
+		return
+	}
+	if req.Channel != "stable" && req.Channel != "beta" && req.Channel != "alpha" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "channel must be stable, beta, or alpha"})
+		return
+	}
+
+	_, err := s.db.DB().ExecContext(r.Context(), `
+		UPDATE tenants SET update_source = $1, update_channel = $2 WHERE id = $3
+	`, req.Source, req.Channel, tenantID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}
+
+func (s *APIServer) handleDeviceVersion(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.PathValue("tenantID")
+	rows, err := s.db.DB().QueryContext(r.Context(), `
+		SELECT id, hostname, os, agent_version, status, last_heartbeat
+		FROM devices WHERE tenant_id = $1
+		ORDER BY hostname ASC
+	`, tenantID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	var devices []map[string]interface{}
+	for rows.Next() {
+		var id, hostname, os, agentVersion, status string
+		var lastHeartbeat sql.NullTime
+		if err := rows.Scan(&id, &hostname, &os, &agentVersion, &status, &lastHeartbeat); err != nil {
+			continue
+		}
+		d := map[string]interface{}{
+			"id": id, "hostname": hostname, "os": os,
+			"agent_version": agentVersion, "status": status,
+		}
+		if lastHeartbeat.Valid {
+			d["last_heartbeat"] = lastHeartbeat.Time
+		}
+		devices = append(devices, d)
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"devices": devices})
 }
 
 func generateDeploymentID(name string) string {

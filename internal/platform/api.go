@@ -98,6 +98,7 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("POST /api/v1/enroll", s.handleEnroll)
 	mux.HandleFunc("POST /api/v1/agent/register", s.handleAgentRegister)
+	mux.HandleFunc("POST /api/v1/agent/config", s.handleAgentConfig)
 
 	mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
 	mux.HandleFunc("GET /api/v1/auth/me", s.handleMe)
@@ -106,6 +107,10 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /api/v1/platform/customers", s.handlePlatformCustomers)
 	mux.HandleFunc("GET /api/v1/platform/customers/{tenantID}/devices", s.handleTenantDevices)
 	mux.HandleFunc("GET /api/v1/platform/customers/{tenantID}/devices/{deviceID}", s.handleDeviceInventory)
+	mux.HandleFunc("GET /api/v1/platform/customers/{tenantID}/devices-with-versions", s.handleDeviceVersion)
+	mux.HandleFunc("POST /api/v1/platform/customers/{tenantID}/update-source", s.handleSetUpdateSource)
+	mux.HandleFunc("POST /api/v1/platform/customers/{tenantID}/devices/{deviceID}/update", s.handleDeviceUpdate)
+	mux.HandleFunc("POST /api/v1/platform/customers/{tenantID}/devices/update-all", s.handleDeviceUpdateAll)
 
 	mux.HandleFunc("GET /api/v1/admin/users", s.handleAdminUsers)
 	mux.HandleFunc("POST /api/v1/admin/users", s.handleAdminCreateUser)

@@ -107,13 +107,8 @@ func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 				return fmt.Errorf("init update store: %w", err)
 			}
 
-			manifestURL := cfg.Update.ManifestURL
-			if manifestURL == "" {
-				manifestURL = "https://releases.strata-rmm.io"
-			}
-
 			updateClient := update.NewClient(update.ClientOptions{
-				ManifestURL:   manifestURL,
+				ManifestURL:   cfg.Update.ManifestURL,
 				Store:         updateStore,
 				DataDir:       cfg.Agent.DataDir,
 				Channel:       update.Channel(cfg.Update.Channel),

@@ -87,7 +87,7 @@ func DefaultConfig() *Config {
 			Enabled:       true,
 			CheckInterval: 24 * time.Hour,
 			Channel:       "stable",
-			ManifestURL:   "https://releases.strata-rmm.io",
+			ManifestURL:   "https://releases.example.com", // Set STRATA_MANIFEST_URL env var or configure in agent.yaml
 		},
 	}
 }

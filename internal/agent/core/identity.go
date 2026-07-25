@@ -66,11 +66,17 @@ func (im *IdentityManager) RegisterWithDeploymentID(registerURL, deploymentID st
 
 	hostname, _ := os.Hostname()
 
+	ver := "0.0.0-dev"
+	if v := os.Getenv("STRATA_AGENT_VERSION"); v != "" {
+		ver = v
+	}
+
 	body, _ := json.Marshal(map[string]string{
 		"deployment_id": deploymentID,
 		"hostname":      hostname,
 		"os":            runtime.GOOS,
 		"arch":          runtime.GOARCH,
+		"version":       ver,
 		"public_key":    hex.EncodeToString(pubKeyBytes),
 	})
 
