@@ -143,6 +143,9 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("DELETE /api/v1/reports/{tenantID}/schedules/{scheduleID}", s.handleDeleteSchedule)
 	mux.HandleFunc("POST /api/v1/reports/{tenantID}/generate", s.handleGenerateReport)
 
+	mux.HandleFunc("POST /api/v1/remote/{tenantID}/session", s.handleRemoteSessionStart)
+	mux.HandleFunc("DELETE /api/v1/remote/{tenantID}/session/{sessionID}", s.handleRemoteSessionStop)
+
 	mux.HandleFunc("POST /api/v1/keys/{tenantID}", s.handleCreateKey)
 	mux.HandleFunc("GET /api/v1/keys/{tenantID}", s.handleListKeys)
 	mux.HandleFunc("GET /api/v1/keys/{tenantID}/active", s.handleGetActiveKey)

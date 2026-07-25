@@ -12,6 +12,7 @@ import ScriptsPage from '@/pages/ScriptsPage';
 import SoftwarePage from '@/pages/SoftwarePage';
 import ThirdPartyPage from '@/pages/ThirdPartyPage';
 import ReportsPage from '@/pages/ReportsPage';
+import DeviceRemotePage from '@/pages/DeviceRemotePage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();

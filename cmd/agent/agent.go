@@ -11,6 +11,7 @@ import (
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/agent/collectors"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/agent/comms"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/agent/core"
+	"github.com/strata-rmm/strata-rmm-orchestrator/internal/agent/remotecontrol"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/agent/scripts"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/agent/software"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/agent/update"
@@ -93,6 +94,13 @@ func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 			}
 			defer swInstaller.Stop()
 			logger.Info("software installer started")
+
+			remoteMgr := remotecontrol.NewManager(natsClient.Conn(), logger, agent.Identity().TenantID, agent.Identity().AgentID)
+			if err := remoteMgr.Start(ctx); err != nil {
+				logger.Warn("starting remote control", zap.Error(err))
+			}
+			defer remoteMgr.Stop()
+			logger.Info("remote control manager started")
 
 			updateStore := update.NewStore(agent.Store().DB())
 			if err := updateStore.Init(); err != nil {
