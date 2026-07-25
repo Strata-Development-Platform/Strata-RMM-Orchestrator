@@ -49,6 +49,24 @@ func (s *IngestService) Start(ctx context.Context) error {
 	}
 	s.subs = append(s.subs, heartbeatSub)
 
+	probeSNMPSub, err := s.nats.Subscribe("tenant.>.probe.>.snmp", s.handleProbeSNMP)
+	if err != nil {
+		return fmt.Errorf("subscribing to probe snmp: %w", err)
+	}
+	s.subs = append(s.subs, probeSNMPSub)
+
+	probeFlowSub, err := s.nats.Subscribe("tenant.>.probe.>.flow", s.handleProbeFlow)
+	if err != nil {
+		return fmt.Errorf("subscribing to probe flow: %w", err)
+	}
+	s.subs = append(s.subs, probeFlowSub)
+
+	probeDiscSub, err := s.nats.Subscribe("tenant.>.probe.>.discovery", s.handleProbeDiscovery)
+	if err != nil {
+		return fmt.Errorf("subscribing to probe discovery: %w", err)
+	}
+	s.subs = append(s.subs, probeDiscSub)
+
 	s.logger.Info("metrics ingestion subscriptions active",
 		zap.Int("subscriptions", len(s.subs)),
 	)
@@ -202,4 +220,39 @@ func tokenize(s string, sep byte) []string {
 	}
 	parts = append(parts, s[start:])
 	return parts
+}
+
+// Probe handlers
+
+func (s *IngestService) handleProbeSNMP(m *nats.Msg) {
+	tenantID := extractProbeTenant(m.Subject)
+	if tenantID == "" {
+		return
+	}
+	s.logger.Debug("probe snmp data received", zap.String("subject", m.Subject))
+}
+
+func (s *IngestService) handleProbeFlow(m *nats.Msg) {
+	tenantID := extractProbeTenant(m.Subject)
+	if tenantID == "" {
+		return
+	}
+	s.logger.Debug("probe flow data received", zap.String("subject", m.Subject))
+}
+
+func (s *IngestService) handleProbeDiscovery(m *nats.Msg) {
+	tenantID := extractProbeTenant(m.Subject)
+	if tenantID == "" {
+		return
+	}
+	s.logger.Debug("probe discovery data received", zap.String("subject", m.Subject))
+}
+
+func extractProbeTenant(subject string) string {
+	// subject format: tenant.{tenantID}.probe.{probeID}.{type}
+	parts := tokenize(subject, '.')
+	if len(parts) >= 4 && parts[0] == "tenant" {
+		return parts[1]
+	}
+	return ""
 }
