@@ -1,0 +1,26 @@
+{{- if .Values.agentUpdateChannel.create }}
+apiVersion: strata-rmm.io/v1
+kind: AgentUpdateChannel
+metadata:
+  name: {{ include "strata-rmm.fullname" . }}-{{ .Values.agentUpdateChannel.name }}
+  labels:
+    app.kubernetes.io/name: strata-rmm
+    app.kubernetes.io/component: agent-update
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  channel: {{ .Values.agentUpdateChannel.channel | quote }}
+  rolloutPercent: {{ .Values.agentUpdateChannel.rolloutPercent }}
+  paused: {{ .Values.agentUpdateChannel.paused }}
+  {{- if .Values.agentUpdateChannel.approvedVersion }}
+  approvedVersion: {{ .Values.agentUpdateChannel.approvedVersion | quote }}
+  {{- end }}
+  {{- if .Values.agentUpdateChannel.blockedVersions }}
+  blockedVersions:
+    {{- range .Values.agentUpdateChannel.blockedVersions }}
+    - {{ . | quote }}
+    {{- end }}
+  {{- end }}
+  {{- if .Values.agentUpdateChannel.description }}
+  description: {{ .Values.agentUpdateChannel.description | quote }}
+  {{- end }}
+{{- end }}

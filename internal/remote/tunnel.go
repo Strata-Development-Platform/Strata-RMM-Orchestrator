@@ -50,10 +50,13 @@ type Gateway struct {
 	nats         *nats.Conn
 	logger       *zap.Logger
 	addr         string
+	recorder     *Recorder
+	recStore     *RecordingStore
 
 	mu           sync.RWMutex
 	sessions     map[string]*TunnelSession
 	activeRelays map[string]*dataRelay
+	activeRecs   map[string]*SessionRecorder
 }
 
 type dataRelay struct {
@@ -77,7 +80,18 @@ func NewGateway(nc *nats.Conn, addr string, logger *zap.Logger) *Gateway {
 		addr:         addr,
 		sessions:     make(map[string]*TunnelSession),
 		activeRelays: make(map[string]*dataRelay),
+		activeRecs:   make(map[string]*SessionRecorder),
 	}
+}
+
+func (g *Gateway) WithRecorder(r *Recorder) *Gateway {
+	g.recorder = r
+	return g
+}
+
+func (g *Gateway) WithRecordingStore(s *RecordingStore) *Gateway {
+	g.recStore = s
+	return g
 }
 
 func (g *Gateway) Start(ctx context.Context) error {
@@ -200,6 +214,20 @@ func (g *Gateway) handleConnection(conn net.Conn) {
 		g.logger.Error("send tunnel command", zap.Error(err))
 	}
 
+	// Start recording if recorder is configured
+	var sessionRec *SessionRecorder
+	if g.recorder != nil {
+		rec, err := g.recorder.RecordRaw(context.Background(), session)
+		if err != nil {
+			g.logger.Warn("failed to start recording", zap.Error(err))
+		} else {
+			sessionRec = rec
+			g.mu.Lock()
+			g.activeRecs[session.ID] = rec
+			g.mu.Unlock()
+		}
+	}
+
 	// Relay data from client to agent via NATS
 	buf = make([]byte, 32768)
 	for {
@@ -221,6 +249,32 @@ func (g *Gateway) handleConnection(conn net.Conn) {
 	}
 
 	g.closeSession(session.ID)
+
+	// Finalize recording
+	if sessionRec != nil {
+		result := sessionRec.Stop()
+		if result != nil && g.recStore != nil {
+			rec := &Recording{
+				ID:             result.RecordingID,
+				SessionID:      result.SessionID,
+				TenantID:       result.TenantID,
+				DeviceID:       result.DeviceID,
+				UserID:         &result.UserID,
+				StorageKey:     result.StorageKey,
+				SizeBytes:      result.SizeBytes,
+				DurationMs:     result.Duration.Milliseconds(),
+				Format:         string(result.Format),
+				ChecksumSHA256: result.ChecksumSHA256,
+				StorageBackend: "minio",
+			}
+			if rec.UserID != nil && *rec.UserID == "" {
+				rec.UserID = nil
+			}
+			if err := g.recStore.Create(rec); err != nil {
+				g.logger.Error("save recording metadata", zap.Error(err))
+			}
+		}
+	}
 }
 
 func (g *Gateway) closeSession(sessionID string) {
@@ -228,6 +282,10 @@ func (g *Gateway) closeSession(sessionID string) {
 	relay, ok := g.activeRelays[sessionID]
 	if ok {
 		delete(g.activeRelays, sessionID)
+	}
+	rec, hasRec := g.activeRecs[sessionID]
+	if hasRec {
+		delete(g.activeRecs, sessionID)
 	}
 	session, hasSession := g.sessions[sessionID]
 	g.mu.Unlock()
@@ -244,6 +302,10 @@ func (g *Gateway) closeSession(sessionID string) {
 			session.BytesUp = relay.bytesUp
 			session.BytesDown = relay.bytesDown
 		}
+	}
+
+	if hasRec {
+		rec.Stop()
 	}
 }
 

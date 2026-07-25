@@ -1,20 +1,27 @@
-.PHONY: all build clean test lint run-agent run-orch docker-up docker-down dev
+.PHONY: all build clean test lint run-agent run-orch docker-up docker-down dev goreleaser
 
 BINARY=bin/strata-rmm
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
+DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+LDFLAGS := -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)
 
 all: build
 
 build:
-	go build -ldflags="-s -w" -o $(BINARY) .
+	go build -ldflags="$(LDFLAGS)" -o $(BINARY) .
 
 build-linux:
-	GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o $(BINARY)-linux-amd64 .
+	GOOS=linux GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -o $(BINARY)-linux-amd64 .
 
 build-windows:
-	GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o $(BINARY)-windows-amd64.exe .
+	GOOS=windows GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -o $(BINARY)-windows-amd64.exe .
 
 build-arm64:
-	GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o $(BINARY)-linux-arm64 .
+	GOOS=linux GOARCH=arm64 go build -ldflags="$(LDFLAGS)" -o $(BINARY)-linux-arm64 .
+
+goreleaser:
+	goreleaser release --clean
 
 test:
 	go test ./... -v -count=1

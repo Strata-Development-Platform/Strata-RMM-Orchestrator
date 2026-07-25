@@ -2,16 +2,24 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 
+	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
 	"github.com/strata-rmm/strata-rmm-orchestrator/cmd/agent"
 	"github.com/strata-rmm/strata-rmm-orchestrator/cmd/orchestrator"
 	"github.com/strata-rmm/strata-rmm-orchestrator/cmd/probe"
-	"github.com/spf13/cobra"
+)
+
+var (
+	version = "0.0.0-dev"
+	commit  = "none"
+	date    = "unknown"
 )
 
 func main() {
@@ -20,6 +28,27 @@ func main() {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+
+	versionCmd := &cobra.Command{
+		Use:   "version",
+		Short: "Print version information",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			info := map[string]string{
+				"version": version,
+				"commit":  commit,
+				"date":    date,
+			}
+			output, _ := cmd.Flags().GetString("output")
+			if output == "json" {
+				data, _ := json.Marshal(info)
+				fmt.Println(string(data))
+			} else {
+				fmt.Printf("Strata RMM v%s (commit: %s, built: %s)\n", version, commit, date)
+			}
+			return nil
+		},
+	}
+	versionCmd.Flags().StringP("output", "o", "text", "Output format (text|json)")
 
 	rootCmd := &cobra.Command{
 		Use:   "strata-rmm",
@@ -34,6 +63,7 @@ Components:
 	}
 
 	rootCmd.AddCommand(
+		versionCmd,
 		agent.NewCommand(ctx, logger),
 		orchestrator.NewCommand(ctx, logger),
 		probe.NewCommand(ctx, logger),

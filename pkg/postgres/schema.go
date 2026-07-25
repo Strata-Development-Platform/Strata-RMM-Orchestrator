@@ -371,6 +371,52 @@ func Migrations() []Migration {
 			`,
 			Down: `DELETE FROM cve_database;`,
 		},
+		{
+			ID:   16,
+			Name: "create_mfa_secrets_table",
+			Up: `
+				CREATE TABLE IF NOT EXISTS mfa_secrets (
+					user_id    UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+					tenant_id  UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+					secret     TEXT NOT NULL,
+					enabled    BOOLEAN NOT NULL DEFAULT false,
+					created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+				ALTER TABLE mfa_secrets ENABLE ROW LEVEL SECURITY;
+				CREATE POLICY tenant_isolation_mfa_secrets ON mfa_secrets
+					USING (tenant_id = current_setting('app.tenant_id')::UUID);
+			`,
+			Down: `DROP TABLE IF EXISTS mfa_secrets CASCADE;`,
+		},
+		{
+			ID:   17,
+			Name: "create_session_recordings_table",
+			Up: `
+				CREATE TABLE IF NOT EXISTS session_recordings (
+					id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					session_id      TEXT NOT NULL,
+					tenant_id       UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+					device_id       UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+					user_id         UUID REFERENCES users(id),
+					storage_key     TEXT NOT NULL,
+					size_bytes      BIGINT DEFAULT 0,
+					duration_ms     BIGINT DEFAULT 0,
+					format          TEXT NOT NULL DEFAULT 'mkv',
+					checksum_sha256 TEXT NOT NULL DEFAULT '',
+					storage_backend TEXT NOT NULL DEFAULT 'minio',
+					expires_at      TIMESTAMPTZ,
+					created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+				CREATE INDEX IF NOT EXISTS idx_session_recordings_tenant ON session_recordings(tenant_id, created_at DESC);
+				CREATE INDEX IF NOT EXISTS idx_session_recordings_session ON session_recordings(session_id);
+				CREATE INDEX IF NOT EXISTS idx_session_recordings_expires ON session_recordings(expires_at) WHERE expires_at IS NOT NULL;
+				ALTER TABLE session_recordings ENABLE ROW LEVEL SECURITY;
+				CREATE POLICY tenant_isolation_session_recordings ON session_recordings
+					USING (tenant_id = current_setting('app.tenant_id')::UUID);
+			`,
+			Down: `DROP TABLE IF EXISTS session_recordings CASCADE;`,
+		},
 	}
 }
 

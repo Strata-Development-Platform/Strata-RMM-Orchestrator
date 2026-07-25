@@ -420,8 +420,13 @@ FROM metrics GROUP BY bucket, tenant_id, device_id, metric_name;
 | Relational DB | PostgreSQL (via TimescaleDB) | Hypertables, JSONB, mature, multi-tenant patterns |
 | Local Agent Store | BBolt | Embedded, zero-dependency, offline queue persistence |
 | Auth | Custom JWT + Enrollment Tokens | Lightweight, no external IdP dependency for MVP |
+| MFA | TOTP (RFC 6238, stdlib only) | No external dependency, standard QR enrollment |
 | API Transport | JSON over HTTP | Simple, universal, Go 1.22 stdlib mux |
 | Metrics Encoding | JSON (inline) | Simple for MVP; future: Protocol Buffers/MessagePack |
+| Object Storage | MinIO (self-hosted) / S3 (SaaS) | Abstracted via `Backend` interface, SSE-KMS optional |
+| Session Recording | Raw byte capture + MinIO/S3 | SHA256 verification, presigned URL playback, retention policies |
+| Agent Update | Manifest-based + cosign | Sigstore keyless signing, staged rollout, automatic rollback |
+| CI/CD | GoReleaser + cosign + Docker Buildx | Keyless signing, SPDX SBOM, multi-arch images |
 
 ---
 

@@ -78,7 +78,7 @@ func (r *Rule) FormatMessage(deviceID, metricName string, value float64) string 
 		msg = strings.ReplaceAll(msg, "{condition}", string(r.Condition))
 		return msg
 	}
-	return fmt.Sprintf("[%s] %s = %.2f (%s %s %.2f) on %s",
+	return fmt.Sprintf("[%s] %s = %.2f (%s %s) on %s",
 		strings.ToUpper(string(r.Severity)),
 		metricName, value,
 		string(r.Condition), fmt.Sprintf("%.2f", r.Threshold),

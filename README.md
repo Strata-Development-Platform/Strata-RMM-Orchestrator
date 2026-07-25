@@ -5,7 +5,7 @@ A horizontally-scalable, multi-tenant Remote Monitoring & Management platform wi
 ## Quick Start
 
 ```bash
-# Prerequisites: Go 1.22+, Docker, NATS 2.10+, TimescaleDB 2.15+
+# Prerequisites: Go 1.25+, Docker, NATS 2.10+, TimescaleDB 2.15+
 
 # Build everything
 make build
@@ -24,6 +24,7 @@ TENANT_ID="00000000-0000-0000-0000-000000000001" ENROLLMENT_TOKEN="dev-token" ma
 
 | Command | Description |
 |---------|-------------|
+| `strata-rmm version` | Print version information (supports `--output=json`) |
 | `strata-rmm agent` | Cross-platform monitoring agent |
 | `strata-rmm probe` | Agentless network probe (SNMP, flow, discovery) |
 | `strata-rmm orchestrator` | Platform services (API, ingestion, alerting, patching, tunnels) |
@@ -35,13 +36,16 @@ Agent (Go) ──NATS──► Orchestrator ──► TimescaleDB (metrics)
   │                        │                    │
   │                    PostgreSQL (RLS)      Grafana
   │                        │
+  │                    MinIO / S3 (recordings)
+  │                        │
 Probe (SNMP/Flow) ──NATS──┘
 ```
 
 - **Messaging**: NATS Core with tenant subject isolation (`tenant.{id}.agent.{id}.{metrics,events,heartbeat,cmd}`)
 - **Time-Series**: TimescaleDB hypertables with compression (7d) + continuous aggregates (1m, 1h)
 - **Relational**: PostgreSQL with Row-Level Security for tenant isolation
-- **API**: Go 1.22 stdlib `net/http` (method-based routing, no framework)
+- **Storage**: Abstract `Backend` interface supporting MinIO, S3, and local filesystem for session recordings
+- **API**: Go 1.25 stdlib `net/http` (method-based routing, no framework)
 
 ## Features
 
@@ -59,12 +63,18 @@ Probe (SNMP/Flow) ──NATS──┘
 - **Notifications**: Slack, webhook, email/teams/pagerduty (pluggable)
 - **Network Probe**: SNMP v1/v2c/v3 polling, NetFlow v9/IPFIX/sFlow, ARP/SNMP discovery
 - **Patch Management**: Windows (PowerShell/WU API) + Linux (apt/dnf/zypper), policy CRUD, deployment scheduling
-- **Remote Access**: NATS-relayed RDP/SSH/VNC tunnels with bidirectional streaming
-- **Grafana Dashboards**: System metrics + alerts overview (provisioned)
+- **Remote Access**: NATS-relayed RDP/SSH/VNC tunnels with bidirectional streaming + session recording
 
 ### ✅ Phase 3 — Advanced Features
 - Software inventory (dpkg/Win32_Product)
 - CVE vulnerability correlation (10 seeded CVEs, automatic device matching, 6h scan loop)
+
+### ✅ Sprint 1 — Hardening
+- **Agent Auto-Update**: Manifest-based updates with cosign verification, staged rollout (canary %), rollback, NATS-controlled pause/resume
+- **Session Recording**: Raw session capture with SHA256 verification, MinIO/S3 storage, presigned URL playback, retention cleanup
+- **MFA/TOTP**: RFC 6238 two-factor authentication with QR enrollment, playback gating
+- **GoReleaser + Cosign CI**: Keyless signing, SPDX SBOM, multi-arch Docker images
+- **AgentUpdateChannel CRD**: Kubernetes custom resource for agent rollout management
 
 ### ✅ Phase 5 — Platform Hardening
 - Helm chart (deployment, HPA, PDB, network policies, ingress, air-gapped, multi-region)
@@ -85,9 +95,11 @@ Probe (SNMP/Flow) ──NATS──┘
 ## Security
 
 - **Agent ↔ Platform**: mTLS or JWT enrollment → short-lived certs
-- **Data**: AES-256 at rest, TLS 1.3 in transit
+- **Data**: AES-256 at rest, TLS 1.3 in transit, optional SSE-KMS/SSE-S3 for recordings
+- **MFA**: TOTP-based two-factor authentication for sensitive operations (playback)
 - **RBAC**: Admin/Technician/Viewer roles per tenant
 - **Audit**: Immutable append-only log
+- **Supply Chain**: Cosign keyless signing + SPDX SBOM for all releases
 
 ## Project Structure
 
@@ -97,7 +109,11 @@ Probe (SNMP/Flow) ──NATS──┘
 │   ├── probe/          # Network probe CLI
 │   └── orchestrator/   # Platform services CLI
 ├── internal/
-│   ├── agent/          # Agent core (config, identity, BBolt, collectors)
+│   ├── agent/
+│   │   ├── core/       # Config, identity, BBolt store, lifecycle
+│   │   ├── collectors/ # System collectors (gopsutil)
+│   │   ├── comms/      # NATS client
+│   │   └── update/     # Auto-update: manifest, rollout, rollback
 │   ├── alerting/       # Alert engine + notifications
 │   ├── collectors/     # Software inventory collector
 │   ├── monitoring/     # Metrics/events/heartbeat ingestion
@@ -105,18 +121,24 @@ Probe (SNMP/Flow) ──NATS──┘
 │   ├── patch/          # Patch management + executors
 │   ├── platform/       # API server + routes
 │   ├── probe/          # SNMP, flow, discovery
-│   └── remote/         # Tunnel relay gateway
+│   └── remote/         # Tunnel relay, recording, cleanup
 ├── pkg/
-│   ├── auth/           # JWT generation/validation
+│   ├── auth/           # JWT, enrollment, TOTP/MFA
 │   ├── postgres/       # Relational schema migrations
+│   ├── storage/        # StorageBackend (MinIO, S3, Local, Mock)
 │   └── timescale/      # TimescaleDB client + migrations
 ├── deploy/
 │   ├── docker/         # Docker Compose local dev
 │   ├── grafana/        # Provisioned dashboards
-│   └── helm/           # K8s Helm chart
+│   └── helm/           # K8s Helm chart (incl. AgentUpdateChannel CRD)
 ├── docs/
 │   ├── ARCHITECTURE.md # Full architecture plan
-│   └── RUNBOOK.md      # Operations runbook
+│   ├── RUNBOOK.md      # Operations runbook
+│   └── SECURITY.md     # Security architecture
+├── .github/
+│   ├── workflows/      # CI + release pipelines
+│   └── ISSUE_TEMPLATE/ # Bug, feature, sprint, security templates
+├── .goreleaser.yml     # GoReleaser config with cosign + SBOM
 └── scripts/
     ├── install.sh      # Linux agent installer
     └── loadtest.sh     # Performance test suite
@@ -125,21 +147,24 @@ Probe (SNMP/Flow) ──NATS──┘
 ## Development
 
 ```bash
-# Build
-make build          # All platforms
-make build-linux    # Linux amd64
-make build-windows  # Windows amd64
-make build-arm64    # Linux arm64
+# Build with version info
+make build              # All platforms
+make build-linux        # Linux amd64
+make build-windows      # Windows amd64
+make build-arm64        # Linux arm64
 
 # Test
 make test
 make lint
 make coverage
 
+# Release
+make goreleaser         # Run GoReleaser (requires GITHUB_TOKEN)
+
 # Local dev
-make dev            # Start services + orchestrator
-make docker-up      # Start all containers
-make docker-down    # Stop all containers
+make dev                # Start services + orchestrator
+make docker-up          # Start all containers
+make docker-down        # Stop all containers
 ```
 
 See [docs/RUNBOOK.md](docs/RUNBOOK.md) for operations guide and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full plan.

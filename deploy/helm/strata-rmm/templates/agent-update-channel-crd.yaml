@@ -1,0 +1,107 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: agentupdatechannels.strata-rmm.io
+  labels:
+    app.kubernetes.io/name: strata-rmm
+    app.kubernetes.io/component: crd
+spec:
+  group: strata-rmm.io
+  names:
+    kind: AgentUpdateChannel
+    singular: agentupdatechannel
+    plural: agentupdatechannels
+    shortNames:
+      - auc
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      schema:
+        openAPIV3Schema:
+          type: object
+          required:
+            - spec
+          properties:
+            spec:
+              type: object
+              required:
+                - channel
+              properties:
+                channel:
+                  type: string
+                  enum: [stable, beta, alpha]
+                  description: Update channel for agents
+                  default: stable
+                rolloutPercent:
+                  type: integer
+                  minimum: 0
+                  maximum: 100
+                  description: Percentage of agents to receive update
+                  default: 100
+                paused:
+                  type: boolean
+                  description: Pause all updates in this channel
+                  default: false
+                approvedVersion:
+                  type: string
+                  description: Only allow this specific version (semver)
+                  pattern: ^(\d+\.\d+\.\d+)?$
+                blockedVersions:
+                  type: array
+                  items:
+                    type: string
+                    pattern: ^\d+\.\d+\.\d+$
+                  description: Versions to skip
+                description:
+                  type: string
+                  maxLength: 500
+                  description: Human-readable description of this channel
+              additionalProperties: false
+            status:
+              type: object
+              properties:
+                currentVersion:
+                  type: string
+                  description: Currently deployed version in this channel
+                agentCount:
+                  type: integer
+                  description: Number of agents on this channel
+                lastUpdated:
+                  type: string
+                  format: date-time
+                  description: Last time this channel was modified
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      type:
+                        type: string
+                      status:
+                        type: string
+                        enum: [True, False, Unknown]
+                      reason:
+                        type: string
+                      message:
+                        type: string
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+              additionalProperties: false
+      additionalPrinterColumns:
+        - name: Channel
+          type: string
+          jsonPath: .spec.channel
+        - name: Rollout
+          type: integer
+          jsonPath: .spec.rolloutPercent
+        - name: Paused
+          type: boolean
+          jsonPath: .spec.paused
+        - name: Version
+          type: string
+          jsonPath: .status.currentVersion

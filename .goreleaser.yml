@@ -1,0 +1,128 @@
+version: 2
+
+project_name: strata-rmm
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: agent
+    binary: strata-agent
+    main: .
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .Commit }}
+      - -X main.date={{ .Date }}
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: darwin
+        goarch: arm64
+
+  - id: orchestrator
+    binary: strata-orchestrator
+    main: .
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .Commit }}
+      - -X main.date={{ .Date }}
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+
+  - id: probe
+    binary: strata-probe
+    main: .
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .Commit }}
+      - -X main.date={{ .Date }}
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+
+archives:
+  - id: agent
+    builds: [agent]
+    name_template: "{{ .ProjectName }}-agent-{{ .Version }}-{{ .Os }}-{{ .Arch }}"
+    formats: [tar.gz]
+    files:
+      - LICENSE
+      - README.md
+
+  - id: orchestrator
+    builds: [orchestrator]
+    name_template: "{{ .ProjectName }}-orchestrator-{{ .Version }}-{{ .Os }}-{{ .Arch }}"
+    formats: [tar.gz]
+    files:
+      - LICENSE
+      - README.md
+
+  - id: probe
+    builds: [probe]
+    name_template: "{{ .ProjectName }}-probe-{{ .Version }}-{{ .Os }}-{{ .Arch }}"
+    formats: [tar.gz]
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+snapshot:
+  name_template: "{{ .Tag }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+
+signs:
+  - artifacts: all
+    args:
+      - sign-blob
+      - "--output-signature=${signature}"
+      - "${artifact}"
+      - "--yes"
+    signature: "${artifact}.sig"
+    certificate: "${artifact}.pem"
+
+sboms:
+  - artifacts: archive
+    documents:
+      - "{{ .ProjectName }}-{{ .Version }}-spdx.json"
+
+release:
+  github:
+    owner: Strata-Development-Platform
+    name: Strata-RMM-Orchestrator
+  prerelease: auto
+  name_template: "v{{ .Version }}"

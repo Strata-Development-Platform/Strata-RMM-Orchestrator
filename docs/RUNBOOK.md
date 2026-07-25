@@ -227,7 +227,150 @@ API_URL=http://localhost:8080 NATS_URL=nats://localhost:4222 ./scripts/loadtest.
 2. Check the alert engine is running in orchestrator logs
 3. Verify metrics are flowing: `SELECT count(*) FROM metrics WHERE time > NOW() - INTERVAL '5 minutes';`
 
-### Slow queries
+## Session Recordings
+
+### List recordings for a tenant
+```bash
+curl localhost:8080/api/v1/recordings/TENANT_ID
+```
+
+### View/playback a recording
+```bash
+# Requires MFA code in header
+curl localhost:8080/api/v1/recordings/RECORDING_ID/playback \
+  -H 'X-MFA-Code: 123456'
+```
+
+### Delete a recording
+```bash
+curl -X DELETE localhost:8080/api/v1/recordings/RECORDING_ID
+```
+
+### Configure retention
+Recordings expire automatically based on the `expires_at` column.
+Default: 90 days. Override per recording on creation.
+
+## MFA Management
+
+### Enroll a user in TOTP
+```bash
+curl -X POST localhost:8080/api/v1/mfa/enroll/USER_ID
+# Returns: secret + provisioning URI + QR code URL
+```
+
+### Verify and activate MFA
+```bash
+curl -X POST localhost:8080/api/v1/mfa/verify/USER_ID \
+  -H 'Content-Type: application/json' \
+  -d '{"code": "123456"}'
+```
+
+### Check MFA status
+```bash
+curl localhost:8080/api/v1/mfa/status/USER_ID
+```
+
+### Disable MFA
+```bash
+curl -X DELETE localhost:8080/api/v1/mfa/USER_ID
+```
+
+## Agent Auto-Update
+
+### Check agent version
+```bash
+# From agent host
+strata-rmm version --output json
+
+# From orchestrator - check update state
+# (recorded in agent's BBolt store, reported via NATS status subject)
+```
+
+### Manual update trigger (via NATS)
+```bash
+# Pause rollouts
+nats pub tenant.TENANT_ID.rollout.AGENT_ID '{"action":"pause"}'
+
+# Resume rollouts
+nats pub tenant.TENANT_ID.rollout.AGENT_ID '{"action":"resume"}'
+
+# Set channel config
+nats pub tenant.TENANT_ID.rollout.AGENT_ID '{"action":"set_config","config":{"channel":"stable","rollout_percent":50}}'
+
+# Force rollback
+nats pub tenant.TENANT_ID.rollout.AGENT_ID '{"action":"rollback"}'
+```
+
+### View update status
+```bash
+nats sub "tenant.TENANT_ID.rollout.status.>"
+```
+
+## Storage Backends
+
+### Configure MinIO (self-hosted, default)
+```yaml
+STORAGE_BACKEND: minio
+STORAGE_BUCKET: strata-recordings
+STORAGE_MINIO_ENDPOINT: minio:9000
+STORAGE_MINIO_ACCESS_KEY: minioadmin
+STORAGE_MINIO_SECRET_KEY: minioadmin
+STORAGE_MINIO_USE_SSL: "false"
+```
+
+### Configure AWS S3 (SaaS)
+```yaml
+STORAGE_BACKEND: s3
+STORAGE_BUCKET: strata-recordings-prod
+STORAGE_S3_REGION: us-east-1
+STORAGE_S3_KMS_KEY_ID: "arn:aws:kms:..."  # Optional SSE-KMS
+# Credentials via IAM role or env vars
+```
+
+### Configure Local FS (dev/testing)
+```yaml
+STORAGE_BACKEND: local
+STORAGE_LOCAL_PATH: /tmp/strata-recordings
+```
+
+## Kubernetes (Helm)
+
+### Install
+```bash
+helm repo add strata-rmm https://strata-development-platform.github.io/helm-charts
+helm upgrade --install strata-rmm strata-rmm/strata-rmm \
+  --namespace strata-rmm --create-namespace
+```
+
+### With custom values
+```bash
+helm upgrade --install strata-rmm ./deploy/helm/strata-rmm \
+  --values ./deploy/helm/strata-rmm/ci/multi-region-values.yaml \
+  --set global.region=us-east-1
+```
+
+### Air-gapped
+```bash
+helm upgrade --install strata-rmm ./deploy/helm/strata-rmm \
+  --values ./deploy/helm/strata-rmm/ci/air-gapped-values.yaml
+```
+
+### Configure agent update channel
+```bash
+# View current channel CRD
+kubectl get agentupdatechannels
+
+# Update rollout percentage
+kubectl patch agentupdatechannel RELEASE-stable --type merge \
+  -p '{"spec":{"rolloutPercent":25}}'
+```
+
+### Uninstall
+```bash
+helm uninstall strata-rmm --namespace strata-rmm
+```
+
+## Performance Testing
 ```sql
 -- Check active queries
 SELECT pid, query, state, wait_event FROM pg_stat_activity WHERE state != 'idle';

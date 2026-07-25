@@ -1,0 +1,43 @@
+name: Sprint Task
+description: Standard task for sprint work
+title: "[Component] Short description"
+labels: ["sprint-task"]
+body:
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options: [Agent, Platform, Probe, Infra, Security, Docs, CI/CD]
+    validations:
+      required: true
+  - type: dropdown
+    id: sprint
+    attributes:
+      label: Sprint
+      options: [Sprint 1, Sprint 2, Sprint 3, Sprint 4, Sprint 5, Sprint 6, Backlog]
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options: [P0-Critical, P1-High, P2-Medium, P3-Low]
+    validations:
+      required: true
+  - type: input
+    id: points
+    attributes:
+      label: Story Points
+      placeholder: "1, 2, 3, 5, 8, 13"
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      placeholder: |
+        - [ ] Criterion 1
+        - [ ] Criterion 2
+    validations:
+      required: true
+  - type: textarea
+    id: soc2
+    attributes:
+      label: SOC2 Control (if applicable)
+      placeholder: "CC6.1, CC7.2, etc."

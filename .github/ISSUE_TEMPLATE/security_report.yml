@@ -1,0 +1,40 @@
+name: Security Report
+description: Report a security vulnerability (confidential)
+title: "[Security]: "
+labels: ["security"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ⚠️ This report is private. Do not include exploit code in public comments.
+        Read SECURITY.md for our disclosure policy.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What kind of vulnerability is this? (e.g., XSS, auth bypass, RCE)
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+      description: What would a successful exploit allow?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction (confidential)
+      description: Steps or PoC (send full details to security@strata-rmm.example.com)
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity (CVSS 3.1)
+      options:
+        - Critical (9.0-10.0)
+        - High (7.0-8.9)
+        - Medium (4.0-6.9)
+        - Low (0.1-3.9)
+    validations:
+      required: true

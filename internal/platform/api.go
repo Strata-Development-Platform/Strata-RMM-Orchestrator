@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -12,30 +13,41 @@ import (
 
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/alerting"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/inventory"
+	"github.com/strata-rmm/strata-rmm-orchestrator/internal/remote"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/auth"
+	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/storage"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/timescale"
 )
 
 type APIServer struct {
-	addr        string
-	db          *timescale.Client
-	nats        *nats.Conn
-	auth        *auth.EnrollmentManager
-	logger      *zap.Logger
-	server      *http.Server
-	alertEngine *alerting.Engine
-	vulnEngine  *inventory.VulnerabilityEngine
+	addr           string
+	db             *timescale.Client
+	nats           *nats.Conn
+	auth           *auth.EnrollmentManager
+	totp           *auth.TOTPManager
+	mfaStore       *auth.MFAStore
+	logger         *zap.Logger
+	server         *http.Server
+	alertEngine    *alerting.Engine
+	vulnEngine     *inventory.VulnerabilityEngine
+	recordingStore *remote.RecordingStore
+	storageBackend storage.Backend
 }
 
 func NewAPIServer(addr string, db *timescale.Client, nc *nats.Conn, logger *zap.Logger) *APIServer {
 	em := auth.NewEnrollmentManager("strata-rmm-dev-secret")
-	return &APIServer{
+	s := &APIServer{
 		addr:   addr,
 		db:     db,
 		nats:   nc,
 		auth:   em,
+		totp:   auth.NewTOTPManager(),
 		logger: logger,
 	}
+	if db != nil {
+		s.mfaStore = auth.NewMFAStore(db.DB())
+	}
+	return s
 }
 
 func (s *APIServer) WithAlertEngine(e *alerting.Engine) *APIServer {
@@ -45,6 +57,16 @@ func (s *APIServer) WithAlertEngine(e *alerting.Engine) *APIServer {
 
 func (s *APIServer) WithVulnEngine(e *inventory.VulnerabilityEngine) *APIServer {
 	s.vulnEngine = e
+	return s
+}
+
+func (s *APIServer) WithRecordingStore(rs *remote.RecordingStore) *APIServer {
+	s.recordingStore = rs
+	return s
+}
+
+func (s *APIServer) WithStorageBackend(sb storage.Backend) *APIServer {
+	s.storageBackend = sb
 	return s
 }
 
@@ -68,7 +90,14 @@ func (s *APIServer) Start(ctx context.Context) error {
 
 	mux.HandleFunc("GET /api/v1/vulnerabilities/device/{deviceID}", s.handleDeviceVulnerabilities)
 	mux.HandleFunc("GET /api/v1/vulnerabilities/tenant/{tenantID}", s.handleTenantVulnerabilities)
-	mux.HandleFunc("GET /api/v1/inventory/{deviceID}", s.handleDeviceInventory)
+	mux.HandleFunc("POST /api/v1/mfa/enroll/{userID}", s.handleMFAEnroll)
+	mux.HandleFunc("POST /api/v1/mfa/verify/{userID}", s.handleMFAVerify)
+	mux.HandleFunc("GET /api/v1/mfa/status/{userID}", s.handleMFAStatus)
+	mux.HandleFunc("DELETE /api/v1/mfa/{userID}", s.handleMFADisable)
+
+	mux.HandleFunc("GET /api/v1/recordings/{tenantID}", s.handleListRecordings)
+	mux.HandleFunc("GET /api/v1/recordings/{id}/playback", s.handlePlaybackRecording)
+	mux.HandleFunc("DELETE /api/v1/recordings/{id}", s.handleDeleteRecording)
 
 	s.server = &http.Server{
 		Addr:         s.addr,
@@ -416,4 +445,202 @@ func (s *APIServer) handleDeviceInventory(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, inv)
+}
+
+func (s *APIServer) handleListRecordings(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.PathValue("tenantID")
+	if s.recordingStore == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "recording store not available"})
+		return
+	}
+
+	recordings, err := s.recordingStore.ListByTenant(tenantID, 50, 0)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"recordings": recordings})
+}
+
+func (s *APIServer) handlePlaybackRecording(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if s.recordingStore == nil || s.storageBackend == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "recording service not available"})
+		return
+	}
+
+	rec, err := s.recordingStore.GetByID(id)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "recording not found"})
+		return
+	}
+
+	// MFA gate: require X-MFA-Code header for playback
+	if s.mfaStore != nil && rec.UserID != nil {
+		mfaCode := r.Header.Get("X-MFA-Code")
+		if mfaCode == "" {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{
+				"error": "MFA code required. Provide X-MFA-Code header.",
+			})
+			return
+		}
+		secret, err := s.mfaStore.GetByUserID(*rec.UserID)
+		if err != nil {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "MFA not configured for user"})
+			return
+		}
+		if !secret.Enabled {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "MFA not enabled for user"})
+			return
+		}
+		valid, err := s.totp.ValidateCode(secret.Secret, mfaCode, time.Now())
+		if err != nil || !valid {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid MFA code"})
+			return
+		}
+	}
+
+	url, err := s.storageBackend.PresignedURL(r.Context(), rec.StorageKey, storage.PresignedOptions{
+		Method:      "GET",
+		Expiry:      time.Hour,
+		ContentType: "video/x-matroska",
+		Disposition: "inline",
+	})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "generate playback URL"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"recording":    rec,
+		"playback_url": url,
+	})
+}
+
+func (s *APIServer) handleMFAEnroll(w http.ResponseWriter, r *http.Request) {
+	userID := r.PathValue("userID")
+	if s.mfaStore == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "MFA store not available"})
+		return
+	}
+
+	secret, err := s.totp.GenerateSecret()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "generate secret"})
+		return
+	}
+
+	uri := s.totp.ProvisioningURI(secret, userID+"@strata-rmm", "Strata RMM")
+
+	if err := s.mfaStore.Create(userID, "", secret); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "save secret"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"secret":            secret,
+		"provisioning_uri":  uri,
+		"qr_code_url":       "https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=" + url.QueryEscape(uri),
+	})
+}
+
+func (s *APIServer) handleMFAVerify(w http.ResponseWriter, r *http.Request) {
+	userID := r.PathValue("userID")
+	if s.mfaStore == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "MFA store not available"})
+		return
+	}
+
+	var req struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Code == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "code required"})
+		return
+	}
+
+	secret, err := s.mfaStore.GetByUserID(userID)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "MFA not configured"})
+		return
+	}
+
+	valid, err := s.totp.ValidateCode(secret.Secret, req.Code, time.Now())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "validate code"})
+		return
+	}
+	if !valid {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid code"})
+		return
+	}
+
+	if !secret.Enabled {
+		secret.Enabled = true
+		s.mfaStore.Create(secret.UserID, secret.TenantID, secret.Secret)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"verified": true,
+		"message":  "MFA enabled successfully",
+	})
+}
+
+func (s *APIServer) handleMFAStatus(w http.ResponseWriter, r *http.Request) {
+	userID := r.PathValue("userID")
+	if s.mfaStore == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "MFA store not available"})
+		return
+	}
+
+	enabled, err := s.mfaStore.IsEnabled(userID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"user_id": userID,
+		"enabled": enabled,
+	})
+}
+
+func (s *APIServer) handleMFADisable(w http.ResponseWriter, r *http.Request) {
+	userID := r.PathValue("userID")
+	if s.mfaStore == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "MFA store not available"})
+		return
+	}
+
+	if err := s.mfaStore.Disable(userID); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "disabled"})
+}
+
+func (s *APIServer) handleDeleteRecording(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if s.recordingStore == nil || s.storageBackend == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "recording service not available"})
+		return
+	}
+
+	rec, err := s.recordingStore.GetByID(id)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "recording not found"})
+		return
+	}
+
+	if err := s.storageBackend.Delete(r.Context(), rec.StorageKey); err != nil {
+		s.logger.Warn("failed to delete recording from storage", zap.String("key", rec.StorageKey), zap.Error(err))
+	}
+
+	if err := s.recordingStore.Delete(id); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "delete recording"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
