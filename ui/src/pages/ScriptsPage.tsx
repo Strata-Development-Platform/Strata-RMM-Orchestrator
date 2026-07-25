@@ -1,12 +1,18 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { api } from '@/api/client';
+import { useToast } from '@/components/shared/Toast';
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
+import { EmptyState } from '@/components/shared/EmptyState';
+import { Skeleton } from '@/components/shared/Skeleton';
+import { StatusBadge } from '@/components/shared/StatusBadge';
 
 type Script = Record<string, unknown>;
 type Execution = Record<string, unknown>;
 
 export default function ScriptsPage() {
   const { user } = useAuth();
+  const { showToast } = useToast();
   const tenantID = user?.accessible_tenants?.[0]?.id || '';
   const [scripts, setScripts] = useState<Script[]>([]);
   const [executions, setExecutions] = useState<Execution[]>([]);
@@ -17,6 +23,7 @@ export default function ScriptsPage() {
   const [showResult, setShowResult] = useState<string | null>(null);
   const [resultData, setResultData] = useState<Record<string, unknown> | null>(null);
   const [devices, setDevices] = useState<Record<string, unknown>[]>([]);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   const load = async () => {
     if (!tenantID) return;
@@ -37,8 +44,14 @@ export default function ScriptsPage() {
   useEffect(() => { load(); }, [tenantID]);
 
   const handleDelete = async (scriptID: string) => {
-    if (!confirm('Delete this script?')) return;
-    await api.deleteScript(tenantID, scriptID);
+    setConfirmDelete(scriptID);
+  };
+
+  const doDelete = async () => {
+    if (!confirmDelete) return;
+    await api.deleteScript(tenantID, confirmDelete);
+    setConfirmDelete(null);
+    showToast('success', 'Script deleted');
     load();
   };
 
@@ -47,10 +60,10 @@ export default function ScriptsPage() {
       const r = await api.getScriptExecution(tenantID, execID);
       setResultData(r);
       setShowResult(execID);
-    } catch { alert('Failed to load result'); }
+    } catch { showToast('error', 'Failed to load result'); }
   };
 
-  if (loading) return <div className="text-center py-12 text-slate-500">Loading...</div>;
+  if (loading) return <Skeleton type="table" rows={6} count={6} />;
 
   return (
     <div className="space-y-6">
