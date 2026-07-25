@@ -2,122 +2,144 @@
 
 A horizontally-scalable, multi-tenant Remote Monitoring & Management platform with cross-platform agents (Go), supporting both SaaS and self-hosted deployments.
 
-## Architecture Overview
-
-Built on polyglot microservices with:
-- **NATS JetStream** - Message backbone with multi-tenant subject isolation
-- **TimescaleDB** - Time-series metrics with compression & continuous aggregates
-- **PostgreSQL** - Relational data with Row Level Security for multi-tenancy
-- **Redis** - Caching, sessions, distributed locks
-- **Kubernetes** - Elastic scaling, self-healing, GitOps deployment
-
-## Components
-
-| Component | Language | Description |
-|-----------|----------|-------------|
-| **Agent** | Go | Cross-platform monitoring agent (Windows/Linux/macOS) |
-| **Probe** | Go | Agentless network collector (SNMP, NetFlow, synthetics) |
-| **Orchestrator** | Go | Platform services (API, Inventory, Monitoring, Alerting, Remote Access) |
-| **API Gateway** | Kong/Traefik | TLS, rate limiting, tenant routing, WebSocket tunnels |
-
 ## Quick Start
 
-### Prerequisites
-- Go 1.23+
-- NATS JetStream cluster
-- PostgreSQL 15+ with TimescaleDB extension
-- Redis 7+
-
-### Build
 ```bash
-go build -o bin/strata-rmm .
+# Prerequisites: Go 1.22+, Docker, NATS 2.10+, TimescaleDB 2.15+
+
+# Build everything
+make build
+
+# Start local dev environment
+docker compose -f deploy/docker/docker-compose.yml up -d nats postgres
+
+# Start orchestrator
+make run-orch
+
+# In another terminal - run an agent
+TENANT_ID="00000000-0000-0000-0000-000000000001" ENROLLMENT_TOKEN="dev-token" make run-agent
 ```
 
-### Run Agent
-```bash
-./bin/strata-rmm agent \
-  --tenant-id=<TENANT_UUID> \
-  --enrollment-token=<TOKEN> \
-  --nats-url=nats://localhost:4222
+## CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `strata-rmm agent` | Cross-platform monitoring agent |
+| `strata-rmm probe` | Agentless network probe (SNMP, flow, discovery) |
+| `strata-rmm orchestrator` | Platform services (API, ingestion, alerting, patching, tunnels) |
+
+## Architecture
+
+```
+Agent (Go) ──NATS──► Orchestrator ──► TimescaleDB (metrics)
+  │                        │                    │
+  │                    PostgreSQL (RLS)      Grafana
+  │                        │
+Probe (SNMP/Flow) ──NATS──┘
 ```
 
-### Run Network Probe
-```bash
-./bin/strata-rmm probe \
-  --tenant-id=<TENANT_UUID> \
-  --nats-url=nats://localhost:4222
-```
+- **Messaging**: NATS Core with tenant subject isolation (`tenant.{id}.agent.{id}.{metrics,events,heartbeat,cmd}`)
+- **Time-Series**: TimescaleDB hypertables with compression (7d) + continuous aggregates (1m, 1h)
+- **Relational**: PostgreSQL with Row-Level Security for tenant isolation
+- **API**: Go 1.22 stdlib `net/http` (method-based routing, no framework)
 
-### Run Orchestrator (Platform Services)
-```bash
-./bin/strata-rmm orchestrator \
-  --config=config.yaml
-```
+## Features
+
+### ✅ Phase 1 — Foundation
+- Go cross-platform agent (Linux/Windows/macOS, single binary ~15MB)
+- NATS communication with reconnect backoff + store-and-forward (BBolt)
+- Metrics ingestion pipeline (NATS → TimescaleDB batch writer)
+- JWT auth + enrollment tokens
+- REST API (health, metrics query, heartbeat, enrollment)
+- PostgreSQL relational schema with RLS (tenants, devices, users, audit)
+- Docker + Makefile for local dev
+
+### ✅ Phase 2 — Monitoring Core
+- **Alerting Engine**: Threshold rules (gt/gte/lt/lte/eq/neq), heartbeat monitoring, cooldowns, auto-resolution
+- **Notifications**: Slack, webhook, email/teams/pagerduty (pluggable)
+- **Network Probe**: SNMP v1/v2c/v3 polling, NetFlow v9/IPFIX/sFlow, ARP/SNMP discovery
+- **Patch Management**: Windows (PowerShell/WU API) + Linux (apt/dnf/zypper), policy CRUD, deployment scheduling
+- **Remote Access**: NATS-relayed RDP/SSH/VNC tunnels with bidirectional streaming
+- **Grafana Dashboards**: System metrics + alerts overview (provisioned)
+
+### ✅ Phase 3 — Advanced Features
+- Software inventory (dpkg/Win32_Product)
+- CVE vulnerability correlation (10 seeded CVEs, automatic device matching, 6h scan loop)
+
+### ✅ Phase 5 — Platform Hardening
+- Helm chart (deployment, HPA, PDB, network policies, ingress, air-gapped, multi-region)
+- Load testing script (vegeta API + NATS agent simulation, 500 agents)
+
+## Multi-Tenancy
+
+- **Default**: Shared schema with RLS + NATS subject isolation
+- **Premium**: Dedicated schema/database per tenant
+- Tenant onboarding: Create tenant → run migrations → generate enrollment token
+
+## Deployment Models
+
+1. **SaaS**: Multi-region K8s via Helm, GitOps (ArgoCD/Flux), NATS supercluster
+2. **Self-Hosted**: Helm charts, air-gapped bundles, license validation
+3. **Hybrid**: SaaS control plane + customer-hosted agents/probes
+
+## Security
+
+- **Agent ↔ Platform**: mTLS or JWT enrollment → short-lived certs
+- **Data**: AES-256 at rest, TLS 1.3 in transit
+- **RBAC**: Admin/Technician/Viewer roles per tenant
+- **Audit**: Immutable append-only log
 
 ## Project Structure
 
 ```
 ├── cmd/
-│   ├── agent/        # Monitoring agent entry point
-│   ├── probe/        # Network probe entry point
-│   └── orchestrator/ # Platform services entry point
+│   ├── agent/          # Agent CLI
+│   ├── probe/          # Network probe CLI
+│   └── orchestrator/   # Platform services CLI
 ├── internal/
-│   ├── agent/        # Agent core (identity, comms, collectors, executors)
-│   ├── platform/     # Platform services
-│   ├── monitoring/   # Metrics ingestion & check evaluation
-│   ├── alerting/     # Alert engine & notifications
-│   ├── inventory/    # Asset CMDB & discovery
-│   ├── remoteaccess/ # Reverse tunnel & protocol proxies
-│   └── patch/        # Patch/software management
+│   ├── agent/          # Agent core (config, identity, BBolt, collectors)
+│   ├── alerting/       # Alert engine + notifications
+│   ├── collectors/     # Software inventory collector
+│   ├── monitoring/     # Metrics/events/heartbeat ingestion
+│   ├── inventory/      # Device CRUD + vulnerability engine
+│   ├── patch/          # Patch management + executors
+│   ├── platform/       # API server + routes
+│   ├── probe/          # SNMP, flow, discovery
+│   └── remote/         # Tunnel relay gateway
 ├── pkg/
-│   ├── nats/         # NATS JetStream client helpers
-│   ├── timescale/    # TimescaleDB client & schemas
-│   ├── postgres/     # PostgreSQL client & migrations
-│   └── auth/         # OIDC/mTLS authentication
+│   ├── auth/           # JWT generation/validation
+│   ├── postgres/       # Relational schema migrations
+│   └── timescale/      # TimescaleDB client + migrations
 ├── deploy/
-│   ├── helm/         # Helm charts for K8s
-│   ├── kots/         # KOTS manifests for self-hosted
-│   └── docker/       # Docker Compose for dev
+│   ├── docker/         # Docker Compose local dev
+│   ├── grafana/        # Provisioned dashboards
+│   └── helm/           # K8s Helm chart
 ├── docs/
-│   └── ARCHITECTURE.md
-├── scripts/          # Build & deployment scripts
-└── tests/            # Integration & e2e tests
+│   ├── ARCHITECTURE.md # Full architecture plan
+│   └── RUNBOOK.md      # Operations runbook
+└── scripts/
+    ├── install.sh      # Linux agent installer
+    └── loadtest.sh     # Performance test suite
 ```
 
-## Development Phases
+## Development
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full 12-month roadmap:
+```bash
+# Build
+make build          # All platforms
+make build-linux    # Linux amd64
+make build-windows  # Windows amd64
+make build-arm64    # Linux arm64
 
-- **Phase 1** (Months 1-3): Foundation - Tenant/Auth, DB, NATS, Agent core
-- **Phase 2** (Months 3-5): Monitoring Core - Ingestion, Alerting, SNMP, Dashboards
-- **Phase 3** (Months 5-7): Remote Access & Automation - Tunnels, Patching
-- **Phase 4** (Months 7-10): Advanced - ML Anomaly, NetFlow, IP Phones, Synthetics
-- **Phase 5** (Months 10-12): Hardening - Self-hosted distro, Air-gap, Security audit
+# Test
+make test
+make lint
+make coverage
 
-## Multi-Tenancy
+# Local dev
+make dev            # Start services + orchestrator
+make docker-up      # Start all containers
+make docker-down    # Stop all containers
+```
 
-- **Shared (Default)**: Single cluster, RLS policies, subject isolation `tenant.{id}.*`
-- **Dedicated (Premium)**: Per-tenant namespace/cluster, data residency
-
-## Deployment Models
-
-1. **SaaS** - Multi-region K8s (EKS/GKE/AKS), GitOps via ArgoCD/Flux
-2. **Self-Hosted** - Helm + KOTS, air-gapped bundles, license validation
-3. **Hybrid** - Control plane (SaaS) + Data plane (customer-hosted)
-
-## Security
-
-- **Agent ↔ Platform**: mTLS with auto-rotated certs (or JWT enrollment)
-- **Data**: AES-256 at rest, TLS 1.3 in transit
-- **Secrets**: HashiCorp Vault / Sealed Secrets
-- **Audit**: Immutable append-only logs
-
-## License
-
-Proprietary - Strata Development Platform
-
----
-
-## Contributing
-
-Internal project - not accepting external contributions at this time.
+See [docs/RUNBOOK.md](docs/RUNBOOK.md) for operations guide and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full plan.
