@@ -55,6 +55,12 @@ class ApiClient {
   updateUserTenants = (userId: string, tenant_ids: string[]) =>
     this.request<{ status: string }>('PUT', `/api/v1/admin/users/${userId}/tenants`, { tenant_ids });
 
+  // Admin
+  createCustomer = (name: string, slug: string, plan: string, adminEmail: string) =>
+    this.request<{ id: string; name: string; slug: string; plan: string; deployment_id: string; status: string }>(
+      'POST', '/api/v1/admin/customers', { name, slug, plan, admin_email: adminEmail }
+    );
+
   // Devices
   getTenantDevices = (tenantID: string) =>
     this.request<{ devices: Record<string, unknown>[] }>('GET', `/api/v1/platform/customers/${tenantID}/devices`);

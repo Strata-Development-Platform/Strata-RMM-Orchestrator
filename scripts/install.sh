@@ -6,6 +6,18 @@ INSTALL_DIR="/usr/local/bin"
 CONFIG_DIR="/etc/strata-rmm"
 DATA_DIR="/var/lib/strata-rmm"
 SERVICE_NAME="strata-rmm-agent"
+DEPLOYMENT_ID=""
+
+# Parse args
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --deployment-id) DEPLOYMENT_ID="$2"; shift 2 ;;
+    --tenant-id) TENANT_ID="$2"; shift 2 ;;
+    --nats-url) NATS_URL="$2"; shift 2 ;;
+    --help|-h) echo "Usage: install.sh [--deployment-id ID] [--tenant-id ID] [--nats-url URL]"; exit 0 ;;
+    *) echo "Unknown option: $1"; exit 1 ;;
+  esac
+done
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -64,13 +76,23 @@ install_systemd_service() {
 		return 0
 	fi
 
-	cp "deploy/$SERVICE_NAME.service" "/etc/systemd/system/$SERVICE_NAME.service"
+	ARGS="agent"
+	if [ -n "$DEPLOYMENT_ID" ]; then
+		ARGS="$ARGS --deployment-id $DEPLOYMENT_ID"
+	fi
+	if [ -n "${NATS_URL:-}" ]; then
+		ARGS="$ARGS --nats-url $NATS_URL"
+	fi
+
+	sed "s|ExecStart=.*|ExecStart=$INSTALL_DIR/$BINARY_NAME $ARGS|" \
+		"deploy/$SERVICE_NAME.service" > "/etc/systemd/system/$SERVICE_NAME.service"
 	chmod 644 "/etc/systemd/system/$SERVICE_NAME.service"
 
 	systemctl daemon-reload
 	systemctl enable "$SERVICE_NAME"
 
 	log_info "Installed systemd service: $SERVICE_NAME"
+	log_info "Deployment ID: ${DEPLOYMENT_ID:-not set}"
 	log_info "Start with: systemctl start $SERVICE_NAME"
 }
 
@@ -110,7 +132,12 @@ case "${1:-install}" in
 		install_systemd_service
 		log_info ""
 		log_info "Installation complete!"
-		log_info "1. Edit config: $CONFIG_DIR/agent.yaml"
+		if [ -n "$DEPLOYMENT_ID" ]; then
+			log_info "Agent will register using deployment ID: $DEPLOYMENT_ID"
+		else
+			log_info "1. Edit config: $CONFIG_DIR/agent.yaml"
+			log_info "   Set tenant_id and enrollment_token"
+		fi
 		log_info "2. Start agent: systemctl start $SERVICE_NAME"
 		log_info "3. Check logs: journalctl -u $SERVICE_NAME -f"
 		;;

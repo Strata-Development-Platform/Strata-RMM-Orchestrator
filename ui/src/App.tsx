@@ -4,6 +4,7 @@ import Layout from '@/components/layout/Layout';
 import LoginPage from '@/pages/LoginPage';
 import DashboardPage from '@/pages/DashboardPage';
 import CustomerDetailPage from '@/pages/CustomerDetailPage';
+import CustomersPage from '@/pages/CustomersPage';
 import UserManagementPage from '@/pages/UserManagementPage';
 import AdminSettingsPage from '@/pages/AdminSettingsPage';
 import SettingsPage from '@/pages/SettingsPage';
