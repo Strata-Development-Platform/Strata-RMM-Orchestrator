@@ -108,6 +108,10 @@ func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 			cveSync.Start(ctx)
 			logger.Info("CVE sync engine started")
 
+			thirdParty := inventory.NewThirdPartyEngine(tsdb.DB(), logger)
+			go thirdParty.Start(ctx)
+			logger.Info("third-party patching engine started")
+
 			api := platform.NewAPIServer(apiAddr, tsdb, nc, logger).
 				WithAlertEngine(alertEngine).
 				WithVulnEngine(vulnEngine).
