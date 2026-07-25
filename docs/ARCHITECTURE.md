@@ -309,12 +309,27 @@ FROM metrics GROUP BY bucket, tenant_id, device_id, metric_name;
 ## 9. Development Phases
 
 ### Phase 1: Foundation (Months 1-3)
+
+#### 1.1 Agent Core (Months 1-1.5) ✅
+- [x] Config management (YAML/TOML, remote config via NATS KV)
+- [x] Identity management (self-generated ECDSA P256 certs, UUID agent IDs)
+- [x] Local persistence (BBolt store with metrics/events/state/queue buckets)
+- [x] Agent lifecycle (start/stop, health API, state machine)
+- [x] Logger abstraction (zap-backed, structured logging)
+- [x] System collector: CPU, RAM, disk, net, load, host info via gopsutil v3
+
+#### 1.2 NATS JetStream Communication (In Progress)
+- [ ] NATS JetStream connection manager (reconnect, backoff)
+- [ ] Tenant subject isolation: `tenant.{id}.agent.{agent_id}` / `.cmd.` / `.events.`
+- [ ] Metrics batch publish with queued replay on reconnect
+- [ ] Command subscription (request/response pattern)
+- [ ] Heartbeat/health monitoring
+
+#### 1.3 Remaining Foundation
 - [ ] Tenant/Auth service + API Gateway
 - [ ] PostgreSQL + TimescaleDB schema + migrations
-- [ ] NATS JetStream cluster setup
-- [ ] Core Agent (Go): identity, comms, config, self-update
-- [ ] Basic system collector (CPU, RAM, disk, net)
 - [ ] Inventory API + UI skeleton
+- [ ] Agent service installer (systemd, Windows Service)
 
 ### Phase 2: Monitoring Core (Months 3-5)
 - [ ] Metrics ingestion pipeline (NATS → TimescaleDB)
