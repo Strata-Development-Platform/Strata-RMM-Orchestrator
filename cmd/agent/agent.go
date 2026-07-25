@@ -11,6 +11,7 @@ import (
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/agent/collectors"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/agent/comms"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/agent/core"
+	"github.com/strata-rmm/strata-rmm-orchestrator/internal/agent/scripts"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/agent/update"
 )
 
@@ -77,6 +78,13 @@ func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 				return fmt.Errorf("starting comms: %w", err)
 			}
 			defer commsHandler.Stop()
+
+			scriptExec := scripts.NewExecutor(natsClient.Conn(), logger, agent.Identity().TenantID, agent.Identity().AgentID)
+			if err := scriptExec.Start(ctx); err != nil {
+				logger.Warn("starting script executor", zap.Error(err))
+			}
+			defer scriptExec.Stop()
+			logger.Info("script executor started")
 
 			updateStore := update.NewStore(agent.Store().DB())
 			if err := updateStore.Init(); err != nil {

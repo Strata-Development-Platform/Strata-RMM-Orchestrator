@@ -535,6 +535,52 @@ func Migrations() []Migration {
 				ALTER TABLE tenants DROP COLUMN IF EXISTS deployment_id;
 			`,
 		},
+		{
+			ID:   22,
+			Name: "create_scripting_tables",
+			Up: `
+				CREATE TABLE IF NOT EXISTS scripts (
+					id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					tenant_id   UUID REFERENCES tenants(id) ON DELETE CASCADE,
+					name        TEXT NOT NULL,
+					description TEXT DEFAULT '',
+					language    TEXT NOT NULL CHECK (language IN ('powershell', 'bash', 'python', 'batch')),
+					content     TEXT NOT NULL,
+					parameters  JSONB DEFAULT '[]',
+					timeout_sec INT DEFAULT 300,
+					is_public   BOOLEAN NOT NULL DEFAULT false,
+					created_by  UUID REFERENCES users(id),
+					created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+				CREATE INDEX IF NOT EXISTS idx_scripts_tenant ON scripts(tenant_id);
+
+				CREATE TABLE IF NOT EXISTS script_executions (
+					id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					script_id    UUID REFERENCES scripts(id) ON DELETE SET NULL,
+					tenant_id    UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+					device_id    UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+					triggered_by UUID REFERENCES users(id),
+					status       TEXT NOT NULL DEFAULT 'pending'
+					             CHECK (status IN ('pending', 'running', 'success', 'failed', 'timeout', 'cancelled')),
+					stdout       TEXT DEFAULT '',
+					stderr       TEXT DEFAULT '',
+					exit_code    INT,
+					duration_ms  INT,
+					parameters   JSONB DEFAULT '{}',
+					started_at   TIMESTAMPTZ,
+					completed_at TIMESTAMPTZ,
+					created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+				CREATE INDEX IF NOT EXISTS idx_script_executions_tenant ON script_executions(tenant_id, created_at DESC);
+				CREATE INDEX IF NOT EXISTS idx_script_executions_device ON script_executions(device_id);
+				CREATE INDEX IF NOT EXISTS idx_script_executions_status ON script_executions(status);
+			`,
+			Down: `
+				DROP TABLE IF EXISTS script_executions CASCADE;
+				DROP TABLE IF EXISTS scripts CASCADE;
+			`,
+		},
 	}
 }
 

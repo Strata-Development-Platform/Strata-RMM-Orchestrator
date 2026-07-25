@@ -136,6 +136,14 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /api/v1/access/users/{tenantID}", s.handleTenantUsers)
 	mux.HandleFunc("GET /api/v1/access/permissions/{tenantID}", s.handleTenantPermissions)
 
+	mux.HandleFunc("GET /api/v1/scripts/{tenantID}", s.handleListScripts)
+	mux.HandleFunc("POST /api/v1/scripts/{tenantID}", s.handleCreateScript)
+	mux.HandleFunc("GET /api/v1/scripts/{tenantID}/{scriptID}", s.handleGetScript)
+	mux.HandleFunc("DELETE /api/v1/scripts/{tenantID}/{scriptID}", s.handleDeleteScript)
+	mux.HandleFunc("POST /api/v1/scripts/{tenantID}/{scriptID}/run", s.handleRunScript)
+	mux.HandleFunc("GET /api/v1/scripts/{tenantID}/executions", s.handleScriptExecutions)
+	mux.HandleFunc("GET /api/v1/scripts/{tenantID}/executions/{execID}", s.handleGetExecution)
+
 	mux.HandleFunc("POST /api/v1/mfa/enroll/{userID}", s.handleMFAEnroll)
 	mux.HandleFunc("POST /api/v1/mfa/verify/{userID}", s.handleMFAVerify)
 	mux.HandleFunc("GET /api/v1/mfa/status/{userID}", s.handleMFAStatus)
@@ -152,6 +160,16 @@ func (s *APIServer) Start(ctx context.Context) error {
 			withLogging(mux, s.logger),
 		),
 	)
+
+	if s.nats != nil {
+		sub, err := s.nats.Subscribe("tenant.>.agent.>.script.result", s.handleScriptResultNATS)
+		if err != nil {
+			s.logger.Warn("subscribe script results", zap.Error(err))
+		} else {
+			s.logger.Info("subscribed to script results")
+			defer sub.Unsubscribe()
+		}
+	}
 
 	s.server = &http.Server{
 		Addr:         s.addr,
