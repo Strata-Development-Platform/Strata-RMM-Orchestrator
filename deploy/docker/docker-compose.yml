@@ -1,0 +1,53 @@
+version: "3.9"
+
+services:
+  nats:
+    image: nats:2.10-alpine
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    command: ["-js", "-m", "8222"]
+
+  postgres:
+    image: timescale/timescaledb:2.15-pg16
+    environment:
+      POSTGRES_DB: strata_rmm
+      POSTGRES_USER: strata
+      POSTGRES_PASSWORD: strata_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "strata", "-d", "strata_rmm"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  orchestrator:
+    build: .
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
+    environment:
+      STRATA_RMM_NATS_URL: nats://nats:4222
+      STRATA_RMM_TIMESCALE_DSN: postgres://strata:strata_dev@postgres:5432/strata_rmm?sslmode=disable
+      STRATA_RMM_API_ADDR: :8080
+    command: ["orchestrator", "--nats-url", "nats://nats:4222", "--timescale-dsn", "postgres://strata:strata_dev@postgres:5432/strata_rmm?sslmode=disable", "--api-addr", ":8080"]
+
+  agent:
+    build: .
+    depends_on:
+      - nats
+    environment:
+      STRATA_RMM_NATS_URL: nats://nats:4222
+    command: ["agent", "--tenant-id", "dev-tenant", "--enrollment-token", "dev-token", "--nats-url", "nats://nats:4222"]
+    profiles:
+      - agent
+
+volumes:
+  pgdata:
