@@ -10,19 +10,21 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/monitoring"
+	"github.com/strata-rmm/strata-rmm-orchestrator/internal/platform"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/timescale"
 )
 
 func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 	var (
-		natsURL    string
+		natsURL      string
 		timescaleDSN string
+		apiAddr      string
 	)
 
 	cmd := &cobra.Command{
 		Use:   "orchestrator",
 		Short: "Start the RMM orchestrator platform services",
-		Long:  `Starts the core platform services: NATS consumer, TimescaleDB ingestion, alerting, and API`,
+		Long:  `Starts the core platform services: NATS consumer, TimescaleDB ingestion, REST API, and alerting`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			logger.Info("starting Strata RMM Orchestrator")
 
@@ -30,6 +32,7 @@ func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 				nats.Name("StrataRMM-Orchestrator"),
 				nats.ReconnectWait(5*time.Second),
 				nats.MaxReconnects(-1),
+				nats.RetryOnFailedConnect(true),
 			)
 			if err != nil {
 				return fmt.Errorf("connecting to NATS: %w", err)
@@ -56,6 +59,13 @@ func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 			defer ingest.Stop()
 			logger.Info("metrics ingestion started")
 
+			api := platform.NewAPIServer(apiAddr, tsdb, nc, logger)
+			if err := api.Start(ctx); err != nil {
+				return fmt.Errorf("starting API server: %w", err)
+			}
+			defer api.Stop(ctx)
+			logger.Info("API server started", zap.String("addr", apiAddr))
+
 			logger.Info("orchestrator running, waiting for signals")
 			<-ctx.Done()
 			logger.Info("shutting down orchestrator")
@@ -65,6 +75,7 @@ func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 
 	cmd.Flags().StringVar(&natsURL, "nats-url", "nats://localhost:4222", "NATS server URL")
 	cmd.Flags().StringVar(&timescaleDSN, "timescale-dsn", "postgres://localhost:5432/strata_rmm?sslmode=disable", "TimescaleDB DSN")
+	cmd.Flags().StringVar(&apiAddr, "api-addr", ":8080", "API server listen address")
 
 	return cmd
 }

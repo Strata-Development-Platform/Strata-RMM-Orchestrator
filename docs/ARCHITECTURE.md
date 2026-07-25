@@ -335,14 +335,19 @@ FROM metrics GROUP BY bucket, tenant_id, device_id, metric_name;
 - [x] Retention policy (365-day auto-expiry)
 - [x] Event and heartbeat ingestion
 
-#### 1.4 Remaining Foundation
-- [ ] Tenant/Auth service + API Gateway (Kong/Traefik)
-- [ ] PostgreSQL relational schema + RLS policies
-- [ ] Inventory API + UI skeleton
-- [ ] Agent service installer (systemd, Windows Service)
+#### 1.4 Auth, Tenancy & API Gateway (Months 2.5-3) ✅
+- [x] JWT token generation/validation (HS256, agent + user tokens)
+- [x] Enrollment token system (time-bound, single-use agent provisioning)
+- [x] REST API server (Go 1.22 stdlib net/http with method-based routing)
+- [x] Health check endpoint (GET /health)
+- [x] Agent enrollment endpoint (POST /api/v1/enroll)
+- [x] Metrics query API (GET /api/v1/metrics, GET /api/v1/devices/{id}/metrics/{name})
+- [x] Heartbeat query API (GET /api/v1/heartbeat/{tenantID}/{deviceID})
+- [x] Aggregated metrics support (1m, 1h bucket via continuous aggregate views)
+- [x] Request logging middleware
 
-### Phase 2: Monitoring Core (Months 3-5)
-- [ ] Metrics ingestion pipeline (NATS → TimescaleDB)
+### Phase 2: Monitoring Core (Months 3-5) ⏳
+- [x] Metrics ingestion pipeline (NATS → TimescaleDB) — *completed in Phase 1.3*
 - [ ] Alerting engine (threshold, heartbeat)
 - [ ] SNMP/ICMP collector (agentless)
 - [ ] Network Probe (SNMP, discovery)
@@ -377,15 +382,14 @@ FROM metrics GROUP BY bucket, tenant_id, device_id, metric_name;
 | Component | Choice | Rationale |
 |-----------|--------|-----------|
 | Agent Language | Go | Cross-compile, single binary, performance, NATS client |
-| Platform Services | Polyglot | Best tool per domain (Go for data plane, Python for ML, etc.) |
-| Message Bus | NATS JetStream | Lightweight, streaming, KV, multi-tenant subjects |
-| Time-Series DB | TimescaleDB | PostgreSQL-compatible, compression, continuous aggregates |
-| Relational DB | PostgreSQL | RLS, JSONB, mature, multi-tenant patterns |
-| Cache | Redis | Sessions, rate limits, distributed locks |
-| API Gateway | Kong/Traefik | Plugins, TLS, rate limiting, WebSocket |
-| Auth | Keycloak/OIDC | Standards-based, federation, MFA |
-| Container Orch | Kubernetes | Elastic scaling, self-healing, GitOps |
-| Self-Hosted Distro | Helm + KOTS | Enterprise-grade, license management, air-gap |
+| Platform Services | Go (stdlib) | Minimal deps, Go 1.22 net/http with method-based routing |
+| Message Bus | NATS Core | Lightweight, pub/sub, reconnect, multi-tenant subjects |
+| Time-Series DB | TimescaleDB (lib/pq) | PostgreSQL-compatible, hypertables, compression, continuous aggregates |
+| Relational DB | PostgreSQL (via TimescaleDB) | Hypertables, JSONB, mature, multi-tenant patterns |
+| Local Agent Store | BBolt | Embedded, zero-dependency, offline queue persistence |
+| Auth | Custom JWT + Enrollment Tokens | Lightweight, no external IdP dependency for MVP |
+| API Transport | JSON over HTTP | Simple, universal, Go 1.22 stdlib mux |
+| Metrics Encoding | JSON (inline) | Simple for MVP; future: Protocol Buffers/MessagePack |
 
 ---
 
