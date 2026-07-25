@@ -639,6 +639,45 @@ func Migrations() []Migration {
 				DROP TABLE IF EXISTS software_packages CASCADE;
 			`,
 		},
+		{
+			ID:   24,
+			Name: "create_reporting_tables",
+			Up: `
+				CREATE TABLE IF NOT EXISTS report_schedules (
+					id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					tenant_id   UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+					name        TEXT NOT NULL,
+					frequency   TEXT NOT NULL CHECK (frequency IN ('daily', 'weekly', 'monthly')),
+					day_of_week INT DEFAULT 1,
+					day_of_month INT DEFAULT 1,
+					format      TEXT NOT NULL DEFAULT 'pdf',
+					sections    JSONB NOT NULL DEFAULT '["summary","alerts","cves","patches"]',
+					recipients  TEXT[] DEFAULT '{}',
+					enabled     BOOLEAN NOT NULL DEFAULT true,
+					last_sent   TIMESTAMPTZ,
+					created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+				CREATE INDEX IF NOT EXISTS idx_report_schedules_tenant ON report_schedules(tenant_id);
+
+				CREATE TABLE IF NOT EXISTS generated_reports (
+					id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					schedule_id UUID REFERENCES report_schedules(id) ON DELETE SET NULL,
+					tenant_id   UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+					name        TEXT NOT NULL,
+					format      TEXT NOT NULL DEFAULT 'pdf',
+					storage_key TEXT NOT NULL,
+					size_bytes  BIGINT DEFAULT 0,
+					sections    JSONB DEFAULT '[]',
+					generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+				CREATE INDEX IF NOT EXISTS idx_generated_reports_tenant ON generated_reports(tenant_id, generated_at DESC);
+			`,
+			Down: `
+				DROP TABLE IF EXISTS generated_reports CASCADE;
+				DROP TABLE IF EXISTS report_schedules CASCADE;
+			`,
+		},
 	}
 }
 

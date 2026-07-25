@@ -15,6 +15,7 @@ import (
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/monitoring"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/platform"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/remote"
+	"github.com/strata-rmm/strata-rmm-orchestrator/internal/reporting"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/postgres"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/storage"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/timescale"
@@ -149,6 +150,10 @@ func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 
 					cleanup := remote.NewCleanupJob(recStore, sb, logger)
 					cleanup.Start(ctx)
+
+					reportEngine := reporting.NewReportEngine(tsdb.DB(), logger, sb, storageBucket)
+					go reportEngine.Start(ctx)
+					logger.Info("report engine started")
 
 					api = api.WithRecordingStore(recStore).WithStorageBackend(sb)
 				}
