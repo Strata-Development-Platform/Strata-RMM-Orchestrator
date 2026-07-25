@@ -25,6 +25,7 @@ func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 		natsURL         string
 		timescaleDSN    string
 		apiAddr         string
+		tunnelAddr      string
 		storageBackend  string
 		storageBucket   string
 		storageRegion   string
@@ -126,12 +127,17 @@ func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 
 					recStore := remote.NewRecordingStore(tsdb.DB())
 					recorder := remote.NewRecorder(sb, logger)
-					cleanup := remote.NewCleanupJob(recStore, sb, logger)
-					cleanup.Start(ctx)
 
-					remote.NewGateway(nc, "", logger).
+					gw := remote.NewGateway(nc, tunnelAddr, logger).
 						WithRecorder(recorder).
 						WithRecordingStore(recStore)
+					if err := gw.Start(ctx); err != nil {
+						return fmt.Errorf("starting tunnel gateway: %w", err)
+					}
+					logger.Info("tunnel gateway started", zap.String("addr", tunnelAddr))
+
+					cleanup := remote.NewCleanupJob(recStore, sb, logger)
+					cleanup.Start(ctx)
 
 					api = api.WithRecordingStore(recStore).WithStorageBackend(sb)
 				}
@@ -152,6 +158,7 @@ func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 	cmd.Flags().StringVar(&natsURL, "nats-url", "nats://localhost:4222", "NATS server URL")
 	cmd.Flags().StringVar(&timescaleDSN, "timescale-dsn", "postgres://localhost:5432/strata_rmm?sslmode=disable", "TimescaleDB DSN")
 	cmd.Flags().StringVar(&apiAddr, "api-addr", ":8080", "API server listen address")
+	cmd.Flags().StringVar(&tunnelAddr, "tunnel-addr", ":8443", "Tunnel gateway listen address")
 
 	cmd.Flags().StringVar(&storageBackend, "storage-backend", envOrDefault("STORAGE_BACKEND", "local"), "Storage backend (minio, s3, local, none)")
 	cmd.Flags().StringVar(&storageBucket, "storage-bucket", envOrDefault("STORAGE_BUCKET", "strata-recordings"), "Storage bucket name")

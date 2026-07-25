@@ -59,3 +59,14 @@ tidy:
 coverage:
 	go test ./... -coverprofile=coverage.out
 	go tool cover -html=coverage.out -o coverage.html
+
+smoke-test:
+	./scripts/smoke_test.sh
+
+smoke-test-docker:
+	@echo "Starting stack..."
+	docker compose -f deploy/docker/docker-compose.yml up -d
+	@echo "Waiting for orchestrator..."
+	@sleep 10
+	API_URL=http://localhost:8080 ./scripts/smoke_test.sh || (docker compose -f deploy/docker/docker-compose.yml down; exit 1)
+	docker compose -f deploy/docker/docker-compose.yml down
