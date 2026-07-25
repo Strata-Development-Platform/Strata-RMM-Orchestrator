@@ -318,6 +318,59 @@ func Migrations() []Migration {
 			`,
 			Down: `DROP TABLE IF EXISTS patch_inventory CASCADE; DROP TABLE IF EXISTS patch_device_states CASCADE; DROP TABLE IF EXISTS patch_deployment_devices CASCADE;`,
 		},
+		{
+			ID:   14,
+			Name: "create_vulnerability_tables",
+			Up: `
+				CREATE TABLE IF NOT EXISTS cve_database (
+					id            TEXT PRIMARY KEY,
+					package_name  TEXT NOT NULL,
+					severity      TEXT NOT NULL DEFAULT 'unknown',
+					score         DOUBLE PRECISION DEFAULT 0,
+					description   TEXT DEFAULT '',
+					fixed_in      TEXT NOT NULL,
+					published     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+				CREATE INDEX IF NOT EXISTS idx_cve_package ON cve_database(package_name);
+
+				CREATE TABLE IF NOT EXISTS device_vulnerabilities (
+					id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					device_id       UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+					cve_id          TEXT NOT NULL REFERENCES cve_database(id),
+					package_name    TEXT NOT NULL,
+					current_version TEXT NOT NULL,
+					fixed_in        TEXT NOT NULL,
+					severity        TEXT NOT NULL DEFAULT 'unknown',
+					status          TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'patched', 'ignored')),
+					detected_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					resolved_at     TIMESTAMPTZ,
+					UNIQUE(device_id, cve_id)
+				);
+				CREATE INDEX IF NOT EXISTS idx_device_vulns_device ON device_vulnerabilities(device_id);
+				CREATE INDEX IF NOT EXISTS idx_device_vulns_status ON device_vulnerabilities(device_id, status);
+				CREATE INDEX IF NOT EXISTS idx_device_vulns_severity ON device_vulnerabilities(device_id, severity);
+			`,
+			Down: `DROP TABLE IF EXISTS device_vulnerabilities CASCADE; DROP TABLE IF EXISTS cve_database CASCADE;`,
+		},
+		{
+			ID:   15,
+			Name: "seed_base_cve_data",
+			Up: `
+				INSERT INTO cve_database (id, package_name, severity, score, description, fixed_in) VALUES
+					('CVE-2024-6387', 'openssh', 'critical', 9.8, 'OpenSSH regreSSHion: RCE in sshd', '9.8p1'),
+					('CVE-2024-3094', 'xz-utils', 'critical', 10.0, 'XZ Utils backdoor (liblzma)', '5.6.1'),
+					('CVE-2024-21626', 'docker', 'high', 8.6, 'Docker / runc container escape via process.cwd', '25.0.2'),
+					('CVE-2024-4437', 'glibc', 'high', 8.4, 'glibc LD_PRELOAD privilege escalation', '2.40'),
+					('CVE-2024-2961', 'glibc', 'high', 8.1, 'glibc iconv buffer overflow', '2.40'),
+					('CVE-2024-31497', 'openssl', 'high', 7.5, 'PuTTY/OpenSSL ECDSA bias attack', '3.3.0'),
+					('CVE-2024-27316', 'httpd', 'medium', 6.5, 'Apache HTTPd HTTP/2 CONTINUATION flood', '2.4.59'),
+					('CVE-2024-24786', 'protobuf', 'medium', 5.5, 'Protocol Buffers JSON parse DoS', '25.0'),
+					('CVE-2024-24576', 'rust', 'medium', 5.0, 'Rust std::process::Command argument injection on Windows', '1.77.2'),
+					('CVE-2024-27135', 'curl', 'medium', 5.3, 'cURL HSTS subdomain match bypass', '8.7.0')
+				ON CONFLICT (id) DO NOTHING;
+			`,
+			Down: `DELETE FROM cve_database;`,
+		},
 	}
 }
 

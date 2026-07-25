@@ -11,6 +11,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/alerting"
+	"github.com/strata-rmm/strata-rmm-orchestrator/internal/inventory"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/auth"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/timescale"
 )
@@ -23,6 +24,7 @@ type APIServer struct {
 	logger      *zap.Logger
 	server      *http.Server
 	alertEngine *alerting.Engine
+	vulnEngine  *inventory.VulnerabilityEngine
 }
 
 func NewAPIServer(addr string, db *timescale.Client, nc *nats.Conn, logger *zap.Logger) *APIServer {
@@ -38,6 +40,11 @@ func NewAPIServer(addr string, db *timescale.Client, nc *nats.Conn, logger *zap.
 
 func (s *APIServer) WithAlertEngine(e *alerting.Engine) *APIServer {
 	s.alertEngine = e
+	return s
+}
+
+func (s *APIServer) WithVulnEngine(e *inventory.VulnerabilityEngine) *APIServer {
+	s.vulnEngine = e
 	return s
 }
 
@@ -58,6 +65,10 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("POST /api/v1/rules/{tenantID}", s.handleCreateRule)
 	mux.HandleFunc("GET /api/v1/rules/{tenantID}", s.handleListRules)
 	mux.HandleFunc("DELETE /api/v1/rules/{tenantID}/{ruleID}", s.handleDeleteRule)
+
+	mux.HandleFunc("GET /api/v1/vulnerabilities/device/{deviceID}", s.handleDeviceVulnerabilities)
+	mux.HandleFunc("GET /api/v1/vulnerabilities/tenant/{tenantID}", s.handleTenantVulnerabilities)
+	mux.HandleFunc("GET /api/v1/inventory/{deviceID}", s.handleDeviceInventory)
 
 	s.server = &http.Server{
 		Addr:         s.addr,
@@ -360,4 +371,49 @@ func intQueryParam(r *http.Request, name string, defaultVal int) int {
 		return defaultVal
 	}
 	return n
+}
+
+// Vulnerability API handlers
+
+func (s *APIServer) handleDeviceVulnerabilities(w http.ResponseWriter, r *http.Request) {
+	deviceID := r.PathValue("deviceID")
+	if s.vulnEngine == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "vulnerability engine not enabled"})
+		return
+	}
+	vulns, err := s.vulnEngine.GetDeviceVulnerabilities(r.Context(), deviceID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"vulnerabilities": vulns})
+}
+
+func (s *APIServer) handleTenantVulnerabilities(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.PathValue("tenantID")
+	if s.vulnEngine == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "vulnerability engine not enabled"})
+		return
+	}
+	vulns, err := s.vulnEngine.GetTenantVulnerabilities(r.Context(), tenantID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"vulnerabilities": vulns})
+}
+
+func (s *APIServer) handleDeviceInventory(w http.ResponseWriter, r *http.Request) {
+	deviceID := r.PathValue("deviceID")
+	if s.db == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "database not available"})
+		return
+	}
+	inventoryStore := inventory.NewStore(s.db.DB())
+	inv, err := inventoryStore.GetDevice(deviceID)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "device not found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, inv)
 }

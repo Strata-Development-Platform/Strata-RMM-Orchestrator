@@ -1,0 +1,18 @@
+apiVersion: 1
+
+datasources:
+  - name: StrataRMM PostgreSQL
+    type: postgres
+    url: postgres:5432
+    database: strata_rmm
+    user: strata
+    secureJsonData:
+      password: strata_dev
+    jsonData:
+      sslmode: disable
+      postgresVersion: 1600
+      timescaledb: true
+  - name: StrataRMM API
+    type: grafana-simple-json-datasource
+    url: http://orchestrator:8080
+    access: proxy

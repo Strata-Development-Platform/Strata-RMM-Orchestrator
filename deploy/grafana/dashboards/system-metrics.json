@@ -1,0 +1,80 @@
+{
+  "title": "System Metrics",
+  "uid": "strata-rmm-system",
+  "tags": ["strata-rmm"],
+  "timezone": "browser",
+  "panels": [
+    {
+      "title": "CPU Usage",
+      "type": "timeseries",
+      "datasource": "StrataRMM PostgreSQL",
+      "fieldConfig": {
+        "defaults": { "unit": "percent", "min": 0, "max": 100 }
+      },
+      "targets": [{
+        "rawSql": "SELECT time, value FROM metrics WHERE metric_name = 'cpu_percent' AND $__timeFilter(time) ORDER BY time",
+        "format": "time_series"
+      }]
+    },
+    {
+      "title": "Memory Usage",
+      "type": "timeseries",
+      "datasource": "StrataRMM PostgreSQL",
+      "fieldConfig": {
+        "defaults": { "unit": "bytes" }
+      },
+      "targets": [{
+        "rawSql": "SELECT time, value FROM metrics WHERE metric_name IN ('mem_used_bytes', 'mem_total_bytes') AND $__timeFilter(time) ORDER BY time",
+        "format": "time_series"
+      }]
+    },
+    {
+      "title": "Disk Usage",
+      "type": "timeseries",
+      "datasource": "StrataRMM PostgreSQL",
+      "fieldConfig": {
+        "defaults": { "unit": "bytes" }
+      },
+      "targets": [{
+        "rawSql": "SELECT time, value FROM metrics WHERE metric_name LIKE 'disk_used_%' AND $__timeFilter(time) ORDER BY time",
+        "format": "time_series"
+      }]
+    },
+    {
+      "title": "Network Traffic",
+      "type": "timeseries",
+      "datasource": "StrataRMM PostgreSQL",
+      "fieldConfig": {
+        "defaults": { "unit": "bps" }
+      },
+      "targets": [{
+        "rawSql": "SELECT time, value FROM metrics WHERE metric_name IN ('net_bytes_sent', 'net_bytes_recv') AND $__timeFilter(time) ORDER BY time",
+        "format": "time_series"
+      }]
+    },
+    {
+      "title": "Top Devices by Load",
+      "type": "table",
+      "datasource": "StrataRMM PostgreSQL",
+      "targets": [{
+        "rawSql": "SELECT device_id, AVG(value) as avg_load FROM metrics WHERE metric_name = 'load_avg_1' AND time > NOW() - INTERVAL '1 hour' GROUP BY device_id ORDER BY avg_load DESC LIMIT 20",
+        "format": "table"
+      }]
+    },
+    {
+      "title": "Active Devices (Heartbeat)",
+      "type": "stat",
+      "datasource": "StrataRMM PostgreSQL",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red" }, { "value": 1, "color": "green" }] }
+        }
+      },
+      "targets": [{
+        "rawSql": "SELECT COUNT(DISTINCT device_id) FROM heartbeats WHERE time > NOW() - INTERVAL '5 minutes'",
+        "format": "time_series"
+      }]
+    }
+  ]
+}

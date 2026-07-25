@@ -49,5 +49,21 @@ services:
     profiles:
       - agent
 
+  grafana:
+    image: grafana/grafana:11.1
+    ports:
+      - "3000:3000"
+    depends_on:
+      - postgres
+      - orchestrator
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ../grafana/datasources:/etc/grafana/provisioning/datasources
+      - ../grafana/dashboards:/etc/grafana/provisioning/dashboards
+
 volumes:
   pgdata:
+  grafana_data:

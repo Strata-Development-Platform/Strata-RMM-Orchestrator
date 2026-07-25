@@ -10,6 +10,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/alerting"
+	"github.com/strata-rmm/strata-rmm-orchestrator/internal/inventory"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/monitoring"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/platform"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/postgres"
@@ -82,7 +83,16 @@ func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 			defer alertEngine.Stop()
 			logger.Info("alerting engine started")
 
-			api := platform.NewAPIServer(apiAddr, tsdb, nc, logger).WithAlertEngine(alertEngine)
+			vulnEngine := inventory.NewVulnerabilityEngine(tsdb.DB(), logger)
+			if err := vulnEngine.Start(ctx); err != nil {
+				logger.Warn("starting vulnerability engine", zap.Error(err))
+			} else {
+				logger.Info("vulnerability engine started")
+			}
+
+			api := platform.NewAPIServer(apiAddr, tsdb, nc, logger).
+				WithAlertEngine(alertEngine).
+				WithVulnEngine(vulnEngine)
 			if err := api.Start(ctx); err != nil {
 				return fmt.Errorf("starting API server: %w", err)
 			}

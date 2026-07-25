@@ -1,0 +1,54 @@
+{
+  "title": "Alerts Overview",
+  "uid": "strata-rmm-alerts",
+  "tags": ["strata-rmm"],
+  "timezone": "browser",
+  "panels": [
+    {
+      "title": "Active Alerts",
+      "type": "stat",
+      "datasource": "StrataRMM PostgreSQL",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green" },
+            { "value": 1, "color": "yellow" },
+            { "value": 10, "color": "red" }
+          ]}
+        }
+      },
+      "targets": [{
+        "rawSql": "SELECT COUNT(*) FROM alerts WHERE status = 'firing'",
+        "format": "time_series"
+      }]
+    },
+    {
+      "title": "Alert Firing Rate",
+      "type": "timeseries",
+      "datasource": "StrataRMM PostgreSQL",
+      "targets": [{
+        "rawSql": "SELECT time_bucket('5m', time) AS t, COUNT(*) FROM alerts_ts WHERE status = 'firing' AND $__timeFilter(time) GROUP BY t ORDER BY t",
+        "format": "time_series"
+      }]
+    },
+    {
+      "title": "Alerts by Severity",
+      "type": "piechart",
+      "datasource": "StrataRMM PostgreSQL",
+      "targets": [{
+        "rawSql": "SELECT severity, COUNT(*) FROM alerts_ts WHERE $__timeFilter(time) GROUP BY severity",
+        "format": "table"
+      }]
+    },
+    {
+      "title": "Recent Alerts",
+      "type": "table",
+      "datasource": "StrataRMM PostgreSQL",
+      "targets": [{
+        "rawSql": "SELECT time, device_id, severity, message FROM alerts_ts WHERE $__timeFilter(time) ORDER BY time DESC LIMIT 50",
+        "format": "table"
+      }]
+    }
+  ]
+}
