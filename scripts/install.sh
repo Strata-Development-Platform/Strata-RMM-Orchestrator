@@ -26,11 +26,15 @@ done
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+BLUE='\033[1;34m'
+BOLD='\033[1m'
 NC='\033[0m'
 
-log_info()  { echo -e "${GREEN}[INFO]${NC} $1"; }
-log_warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+log_info()  { echo -e "${GREEN}*${NC} $1"; }
+log_warn()  { echo -e "${YELLOW}*${NC} $1"; }
+log_error() { echo -e "${RED}*${NC} $1"; }
+log_step()  { echo -e "\n${BLUE}==>${NC} $2"; }
+
 
 require_root() {
 	if [ "$(id -u)" -ne 0 ]; then
@@ -143,21 +147,66 @@ print_usage() {
 
 case "${1:-install}" in
 	install)
+		clear
+		echo -e "${BLUE}════════════════════════════════════════════${NC}"
+		echo -e "${BLUE}  Strata RMM Agent Installer${NC}"
+		echo -e "${BLUE}════════════════════════════════════════════${NC}"
+		echo ""
+
 		require_root
 		detect_platform
-		install_binary
-		setup_directories
-		install_systemd_service
-		log_info ""
-		log_info "Installation complete!"
-		if [ -n "$DEPLOYMENT_ID" ]; then
-			log_info "Agent will register using deployment ID: $DEPLOYMENT_ID"
-		else
-			log_info "1. Edit config: $CONFIG_DIR/agent.yaml"
-			log_info "   Set tenant_id and enrollment_token"
+
+		if [ -z "$DEPLOYMENT_ID" ] && [ -z "${TENANT_ID:-}" ]; then
+			echo ""
+			read -p "  Enter deployment ID (from your Strata RMM console): " DEPLOYMENT_ID
+			if [ -z "$DEPLOYMENT_ID" ]; then
+				log_error "Deployment ID is required. Get it from your Strata RMM admin console."
+				exit 1
+			fi
 		fi
-		log_info "2. Start agent: systemctl start $SERVICE_NAME"
-		log_info "3. Check logs: journalctl -u $SERVICE_NAME -f"
+
+		if [ -z "${NATS_URL:-}" ]; then
+			read -p "  NATS server address [localhost:4222]: " NATS_URL
+			NATS_URL="${NATS_URL:-localhost:4222}"
+		fi
+
+		echo ""
+		log_step "1/4" "Downloading agent binary"
+		install_binary
+
+		log_step "2/4" "Setting up directories"
+		setup_directories
+
+		log_step "3/4" "Installing systemd service"
+		install_systemd_service
+
+		log_step "4/4" "Starting agent"
+		systemctl start "$SERVICE_NAME" 2>/dev/null || true
+		sleep 2
+		if systemctl is-active --quiet "$SERVICE_NAME"; then
+			log_info "Agent is running"
+		else
+			log_warn "Agent may not have started. Check: journalctl -u $SERVICE_NAME -f"
+		fi
+
+		echo ""
+		echo -e "${GREEN}════════════════════════════════════════════${NC}"
+		echo -e "${GREEN}  Agent Installation Complete!${NC}"
+		echo -e "${GREEN}════════════════════════════════════════════${NC}"
+		echo ""
+		echo -e "  Deployment ID: ${DEPLOYMENT_ID:-not set}"
+		echo -e "  NATS server:   ${NATS_URL:-localhost:4222}"
+		echo -e "  Service:       $SERVICE_NAME"
+		echo -e "  Logs:          journalctl -u $SERVICE_NAME -f"
+		echo ""
+
+		read -p "  ${YELLOW}Reboot now to complete installation? [Y/n]: ${NC}" REBOOT
+		REBOOT="${REBOOT:-Y}"
+		if [[ "$REBOOT" =~ ^[Yy]$ ]]; then
+			log_info "Rebooting in 3 seconds..."
+			sleep 3
+			reboot
+		fi
 		;;
 	uninstall)
 		require_root

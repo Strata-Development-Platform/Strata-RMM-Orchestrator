@@ -35,6 +35,7 @@ type APIServer struct {
 	cveSync        *inventory.CVESyncEngine
 	thirdParty     *inventory.ThirdPartyEngine
 	updateMgr      *UpdateManager
+	releaseServer  *ReleaseServer
 	keyStore       *encrypt.KeyStore
 	recordingStore *remote.RecordingStore
 	storageBackend storage.Backend
@@ -82,6 +83,11 @@ func (s *APIServer) WithUpdateManager(mgr *UpdateManager) *APIServer {
 	return s
 }
 
+func (s *APIServer) WithReleaseServer(rs *ReleaseServer) *APIServer {
+	s.releaseServer = rs
+	return s
+}
+
 func (s *APIServer) WithRecordingStore(rs *remote.RecordingStore) *APIServer {
 	s.recordingStore = rs
 	return s
@@ -99,6 +105,9 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("POST /api/v1/enroll", s.handleEnroll)
 	mux.HandleFunc("POST /api/v1/agent/register", s.handleAgentRegister)
 	mux.HandleFunc("POST /api/v1/agent/config", s.handleAgentConfig)
+
+	mux.HandleFunc("GET /install.sh", s.handleInstallScript)
+	mux.HandleFunc("GET /releases/latest/agent/{os}/{arch}", s.handleReleaseBinary)
 
 	mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
 	mux.HandleFunc("GET /api/v1/auth/me", s.handleMe)

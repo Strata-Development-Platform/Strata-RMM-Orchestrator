@@ -116,7 +116,10 @@ func NewCommand(ctx context.Context, version string, logger *zap.Logger) *cobra.
 
 			updateMgr := platform.NewUpdateManager(version, "Strata-Development-Platform", "Strata-RMM-Orchestrator", apiAddr, logger)
 
+			releaseServer := platform.NewReleaseServer("/var/lib/strata-rmm/releases", "Strata-Development-Platform", "Strata-RMM-Orchestrator")
+
 			api := platform.NewAPIServer(apiAddr, tsdb, nc, logger).
+				WithReleaseServer(releaseServer)
 				WithAlertEngine(alertEngine).
 				WithVulnEngine(vulnEngine).
 				WithCVESyncEngine(cveSync).
