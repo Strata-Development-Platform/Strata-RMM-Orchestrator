@@ -234,6 +234,90 @@ func Migrations() []Migration {
 			`,
 			Down: `DROP TABLE IF EXISTS maintenance_windows CASCADE;`,
 		},
+		{
+			ID:   11,
+			Name: "create_patch_policies_table",
+			Up: `
+				CREATE TABLE IF NOT EXISTS patch_policies (
+					id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					tenant_id        UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+					name             TEXT NOT NULL,
+					enabled          BOOLEAN NOT NULL DEFAULT true,
+					platforms        JSONB NOT NULL DEFAULT '["windows","linux"]',
+					approval_mode    TEXT NOT NULL DEFAULT 'auto' CHECK (approval_mode IN ('auto', 'manual')),
+					severity         TEXT NOT NULL DEFAULT 'critical' CHECK (severity IN ('critical', 'important', 'moderate', 'low')),
+					maintenance_window TEXT DEFAULT 'outside_business_hours',
+					device_filter    JSONB DEFAULT '{}',
+					max_retries      INT DEFAULT 3,
+					created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+				CREATE INDEX IF NOT EXISTS idx_patch_policies_tenant ON patch_policies(tenant_id);
+				ALTER TABLE patch_policies ENABLE ROW LEVEL SECURITY;
+				CREATE POLICY tenant_isolation_patch_policies ON patch_policies
+					USING (tenant_id = current_setting('app.tenant_id')::UUID);
+			`,
+			Down: `DROP TABLE IF EXISTS patch_policies CASCADE;`,
+		},
+		{
+			ID:   12,
+			Name: "create_patch_deployments_table",
+			Up: `
+				CREATE TABLE IF NOT EXISTS patch_deployments (
+					id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					policy_id     UUID NOT NULL REFERENCES patch_policies(id) ON DELETE CASCADE,
+					tenant_id     UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+					status        TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'deploying', 'installed', 'failed')),
+					device_count  INT DEFAULT 0,
+					installed     INT DEFAULT 0,
+					failed        INT DEFAULT 0,
+					pending       INT DEFAULT 0,
+					scheduled_for TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					started_at    TIMESTAMPTZ,
+					completed_at  TIMESTAMPTZ,
+					created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+				CREATE INDEX IF NOT EXISTS idx_patch_deployments_tenant ON patch_deployments(tenant_id);
+				CREATE INDEX IF NOT EXISTS idx_patch_deployments_schedule ON patch_deployments(status, scheduled_for);
+				ALTER TABLE patch_deployments ENABLE ROW LEVEL SECURITY;
+				CREATE POLICY tenant_isolation_patch_deployments ON patch_deployments
+					USING (tenant_id = current_setting('app.tenant_id')::UUID);
+			`,
+			Down: `DROP TABLE IF EXISTS patch_deployments CASCADE;`,
+		},
+		{
+			ID:   13,
+			Name: "create_patch_device_tracking",
+			Up: `
+				CREATE TABLE IF NOT EXISTS patch_deployment_devices (
+					deployment_id UUID NOT NULL REFERENCES patch_deployments(id) ON DELETE CASCADE,
+					device_id     UUID NOT NULL,
+					PRIMARY KEY (deployment_id, device_id)
+				);
+				CREATE TABLE IF NOT EXISTS patch_device_states (
+					deployment_id UUID NOT NULL,
+					device_id     UUID NOT NULL,
+					patch_id      TEXT NOT NULL,
+					status        TEXT NOT NULL DEFAULT 'pending',
+					attempts      INT DEFAULT 0,
+					error         TEXT DEFAULT '',
+					updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					PRIMARY KEY (deployment_id, device_id, patch_id)
+				);
+				CREATE TABLE IF NOT EXISTS patch_inventory (
+					id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					tenant_id  UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+					device_id  UUID NOT NULL,
+					snapshot   JSONB NOT NULL DEFAULT '{}',
+					created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+				CREATE INDEX IF NOT EXISTS idx_patch_inventory_lookup ON patch_inventory(tenant_id, device_id, created_at DESC);
+				ALTER TABLE patch_inventory ENABLE ROW LEVEL SECURITY;
+				CREATE POLICY tenant_isolation_patch_inventory ON patch_inventory
+					USING (tenant_id = current_setting('app.tenant_id')::UUID);
+			`,
+			Down: `DROP TABLE IF EXISTS patch_inventory CASCADE; DROP TABLE IF EXISTS patch_device_states CASCADE; DROP TABLE IF EXISTS patch_deployment_devices CASCADE;`,
+		},
 	}
 }
 
