@@ -399,11 +399,11 @@ FROM metrics GROUP BY bucket, tenant_id, device_id, metric_name;
 - [ ] Synthetic monitoring
 - [ ] Reporting engine
 
-### Phase 5: Platform Hardening (Months 10-12)
-- [ ] Self-hosted distribution (Helm/KOTS)
-- [ ] Air-gapped install
-- [ ] Multi-region SaaS
-- [ ] Performance/load testing
+### Phase 5: Platform Hardening (Months 10-12) ✅
+- [x] Self-hosted distribution (Helm chart: deployments, HPA, PDB, network policies, ingress)
+- [x] Air-gapped install (Helm values with private registry, pre-pulled images)
+- [x] Multi-region SaaS (region-scoped values, NATS supercluster, regional backup)
+- [x] Performance/load testing (vegeta-based API + NATS agent simulation)
 - [ ] Security audit + penetration test
 - [ ] Documentation + runbooks
 

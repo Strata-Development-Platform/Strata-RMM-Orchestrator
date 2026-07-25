@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "strata-rmm.fullname" . }}-config
+  labels:
+    {{- include "strata-rmm.labels" . | nindent 4 }}
+data:
+  agent-config.yaml: |
+    nats_url: {{ include "strata-rmm.nats-url" . }}
+    collect_interval: 60s
+    log_level: {{ .Values.orchestrator.env.STRATA_RMM_LOG_LEVEL | default "info" }}
+
+  probe-config.yaml: |
+    nats_url: {{ include "strata-rmm.nats-url" . }}
+    discovery_enabled: true
+    flow_port: 2055
+    poll_interval: 300s
+    discovery_interval: 3600s

@@ -1,0 +1,96 @@
+{{- if .Values.orchestrator.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "strata-rmm.fullname" . }}
+  labels:
+    {{- include "strata-rmm.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.orchestrator.autoscaling.enabled }}
+  replicas: {{ .Values.orchestrator.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "strata-rmm.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.orchestrator.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "strata-rmm.labels" . | nindent 8 }}
+        {{- with .Values.orchestrator.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "strata-rmm.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.orchestrator.securityContext | nindent 8 }}
+      containers:
+        - name: orchestrator
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+          image: "{{ include "strata-rmm.image" . }}"
+          imagePullPolicy: {{ .Values.orchestrator.image.pullPolicy }}
+          args:
+            - orchestrator
+            - --nats-url
+            - {{ include "strata-rmm.nats-url" . | quote }}
+            - --timescale-dsn
+            - {{ include "strata-rmm.timescale-dsn" . | quote }}
+            - --api-addr
+            - "{{ .Values.orchestrator.env.STRATA_RMM_API_ADDR }}"
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-postgres
+                  key: password
+                  optional: true
+          ports:
+            - name: http
+              containerPort: {{ .Values.orchestrator.service.port }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+          resources:
+            {{- toYaml .Values.orchestrator.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.orchestrator.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.orchestrator.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.orchestrator.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

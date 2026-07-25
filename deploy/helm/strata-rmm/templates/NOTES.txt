@@ -1,0 +1,18 @@
+Thank you for installing {{ .Chart.Name }} {{ .Chart.Version }}.
+
+The Strata RMM orchestrator is now running.
+
+1. Get the API endpoint:
+   export POD_NAME=$(kubectl get pods --namespace {{ .Release.Namespace }} -l "app.kubernetes.io/name={{ include "strata-rmm.name" . }},app.kubernetes.io/instance={{ .Release.Name }}" -o jsonpath="{.items[0].metadata.name}")
+   kubectl --namespace {{ .Release.Namespace }} port-forward $POD_NAME 8080:8080
+
+2. Check health:
+   curl http://localhost:8080/health
+
+3. If Grafana is enabled:
+   kubectl --namespace {{ .Release.Namespace }} port-forward service/{{ .Release.Name }}-grafana 3000:80
+   Open http://localhost:3000 (admin/{{ .Values.grafana.adminPassword }})
+
+4. Deploy an agent:
+   strata-rmm agent --tenant-id YOUR_TENANT --enrollment-token YOUR_TOKEN \
+     --nats-url {{ include "strata-rmm.nats-url" . }}

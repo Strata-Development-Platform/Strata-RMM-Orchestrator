@@ -1,0 +1,36 @@
+# Air-gapped installation values
+# Pre-pull images to a private registry before deploying
+global:
+  imageRegistry: registry.internal.strata-rmm.io/library
+  imagePullSecrets:
+    - name: registry-credentials
+
+orchestrator:
+  image:
+    repository: strata-rmm
+    tag: "0.1.0"
+    pullPolicy: Always
+
+nats:
+  enabled: true
+  image:
+    repository: nats
+    tag: "2.10-alpine"
+  reloader:
+    image:
+      repository: natsio/nats-server-config-reloader
+      tag: "0.15.0"
+
+timescaledb:
+  enabled: true
+  image:
+    repository: timescaledev/timescaledb-ha
+    tag: pg16-2.15.1
+
+grafana:
+  enabled: false  # disable if air-gapped, use external grafana
+
+# Disable external chart dependencies - use images explicitly
+global:
+  tls:
+    enabled: false  # configure cert-manager separately

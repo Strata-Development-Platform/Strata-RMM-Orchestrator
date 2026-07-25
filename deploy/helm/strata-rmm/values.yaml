@@ -1,0 +1,186 @@
+# Strata RMM Helm Chart Values
+# Global settings apply across all sub-charts
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+  storageClass: ""
+
+# Orchestrator platform service
+orchestrator:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: stratalabs/strata-rmm
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  env:
+    STRATA_RMM_API_ADDR: ":8080"
+    STRATA_RMM_LOG_LEVEL: "info"
+  nats:
+    url: "nats://nats:4222"
+  timescale:
+    dsn: "postgres://strata:${POSTGRES_PASSWORD}@timescaledb:5432/strata_rmm?sslmode=disable"
+  service:
+    type: ClusterIP
+    port: 8080
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts:
+      - host: api.strata-rmm.local
+        paths: ["/"]
+    tls: []
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: 2000m
+      memory: 1Gi
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  podDisruptionBudget:
+    minAvailable: 1
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podAnnotations: {}
+  podLabels: {}
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
+  serviceAccount:
+    create: true
+    annotations: {}
+    name: ""
+
+# Agent (deployed on managed endpoints, not in cluster)
+# Included for reference; normally run outside K8s
+agent:
+  enabled: false
+
+# Network Probe (deployed in customer networks)
+probe:
+  enabled: false
+
+# NATS JetStream cluster
+nats:
+  enabled: true
+  cluster:
+    enabled: false
+    replicas: 3
+  config:
+    jetstream:
+      enabled: true
+      maxMemory: 2Gi
+      maxStore: 20Gi
+      fileStorage:
+        storageDirectory: /data/nats
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+# TimescaleDB
+timescaledb:
+  enabled: true
+  image:
+    tag: pg16-2.15.1
+  credentials:
+    user: strata
+    password: ""  # auto-generated if empty
+    database: strata_rmm
+  persistence:
+    size: 100Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 1000m
+      memory: 2Gi
+    limits:
+      cpu: 4000m
+      memory: 8Gi
+  backup:
+    enabled: false
+    schedule: "0 2 * * *"
+    retention: 7
+
+# Grafana (optional)
+grafana:
+  enabled: false
+  adminPassword: admin
+  persistence:
+    enabled: true
+    size: 10Gi
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+        - name: StrataRMM
+          orgId: 1
+          folder: StrataRMM
+          type: file
+          disableDeletion: false
+          editable: true
+          options:
+            path: /var/lib/grafana/dashboards
+  dashboards:
+    StrataRMM:
+      system-metrics:
+        gnetId: null
+        datasource: StrataRMM PostgreSQL
+      alerts:
+        gnetId: null
+        datasource: StrataRMM PostgreSQL
+  datasources:
+    "datasources.yaml":
+      apiVersion: 1
+      datasources:
+        - name: StrataRMM PostgreSQL
+          type: postgres
+          url: timescaledb:5432
+          database: strata_rmm
+          user: strata
+          secureJsonData:
+            password: ${POSTGRES_PASSWORD}
+          jsonData:
+            sslmode: disable
+            postgresVersion: 1600
+            timescaledb: true
+        - name: StrataRMM API
+          type: grafana-simple-json-datasource
+          url: http://orchestrator:8080
+          access: proxy
+
+# PostgreSQL (standalone, used when TimescaleDB not enabled)
+postgresql:
+  enabled: false
+  image:
+    tag: "16"
+  auth:
+    database: strata_rmm
+    username: strata
+    password: ""
+  primary:
+    persistence:
+      size: 50Gi
+
+# Global settings
+global:
+  environment: production
+  region: us-east-1
+  tenantMode: shared  # shared | dedicated
+  tls:
+    enabled: true
+    certManager:
+      enabled: false
+      issuer: ""

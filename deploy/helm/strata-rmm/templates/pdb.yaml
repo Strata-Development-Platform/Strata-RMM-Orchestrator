@@ -1,0 +1,18 @@
+{{- if .Values.orchestrator.podDisruptionBudget }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "strata-rmm.fullname" . }}
+  labels:
+    {{- include "strata-rmm.labels" . | nindent 4 }}
+spec:
+  {{- if .Values.orchestrator.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ .Values.orchestrator.podDisruptionBudget.minAvailable }}
+  {{- end }}
+  {{- if .Values.orchestrator.podDisruptionBudget.maxUnavailable }}
+  maxUnavailable: {{ .Values.orchestrator.podDisruptionBudget.maxUnavailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "strata-rmm.selectorLabels" . | nindent 6 }}
+{{- end }}

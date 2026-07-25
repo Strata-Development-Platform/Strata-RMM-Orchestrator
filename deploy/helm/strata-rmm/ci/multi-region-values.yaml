@@ -1,0 +1,81 @@
+# Multi-region SaaS deployment values
+# Each region gets its own instance with shared NATS supercluster
+
+global:
+  environment: production
+  region: ${REGION}  # set via --set global.region=us-east-1
+
+orchestrator:
+  replicaCount: 4
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 20
+    targetCPUUtilizationPercentage: 60
+    targetMemoryUtilizationPercentage: 70
+  resources:
+    requests:
+      cpu: 1000m
+      memory: 1Gi
+    limits:
+      cpu: 4000m
+      memory: 4Gi
+  ingress:
+    enabled: true
+    className: nginx
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt-prod
+      nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    hosts:
+      - host: api.${REGION}.strata-rmm.io
+        paths: ["/"]
+    tls:
+      - hosts:
+          - api.${REGION}.strata-rmm.io
+        secretName: strata-rmm-tls-${REGION}
+
+nats:
+  enabled: true
+  cluster:
+    enabled: true
+    replicas: 3
+  config:
+    jetstream:
+      enabled: true
+      maxMemory: 4Gi
+      maxStore: 100Gi
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+
+timescaledb:
+  enabled: true
+  credentials:
+    password: ""  # use external secrets manager in prod
+  persistence:
+    size: 500Gi
+    storageClass: gp3
+  resources:
+    requests:
+      cpu: 2000m
+      memory: 4Gi
+    limits:
+      cpu: 8000m
+      memory: 16Gi
+  backup:
+    enabled: true
+    schedule: "0 2 * * *"
+    retention: 30
+    s3:
+      bucket: strata-rmm-backups-${REGION}
+      region: ${REGION}
+
+grafana:
+  enabled: true
+  persistence:
+    size: 50Gi
