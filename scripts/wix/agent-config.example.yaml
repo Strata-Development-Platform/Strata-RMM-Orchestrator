@@ -1,0 +1,31 @@
+# Strata RMM Agent Configuration
+# Copy this to agent.yaml and fill in your tenant details
+
+agent:
+  tenant_id: "CHANGE_ME"           # Your tenant ID from the Strata RMM platform
+  enrollment_token: "CHANGE_ME"    # One-time enrollment token
+  log_level: "info"
+  data_dir: "C:\\ProgramData\\StrataRMM"
+
+nats:
+  urls:
+    - "nats://platform.strata-rmm.example.com:4222"
+  reconnect_wait: 5s
+  max_reconnects: -1
+
+collect:
+  interval: 60s
+  enable_system: true
+  enable_hardware: true
+  enable_software: true
+  enable_network: true
+
+store:
+  type: "bbolt"
+  path: "C:\\ProgramData\\StrataRMM\\agent.db"
+
+update:
+  enabled: true
+  check_interval: 24h
+  channel: "stable"
+  manifest_url: "https://releases.strata-rmm.io"

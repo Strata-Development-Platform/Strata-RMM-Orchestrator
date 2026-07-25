@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*"
+           Name="Strata RMM Agent"
+           Language="1033"
+           Version="$(var.Version)"
+           Manufacturer="Strata Development Platform"
+           UpgradeCode="$(var.UpgradeCode)">
+
+    <Package InstallerVersion="200"
+             Compressed="yes"
+             InstallScope="perMachine"
+             Platform="x64" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Strata RMM Agent is already installed." />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Directory structure -->
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="MANUFACTURERDIR" Name="StrataRMM">
+          <Directory Id="INSTALLDIR" Name="Agent">
+            <Component Id="AgentBinary" Guid="$(var.AgentBinaryGuid)">
+              <File Id="StrataRMMExe"
+                    Name="strata-rmm.exe"
+                    Source="$(var.BinaryPath)"
+                    KeyPath="yes"
+                    Checksum="yes"
+                    Vital="yes" />
+              <Environment Id="PathEnv"
+                           Name="PATH"
+                           Value="[INSTALLDIR]"
+                           Permanent="no"
+                           Part="last"
+                           Action="set"
+                           System="yes" />
+            </Component>
+
+            <Component Id="AgentConfig" Guid="$(var.AgentConfigGuid)">
+              <File Id="AgentConfigYaml"
+                    Name="agent.yaml"
+                    Source="$(var.ConfigPath)"
+                    KeyPath="yes"
+                    Vital="yes" />
+            </Component>
+
+            <Component Id="UninstallShortcut" Guid="$(var.UninstallShortcutGuid)">
+              <Shortcut Id="UninstallShortcut"
+                        Directory="INSTALLDIR"
+                        Name="Uninstall Strata RMM Agent"
+                        Target="[System64Folder]msiexec.exe"
+                        Arguments="/x [ProductCode]" />
+              <RemoveFolder Id="INSTALLDIR" On="uninstall" />
+              <RegistryValue Root="HKLM"
+                             Key="Software\StrataRMM\Agent"
+                             Name="installed"
+                             Type="integer"
+                             Value="1"
+                             KeyPath="yes" />
+            </Component>
+          </Directory>
+        </Directory>
+      </Directory>
+
+      <!-- Start Menu shortcuts -->
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="ProgramMenuDir" Name="Strata RMM">
+          <Component Id="StartMenuShortcuts" Guid="$(var.StartMenuGuid)">
+            <Shortcut Id="ConfigShortcut"
+                      Directory="ProgramMenuDir"
+                      Name="Edit Agent Config"
+                      Target="notepad.exe"
+                      Arguments="[INSTALLDIR]agent.yaml" />
+            <Shortcut Id="UninstallShortcutMenu"
+                      Directory="ProgramMenuDir"
+                      Name="Uninstall Strata RMM Agent"
+                      Target="[System64Folder]msiexec.exe"
+                      Arguments="/x [ProductCode]" />
+            <RemoveFolder Id="ProgramMenuDir" On="uninstall" />
+            <RegistryValue Root="HKLM"
+                           Key="Software\StrataRMM\Agent"
+                           Name="menu"
+                           Type="integer"
+                           Value="1"
+                           KeyPath="yes" />
+          </Component>
+        </Directory>
+      </Directory>
+    </Directory>
+
+    <!-- Install service -->
+    <CustomAction Id="InstallService"
+                  Directory="INSTALLDIR"
+                  ExeCommand="[System64Folder]sc.exe create StrataRMMAgent binPath= &quot;[INSTALLDIR]strata-rmm.exe agent --config [INSTALLDIR]agent.yaml&quot; start= auto DisplayName= &quot;Strata RMM Agent&quot;"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="check" />
+
+    <CustomAction Id="StartService"
+                  Directory="INSTALLDIR"
+                  ExeCommand="[System64Folder]sc.exe start StrataRMMAgent"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="ignore" />
+
+    <!-- Uninstall service -->
+    <CustomAction Id="StopService"
+                  Directory="INSTALLDIR"
+                  ExeCommand="[System64Folder]sc.exe stop StrataRMMAgent"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="ignore" />
+
+    <CustomAction Id="RemoveService"
+                  Directory="INSTALLDIR"
+                  ExeCommand="[System64Folder]sc.exe delete StrataRMMAgent"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="ignore" />
+
+    <!-- Installation sequence -->
+    <InstallExecuteSequence>
+      <Custom Action="StopService" Before="RemoveFiles">Installed AND NOT REMOVE</Custom>
+      <Custom Action="RemoveService" Before="RemoveFiles">REMOVE</Custom>
+      <Custom Action="InstallService" After="InstallFiles">NOT Installed</Custom>
+      <Custom Action="StartService" After="InstallService">NOT Installed</Custom>
+    </InstallExecuteSequence>
+
+    <!-- Features -->
+    <Feature Id="AgentFeature" Title="Strata RMM Agent" Level="1">
+      <ComponentRef Id="AgentBinary" />
+      <ComponentRef Id="AgentConfig" />
+      <ComponentRef Id="UninstallShortcut" />
+      <ComponentRef Id="StartMenuShortcuts" />
+    </Feature>
+  </Product>
+</Wix>

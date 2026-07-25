@@ -1,0 +1,78 @@
+apiVersion: kots.io/v1beta1
+kind: Config
+metadata:
+  name: strata-rmm-config
+spec:
+  groups:
+    - name: platform
+      title: Platform Configuration
+      items:
+        - name: nats_url
+          title: NATS URL
+          type: text
+          default: "nats://nats:4222"
+        - name: api_addr
+          title: API Listen Address
+          type: text
+          default: ":8080"
+        - name: tunnel_addr
+          title: Tunnel Gateway Address
+          type: text
+          default: ":8443"
+        - name: log_level
+          title: Log Level
+          type: select_one
+          default: "info"
+          items:
+            - {name: "debug", title: "Debug"}
+            - {name: "info", title: "Info"}
+            - {name: "warn", title: "Warn"}
+    - name: storage
+      title: Storage Backend
+      items:
+        - name: storage_backend
+          title: Backend Type
+          type: select_one
+          default: "minio"
+          items:
+            - {name: "minio", title: "MinIO"}
+            - {name: "s3", title: "AWS S3"}
+            - {name: "local", title: "Local"}
+            - {name: "none", title: "Disable"}
+        - name: storage_bucket
+          title: Bucket Name
+          type: text
+          default: "strata-recordings"
+        - name: storage_access_key
+          title: Access Key
+          type: text
+          default: "minioadmin"
+        - name: storage_secret_key
+          title: Secret Key
+          type: password
+          default: "minioadmin"
+    - name: security
+      title: Security
+      items:
+        - name: jwt_secret
+          title: JWT Secret
+          type: password
+          default: "strata-rmm-dev-secret"
+        - name: nvd_api_key
+          title: NVD API Key (optional)
+          type: password
+          default: ""
+    - name: agent
+      title: Agent Settings
+      items:
+        - name: agent_update_channel
+          title: Update Channel
+          type: select_one
+          default: "stable"
+          items:
+            - {name: "stable", title: "Stable"}
+            - {name: "beta", title: "Beta"}
+        - name: agent_rollout_percent
+          title: Rollout Percentage
+          type: text
+          default: "100"

@@ -1,0 +1,16 @@
+apiVersion: kots.io/v1beta1
+kind: Application
+metadata:
+  name: strata-rmm
+spec:
+  title: Strata RMM
+  description: |
+    Strata RMM is a horizontally-scalable, multi-tenant Remote Monitoring & Management
+    platform with cross-platform agents. Supports both SaaS and self-hosted deployments.
+  statusInformers:
+    - deployment/strata-rmm-orchestrator
+  additionalImages:
+    - nats:2.10-alpine
+    - timescale/timescaledb:2.15-pg16
+    - minio/minio:latest
+  minKotsVersion: "1.100.0"
