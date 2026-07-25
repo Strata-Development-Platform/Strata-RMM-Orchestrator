@@ -91,6 +91,8 @@ func (s *APIServer) Start(ctx context.Context) error {
 
 	mux.HandleFunc("GET /api/v1/platform/overview", s.handlePlatformOverview)
 	mux.HandleFunc("GET /api/v1/platform/customers", s.handlePlatformCustomers)
+	mux.HandleFunc("GET /api/v1/platform/customers/{tenantID}/devices", s.handleTenantDevices)
+	mux.HandleFunc("GET /api/v1/platform/customers/{tenantID}/devices/{deviceID}", s.handleDeviceInventory)
 
 	mux.HandleFunc("GET /api/v1/admin/users", s.handleAdminUsers)
 	mux.HandleFunc("POST /api/v1/admin/users", s.handleAdminCreateUser)
@@ -528,6 +530,21 @@ func (s *APIServer) handleIgnoreVulnerability(w http.ResponseWriter, r *http.Req
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ignored"})
+}
+
+func (s *APIServer) handleTenantDevices(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.PathValue("tenantID")
+	if s.db == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "database not available"})
+		return
+	}
+	store := inventory.NewStore(s.db.DB())
+	devices, err := store.ListDevices(tenantID, 100, 0)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"devices": devices})
 }
 
 func (s *APIServer) handleDeviceInventory(w http.ResponseWriter, r *http.Request) {

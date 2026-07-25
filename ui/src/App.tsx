@@ -3,6 +3,7 @@ import { AuthProvider, useAuth } from '@/hooks/useAuth';
 import Layout from '@/components/layout/Layout';
 import LoginPage from '@/pages/LoginPage';
 import DashboardPage from '@/pages/DashboardPage';
+import CustomerDetailPage from '@/pages/CustomerDetailPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();

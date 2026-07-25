@@ -55,8 +55,41 @@ class ApiClient {
   updateUserTenants = (userId: string, tenant_ids: string[]) =>
     this.request<{ status: string }>('PUT', `/api/v1/admin/users/${userId}/tenants`, { tenant_ids });
 
-  // Tenants
-  getTenant = (id: string) => this.request<Record<string, unknown>>('GET', `/api/v1/tenants/${id}`);
+  // Devices
+  getTenantDevices = (tenantID: string) =>
+    this.request<{ devices: Record<string, unknown>[] }>('GET', `/api/v1/platform/customers/${tenantID}/devices`);
+  getDevice = (deviceID: string) =>
+    this.request<Record<string, unknown>>('GET', `/api/v1/platform/customers/_/devices/${deviceID}`);
+
+  // Alerts
+  getTenantAlerts = (tenantID: string) =>
+    this.request<{ alerts: Record<string, unknown>[] }>('GET', `/api/v1/alerts/${tenantID}`);
+  getAlertHistory = (tenantID: string) =>
+    this.request<{ alerts: Record<string, unknown>[] }>('GET', `/api/v1/alerts/${tenantID}/history`);
+  getRules = (tenantID: string) =>
+    this.request<{ rules: Record<string, unknown>[] }>('GET', `/api/v1/rules/${tenantID}`);
+
+  // Vulnerabilities
+  getTenantVulns = (tenantID: string) =>
+    this.request<{ vulnerabilities: Record<string, unknown>[] }>('GET', `/api/v1/vulnerabilities/tenant/${tenantID}`);
+  getVulnSummary = (tenantID: string) =>
+    this.request<Record<string, unknown>>('GET', `/api/v1/vulnerabilities/tenant/${tenantID}/summary`);
+
+  // Recordings
+  getTenantRecordings = (tenantID: string) =>
+    this.request<{ recordings: Record<string, unknown>[] }>('GET', `/api/v1/recordings/${tenantID}`);
+
+  // Keys
+  getTenantKeys = (tenantID: string) =>
+    this.request<{ keys: Record<string, unknown>[] }>('GET', `/api/v1/keys/${tenantID}`);
+
+  // Access
+  getTenantUsers = (tenantID: string) =>
+    this.request<{ users: Record<string, unknown>[] }>('GET', `/api/v1/access/users/${tenantID}`);
+  getTenantAudit = (tenantID: string) =>
+    this.request<{ audit_entries: Record<string, unknown>[] }>('GET', `/api/v1/access/audit/${tenantID}`);
+  getTenantPermissions = (tenantID: string) =>
+    this.request<{ permissions: Record<string, unknown>[] }>('GET', `/api/v1/access/permissions/${tenantID}`);
 }
 
 export const api = new ApiClient();
