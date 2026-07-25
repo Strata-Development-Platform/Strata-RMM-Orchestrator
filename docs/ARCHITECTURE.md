@@ -320,17 +320,20 @@ FROM metrics GROUP BY bucket, tenant_id, device_id, metric_name;
 
 #### 1.2 NATS JetStream Communication (Months 1.5-2) ✅
 - [x] NATS connection manager (TLS/mTLS, reconnect with backoff, error handling)
-- [x] Tenant subject isolation: `tenant.{id}.agent.{agent_id}` / `.cmd.` / `.events.` / `.heartbeat.`
+- [x] Tenant subject isolation: `tenant.{id}.agent.{id}.{metrics,events,heartbeat,cmd}`
 - [x] Metrics batch publish with BBolt-queued replay on reconnect
 - [x] Heartbeat loop (30s interval) with status reporting
 - [x] Event publishing with store-and-forward
 - [x] Command subscription helpers (Subscribe, QueueSubscribe, Request)
 
-#### 1.3 Metrics Ingestion Pipeline (In Progress)
-- [ ] NATS subscription service (platform-side consumer)
-- [ ] TimescaleDB hypertable schema + migrations
-- [ ] Metrics batch writer (hypertable insert with compression)
-- [ ] Continuous aggregate views (1m, 1h downsampling)
+#### 1.3 Metrics Ingestion Pipeline (Months 2-2.5) ✅
+- [x] NATS subscription service (platform-side consumer with wildcard subjects)
+- [x] TimescaleDB hypertable schema + migrations (metrics, events, heartbeats, commands)
+- [x] Batch writer with prepared statements + transaction support
+- [x] Continuous aggregate views (metrics_1m, metrics_1h with avg/min/max/last/count)
+- [x] Compression policy (7-day segment-by tenant/device/metric)
+- [x] Retention policy (365-day auto-expiry)
+- [x] Event and heartbeat ingestion
 
 #### 1.4 Remaining Foundation
 - [ ] Tenant/Auth service + API Gateway (Kong/Traefik)

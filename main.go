@@ -9,6 +9,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/strata-rmm/strata-rmm-orchestrator/cmd/agent"
+	"github.com/strata-rmm/strata-rmm-orchestrator/cmd/orchestrator"
 	"github.com/strata-rmm/strata-rmm-orchestrator/cmd/probe"
 	"github.com/spf13/cobra"
 )
@@ -27,13 +28,14 @@ func main() {
 with cross-platform agents (Go) supporting both SaaS and self-hosted deployments.
 
 Components:
-  agent   - Cross-platform monitoring agent (Windows/Linux/macOS)
-  probe   - Network probe for agentless monitoring (SNMP, flows, synthetics)
-  api     - Platform API server (not implemented in this binary)`,
+  agent         - Cross-platform monitoring agent (Windows/Linux/macOS)
+  orchestrator   - Platform services (NATS consumer, TimescaleDB, alerting, API)
+  probe         - Network probe for agentless monitoring (SNMP, flows, synthetics)`,
 	}
 
 	rootCmd.AddCommand(
 		agent.NewCommand(ctx, logger),
+		orchestrator.NewCommand(ctx, logger),
 		probe.NewCommand(ctx, logger),
 	)
 
