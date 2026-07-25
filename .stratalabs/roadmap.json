@@ -1,0 +1,43 @@
+{
+  "$schemaVersion": 1,
+  "status": "active",
+  "summary": "Build a horizontally-scalable, multi-tenant RMM platform with cross-platform agents supporting SaaS and self-hosted deployments.",
+  "timeline": "Q3 2026 — Q2 2027",
+  "milestones": [
+    {
+      "id": "phase1-foundation",
+      "title": "Phase 1: Foundation (Months 1-3)",
+      "target": "Q3 2026",
+      "status": "in_progress",
+      "description": "Tenant/Auth service, API Gateway, PostgreSQL + TimescaleDB schema, NATS JetStream cluster, Core Agent (identity, comms, config, self-update), Basic system collector"
+    },
+    {
+      "id": "phase2-monitoring-core",
+      "title": "Phase 2: Monitoring Core (Months 3-5)",
+      "target": "Q4 2026",
+      "status": "planned",
+      "description": "Metrics ingestion pipeline (NATS → TimescaleDB), Alerting engine (threshold, heartbeat), SNMP/ICMP collector (agentless), Network Probe (SNMP, discovery), Dashboard/visualization"
+    },
+    {
+      "id": "phase3-remote-access-automation",
+      "title": "Phase 3: Remote Access & Automation (Months 5-7)",
+      "target": "Q1 2027",
+      "status": "planned",
+      "description": "Tunnel infrastructure (WebSocket/NATS), RDP/SSH/VNC proxy, Script execution framework, Patch management (Windows + Linux), Software inventory + vulnerability correlation"
+    },
+    {
+      "id": "phase4-advanced-features",
+      "title": "Phase 4: Advanced Features (Months 7-10)",
+      "target": "Q2 2027",
+      "status": "planned",
+      "description": "ML-based anomaly detection, NetFlow/sFlow ingestion, IP Phone monitoring (SIP, vendor APIs), Synthetic monitoring, Reporting engine"
+    },
+    {
+      "id": "phase5-hardening",
+      "title": "Phase 5: Platform Hardening (Months 10-12)",
+      "target": "Q2 2027",
+      "status": "planned",
+      "description": "Self-hosted distribution (Helm/KOTS), Air-gapped install, Multi-region SaaS, Performance/load testing, Security audit + pentest, Documentation + runbooks"
+    }
+  ]
+}
