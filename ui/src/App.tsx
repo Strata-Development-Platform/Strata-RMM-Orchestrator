@@ -5,6 +5,8 @@ import LoginPage from '@/pages/LoginPage';
 import DashboardPage from '@/pages/DashboardPage';
 import CustomerDetailPage from '@/pages/CustomerDetailPage';
 import UserManagementPage from '@/pages/UserManagementPage';
+import AdminSettingsPage from '@/pages/AdminSettingsPage';
+import SettingsPage from '@/pages/SettingsPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();

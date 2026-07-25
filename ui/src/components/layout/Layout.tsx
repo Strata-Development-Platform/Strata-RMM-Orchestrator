@@ -9,6 +9,10 @@ const navItems = [
   { path: '/admin/settings', label: 'Settings', icon: '⚙' },
 ];
 
+const bottomNav = [
+  { path: '/settings', label: 'My Settings', icon: '🔐' },
+];
+
 export default function Layout({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth();
   const location = useLocation();
@@ -49,6 +53,22 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           ))}
         </nav>
 
+        <div className="p-2 space-y-1">
+          {bottomNav.map(item => (
+            <Link
+              key={item.path}
+              to={item.path}
+              className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
+                location.pathname === item.path
+                  ? 'bg-blue-600 text-white'
+                  : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+              }`}
+            >
+              <span className="text-lg">{item.icon}</span>
+              {!collapsed && <span>{item.label}</span>}
+            </Link>
+          ))}
+        </div>
         <div className="p-3 border-t border-slate-700">
           <div className={`flex items-center gap-2 ${collapsed ? 'justify-center' : ''}`}>
             <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center text-sm font-bold">
