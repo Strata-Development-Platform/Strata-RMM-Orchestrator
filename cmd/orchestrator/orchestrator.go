@@ -11,6 +11,7 @@ import (
 
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/monitoring"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/platform"
+	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/postgres"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/timescale"
 )
 
@@ -51,6 +52,18 @@ func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 				return fmt.Errorf("applying migrations: %w", err)
 			}
 			logger.Info("TimescaleDB migrations applied")
+
+			sm := postgres.NewSchemaManager(tsdb.DB())
+			if err := sm.Apply(); err != nil {
+				return fmt.Errorf("applying relational schema: %w", err)
+			}
+			logger.Info("relational schema migrations applied")
+
+			if err := postgres.SeedDevTenant(tsdb.DB()); err != nil {
+				logger.Warn("seed dev tenant", zap.Error(err))
+			} else {
+				logger.Info("dev tenant seeded")
+			}
 
 			ingest := monitoring.NewIngestService(nc, tsdb, logger)
 			if err := ingest.Start(ctx); err != nil {

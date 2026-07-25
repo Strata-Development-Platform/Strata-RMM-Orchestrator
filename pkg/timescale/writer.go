@@ -58,6 +58,10 @@ func NewClient(ctx context.Context, dsn string) (*Client, error) {
 	return &Client{db: db}, nil
 }
 
+func (c *Client) DB() *sql.DB {
+	return c.db
+}
+
 func (c *Client) Close() {
 	c.db.Close()
 }

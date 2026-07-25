@@ -336,15 +336,32 @@ FROM metrics GROUP BY bucket, tenant_id, device_id, metric_name;
 - [x] Event and heartbeat ingestion
 
 #### 1.4 Auth, Tenancy & API Gateway (Months 2.5-3) ✅
-- [x] JWT token generation/validation (HS256, agent + user tokens)
+- [x] JWT token generation/validation (HS256, agent + user tokens with tenant/role claims)
 - [x] Enrollment token system (time-bound, single-use agent provisioning)
 - [x] REST API server (Go 1.22 stdlib net/http with method-based routing)
 - [x] Health check endpoint (GET /health)
 - [x] Agent enrollment endpoint (POST /api/v1/enroll)
 - [x] Metrics query API (GET /api/v1/metrics, GET /api/v1/devices/{id}/metrics/{name})
 - [x] Heartbeat query API (GET /api/v1/heartbeat/{tenantID}/{deviceID})
-- [x] Aggregated metrics support (1m, 1h bucket via continuous aggregate views)
+- [x] Aggregated metrics via continuous aggregate views (1m, 1h buckets)
 - [x] Request logging middleware
+
+#### 1.5 Deployment Configs (Months 3-3.2) ✅
+- [x] Multi-stage Dockerfile (golang:1.22-alpine → alpine:3.20, 16MB binary)
+- [x] docker-compose.yml for local dev (NATS 2.10, TimescaleDB 2.15 PG16, orchestrator)
+- [x] Makefile with build/test/lint/dev/docker targets
+- [x] Cross-compilation targets (linux amd64/arm64, windows amd64)
+
+#### 1.6 Agent Installer (Months 3.2-3.5) ✅
+- [x] Systemd service unit (hardened, restart policy, journal logging)
+- [x] Install script (binary deploy, dir setup, service enable)
+- [x] Uninstall support (service stop/remove, data cleanup)
+- [x] Multi-platform detection (linux amd64/arm64)
+
+#### 1.7 Next Phase Foundation
+- [ ] Alerting engine (threshold rules, notification channels)
+- [ ] Agentless SNMP/ICMP Network Probe (Go)
+- [ ] Dashboard/visualization layer
 
 ### Phase 2: Monitoring Core (Months 3-5) ⏳
 - [x] Metrics ingestion pipeline (NATS → TimescaleDB) — *completed in Phase 1.3*
