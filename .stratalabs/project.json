@@ -1,0 +1,20 @@
+{
+  "$schemaVersion": 1,
+  "displayName": "Strata RMM Orchestrator",
+  "shortDescription": "Horizontally-scalable, multi-tenant remote monitoring and management platform.",
+  "longDescription": "An open-source RMM platform with cross-platform agents, real-time monitoring, remote access, patch management, alerting, and reporting. Supports SaaS and self-hosted deployments with NATS JetStream messaging and TimescaleDB storage.",
+  "category": "infrastructure",
+  "lifecycle": "incubating",
+  "featured": false,
+  "weight": 50,
+  "documentation": {
+    "entry": "docs/index.md"
+  },
+  "links": {
+    "website": null,
+    "docker": null,
+    "package": null,
+    "discussions": null,
+    "support": "https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/issues"
+  }
+}
