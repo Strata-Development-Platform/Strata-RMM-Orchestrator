@@ -205,12 +205,18 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /api/v1/recordings/{id}/playback", s.handlePlaybackRecording)
 	mux.HandleFunc("DELETE /api/v1/recordings/{id}", s.handleDeleteRecording)
 
+	mux.HandleFunc("GET /api/v1/branding", s.handleGetBranding)
+	mux.HandleFunc("PUT /api/v1/branding", s.handleUpdateBranding)
+	mux.HandleFunc("GET /api/v1/domains", s.handleListDomains)
+
 	rateLimiter := auth.NewRateLimiter(30, 60)
 
 	handler := rateLimiter.Middleware(
 		auth.SecurityHeaders(
 			withLogging(
-				s.withAccessControl(mux),
+				s.withBranding(
+					s.withAccessControl(mux),
+				),
 				s.logger,
 			),
 		),

@@ -799,6 +799,62 @@ func Migrations() []Migration {
 				DELETE FROM msp_tenants WHERE id = '00000000-0000-0000-0000-000000000001';
 			`,
 		},
+		{
+			ID:   31,
+			Name: "create_branding_profiles",
+			Up: `
+				CREATE TABLE IF NOT EXISTS branding_profiles (
+					id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					msp_id          UUID NOT NULL REFERENCES msp_tenants(id) ON DELETE CASCADE,
+					display_name    TEXT NOT NULL DEFAULT '',
+					logo_light      TEXT,
+					logo_dark       TEXT,
+					favicon         TEXT,
+					primary_color   TEXT NOT NULL DEFAULT '#2563eb',
+					accent_color    TEXT NOT NULL DEFAULT '#6366f1',
+					sidebar_bg      TEXT NOT NULL DEFAULT '#0f172a',
+					header_bg       TEXT NOT NULL DEFAULT '#1e293b',
+					login_bg        TEXT NOT NULL DEFAULT '#0f172a',
+					portal_title    TEXT NOT NULL DEFAULT 'Strata RMM',
+					welcome_text    TEXT NOT NULL DEFAULT 'Platform Management Console',
+					support_email   TEXT,
+					support_phone   TEXT,
+					terms_url       TEXT,
+					privacy_url     TEXT,
+					is_default      BOOLEAN NOT NULL DEFAULT false,
+					created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					UNIQUE(msp_id)
+				);
+				INSERT INTO branding_profiles (msp_id, display_name, is_default)
+				SELECT id, name, true FROM msp_tenants ON CONFLICT (msp_id) DO NOTHING;
+			`,
+			Down: `DROP TABLE IF EXISTS branding_profiles CASCADE;`,
+		},
+		{
+			ID:   32,
+			Name: "create_custom_domains",
+			Up: `
+				CREATE TABLE IF NOT EXISTS custom_domains (
+					id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					msp_id              UUID NOT NULL REFERENCES msp_tenants(id) ON DELETE CASCADE,
+					hostname            TEXT NOT NULL,
+					domain_type         TEXT NOT NULL DEFAULT 'custom' CHECK (domain_type IN ('default', 'custom', 'portal')),
+					verification_token  TEXT NOT NULL DEFAULT '',
+					verification_status TEXT NOT NULL DEFAULT 'pending' CHECK (verification_status IN ('pending', 'verified', 'active', 'failed', 'suspended')),
+					certificate_status  TEXT NOT NULL DEFAULT 'none' CHECK (certificate_status IN ('none', 'requested', 'issued', 'expired', 'failed')),
+					is_primary          BOOLEAN NOT NULL DEFAULT false,
+					branding_profile_id UUID REFERENCES branding_profiles(id) ON DELETE SET NULL,
+					verified_at         TIMESTAMPTZ,
+					last_check_at       TIMESTAMPTZ,
+					created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					UNIQUE(hostname)
+				);
+				CREATE INDEX IF NOT EXISTS idx_custom_domains_msp ON custom_domains(msp_id);
+				CREATE INDEX IF NOT EXISTS idx_custom_domains_status ON custom_domains(verification_status);
+			`,
+			Down: `DROP TABLE IF EXISTS custom_domains CASCADE;`,
+		},
 	}
 }
 

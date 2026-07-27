@@ -15,6 +15,15 @@ The format follows Keep a Changelog principles, and releases should use semantic
 - **TypeScript fixes**: `tsc -b` now passes cleanly. Fixed 12 errors across 6 files.
 - **Documentation**: `MASTER_PLAN.md`, `IMPLEMENTATION_STATUS.md`, `COMPATIBILITY_MATRIX.md`, `SECURITY_MODEL.md`, `SAAS_TENANCY.md`, `API_COMPATIBILITY.md`, `AGENT_PROTOCOL.md`.
 
+### Branding & Domains — Phase 3
+- **ADDED**: `branding_profiles` table (migration 31) — MSP display name, logos, colors, portal text.
+- **ADDED**: `custom_domains` table (migration 32) — custom subdomain management with verification status.
+- **ADDED**: Default branding profile seeded for the Strata Platform MSP.
+- **ADDED**: `withBranding` middleware — resolves MSP identity from hostname (platform domain, MSP subdomains, custom domains).
+- **ADDED**: `GET /api/v1/branding` — returns the branding profile for the current MSP.
+- **ADDED**: `PUT /api/v1/branding` — updates branding profile colors, logos, text.
+- **ADDED**: `GET /api/v1/domains` — lists custom domains for the current MSP.
+
 ### SaaS — Phase 2
 - **ADDED**: `msp_tenants` table (migration 27) — MSP tenant model.
 - **ADDED**: `client_organizations` table (migration 28) — client orgs under MSPs.

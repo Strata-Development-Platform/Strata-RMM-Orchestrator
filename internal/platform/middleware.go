@@ -8,6 +8,8 @@ import (
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/auth"
 )
 
+const platformDomain = "rmm.stratadevplatform.com"
+
 type contextKey string
 
 const (
@@ -32,6 +34,58 @@ type Route struct {
 	Method string
 	Path   string
 	Access RouteAccess
+}
+
+func (s *APIServer) resolveMSPByHost(host string) (mspID, slug string) {
+	host = strings.ToLower(strings.Split(host, ":")[0])
+
+	if host == platformDomain || host == "localhost" || host == "127.0.0.1" {
+		if s.db == nil {
+			return "", ""
+		}
+		var id string
+		err := s.db.DB().QueryRow(`SELECT id FROM msp_tenants ORDER BY created_at ASC LIMIT 1`).Scan(&id)
+		if err != nil {
+			return "", ""
+		}
+		return id, "strata"
+	}
+
+	if strings.HasSuffix(host, "."+platformDomain) {
+		slug := strings.TrimSuffix(host, "."+platformDomain)
+		var id string
+		err := s.db.DB().QueryRow(`SELECT id FROM msp_tenants WHERE slug = $1 AND is_active = true`, slug).Scan(&id)
+		if err == nil {
+			return id, slug
+		}
+	}
+
+	var domainMSPID, domainSlug string
+	err := s.db.DB().QueryRow(`
+		SELECT m.id, m.slug FROM msp_tenants m
+		JOIN custom_domains d ON d.msp_id = m.id
+		WHERE d.hostname = $1 AND d.verification_status IN ('verified', 'active')
+		LIMIT 1
+	`, host).Scan(&domainMSPID, &domainSlug)
+	if err == nil {
+		return domainMSPID, domainSlug
+	}
+
+	return "", ""
+}
+
+func (s *APIServer) withBranding(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mspID, slug := s.resolveMSPByHost(r.Host)
+		if mspID != "" {
+			ctx := context.WithValue(r.Context(), ctxKeyMSPID, mspID)
+			r.Header.Set("X-MSP-ID", mspID)
+			r.Header.Set("X-MSP-Slug", slug)
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *APIServer) withAccessControl(next http.Handler) http.Handler {
