@@ -1177,6 +1177,48 @@ func Migrations() []Migration {
 				ALTER TABLE IF EXISTS enrollment_tokens_v2 DISABLE ROW LEVEL SECURITY;
 			`,
 		},
+		{
+			ID:   45,
+			Name: "add_missing_rls_policies_and_force_rls",
+			Up: `
+				-- Add WITH CHECK policies for INSERT/UPDATE on core tenant tables
+				DROP POLICY IF EXISTS msp_isolation_client_orgs_insert ON client_organizations;
+				CREATE POLICY msp_isolation_client_orgs_insert ON client_organizations
+					FOR INSERT WITH CHECK (msp_id = current_setting('app.msp_id')::uuid);
+				DROP POLICY IF EXISTS msp_isolation_client_orgs_update ON client_organizations;
+				CREATE POLICY msp_isolation_client_orgs_update ON client_organizations
+					FOR UPDATE USING (msp_id = current_setting('app.msp_id')::uuid);
+
+				DROP POLICY IF EXISTS msp_isolation_devices_insert ON devices;
+				CREATE POLICY msp_isolation_devices_insert ON devices
+					FOR INSERT WITH CHECK (msp_id = current_setting('app.msp_id')::uuid);
+				DROP POLICY IF EXISTS msp_isolation_devices_update ON devices;
+				CREATE POLICY msp_isolation_devices_update ON devices
+					FOR UPDATE USING (msp_id = current_setting('app.msp_id')::uuid);
+
+				-- Safe missing-setting helper function
+				CREATE OR REPLACE FUNCTION safe_msp_id() RETURNS uuid AS $$
+				BEGIN
+					BEGIN
+						RETURN current_setting('app.msp_id')::uuid;
+					EXCEPTION WHEN OTHERS THEN
+						RETURN NULL;
+					END;
+				END;
+				$$ LANGUAGE plpgsql IMMUTABLE;
+
+				-- Force RLS on key tables (only for owner role)
+				ALTER TABLE IF EXISTS client_organizations FORCE ROW LEVEL SECURITY;
+				ALTER TABLE IF EXISTS devices FORCE ROW LEVEL SECURITY;
+				ALTER TABLE IF EXISTS sites FORCE ROW LEVEL SECURITY;
+			`,
+			Down: `
+				ALTER TABLE IF EXISTS client_organizations NO FORCE ROW LEVEL SECURITY;
+				ALTER TABLE IF EXISTS devices NO FORCE ROW LEVEL SECURITY;
+				ALTER TABLE IF EXISTS sites NO FORCE ROW LEVEL SECURITY;
+				DROP FUNCTION IF EXISTS safe_msp_id();
+			`,
+		},
 	}
 }
 
