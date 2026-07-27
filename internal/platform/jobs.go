@@ -71,7 +71,8 @@ func (s *APIServer) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 	}
 	expiresAt := scheduledFor.Add(72 * time.Hour)
 
-	_, err := s.db.DB().ExecContext(r.Context(), `
+	db := s.requestDB(r)
+	_, err := db.ExecContext(r.Context(), `
 		INSERT INTO jobs (id, msp_id, client_id, created_by, type, status, priority,
 		                  payload, idempotency_key, max_retries, max_devices, expires_at,
 		                  correlation_id, scheduled_for)
@@ -87,7 +88,7 @@ func (s *APIServer) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 	// Create targets and outbox entries
 	for _, deviceID := range req.DeviceIDs {
 		targetID := uuid.New().String()
-		s.db.DB().ExecContext(r.Context(), `
+		db.ExecContext(r.Context(), `
 			INSERT INTO job_targets (id, job_id, device_id, msp_id, status)
 			VALUES ($1, $2, $3, $4, 'queued')
 		`, targetID, id, deviceID, mspID)
@@ -100,7 +101,7 @@ func (s *APIServer) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 			"type":      req.Type,
 			"payload":   req.Payload,
 		})
-		s.db.DB().ExecContext(r.Context(), `
+		db.ExecContext(r.Context(), `
 			INSERT INTO job_outbox (id, msp_id, aggregate_id, event_type, payload, available_at)
 			VALUES (gen_random_uuid(), $1, $2, 'job.dispatch', $3, $4)
 		`, mspID, id, outboxPayload, scheduledFor)
@@ -119,7 +120,8 @@ func (s *APIServer) handleGetJob(w http.ResponseWriter, r *http.Request) {
 
 	var mspID, clientID, jobType, status string
 	var createdAt, expiresAt time.Time
-	err := s.db.DB().QueryRowContext(r.Context(), `
+	db := s.requestDB(r)
+	err := db.QueryRowContext(r.Context(), `
 		SELECT msp_id, client_id, type, status, created_at, expires_at
 		FROM jobs WHERE id = $1
 	`, jobID).Scan(&mspID, &clientID, &jobType, &status, &createdAt, &expiresAt)
@@ -132,7 +134,7 @@ func (s *APIServer) handleGetJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := s.db.DB().QueryContext(r.Context(), `
+	rows, err := db.QueryContext(r.Context(), `
 		SELECT device_id, status, COALESCE(error_message, ''), started_at, completed_at, attempt, exit_code
 		FROM job_targets WHERE job_id = $1 ORDER BY created_at ASC
 	`, jobID)

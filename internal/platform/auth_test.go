@@ -182,6 +182,8 @@ func TestAdminRoutesRejectNonAdmin(t *testing.T) {
 }
 
 func TestTokenPurposeSeparation(t *testing.T) {
+	os.Setenv("JWT_SECRET", "test-secret-that-is-long-enough-for-testing")
+	defer os.Unsetenv("JWT_SECRET")
 	gen := auth.NewTokenGenerator("test-secret-that-is-long-enough-for-testing")
 	userToken, err := gen.GenerateUserToken("user-1", "tenant-1", "msp-1", "", "", []string{"msp_admin"}, time.Hour)
 	if err != nil {
