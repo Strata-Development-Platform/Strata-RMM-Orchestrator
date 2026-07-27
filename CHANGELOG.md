@@ -4,6 +4,22 @@ All notable changes to this project should be documented here.
 
 The format follows Keep a Changelog principles, and releases should use semantic versioning where applicable.
 
+## [0.5.0] - 2026-07-27
+
+### Added
+- **SaaS Rewrite Phase 0 — Baseline**: Backup branch `backup/pre-saas-rewrite-20260727`, baseline tag `pre-saas-rewrite-20260727`.
+- **Comprehensive baseline inventory**: 17,292 Go LOC, 3,185 TS/TSX LOC, 66 HTTP routes, 23 NATS subjects, 37 database tables.
+- **Missing `alerts` table**: Created by migration #26 — all alert queries previously failed with "relation does not exist".
+- **Missing UI routes**: 10 page components were imported but not registered in App.tsx. All routes now wired.
+- **Missing remote input endpoint**: `POST /api/v1/remote/{tenantID}/session/{sessionID}/input` added.
+- **TypeScript fixes**: `tsc -b` now passes cleanly. Fixed 12 errors across 6 files.
+- **Documentation**: `MASTER_PLAN.md`, `IMPLEMENTATION_STATUS.md`, `COMPATIBILITY_MATRIX.md`, `SECURITY_MODEL.md`, `SAAS_TENANCY.md`, `API_COMPATIBILITY.md`, `AGENT_PROTOCOL.md`.
+
+### Security
+- **CRITICAL**: Hardcoded JWT secret `strata-rmm-dev-secret` identified in 6 locations (documented, not yet fixed).
+- **CRITICAL**: Placeholder password hash `$2a$10$placeholder` in seed data (documented, not yet fixed).
+- Enrollment tokens stored in-memory only (documented, not yet fixed).
+
 ## [0.4.0] - 2026-07-25
 
 ### Added
