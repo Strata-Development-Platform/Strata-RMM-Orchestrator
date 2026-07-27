@@ -157,6 +157,41 @@ func (d *Dispatcher) processOutbox() {
 			continue
 		}
 
+		// Commit the dispatched state before publishing. Otherwise a fast agent
+		// can acknowledge or finish while PostgreSQL still reports "queued".
+		tx, err := d.db.DB().Begin()
+		if err != nil {
+			d.failOutbox(id, err, attempt)
+			continue
+		}
+		result, err := tx.Exec(`
+			UPDATE job_targets
+			SET status = 'dispatched', dispatched_at = COALESCE(dispatched_at, NOW()), attempt = $2,
+			    lease_owner = NULL, lease_expires = NOW() + INTERVAL '2 minutes'
+			WHERE id = $1 AND status IN ('queued','dispatched') AND (status = 'queued' OR attempt < $2)
+		`, targetID, attempt)
+		if err == nil {
+			var affected int64
+			affected, err = result.RowsAffected()
+			if err == nil && affected > 0 {
+				_, err = tx.Exec(`
+					UPDATE jobs SET dispatch_count = dispatch_count + 1,
+						status = CASE WHEN status IN ('pending','queued') THEN 'dispatched' ELSE status END,
+						updated_at = NOW()
+					WHERE id = $1
+				`, aggregateID)
+			}
+		}
+		if err != nil {
+			_ = tx.Rollback()
+			d.failOutbox(id, err, attempt)
+			continue
+		}
+		if err := tx.Commit(); err != nil {
+			d.failOutbox(id, err, attempt)
+			continue
+		}
+
 		subject := fmt.Sprintf("tenant.%s.cmd.%s", mspID, agentID)
 		if err := d.nc.Publish(subject, []byte(payloadStr)); err != nil {
 			d.failOutbox(id, err, attempt)
@@ -167,33 +202,12 @@ func (d *Dispatcher) processOutbox() {
 			continue
 		}
 
-		tx, err := d.db.DB().Begin()
-		if err != nil {
-			d.failOutbox(id, err, attempt)
-			continue
-		}
-		if _, err = tx.Exec(`
+		if _, err := d.db.DB().Exec(`
 			UPDATE job_outbox
 			SET published_at = NOW(), lease_owner = NULL, lease_expires = NULL, last_error = NULL
 			WHERE id = $1 AND lease_owner = $2
-		`, id, d.workerID); err == nil {
-			_, err = tx.Exec(`
-				UPDATE job_targets
-				SET status = 'dispatched', dispatched_at = NOW(), attempt = $2,
-				    lease_owner = NULL, lease_expires = NOW() + INTERVAL '2 minutes'
-				WHERE id = $1 AND status = 'queued' AND attempt < $2
-			`, targetID, attempt)
-		}
-		if err == nil {
-			_, err = tx.Exec(`UPDATE jobs SET dispatch_count = dispatch_count + 1, status = 'dispatched', updated_at = NOW() WHERE id = $1`, aggregateID)
-		}
-		if err != nil {
-			_ = tx.Rollback()
+		`, id, d.workerID); err != nil {
 			d.logger.Error("finalize outbox publish", zap.String("id", id), zap.Error(err))
-			continue
-		}
-		if err := tx.Commit(); err != nil {
-			d.logger.Error("commit outbox publish", zap.String("id", id), zap.Error(err))
 		}
 	}
 

@@ -36,6 +36,10 @@ Operational recovery:
 - Investigate repeated pending results as a NATS connectivity or server inbox
   processing failure; do not manually mark them successful.
 
+CI exercises the protocol against real PostgreSQL and NATS containers with the
+`jobintegration` build tag. It covers the complete round trip, duplicate
+delivery, restart replay, result receipts, and running-command cancellation.
+
 ## Overview
 
 The durable job system provides reliable, asynchronous execution of operations across managed devices. It supports dispatch via NATS, per-device status tracking, retry with backoff, idempotency enforcement, and automatic expiration.
