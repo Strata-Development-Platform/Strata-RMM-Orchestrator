@@ -48,7 +48,7 @@ func (im *IdentityManager) LoadOrCreate(tenantID, enrollmentToken string) (*Iden
 	return im.enroll(tenantID, enrollmentToken)
 }
 
-func (im *IdentityManager) RegisterWithDeploymentID(registerURL, deploymentID string) (*Identity, error) {
+func (im *IdentityManager) RegisterWithDeploymentID(registerURL, deploymentID, enrollmentToken string) (*Identity, error) {
 	os.MkdirAll(im.dir, 0700)
 
 	ident, err := im.load()
@@ -72,12 +72,13 @@ func (im *IdentityManager) RegisterWithDeploymentID(registerURL, deploymentID st
 	}
 
 	body, _ := json.Marshal(map[string]string{
-		"deployment_id": deploymentID,
-		"hostname":      hostname,
-		"os":            runtime.GOOS,
-		"arch":          runtime.GOARCH,
-		"version":       ver,
-		"public_key":    hex.EncodeToString(pubKeyBytes),
+		"deployment_id":    deploymentID,
+		"enrollment_token": enrollmentToken,
+		"hostname":         hostname,
+		"os":               runtime.GOOS,
+		"arch":             runtime.GOARCH,
+		"version":          ver,
+		"public_key":       hex.EncodeToString(pubKeyBytes),
 	})
 
 	resp, err := http.Post(registerURL, "application/json", bytes.NewReader(body))
@@ -91,11 +92,11 @@ func (im *IdentityManager) RegisterWithDeploymentID(registerURL, deploymentID st
 	}
 
 	var regResp struct {
-		DeviceID  string `json:"device_id"`
-		AgentID   string `json:"agent_id"`
-		TenantID  string `json:"tenant_id"`
-		Token     string `json:"token"`
-		NatsURLs  []string `json:"nats_urls"`
+		DeviceID string   `json:"device_id"`
+		AgentID  string   `json:"agent_id"`
+		TenantID string   `json:"tenant_id"`
+		Token    string   `json:"token"`
+		NatsURLs []string `json:"nats_urls"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&regResp); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)

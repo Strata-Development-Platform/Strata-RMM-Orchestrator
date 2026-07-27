@@ -174,6 +174,7 @@ WantedBy=multi-user.target
 | `STRATA_RMM_TUNNEL_ADDR` | `:8443` | No | Tunnel gateway listen address |
 | `POSTGRES_PASSWORD` | — | Yes | Database password (injected via secret) |
 | `JWT_SECRET` | — | Yes* | HMAC signing key (min 32 bytes) |
+| `STRATA_ALLOW_LEGACY_DEPLOYMENT_ENROLLMENT` | `false` | No | Temporary compatibility escape hatch for reusable deployment-ID enrollment; do not enable in production |
 | `STORAGE_BACKEND` | `local` | No | Storage type: `minio`, `s3`, `local`, `none` |
 | `STORAGE_BUCKET` | `strata-recordings` | No | Storage bucket name |
 | `STORAGE_ENDPOINT` | — | No | MinIO/S3 endpoint |

@@ -21,7 +21,7 @@ func TestCrossMSPAccessDenied(t *testing.T) {
 	req := httptest.NewRequest("GET", "/api/v2/platform/msps?msp_id=msp-b", nil)
 	req.Header.Set("Authorization", "Bearer "+tokenA)
 	w := httptest.NewRecorder()
-	s := &APIServer{}
+	s := &APIServer{tokenGen: gen, allowClaimPrincipal: true}
 	s.withAccessControl(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})).ServeHTTP(w, req)
@@ -40,7 +40,7 @@ func TestCrossClientAccessDenied(t *testing.T) {
 	req := httptest.NewRequest("GET", "/api/v2/clients/client-b/sites?client_id=client-b", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	w := httptest.NewRecorder()
-	s := &APIServer{}
+	s := &APIServer{tokenGen: gen, allowClaimPrincipal: true}
 	s.withAccessControl(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})).ServeHTTP(w, req)
@@ -59,7 +59,7 @@ func TestOwnMSPSucceeds(t *testing.T) {
 	req := httptest.NewRequest("GET", "/api/v2/platform/msps?msp_id=msp-a", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	w := httptest.NewRecorder()
-	s := &APIServer{}
+	s := &APIServer{tokenGen: gen, allowClaimPrincipal: true}
 	s.withAccessControl(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})).ServeHTTP(w, req)
@@ -95,7 +95,7 @@ func TestSuspendedMSPScenario(t *testing.T) {
 	req := httptest.NewRequest("GET", "/api/v2/platform/msps?msp_id=suspended-msp", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	w := httptest.NewRecorder()
-	s := &APIServer{}
+	s := &APIServer{tokenGen: gen, allowClaimPrincipal: true}
 	s.withAccessControl(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})).ServeHTTP(w, req)

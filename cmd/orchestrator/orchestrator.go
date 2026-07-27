@@ -76,10 +76,11 @@ func NewCommand(ctx context.Context, version string, logger *zap.Logger) *cobra.
 			}
 			logger.Info("relational schema migrations applied")
 
-			if err := postgres.SeedDevTenant(tsdb.DB()); err != nil {
-				logger.Warn("seed dev tenant", zap.Error(err))
-			} else {
-				logger.Info("dev tenant seeded")
+			if os.Getenv("STRATA_SEED_DEV") == "true" {
+				if err := postgres.SeedDevTenant(tsdb.DB()); err != nil {
+					return fmt.Errorf("seed development tenant: %w", err)
+				}
+				logger.Info("development tenant seeded")
 			}
 
 			ingest := monitoring.NewIngestService(nc, tsdb, logger)
@@ -128,8 +129,11 @@ func NewCommand(ctx context.Context, version string, logger *zap.Logger) *cobra.
 				return fmt.Errorf("token generator: %w", err)
 			}
 
-			api := platform.NewAPIServer(apiAddr, tsdb, nc, logger, tokenGen).
-				WithReleaseServer(releaseServer).
+			api, err := platform.NewAPIServer(apiAddr, tsdb, nc, logger, tokenGen)
+			if err != nil {
+				return fmt.Errorf("creating API server: %w", err)
+			}
+			api.WithReleaseServer(releaseServer).
 				WithAlertEngine(alertEngine).
 				WithVulnEngine(vulnEngine).
 				WithCVESyncEngine(cveSync).
@@ -138,14 +142,14 @@ func NewCommand(ctx context.Context, version string, logger *zap.Logger) *cobra.
 
 			if storageBackend != "" && storageBackend != "none" {
 				storageCfg := storage.Config{
-					Type:       storageBackend,
-					Bucket:     storageBucket,
-					Region:     storageRegion,
-					Endpoint:   storageEndpoint,
-					AccessKey:  os.Getenv("STORAGE_ACCESS_KEY"),
-					SecretKey:  os.Getenv("STORAGE_SECRET_KEY"),
-					UseSSL:     os.Getenv("STORAGE_USE_SSL") == "true",
-					KMSKeyID:   os.Getenv("STORAGE_KMS_KEY_ID"),
+					Type:      storageBackend,
+					Bucket:    storageBucket,
+					Region:    storageRegion,
+					Endpoint:  storageEndpoint,
+					AccessKey: os.Getenv("STORAGE_ACCESS_KEY"),
+					SecretKey: os.Getenv("STORAGE_SECRET_KEY"),
+					UseSSL:    os.Getenv("STORAGE_USE_SSL") == "true",
+					KMSKeyID:  os.Getenv("STORAGE_KMS_KEY_ID"),
 				}
 
 				sb, err := storage.NewBackend(ctx, storageCfg)

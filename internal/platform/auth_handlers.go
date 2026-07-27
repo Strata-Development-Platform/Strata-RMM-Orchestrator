@@ -8,12 +8,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
-
-	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/auth"
 )
 
 type loginRequest struct {
@@ -22,12 +22,12 @@ type loginRequest struct {
 }
 
 type loginResponse struct {
-	Token          string        `json:"token"`
-	UserID         string        `json:"user_id"`
-	Email          string        `json:"email"`
-	Role           string        `json:"role"`
+	Token             string       `json:"token"`
+	UserID            string       `json:"user_id"`
+	Email             string       `json:"email"`
+	Role              string       `json:"role"`
 	AccessibleTenants []tenantInfo `json:"accessible_tenants"`
-	ExpiresAt      time.Time     `json:"expires_at"`
+	ExpiresAt         time.Time    `json:"expires_at"`
 }
 
 type tenantInfo struct {
@@ -47,7 +47,7 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	db := s.db.DB()
+	db := s.requestDB(r)
 	var userID, tenantID, role, passwordHash string
 	err := db.QueryRowContext(r.Context(), `
 		SELECT id, tenant_id, email, role, password_hash
@@ -72,26 +72,29 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var mspID string
 	db.QueryRowContext(r.Context(), `SELECT msp_id FROM client_organizations WHERE id = $1`, tenantID).Scan(&mspID)
 
-	tokenGen := auth.NewTokenGenerator("")
+	if s.tokenGen == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "authentication is not configured"})
+		return
+	}
 	ttl := 8 * time.Hour
-	token, err := tokenGen.GenerateUserToken(userID, tenantID, mspID, "", "", []string{role}, ttl)
+	token, err := s.tokenGen.GenerateUserToken(userID, tenantID, mspID, "", "", []string{role}, ttl)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "token generation failed"})
 		return
 	}
 
-	accessibleTenants, _ := s.getAccessibleTenants(r.Context(), userID, role, tenantID)
+	accessibleTenants, _ := s.getAccessibleTenants(r, userID, role, tenantID)
 
 	db.ExecContext(r.Context(), `UPDATE users SET last_login = NOW() WHERE id = $1`, userID)
 	s.logAuditAuth(userID, req.Email, r.RemoteAddr, true, "login")
 
 	writeJSON(w, http.StatusOK, loginResponse{
-		Token:          token,
-		UserID:         userID,
-		Email:          req.Email,
-		Role:           role,
+		Token:             token,
+		UserID:            userID,
+		Email:             req.Email,
+		Role:              role,
 		AccessibleTenants: accessibleTenants,
-		ExpiresAt:      time.Now().Add(ttl),
+		ExpiresAt:         time.Now().Add(ttl),
 	})
 }
 
@@ -102,7 +105,7 @@ func (s *APIServer) handleMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	db := s.db.DB()
+	db := s.requestDB(r)
 	var userID, email, role, tenantID string
 	var isActive bool
 	err := db.QueryRowContext(r.Context(), `
@@ -117,19 +120,19 @@ func (s *APIServer) handleMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	accessibleTenants, _ := s.getAccessibleTenants(r.Context(), userID, role, tenantID)
+	accessibleTenants, _ := s.getAccessibleTenants(r, userID, role, tenantID)
 
 	writeJSON(w, http.StatusOK, loginResponse{
-		Token:          r.Header.Get("Authorization"),
-		UserID:         userID,
-		Email:          email,
-		Role:           role,
+		Token:             r.Header.Get("Authorization"),
+		UserID:            userID,
+		Email:             email,
+		Role:              role,
 		AccessibleTenants: accessibleTenants,
 	})
 }
 
 func (s *APIServer) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
-	db := s.db.DB()
+	db := s.requestDB(r)
 	rows, err := db.QueryContext(r.Context(), `
 		SELECT u.id, u.email, u.role, u.is_active, u.last_login, u.created_at,
 		       COALESCE(json_agg(json_build_object('id', t.id, 'name', t.name, 'slug', t.slug))
@@ -179,9 +182,9 @@ func (s *APIServer) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 
 func (s *APIServer) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Email    string   `json:"email"`
-		Password string   `json:"password"`
-		Role     string   `json:"role"`
+		Email     string   `json:"email"`
+		Password  string   `json:"password"`
+		Role      string   `json:"role"`
 		TenantIDs []string `json:"tenant_ids"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -199,7 +202,7 @@ func (s *APIServer) handleAdminCreateUser(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	db := s.db.DB()
+	db := s.requestDB(r)
 	var userID string
 	err = db.QueryRowContext(r.Context(), `
 		INSERT INTO users (email, password_hash, role)
@@ -222,10 +225,10 @@ func (s *APIServer) handleAdminCreateUser(w http.ResponseWriter, r *http.Request
 
 func (s *APIServer) handleAdminCreateCustomer(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name       string   `json:"name"`
-		Slug       string   `json:"slug"`
-		Plan       string   `json:"plan"`
-		AdminEmail string   `json:"admin_email"`
+		Name       string `json:"name"`
+		Slug       string `json:"slug"`
+		Plan       string `json:"plan"`
+		AdminEmail string `json:"admin_email"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
@@ -236,7 +239,7 @@ func (s *APIServer) handleAdminCreateCustomer(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	db := s.db.DB()
+	db := s.requestDB(r)
 	deploymentID := generateDeploymentID(req.Name)
 	slug := req.Slug
 	if slug == "" {
@@ -285,25 +288,23 @@ func (s *APIServer) handleAdminUpdateUserTenants(w http.ResponseWriter, r *http.
 		return
 	}
 
-	db := s.db.DB()
-	tx, err := db.BeginTx(r.Context(), nil)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "tx failed"})
+	db := s.requestDB(r)
+	if _, err := db.ExecContext(r.Context(), `DELETE FROM user_tenant_access WHERE user_id = $1`, userID); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "tenant access update failed"})
 		return
 	}
-	defer tx.Rollback()
-
-	tx.ExecContext(r.Context(), `DELETE FROM user_tenant_access WHERE user_id = $1`, userID)
 	for _, tenantID := range req.TenantIDs {
-		tx.ExecContext(r.Context(), `INSERT INTO user_tenant_access (user_id, tenant_id) VALUES ($1, $2)`, userID, tenantID)
+		if _, err := db.ExecContext(r.Context(), `INSERT INTO user_tenant_access (user_id, tenant_id) VALUES ($1, $2)`, userID, tenantID); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "tenant access update failed"})
+			return
+		}
 	}
-	tx.Commit()
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
 func (s *APIServer) handlePlatformOverview(w http.ResponseWriter, r *http.Request) {
-	db := s.db.DB()
+	db := s.requestDB(r)
 
 	var totalDevices, onlineDevices, activeAlerts, openCVEs int
 	db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM devices`).Scan(&totalDevices)
@@ -323,20 +324,20 @@ func (s *APIServer) handlePlatformOverview(w http.ResponseWriter, r *http.Reques
 	db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM tenants`).Scan(&totalCustomers)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"total_devices":    totalDevices,
-		"online_devices":   onlineDevices,
-		"offline_devices":  totalDevices - onlineDevices,
-		"active_alerts":    activeAlerts,
-		"critical_alerts":  criticalAlerts,
-		"open_cves":        openCVEs,
-		"total_customers":  totalCustomers,
-		"timestamp":        time.Now().UTC().Format(time.RFC3339),
+		"total_devices":   totalDevices,
+		"online_devices":  onlineDevices,
+		"offline_devices": totalDevices - onlineDevices,
+		"active_alerts":   activeAlerts,
+		"critical_alerts": criticalAlerts,
+		"open_cves":       openCVEs,
+		"total_customers": totalCustomers,
+		"timestamp":       time.Now().UTC().Format(time.RFC3339),
 	})
 }
 
 func (s *APIServer) handlePlatformCustomers(w http.ResponseWriter, r *http.Request) {
-	db := s.db.DB()
-		rows, err := db.QueryContext(r.Context(), `
+	db := s.requestDB(r)
+	rows, err := db.QueryContext(r.Context(), `
 		SELECT t.id, t.name, t.slug, t.plan, t.is_active, t.created_at,
 		       COALESCE(t.deployment_id, '') as deployment_id,
 		       (SELECT COUNT(*) FROM devices d WHERE d.tenant_id = t.id) as device_count,
@@ -382,7 +383,7 @@ func (s *APIServer) handlePlatformCustomers(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, map[string]interface{}{"customers": customers})
 }
 
-func (s *APIServer) getAccessibleTenants(ctx interface{}, userID, role, tenantID string) ([]tenantInfo, error) {
+func (s *APIServer) getAccessibleTenants(r *http.Request, userID, role, tenantID string) ([]tenantInfo, error) {
 	db := s.db.DB()
 	if role == "admin" {
 		rows, err := db.Query(`SELECT id, name, slug FROM tenants ORDER BY name`)
@@ -420,68 +421,143 @@ func (s *APIServer) getAccessibleTenants(ctx interface{}, userID, role, tenantID
 
 func (s *APIServer) handleAgentRegister(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		DeploymentID string `json:"deployment_id"`
-		Hostname     string `json:"hostname"`
-		OS           string `json:"os"`
-		Arch         string `json:"arch"`
-		Version      string `json:"version"`
-		PublicKey    string `json:"public_key"`
+		DeploymentID    string `json:"deployment_id"`
+		EnrollmentToken string `json:"enrollment_token"`
+		Hostname        string `json:"hostname"`
+		OS              string `json:"os"`
+		Arch            string `json:"arch"`
+		Version         string `json:"version"`
+		PublicKey       string `json:"public_key"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
 		return
 	}
-	if req.DeploymentID == "" || req.Hostname == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "deployment_id and hostname required"})
+	if req.Hostname == "" || (req.EnrollmentToken == "" && req.DeploymentID == "") {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "hostname and enrollment_token required"})
+		return
+	}
+	if s.db == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "database not available"})
 		return
 	}
 
-	db := s.db.DB()
-
-	var tenantID string
-	err := db.QueryRowContext(r.Context(),
-		`SELECT id FROM tenants WHERE deployment_id = $1 AND is_active = true`, req.DeploymentID).Scan(&tenantID)
+	tx, err := s.db.DB().BeginTx(r.Context(), nil)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "invalid deployment_id"})
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "database transaction unavailable"})
+		return
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	var tenantID, mspID, clientID, siteID string
+	if req.EnrollmentToken != "" {
+		hash := sha256.Sum256([]byte(req.EnrollmentToken))
+		tokenHash := hex.EncodeToString(hash[:])
+		if _, err := tx.ExecContext(r.Context(), `SELECT set_config('app.enrollment_hash', $1, true)`, tokenHash); err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "database security context unavailable"})
+			return
+		}
+		err = tx.QueryRowContext(r.Context(), `
+			UPDATE enrollment_tokens_v2 et
+			SET use_count = use_count + 1
+			FROM msp_tenants m, client_organizations c
+			WHERE et.token_hash = $1
+			  AND et.is_revoked = false
+			  AND et.expires_at > NOW()
+			  AND et.use_count < et.max_uses
+			  AND m.id = et.msp_id AND m.is_active = true
+			  AND c.id = et.client_id AND c.msp_id = et.msp_id AND c.is_active = true
+			RETURNING et.client_id::text, et.msp_id::text, et.client_id::text,
+				COALESCE(
+					et.site_id::text,
+					(SELECT s.id::text FROM sites s WHERE s.client_id = et.client_id AND s.is_active = true ORDER BY s.created_at LIMIT 1)
+				)
+		`, tokenHash).Scan(&tenantID, &mspID, &clientID, &siteID)
+	} else {
+		if os.Getenv("STRATA_ALLOW_LEGACY_DEPLOYMENT_ENROLLMENT") != "true" {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "enrollment token required"})
+			return
+		}
+		err = tx.QueryRowContext(r.Context(), `
+			SELECT t.id::text, c.msp_id::text, c.id::text,
+			       COALESCE((SELECT s.id::text FROM sites s WHERE s.client_id = c.id AND s.is_active = true ORDER BY s.created_at LIMIT 1), '')
+			FROM tenants t
+			JOIN client_organizations c ON c.id = t.id
+			WHERE t.deployment_id = $1 AND t.is_active = true AND c.is_active = true
+		`, req.DeploymentID).Scan(&tenantID, &mspID, &clientID, &siteID)
+	}
+	if err != nil || siteID == "" {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "invalid enrollment or no active site"})
+		return
+	}
+	if _, err := tx.ExecContext(r.Context(), `
+		SELECT set_config('app.msp_id', $1, true), set_config('app.tenant_id', $2, true)
+	`, mspID, tenantID); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "database security context unavailable"})
 		return
 	}
 
-	h := sha256.Sum256([]byte(req.Hostname + tenantID + time.Now().String()))
-	agentID := fmt.Sprintf("agent-%s-%x", req.DeploymentID, h[:8])
-
-	pubKey, _ := hex.DecodeString(req.PublicKey)
-
+	agentID := uuid.NewString()
+	pubKey, err := hex.DecodeString(req.PublicKey)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "public_key must be hexadecimal"})
+		return
+	}
 	var deviceID string
 	agentVersion := req.Version
 	if agentVersion == "" {
 		agentVersion = "0.0.0"
 	}
 
-	err = db.QueryRowContext(r.Context(), `
-		INSERT INTO devices (tenant_id, hostname, os, arch, agent_version, status, enrolled_at)
-		VALUES ($1, $2, $3, $4, $5, 'online', NOW())
+	err = tx.QueryRowContext(r.Context(), `
+		INSERT INTO devices (tenant_id, msp_id, client_id, site_id, agent_id, hostname, os, arch, agent_version, status, enrolled_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'online', NOW())
 		RETURNING id
-	`, tenantID, req.Hostname, req.OS, req.Arch, agentVersion).Scan(&deviceID)
+	`, tenantID, mspID, clientID, siteID, agentID, req.Hostname, req.OS, req.Arch, agentVersion).Scan(&deviceID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create device failed"})
 		return
 	}
 
-	db.ExecContext(r.Context(), `
+	if _, err = tx.ExecContext(r.Context(), `
 		INSERT INTO agent_registrations (deployment_id, device_id, agent_id, public_key, hostname, os, arch, ip_address, approved)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true)
-	`, req.DeploymentID, deviceID, agentID, pubKey, req.Hostname, req.OS, req.Arch, r.RemoteAddr)
+	`, req.DeploymentID, deviceID, agentID, pubKey, req.Hostname, req.OS, req.Arch, r.RemoteAddr); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "register agent failed"})
+		return
+	}
 
-	tokenGen := auth.NewTokenGenerator("")
-	token, _ := tokenGen.GenerateAgentToken(tenantID, agentID, 720*time.Hour)
+	if s.tokenGen == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "authentication is not configured"})
+		return
+	}
+	token, err := s.tokenGen.GenerateAgentToken(tenantID, agentID, 720*time.Hour)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "token generation failed"})
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "registration transaction failed"})
+		return
+	}
+	committed = true
 
+	natsURLs := []string{}
+	if s.nats != nil {
+		natsURLs = append(natsURLs, s.nats.ConnectedUrl())
+	}
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
-		"device_id":   deviceID,
-		"agent_id":    agentID,
-		"tenant_id":   tenantID,
-		"token":       token,
-		"nats_urls":   []string{s.nats.ConnectedUrl()},
-		"interval":    60,
+		"device_id": deviceID,
+		"agent_id":  agentID,
+		"tenant_id": tenantID,
+		"token":     token,
+		"nats_urls": natsURLs,
+		"interval":  60,
 	})
 }
 
@@ -495,7 +571,7 @@ func (s *APIServer) handleAgentConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var source, channel string
-	err := s.db.DB().QueryRowContext(r.Context(), `
+	err := s.requestDB(r).QueryRowContext(r.Context(), `
 		SELECT update_source, update_channel FROM tenants WHERE deployment_id = $1 AND is_active = true
 	`, req.DeploymentID).Scan(&source, &channel)
 	if err != nil {
@@ -522,7 +598,7 @@ func (s *APIServer) handleDeviceUpdate(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.PathValue("deviceID")
 
 	var source, channel string
-	err := s.db.DB().QueryRowContext(r.Context(), `
+	err := s.requestDB(r).QueryRowContext(r.Context(), `
 		SELECT update_source, update_channel FROM tenants WHERE id = $1
 	`, tenantID).Scan(&source, &channel)
 	if err != nil {
@@ -550,7 +626,7 @@ func (s *APIServer) handleDeviceUpdateAll(w http.ResponseWriter, r *http.Request
 	tenantID := r.PathValue("tenantID")
 
 	var source, channel string
-	err := s.db.DB().QueryRowContext(r.Context(), `
+	err := s.requestDB(r).QueryRowContext(r.Context(), `
 		SELECT update_source, update_channel FROM tenants WHERE id = $1
 	`, tenantID).Scan(&source, &channel)
 	if err != nil {
@@ -558,7 +634,7 @@ func (s *APIServer) handleDeviceUpdateAll(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	rows, err := s.db.DB().QueryContext(r.Context(), `SELECT id FROM devices WHERE tenant_id = $1 AND status = 'online'`, tenantID)
+	rows, err := s.requestDB(r).QueryContext(r.Context(), `SELECT id FROM devices WHERE tenant_id = $1 AND status = 'online'`, tenantID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -606,7 +682,7 @@ func (s *APIServer) handleSetUpdateSource(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	_, err := s.db.DB().ExecContext(r.Context(), `
+	_, err := s.requestDB(r).ExecContext(r.Context(), `
 		UPDATE tenants SET update_source = $1, update_channel = $2 WHERE id = $3
 	`, req.Source, req.Channel, tenantID)
 	if err != nil {
@@ -619,7 +695,7 @@ func (s *APIServer) handleSetUpdateSource(w http.ResponseWriter, r *http.Request
 
 func (s *APIServer) handleDeviceVersion(w http.ResponseWriter, r *http.Request) {
 	tenantID := r.PathValue("tenantID")
-	rows, err := s.db.DB().QueryContext(r.Context(), `
+	rows, err := s.requestDB(r).QueryContext(r.Context(), `
 		SELECT id, hostname, os, agent_version, status, last_heartbeat
 		FROM devices WHERE tenant_id = $1
 		ORDER BY hostname ASC

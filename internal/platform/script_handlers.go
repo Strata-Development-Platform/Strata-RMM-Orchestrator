@@ -84,7 +84,7 @@ func (s *APIServer) handleCreateScript(w http.ResponseWriter, r *http.Request) {
 
 	var scriptID string
 	var createdAt, updatedAt time.Time
-	err := s.db.DB().QueryRowContext(r.Context(), `
+	err := s.requestDB(r).QueryRowContext(r.Context(), `
 		INSERT INTO scripts (tenant_id, name, description, language, content, parameters, timeout_sec)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING id, created_at, updated_at
@@ -105,7 +105,7 @@ func (s *APIServer) handleCreateScript(w http.ResponseWriter, r *http.Request) {
 
 func (s *APIServer) handleListScripts(w http.ResponseWriter, r *http.Request) {
 	tenantID := r.PathValue("tenantID")
-	rows, err := s.db.DB().QueryContext(r.Context(), `
+	rows, err := s.requestDB(r).QueryContext(r.Context(), `
 		SELECT id, name, description, language, parameters, timeout_sec, is_public, created_by, created_at, updated_at
 		FROM scripts WHERE tenant_id = $1 OR is_public = true
 		ORDER BY created_at DESC
@@ -149,7 +149,7 @@ func (s *APIServer) handleGetScript(w http.ResponseWriter, r *http.Request) {
 	scriptID := r.PathValue("scriptID")
 	var script Script
 	var createdBy sql.NullString
-	err := s.db.DB().QueryRowContext(r.Context(), `
+	err := s.requestDB(r).QueryRowContext(r.Context(), `
 		SELECT id, tenant_id, name, description, language, content, parameters, timeout_sec, is_public, created_by, created_at, updated_at
 		FROM scripts WHERE id = $1
 	`, scriptID).Scan(
@@ -169,7 +169,7 @@ func (s *APIServer) handleGetScript(w http.ResponseWriter, r *http.Request) {
 
 func (s *APIServer) handleDeleteScript(w http.ResponseWriter, r *http.Request) {
 	scriptID := r.PathValue("scriptID")
-	_, err := s.db.DB().ExecContext(r.Context(), `DELETE FROM scripts WHERE id = $1`, scriptID)
+	_, err := s.requestDB(r).ExecContext(r.Context(), `DELETE FROM scripts WHERE id = $1`, scriptID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -190,7 +190,7 @@ func (s *APIServer) handleRunScript(w http.ResponseWriter, r *http.Request) {
 
 	var script Script
 	var tenantID string
-	err := s.db.DB().QueryRowContext(r.Context(), `
+	err := s.requestDB(r).QueryRowContext(r.Context(), `
 		SELECT id, tenant_id, name, language, content, timeout_sec
 		FROM scripts WHERE id = $1
 	`, scriptID).Scan(&script.ID, &tenantID, &script.Name, &script.Language, &script.Content, &script.TimeoutSec)
@@ -208,7 +208,7 @@ func (s *APIServer) handleRunScript(w http.ResponseWriter, r *http.Request) {
 	for _, deviceID := range req.DeviceIDs {
 		execID := uuid.New().String()
 
-		_, err := s.db.DB().ExecContext(r.Context(), `
+		_, err := s.requestDB(r).ExecContext(r.Context(), `
 			INSERT INTO script_executions (id, script_id, tenant_id, device_id, status, parameters)
 			VALUES ($1, $2, $3, $4, 'pending', $5)
 		`, execID, scriptID, tenantID, deviceID, params)
@@ -218,18 +218,18 @@ func (s *APIServer) handleRunScript(w http.ResponseWriter, r *http.Request) {
 		}
 
 		cmdPayload, _ := json.Marshal(map[string]interface{}{
-			"type":        "script_exec",
+			"type":         "script_exec",
 			"execution_id": execID,
-			"language":    script.Language,
-			"content":     script.Content,
-			"parameters":  params,
-			"timeout":     script.TimeoutSec,
+			"language":     script.Language,
+			"content":      script.Content,
+			"parameters":   params,
+			"timeout":      script.TimeoutSec,
 		})
 
 		subject := fmt.Sprintf("tenant.%s.cmd.%s", tenantID, deviceID)
 		if err := s.nats.Publish(subject, cmdPayload); err != nil {
 			s.logger.Warn("publish script command", zap.Error(err))
-			s.db.DB().ExecContext(r.Context(), `UPDATE script_executions SET status = 'failed', stderr = 'NATS publish failed' WHERE id = $1`, execID)
+			s.requestDB(r).ExecContext(r.Context(), `UPDATE script_executions SET status = 'failed', stderr = 'NATS publish failed' WHERE id = $1`, execID)
 		}
 
 		executions = append(executions, map[string]interface{}{
@@ -248,7 +248,7 @@ func (s *APIServer) handleRunScript(w http.ResponseWriter, r *http.Request) {
 
 func (s *APIServer) handleScriptExecutions(w http.ResponseWriter, r *http.Request) {
 	tenantID := r.PathValue("tenantID")
-	rows, err := s.db.DB().QueryContext(r.Context(), `
+	rows, err := s.requestDB(r).QueryContext(r.Context(), `
 		SELECT id, script_id, device_id, status, exit_code, duration_ms, started_at, completed_at, created_at
 		FROM script_executions WHERE tenant_id = $1
 		ORDER BY created_at DESC LIMIT 50
@@ -302,7 +302,7 @@ func (s *APIServer) handleGetExecution(w http.ResponseWriter, r *http.Request) {
 	var startedNull, completedNull sql.NullTime
 	var params []byte
 
-	err := s.db.DB().QueryRowContext(r.Context(), `
+	err := s.requestDB(r).QueryRowContext(r.Context(), `
 		SELECT id, script_id, tenant_id, device_id, triggered_by, status, stdout, stderr, exit_code, duration_ms, parameters, started_at, completed_at, created_at
 		FROM script_executions WHERE id = $1
 	`, execID).Scan(

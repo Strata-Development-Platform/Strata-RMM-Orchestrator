@@ -4,17 +4,17 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
-	"crypto/subtle"
 	"fmt"
 	"os"
 	"time"
 )
 
 const (
-	issuer     = "strata-rmm"
-	audience   = "strata-rmm-api"
+	issuer       = "strata-rmm"
+	audience     = "strata-rmm-api"
 	minSecretLen = 32
 )
 
@@ -37,21 +37,21 @@ func ValidateJWTConfig() error {
 }
 
 type Claims struct {
-	Subject    string   `json:"sub"`
-	TokenID    string   `json:"jti"`
-	Issuer     string   `json:"iss"`
-	Audience   string   `json:"aud"`
-	TokenUse   string   `json:"token_use"`
-	ExpiresAt  int64    `json:"exp"`
-	IssuedAt   int64    `json:"iat"`
-	NotBefore  int64    `json:"nbf,omitempty"`
+	Subject   string `json:"sub"`
+	TokenID   string `json:"jti"`
+	Issuer    string `json:"iss"`
+	Audience  string `json:"aud"`
+	TokenUse  string `json:"token_use"`
+	ExpiresAt int64  `json:"exp"`
+	IssuedAt  int64  `json:"iat"`
+	NotBefore int64  `json:"nbf,omitempty"`
 
-	TenantID   string   `json:"tid"`
-	MSPID      string   `json:"mid"`
-	ClientID   string   `json:"cid"`
-	SiteID     string   `json:"sid"`
-	AgentID    string   `json:"aid"`
-	Roles      []string `json:"roles"`
+	TenantID string   `json:"tid"`
+	MSPID    string   `json:"mid"`
+	ClientID string   `json:"cid"`
+	SiteID   string   `json:"sid"`
+	AgentID  string   `json:"aid"`
+	Roles    []string `json:"roles"`
 }
 
 func generateTokenID() (string, error) {
@@ -67,9 +67,6 @@ type TokenGenerator struct {
 }
 
 func NewTokenGenerator(secret string) *TokenGenerator {
-	if secret == "" {
-		secret = jwtSecret()
-	}
 	return &TokenGenerator{secret: []byte(secret)}
 }
 
@@ -87,6 +84,15 @@ func NewTokenGeneratorOrFail(secret string) (*TokenGenerator, error) {
 }
 
 func (g *TokenGenerator) GenerateAgentToken(tenantID, agentID string, ttl time.Duration) (string, error) {
+	if err := g.validateSecret(); err != nil {
+		return "", err
+	}
+	if tenantID == "" {
+		return "", fmt.Errorf("tenantID is required")
+	}
+	if agentID == "" {
+		return "", fmt.Errorf("agentID is required")
+	}
 	tokenID, err := generateTokenID()
 	if err != nil {
 		return "", fmt.Errorf("generating token id: %w", err)
@@ -108,6 +114,9 @@ func (g *TokenGenerator) GenerateAgentToken(tenantID, agentID string, ttl time.D
 }
 
 func (g *TokenGenerator) GenerateUserToken(userID, tenantID, mspID, clientID, siteID string, roles []string, ttl time.Duration) (string, error) {
+	if err := g.validateSecret(); err != nil {
+		return "", err
+	}
 	if userID == "" {
 		return "", fmt.Errorf("userID is required")
 	}
@@ -137,6 +146,9 @@ func (g *TokenGenerator) GenerateUserToken(userID, tenantID, mspID, clientID, si
 }
 
 func (g *TokenGenerator) Validate(token string) (*Claims, error) {
+	if err := g.validateSecret(); err != nil {
+		return nil, err
+	}
 	parts := tokenize(token, '.')
 	if len(parts) != 3 {
 		return nil, fmt.Errorf("invalid token format")
@@ -156,6 +168,9 @@ func (g *TokenGenerator) Validate(token string) (*Claims, error) {
 	}
 	if header.Alg != "HS256" {
 		return nil, fmt.Errorf("unsupported algorithm: %s", header.Alg)
+	}
+	if header.Typ != "JWT" {
+		return nil, fmt.Errorf("unsupported token type: %s", header.Typ)
 	}
 
 	expectedSig := g.sign(parts[0] + "." + parts[1])
@@ -227,6 +242,17 @@ func (g *TokenGenerator) Validate(token string) (*Claims, error) {
 	if claims.IssuedAt > now+maxIatSkew {
 		return nil, fmt.Errorf("token issued in the future")
 	}
+	if claims.ExpiresAt <= claims.IssuedAt {
+		return nil, fmt.Errorf("invalid token lifetime")
+	}
+
+	maxLifetime := int64((24 * time.Hour).Seconds())
+	if claims.TokenUse == "agent" {
+		maxLifetime = int64((31 * 24 * time.Hour).Seconds())
+	}
+	if claims.ExpiresAt-claims.IssuedAt > maxLifetime {
+		return nil, fmt.Errorf("token lifetime exceeds maximum")
+	}
 
 	return &claims, nil
 }
@@ -249,6 +275,13 @@ func (g *TokenGenerator) sign(data string) string {
 	mac := hmac.New(sha256.New, g.secret)
 	mac.Write([]byte(data))
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func (g *TokenGenerator) validateSecret() error {
+	if g == nil || len(g.secret) < minSecretLen {
+		return fmt.Errorf("JWT signing secret must be at least %d characters", minSecretLen)
+	}
+	return nil
 }
 
 type EnrollmentToken struct {

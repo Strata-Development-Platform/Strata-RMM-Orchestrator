@@ -32,7 +32,7 @@ func (s *APIServer) handleGetBranding(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var bp brandingProfile
-	err := s.db.DB().QueryRowContext(r.Context(), `
+	err := s.requestDB(r).QueryRowContext(r.Context(), `
 		SELECT id, msp_id, display_name, COALESCE(logo_light, ''),
 		       COALESCE(logo_dark, ''), COALESCE(favicon, ''),
 		       primary_color, accent_color, sidebar_bg, header_bg,
@@ -64,7 +64,7 @@ func (s *APIServer) handleUpdateBranding(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	_, err := s.db.DB().ExecContext(r.Context(), `
+	_, err := s.requestDB(r).ExecContext(r.Context(), `
 		UPDATE branding_profiles SET
 			display_name = CASE WHEN $2 = '' THEN display_name ELSE $2 END,
 			logo_light = CASE WHEN $3 = '' THEN logo_light ELSE $3 END,
@@ -100,7 +100,7 @@ func (s *APIServer) handleListDomains(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := s.db.DB().QueryContext(r.Context(), `
+	rows, err := s.requestDB(r).QueryContext(r.Context(), `
 		SELECT id, hostname, domain_type, verification_status, certificate_status, is_primary
 		FROM custom_domains WHERE msp_id = $1 ORDER BY created_at ASC
 	`, mspID)

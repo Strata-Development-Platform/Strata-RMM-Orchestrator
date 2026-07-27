@@ -49,7 +49,7 @@ See [docs/INSTALL.md](docs/INSTALL.md) for full installation guide (bare metal, 
 | Command | Description |
 |---------|-------------|
 | `strata-rmm version` | Print version info (`--output=json`) |
-| `strata-rmm agent [--deployment-id X]` | Monitoring agent |
+| `strata-rmm agent --enrollment-token X` | Securely enroll and start the monitoring agent |
 | `strata-rmm orchestrator` | Platform services |
 | `strata-rmm orchestrator update` | Self-update orchestrator |
 | `strata-rmm probe` | Network probe (SNMP, flow) |

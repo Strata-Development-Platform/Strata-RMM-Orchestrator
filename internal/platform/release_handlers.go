@@ -17,17 +17,17 @@ import (
 )
 
 type ReleaseServer struct {
-	cacheDir  string
-	repoOwner string
-	repoName  string
+	cacheDir   string
+	repoOwner  string
+	repoName   string
 	httpClient *http.Client
-	mu        sync.Mutex
-	cached    map[string]string // platformKey -> localPath
+	mu         sync.Mutex
+	cached     map[string]string // platformKey -> localPath
 }
 
 type githubRelease struct {
-	TagName string         `json:"tag_name"`
-	Assets  []githubAsset  `json:"assets"`
+	TagName string        `json:"tag_name"`
+	Assets  []githubAsset `json:"assets"`
 }
 
 type githubAsset struct {
@@ -175,8 +175,9 @@ echo ""
 echo -e "${BLUE}Strata RMM Agent Installer${NC}"
 echo ""
 
-read -p "Enter deployment ID: " DEPLOYMENT_ID
-if [ -z "$DEPLOYMENT_ID" ]; then echo "Deployment ID required"; exit 1; fi
+read -rsp "Enter enrollment token: " ENROLLMENT_TOKEN
+echo ""
+if [ -z "$ENROLLMENT_TOKEN" ]; then echo "Enrollment token required"; exit 1; fi
 
 log_step "Downloading agent..."
 BINARY_URL="$SERVER_URL/releases/latest/agent/$PLATFORM"
@@ -196,7 +197,8 @@ chmod 755 "$CONFIG_DIR"
 chmod 700 "$DATA_DIR"
 cat > "$CONFIG_DIR/agent.yaml" <<EOF
 agent:
-  deployment_id: "$DEPLOYMENT_ID"
+  enrollment_token: "$ENROLLMENT_TOKEN"
+  register_url: "$SERVER_URL/api/v1/agent/register"
   log_level: "info"
   data_dir: "$DATA_DIR"
 nats:

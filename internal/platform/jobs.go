@@ -10,12 +10,12 @@ import (
 )
 
 type jobRequest struct {
-	Type          string                 `json:"type"`
-	DeviceIDs     []string               `json:"device_ids"`
-	Payload       map[string]interface{} `json:"payload"`
-	Priority      int                    `json:"priority"`
-	MaxRetries    int                    `json:"max_retries"`
-	IdempotencyKey string                `json:"idempotency_key,omitempty"`
+	Type           string                 `json:"type"`
+	DeviceIDs      []string               `json:"device_ids"`
+	Payload        map[string]interface{} `json:"payload"`
+	Priority       int                    `json:"priority"`
+	MaxRetries     int                    `json:"max_retries"`
+	IdempotencyKey string                 `json:"idempotency_key,omitempty"`
 }
 
 func (s *APIServer) handleCreateJob(w http.ResponseWriter, r *http.Request) {
@@ -42,7 +42,7 @@ func (s *APIServer) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 	id := uuid.New().String()
 	payloadJSON, _ := json.Marshal(req.Payload)
 
-	_, err := s.db.DB().ExecContext(r.Context(), `
+	_, err := s.requestDB(r).ExecContext(r.Context(), `
 		INSERT INTO jobs (id, msp_id, client_id, created_by, type, status, priority,
 		                  payload, idempotency_key, max_retries, max_devices, expires_at)
 		VALUES ($1, $2, $3, $4, $5, 'queued', $6, $7, $8, $9, $10, NOW() + INTERVAL '24 hours')
@@ -55,7 +55,7 @@ func (s *APIServer) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 
 	for _, deviceID := range req.DeviceIDs {
 		targetID := uuid.New().String()
-		s.db.DB().ExecContext(r.Context(), `
+		s.requestDB(r).ExecContext(r.Context(), `
 			INSERT INTO job_targets (id, job_id, device_id)
 			VALUES ($1, $2, $3)
 		`, targetID, id, deviceID)
@@ -65,9 +65,9 @@ func (s *APIServer) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 	if s.nats != nil {
 		for _, deviceID := range req.DeviceIDs {
 			cmdPayload, _ := json.Marshal(map[string]interface{}{
-				"job_id":   id,
-				"type":     req.Type,
-				"payload":  req.Payload,
+				"job_id":  id,
+				"type":    req.Type,
+				"payload": req.Payload,
 			})
 			subject := fmt.Sprintf("tenant.*.cmd.%s", deviceID)
 			s.nats.Publish(subject, cmdPayload)
@@ -87,7 +87,7 @@ func (s *APIServer) handleGetJob(w http.ResponseWriter, r *http.Request) {
 
 	var mspID, clientID, jobType, status, payloadStr string
 	var createdAt, expiresAt time.Time
-	err := s.db.DB().QueryRowContext(r.Context(), `
+	err := s.requestDB(r).QueryRowContext(r.Context(), `
 		SELECT msp_id, client_id, type, status, payload::text, created_at, expires_at
 		FROM jobs WHERE id = $1
 	`, jobID).Scan(&mspID, &clientID, &jobType, &status, &payloadStr, &createdAt, &expiresAt)
@@ -96,7 +96,7 @@ func (s *APIServer) handleGetJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := s.db.DB().QueryContext(r.Context(), `
+	rows, err := s.requestDB(r).QueryContext(r.Context(), `
 		SELECT device_id, status, COALESCE(error_message, ''), started_at, completed_at
 		FROM job_targets WHERE job_id = $1 ORDER BY created_at ASC
 	`, jobID)
@@ -152,7 +152,7 @@ func (s *APIServer) handleListJobs(w http.ResponseWriter, r *http.Request) {
 	}
 	query += " ORDER BY created_at DESC LIMIT 100"
 
-	rows, err := s.db.DB().QueryContext(r.Context(), query, args...)
+	rows, err := s.requestDB(r).QueryContext(r.Context(), query, args...)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -182,7 +182,7 @@ func (s *APIServer) handleListJobs(w http.ResponseWriter, r *http.Request) {
 func (s *APIServer) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 	jobID := r.PathValue("jobID")
 
-	res, err := s.db.DB().ExecContext(r.Context(), `
+	res, err := s.requestDB(r).ExecContext(r.Context(), `
 		UPDATE jobs SET status = 'cancelled', completed_at = NOW()
 		WHERE id = $1 AND status IN ('pending', 'queued', 'dispatched')
 	`, jobID)
@@ -208,11 +208,11 @@ func nullTimeStr(t *time.Time) string {
 // NATS handlers for job results
 func (s *APIServer) handleJobResultNATS(m *natsMsg) {
 	var result struct {
-		JobID   string          `json:"job_id"`
-		DeviceID string         `json:"device_id"`
-		Status  string          `json:"status"`
-		Error   string          `json:"error,omitempty"`
-		Data    json.RawMessage `json:"data,omitempty"`
+		JobID    string          `json:"job_id"`
+		DeviceID string          `json:"device_id"`
+		Status   string          `json:"status"`
+		Error    string          `json:"error,omitempty"`
+		Data     json.RawMessage `json:"data,omitempty"`
 	}
 	if err := json.Unmarshal(m.Data, &result); err != nil || result.JobID == "" {
 		return

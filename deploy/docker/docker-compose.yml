@@ -42,7 +42,7 @@ services:
       retries: 5
 
   orchestrator:
-    build: .
+    build: ../..
     ports:
       - "8080:8080"
     depends_on:
@@ -54,6 +54,7 @@ services:
       STRATA_RMM_NATS_URL: nats://nats:4222
       STRATA_RMM_TIMESCALE_DSN: postgres://strata:strata_dev@postgres:5432/strata_rmm?sslmode=disable
       STRATA_RMM_API_ADDR: :8080
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET to at least 32 characters}
       STORAGE_BACKEND: minio
       STORAGE_BUCKET: strata-recordings
       STORAGE_ENDPOINT: minio:9000
