@@ -208,6 +208,9 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /api/v1/branding", s.handleGetBranding)
 	mux.HandleFunc("PUT /api/v1/branding", s.handleUpdateBranding)
 	mux.HandleFunc("GET /api/v1/domains", s.handleListDomains)
+	mux.HandleFunc("POST /api/v1/enrollment/tokens", s.handleCreateEnrollmentToken)
+	mux.HandleFunc("POST /api/v1/enrollment/validate", s.handleValidateEnrollmentToken)
+	mux.HandleFunc("GET /api/v1/enrollment/tokens", s.handleListEnrollmentTokens)
 
 	rateLimiter := auth.NewRateLimiter(30, 60)
 

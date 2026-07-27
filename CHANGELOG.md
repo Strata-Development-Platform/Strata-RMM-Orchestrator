@@ -15,6 +15,14 @@ The format follows Keep a Changelog principles, and releases should use semantic
 - **TypeScript fixes**: `tsc -b` now passes cleanly. Fixed 12 errors across 6 files.
 - **Documentation**: `MASTER_PLAN.md`, `IMPLEMENTATION_STATUS.md`, `COMPATIBILITY_MATRIX.md`, `SECURITY_MODEL.md`, `SAAS_TENANCY.md`, `API_COMPATIBILITY.md`, `AGENT_PROTOCOL.md`.
 
+### Secure Enrollment — Phase 4
+- **ADDED**: `enrollment_tokens_v2` table (migration 33) — DB-backed, MSP/client/site-scoped.
+- **ADDED**: `POST /api/v1/enrollment/tokens` — create scoped enrollment token with max uses.
+- **ADDED**: `POST /api/v1/enrollment/validate` — validate and consume a token, returns scope.
+- **ADDED**: `GET /api/v1/enrollment/tokens` — list tokens for the current MSP.
+- **ADDED**: Token generation uses cryptographically random 32-byte hex strings, SHA-256 hashed in DB.
+- **ADDED**: Enrollment tokens support max_uses, expiration, and revocation.
+
 ### Branding & Domains — Phase 3
 - **ADDED**: `branding_profiles` table (migration 31) — MSP display name, logos, colors, portal text.
 - **ADDED**: `custom_domains` table (migration 32) — custom subdomain management with verification status.

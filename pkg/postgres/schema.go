@@ -855,6 +855,28 @@ func Migrations() []Migration {
 			`,
 			Down: `DROP TABLE IF EXISTS custom_domains CASCADE;`,
 		},
+		{
+			ID:   33,
+			Name: "create_enrollment_tokens_v2",
+			Up: `
+				CREATE TABLE IF NOT EXISTS enrollment_tokens_v2 (
+					id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					msp_id            UUID NOT NULL REFERENCES msp_tenants(id) ON DELETE CASCADE,
+					client_id         UUID NOT NULL REFERENCES client_organizations(id) ON DELETE CASCADE,
+					site_id           UUID REFERENCES sites(id) ON DELETE CASCADE,
+					token_hash        TEXT NOT NULL,
+					created_by        TEXT NOT NULL DEFAULT '',
+					max_uses          INT NOT NULL DEFAULT 1,
+					use_count         INT NOT NULL DEFAULT 0,
+					expires_at        TIMESTAMPTZ NOT NULL,
+					is_revoked        BOOLEAN NOT NULL DEFAULT false,
+					created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+				CREATE INDEX IF NOT EXISTS idx_enroll_tokens_hash ON enrollment_tokens_v2(token_hash);
+				CREATE INDEX IF NOT EXISTS idx_enroll_tokens_msp ON enrollment_tokens_v2(msp_id);
+			`,
+			Down: `DROP TABLE IF EXISTS enrollment_tokens_v2 CASCADE;`,
+		},
 	}
 }
 
