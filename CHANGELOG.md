@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Wired the durable jobs dispatcher into the managed-agent lifecycle.
+- Enforced persistence-before-acknowledgement and exact result replay.
+- Added server result receipts and agent-side acknowledgement tracking.
+- Made inbox deduplication and job state updates transactional.
+- Added strict NATS subject, ownership, correlation, and attempt validation.
+- Propagated job cancellation, expiry deadlines, and agent shutdown to handlers.
+- Corrected Job Center tenant/client filtering and surfaced action failures.
+- Removed generated TypeScript build metadata from source control.
+
 All notable changes to this project should be documented here.
 
 The format follows Keep a Changelog principles, and releases should use semantic versioning where applicable.

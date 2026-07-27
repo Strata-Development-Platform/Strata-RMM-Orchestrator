@@ -2,8 +2,8 @@ package jobs
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -11,72 +11,82 @@ import (
 	"go.uber.org/zap"
 )
 
-type CommandReceipt struct {
-	EventID      string `json:"event_id"`
-	JobID        string `json:"job_id"`
-	TargetID     string `json:"target_id"`
-	CorrelationID string `json:"correlation_id"`
-	Attempt      int    `json:"attempt"`
-	CommandType  string `json:"command_type"`
-	ReceivedAt   string `json:"received_at"`
-	State        string `json:"state"`
-	ResultMsgID  string `json:"result_msg_id,omitempty"`
-}
+var receiptsBucket = []byte("command_receipts")
 
 const (
-	StateReceived    = "received"
-	StateRunning     = "running"
-	StateSucceeded   = "succeeded"
-	StateFailed      = "failed"
-	StateCancelled   = "cancelled"
-	StateExpired     = "expired"
+	StateReceived  = "received"
+	StateRunning   = "running"
+	StateSucceeded = "succeeded"
+	StateFailed    = "failed"
+	StateCancelled = "cancelled"
+	StateExpired   = "expired"
 )
+
+// CommandReceipt is the agent's durable source of truth. ResultEnvelope contains
+// the exact bytes published to NATS so a restart never has to reconstruct data.
+type CommandReceipt struct {
+	EventID        string          `json:"event_id"`
+	JobID          string          `json:"job_id"`
+	TargetID       string          `json:"target_id"`
+	MSPID          string          `json:"msp_id"`
+	ClientID       string          `json:"client_id,omitempty"`
+	SiteID         string          `json:"site_id,omitempty"`
+	DeviceID       string          `json:"device_id"`
+	AgentID        string          `json:"agent_id"`
+	CorrelationID  string          `json:"correlation_id"`
+	Attempt        int             `json:"attempt"`
+	CommandType    string          `json:"command_type"`
+	ReceivedAt     string          `json:"received_at"`
+	State          string          `json:"state"`
+	ResultMsgID    string          `json:"result_msg_id,omitempty"`
+	ResultEnvelope json.RawMessage `json:"result_envelope,omitempty"`
+	ResultAcked    bool            `json:"result_acked"`
+}
 
 type ReceiptLedger struct {
 	db     *bbolt.DB
 	logger *zap.Logger
-	mu     sync.RWMutex
 }
 
-func NewReceiptLedger(db *bbolt.DB, logger *zap.Logger) *ReceiptLedger {
+func NewReceiptLedger(db *bbolt.DB, logger *zap.Logger) (*ReceiptLedger, error) {
+	if db == nil {
+		return nil, errors.New("receipt ledger database is nil")
+	}
 	l := &ReceiptLedger{db: db, logger: logger}
-	l.init()
-	return l
-}
-
-func (l *ReceiptLedger) init() {
-	l.db.Update(func(tx *bbolt.Tx) error {
-		_, err := tx.CreateBucketIfNotExists([]byte("command_receipts"))
+	if err := l.db.Update(func(tx *bbolt.Tx) error {
+		_, err := tx.CreateBucketIfNotExists(receiptsBucket)
 		return err
-	})
+	}); err != nil {
+		return nil, fmt.Errorf("initialize receipt ledger: %w", err)
+	}
+	return l, nil
 }
-
-func receiptKey(eventID string) string { return eventID }
 
 func (l *ReceiptLedger) RecordReceipt(receipt *CommandReceipt) error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	if receipt == nil || receipt.EventID == "" {
+		return errors.New("receipt event_id is required")
+	}
 	return l.db.Update(func(tx *bbolt.Tx) error {
-		b := tx.Bucket([]byte("command_receipts"))
+		b := tx.Bucket(receiptsBucket)
+		if b.Get([]byte(receipt.EventID)) != nil {
+			return bbolt.ErrBucketExists // caller treats this as a duplicate
+		}
 		data, err := json.Marshal(receipt)
 		if err != nil {
-			return err
+			return fmt.Errorf("marshal receipt: %w", err)
 		}
-		return b.Put([]byte(receiptKey(receipt.EventID)), data)
+		return b.Put([]byte(receipt.EventID), data)
 	})
 }
 
 func (l *ReceiptLedger) GetReceipt(eventID string) (*CommandReceipt, error) {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
 	var receipt CommandReceipt
 	err := l.db.View(func(tx *bbolt.Tx) error {
-		b := tx.Bucket([]byte("command_receipts"))
-		data := b.Get([]byte(receiptKey(eventID)))
+		data := tx.Bucket(receiptsBucket).Get([]byte(eventID))
 		if data == nil {
 			return fmt.Errorf("receipt not found: %s", eventID)
 		}
-		return json.Unmarshal(data, &receipt)
+		return json.Unmarshal(append([]byte(nil), data...), &receipt)
 	})
 	if err != nil {
 		return nil, err
@@ -90,78 +100,116 @@ func (l *ReceiptLedger) IsDuplicate(eventID string) bool {
 }
 
 func (l *ReceiptLedger) MarkRunning(eventID string) error {
-	return l.updateState(eventID, StateRunning)
+	return l.update(eventID, func(receipt *CommandReceipt) {
+		receipt.State = StateRunning
+	})
 }
 
-func (l *ReceiptLedger) MarkComplete(eventID, status, resultMsgID string) error {
-	return l.db.Update(func(tx *bbolt.Tx) error {
-		b := tx.Bucket([]byte("command_receipts"))
-		data := b.Get([]byte(receiptKey(eventID)))
-		if data == nil {
-			return nil
-		}
-		var receipt CommandReceipt
-		json.Unmarshal(data, &receipt)
+func (l *ReceiptLedger) MarkComplete(eventID, status, resultMsgID string, envelope []byte) error {
+	return l.update(eventID, func(receipt *CommandReceipt) {
 		receipt.State = status
-		if resultMsgID != "" {
-			receipt.ResultMsgID = resultMsgID
-		}
-		updated, _ := json.Marshal(receipt)
-		return b.Put([]byte(receiptKey(eventID)), updated)
+		receipt.ResultMsgID = resultMsgID
+		receipt.ResultEnvelope = append(receipt.ResultEnvelope[:0], envelope...)
+		receipt.ResultAcked = false
 	})
 }
 
-func (l *ReceiptLedger) updateState(eventID, state string) error {
+func (l *ReceiptLedger) MarkResultAcknowledged(messageID string) error {
+	if messageID == "" {
+		return errors.New("result message_id is required")
+	}
+	found := false
+	err := l.db.Update(func(tx *bbolt.Tx) error {
+		b := tx.Bucket(receiptsBucket)
+		return b.ForEach(func(k, v []byte) error {
+			var receipt CommandReceipt
+			if err := json.Unmarshal(v, &receipt); err != nil {
+				return fmt.Errorf("decode receipt %q: %w", k, err)
+			}
+			if receipt.ResultMsgID != messageID {
+				return nil
+			}
+			receipt.ResultAcked = true
+			data, err := json.Marshal(&receipt)
+			if err != nil {
+				return err
+			}
+			found = true
+			return b.Put(k, data)
+		})
+	})
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("result receipt not found: %s", messageID)
+	}
+	return nil
+}
+
+func (l *ReceiptLedger) update(eventID string, mutate func(*CommandReceipt)) error {
 	return l.db.Update(func(tx *bbolt.Tx) error {
-		b := tx.Bucket([]byte("command_receipts"))
-		data := b.Get([]byte(receiptKey(eventID)))
+		b := tx.Bucket(receiptsBucket)
+		data := b.Get([]byte(eventID))
 		if data == nil {
-			return nil
+			return fmt.Errorf("receipt not found: %s", eventID)
 		}
 		var receipt CommandReceipt
-		json.Unmarshal(data, &receipt)
-		receipt.State = state
-		updated, _ := json.Marshal(receipt)
-		return b.Put([]byte(receiptKey(eventID)), updated)
-	})
-}
-
-func (l *ReceiptLedger) GetUnacknowledgedResults() []*CommandReceipt {
-	var results []*CommandReceipt
-	l.db.View(func(tx *bbolt.Tx) error {
-		b := tx.Bucket([]byte("command_receipts"))
-		c := b.Cursor()
-		for k, v := c.First(); k != nil; k, v = c.Next() {
-			var receipt CommandReceipt
-			if err := json.Unmarshal(v, &receipt); err != nil {
-				continue
-			}
-			if (receipt.State == StateSucceeded || receipt.State == StateFailed) && receipt.ResultMsgID != "" {
-				results = append(results, &receipt)
-			}
+		if err := json.Unmarshal(data, &receipt); err != nil {
+			return err
 		}
-		return nil
+		mutate(&receipt)
+		updated, err := json.Marshal(&receipt)
+		if err != nil {
+			return err
+		}
+		return b.Put([]byte(eventID), updated)
 	})
-	return results
 }
 
-func (l *ReceiptLedger) Cleanup(before time.Time) {
-	l.db.Update(func(tx *bbolt.Tx) error {
-		b := tx.Bucket([]byte("command_receipts"))
-		c := b.Cursor()
-		toDelete := [][]byte{}
-		for k, v := c.First(); k != nil; k, v = c.Next() {
+func (l *ReceiptLedger) GetUnacknowledgedResults() ([]*CommandReceipt, error) {
+	results := make([]*CommandReceipt, 0)
+	err := l.db.View(func(tx *bbolt.Tx) error {
+		return tx.Bucket(receiptsBucket).ForEach(func(_, value []byte) error {
+			var receipt CommandReceipt
+			if err := json.Unmarshal(value, &receipt); err != nil {
+				return err
+			}
+			if !receipt.ResultAcked && len(receipt.ResultEnvelope) > 0 {
+				copy := receipt
+				copy.ResultEnvelope = append(json.RawMessage(nil), receipt.ResultEnvelope...)
+				results = append(results, &copy)
+			}
+			return nil
+		})
+	})
+	return results, err
+}
+
+func (l *ReceiptLedger) Cleanup(before time.Time) error {
+	return l.db.Update(func(tx *bbolt.Tx) error {
+		b := tx.Bucket(receiptsBucket)
+		var keys [][]byte
+		if err := b.ForEach(func(k, v []byte) error {
 			var receipt CommandReceipt
 			if err := json.Unmarshal(v, &receipt); err != nil {
-				continue
+				return err
 			}
 			receivedAt, err := time.Parse(time.RFC3339, receipt.ReceivedAt)
-			if err == nil && receivedAt.Before(before) {
-				toDelete = append(toDelete, k)
+			if err != nil {
+				return err
 			}
+			if receipt.ResultAcked && receivedAt.Before(before) {
+				keys = append(keys, append([]byte(nil), k...))
+			}
+			return nil
+		}); err != nil {
+			return err
 		}
-		for _, k := range toDelete {
-			b.Delete(k)
+		for _, key := range keys {
+			if err := b.Delete(key); err != nil {
+				return err
+			}
 		}
 		return nil
 	})
@@ -169,50 +217,40 @@ func (l *ReceiptLedger) Cleanup(before time.Time) {
 
 func PublishAcknowledgement(nc *nats.Conn, subject string, eventID, jobID, targetID, mspID, deviceID, agentID, correlationID string, attempt int, status string) error {
 	ack := map[string]interface{}{
-		"schema_version": 1,
-		"message_id":     fmt.Sprintf("ack-%s", eventID),
-		"event_id":       eventID,
-		"job_id":         jobID,
-		"target_id":      targetID,
-		"msp_id":         mspID,
-		"device_id":      deviceID,
-		"agent_id":       agentID,
-		"correlation_id": correlationID,
-		"attempt":        attempt,
-		"status":         status,
-		"timestamp":      time.Now().UTC().Format(time.RFC3339),
+		"schema_version": 1, "message_id": fmt.Sprintf("ack-%s-%d-%s", eventID, attempt, status),
+		"event_id": eventID, "job_id": jobID, "target_id": targetID, "msp_id": mspID,
+		"device_id": deviceID, "agent_id": agentID, "correlation_id": correlationID,
+		"attempt": attempt, "status": status, "timestamp": time.Now().UTC().Format(time.RFC3339),
 	}
-	data, _ := json.Marshal(ack)
+	data, err := json.Marshal(ack)
+	if err != nil {
+		return err
+	}
 	return nc.Publish(subject, data)
 }
 
-func PublishResult(nc *nats.Conn, subject, msgID, eventID, jobID, targetID, mspID, deviceID, agentID, correlationID string, attempt int, status string, exitCode int, resultJSON []byte, errorStr string, startedAt, completedAt time.Time) (string, error) {
+func MarshalResult(msgID, eventID, jobID, targetID, mspID, clientID, siteID, deviceID, agentID, correlationID string, attempt int, status string, exitCode int, resultJSON []byte, errorStr string, startedAt, completedAt time.Time) (string, []byte, error) {
 	if msgID == "" {
 		msgID = fmt.Sprintf("res-%s-%d", eventID, attempt)
 	}
-	durationMs := completedAt.Sub(startedAt).Milliseconds()
 	res := map[string]interface{}{
-		"schema_version": 1,
-		"message_id":     msgID,
-		"event_id":       eventID,
-		"job_id":         jobID,
-		"target_id":      targetID,
-		"msp_id":         mspID,
-		"device_id":      deviceID,
-		"agent_id":       agentID,
-		"correlation_id": correlationID,
-		"attempt":        attempt,
-		"status":         status,
-		"exit_code":      exitCode,
-		"result":         resultJSON,
-		"error":          errorStr,
-		"started_at":     startedAt.UTC().Format(time.RFC3339),
-		"completed_at":   completedAt.UTC().Format(time.RFC3339),
-		"duration_ms":    durationMs,
+		"schema_version": 1, "message_id": msgID, "event_id": eventID, "job_id": jobID,
+		"target_id": targetID, "msp_id": mspID, "client_id": clientID, "site_id": siteID,
+		"device_id": deviceID, "agent_id": agentID, "correlation_id": correlationID,
+		"attempt": attempt, "status": status, "exit_code": exitCode,
+		"result": json.RawMessage(resultJSON), "error": errorStr,
+		"started_at": startedAt.UTC().Format(time.RFC3339),
+		"completed_at": completedAt.UTC().Format(time.RFC3339),
+		"duration_ms": completedAt.Sub(startedAt).Milliseconds(),
 	}
-	data, _ := json.Marshal(res)
-	if err := nc.Publish(subject, data); err != nil {
+	data, err := json.Marshal(res)
+	return msgID, data, err
+}
+
+func PublishResult(nc *nats.Conn, subject, msgID, eventID, jobID, targetID, mspID, deviceID, agentID, correlationID string, attempt int, status string, exitCode int, resultJSON []byte, errorStr string, startedAt, completedAt time.Time) (string, error) {
+	msgID, data, err := MarshalResult(msgID, eventID, jobID, targetID, mspID, "", "", deviceID, agentID, correlationID, attempt, status, exitCode, resultJSON, errorStr, startedAt, completedAt)
+	if err != nil {
 		return msgID, err
 	}
-	return msgID, nil
+	return msgID, nc.Publish(subject, data)
 }

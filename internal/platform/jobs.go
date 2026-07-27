@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 )
 
 type jobRequest struct {
@@ -311,25 +312,71 @@ func (s *APIServer) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, err := db.ExecContext(r.Context(), `
-		UPDATE jobs SET status = 'cancelled', completed_at = NOW(), updated_at = NOW()
-		WHERE id = $1 AND status IN ('pending', 'queued', 'dispatched')
-	`, jobID)
+	tx, err := db.BeginTx(r.Context(), nil)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	affected, _ := res.RowsAffected()
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.ExecContext(r.Context(), `
+		UPDATE jobs SET status = 'cancelled', completed_at = NOW(), cancelled_at=NOW(), updated_at = NOW()
+		WHERE id = $1 AND status IN ('pending', 'queued', 'dispatched', 'running')
+	`, jobID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "cancelling job"})
+		return
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "checking cancellation"})
+		return
+	}
 	if affected == 0 {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "job cannot be cancelled in current state"})
 		return
 	}
 
-	if _, err := db.ExecContext(r.Context(), `
-		UPDATE job_targets SET status = 'cancelled' WHERE job_id = $1 AND status IN ('pending', 'queued', 'dispatched')
-	`, jobID); err != nil {
+	rows, err := tx.QueryContext(r.Context(), `
+		UPDATE job_targets SET status = 'cancelled', completed_at=NOW(), lease_owner=NULL, lease_expires=NULL
+		WHERE job_id = $1 AND status IN ('pending', 'queued', 'dispatched', 'running')
+		RETURNING id::text, COALESCE(agent_id,'')
+	`, jobID)
+	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "cancelling job targets"})
 		return
+	}
+	type cancelledTarget struct{ id, agentID string }
+	var targets []cancelledTarget
+	for rows.Next() {
+		var target cancelledTarget
+		if err := rows.Scan(&target.id, &target.agentID); err != nil {
+			_ = rows.Close()
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "reading cancelled targets"})
+			return
+		}
+		targets = append(targets, target)
+	}
+	rowsErr := rows.Err()
+	if err := rows.Close(); err != nil || rowsErr != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "reading cancelled targets"})
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "committing cancellation"})
+		return
+	}
+	for _, target := range targets {
+		if target.agentID == "" || s.nats == nil {
+			continue
+		}
+		payload, err := json.Marshal(map[string]string{"job_id": jobID, "target_id": target.id})
+		if err != nil {
+			continue
+		}
+		subject := fmt.Sprintf("tenant.%s.cmd.%s.cancel", mspID, target.agentID)
+		if err := s.nats.Publish(subject, payload); err != nil {
+			s.logger.Warn("publish job cancellation", zap.String("job_id", jobID), zap.String("target_id", target.id), zap.Error(err))
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "cancelled"})

@@ -3,11 +3,13 @@ package platform
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"math"
 	"math/big"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -285,139 +287,182 @@ func (d *Dispatcher) reconcile() {
 func (d *Dispatcher) subscribeResults(ctx context.Context) {
 	defer d.wg.Done()
 	sub, err := d.nc.Subscribe("tenant.*.agent.*.result", func(msg *nats.Msg) {
-		d.handleAgentResult(msg.Data)
+		d.handleAgentResult(msg.Subject, msg.Data)
 	})
 	if err != nil {
 		d.logger.Error("subscribe agent results", zap.Error(err))
 		return
 	}
-	defer sub.Unsubscribe()
+	defer func() {
+		if err := sub.Unsubscribe(); err != nil {
+			d.logger.Warn("unsubscribe agent results", zap.Error(err))
+		}
+	}()
 
 	ackSub, err := d.nc.Subscribe("tenant.*.agent.*.ack", func(msg *nats.Msg) {
-		d.handleAgentAck(msg.Data)
+		d.handleAgentAck(msg.Subject, msg.Data)
 	})
 	if err != nil {
 		d.logger.Error("subscribe agent acknowledgements", zap.Error(err))
 		return
 	}
-	defer ackSub.Unsubscribe()
+	defer func() {
+		if err := ackSub.Unsubscribe(); err != nil {
+			d.logger.Warn("unsubscribe agent acknowledgements", zap.Error(err))
+		}
+	}()
 
 	<-ctx.Done()
 }
 
-func (d *Dispatcher) handleAgentAck(data []byte) {
+func subjectIdentity(subject, suffix string) (string, string, bool) {
+	parts := strings.Split(subject, ".")
+	if len(parts) != 5 || parts[0] != "tenant" || parts[2] != "agent" || parts[4] != suffix {
+		return "", "", false
+	}
+	return parts[1], parts[3], parts[1] != "" && parts[3] != ""
+}
+
+func (d *Dispatcher) handleAgentAck(subject string, data []byte) {
 	var ack Acknowledgement
 	if err := json.Unmarshal(data, &ack); err != nil {
 		d.logger.Warn("malformed acknowledgement", zap.Error(err))
 		return
 	}
-	if ack.EventID == "" || ack.JobID == "" || ack.TargetID == "" {
+	subjectMSP, subjectAgent, ok := subjectIdentity(subject, "ack")
+	if !ok || ack.EventID == "" || ack.MessageID == "" || ack.JobID == "" || ack.TargetID == "" ||
+		ack.MSPID != subjectMSP || ack.AgentID != subjectAgent || ack.Attempt < 1 {
+		d.logger.Warn("rejected acknowledgement identity", zap.String("subject", subject))
 		return
 	}
-
-	// Verify job and target exist
-	var currentStatus string
-	err := d.db.DB().QueryRow(`
-		SELECT jt.status FROM job_targets jt
-		JOIN jobs j ON jt.job_id = j.id
-		WHERE jt.id = $1 AND jt.job_id = $2 AND j.msp_id = $3 AND jt.device_id = $4
-	`, ack.TargetID, ack.JobID, ack.MSPID, ack.DeviceID).Scan(&currentStatus)
+	tx, err := d.db.DB().BeginTx(context.Background(), &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
-		d.logger.Warn("acknowledgement for non-existent target",
-			zap.String("job", ack.JobID), zap.String("target", ack.TargetID))
+		d.logger.Error("begin acknowledgement transaction", zap.Error(err))
 		return
 	}
-
-	// Insert into inbox for deduplication
-	payload, _ := json.Marshal(ack)
-	d.db.DB().Exec(`
+	defer func() { _ = tx.Rollback() }()
+	var inserted string
+	err = tx.QueryRow(`
 		INSERT INTO job_inbox (msp_id, message_id, job_id, target_id, event_type, payload)
 		VALUES ($1, $2, $3, $4, 'ack', $5)
-		ON CONFLICT (msp_id, message_id) DO NOTHING
-	`, ack.MSPID, ack.MessageID, ack.JobID, ack.TargetID, payload)
-
-	// Apply state transition based on ack status
+		ON CONFLICT (msp_id, message_id) DO NOTHING RETURNING id::text
+	`, ack.MSPID, ack.MessageID, ack.JobID, ack.TargetID, data).Scan(&inserted)
+	if err == sql.ErrNoRows {
+		return
+	}
+	if err != nil {
+		d.logger.Error("claim acknowledgement", zap.Error(err))
+		return
+	}
+	var currentStatus, targetAgent, correlationID string
+	var currentAttempt int
+	err = tx.QueryRow(`
+		SELECT jt.status, COALESCE(jt.agent_id,''), jt.attempt, COALESCE(j.correlation_id,'')
+		FROM job_targets jt JOIN jobs j ON jt.job_id = j.id
+		WHERE jt.id = $1 AND jt.job_id = $2 AND j.msp_id = $3 AND jt.device_id = $4
+		FOR UPDATE
+	`, ack.TargetID, ack.JobID, ack.MSPID, ack.DeviceID).Scan(&currentStatus, &targetAgent, &currentAttempt, &correlationID)
+	if err != nil || targetAgent != ack.AgentID || currentAttempt != ack.Attempt || correlationID != ack.CorrelationID {
+		d.logger.Warn("acknowledgement ownership mismatch", zap.String("target", ack.TargetID), zap.Error(err))
+		return
+	}
+	nextStatus := ""
 	switch ack.Status {
 	case AckAccepted:
-		TransitionJob(currentStatus, "running")
-		d.db.DB().Exec(`UPDATE job_targets SET status = 'running', acknowledged_at = NOW(), lease_expires = NOW() + INTERVAL '5 minutes' WHERE id = $1 AND status IN ('queued','dispatched')`, ack.TargetID)
+		nextStatus = "running"
 	case AckDuplicate:
-		// Already processed — no-op
+		nextStatus = currentStatus
 	case AckRejected, AckUnsupported:
-		TransitionJob(currentStatus, "failed")
-		d.db.DB().Exec(`UPDATE job_targets SET status = 'failed', error_message = $1, completed_at = NOW() WHERE id = $2`, "target rejected by agent: "+ack.Status, ack.TargetID)
+		nextStatus = "failed"
 	case AckExpired:
-		TransitionJob(currentStatus, "expired")
-		d.db.DB().Exec(`UPDATE job_targets SET status = 'expired', completed_at = NOW() WHERE id = $1`, ack.TargetID)
+		nextStatus = "expired"
+	default:
+		return
 	}
-
-	d.db.DB().Exec(`UPDATE job_inbox SET processed_at = NOW() WHERE msp_id = $1 AND message_id = $2`, ack.MSPID, ack.MessageID)
+	if nextStatus != currentStatus {
+		if err := TransitionJob(currentStatus, nextStatus); err != nil {
+			d.logger.Warn("invalid acknowledgement transition", zap.Error(err))
+			return
+		}
+		if _, err := tx.Exec(`
+			UPDATE job_targets SET status=$1, acknowledged_at=CASE WHEN $1='running' THEN NOW() ELSE acknowledged_at END,
+				completed_at=CASE WHEN $1 IN ('failed','expired') THEN NOW() ELSE completed_at END,
+				error_message=CASE WHEN $1='failed' THEN $2 ELSE error_message END
+			WHERE id=$3
+		`, nextStatus, "target rejected by agent: "+ack.Status, ack.TargetID); err != nil {
+			d.logger.Error("apply acknowledgement", zap.Error(err))
+			return
+		}
+	}
+	if _, err := tx.Exec(`UPDATE job_inbox SET processed_at=NOW() WHERE id::text=$1`, inserted); err != nil {
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		d.logger.Error("commit acknowledgement", zap.Error(err))
+	}
 }
 
-func (d *Dispatcher) handleAgentResult(data []byte) {
-	var res ResultEnvelope
-	if err := json.Unmarshal(data, &res); err != nil {
-		d.logger.Warn("malformed result", zap.Error(err))
+func (d *Dispatcher) handleAgentResult(subject string, data []byte) {
+	subjectMSP, subjectAgent, ok := subjectIdentity(subject, "result")
+	if !ok {
 		return
 	}
-	if res.EventID == "" || res.JobID == "" || res.TargetID == "" {
+	res, err := ValidateResultEnvelope(data, subjectMSP, subjectAgent, "")
+	if err != nil || res.MessageID == "" || res.CorrelationID == "" {
+		d.logger.Warn("rejected agent result", zap.Error(err))
 		return
 	}
-
-	// Insert into inbox (dedup)
-	payload, _ := json.Marshal(res)
-	_, err := d.db.DB().Exec(`
+	tx, err := d.db.DB().BeginTx(context.Background(), &sql.TxOptions{Isolation: sql.LevelSerializable})
+	if err != nil {
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+	var inboxID string
+	err = tx.QueryRow(`
 		INSERT INTO job_inbox (msp_id, message_id, job_id, target_id, event_type, payload)
 		VALUES ($1, $2, $3, $4, 'result', $5)
-		ON CONFLICT (msp_id, message_id) DO NOTHING
-	`, res.MSPID, res.MessageID, res.JobID, res.TargetID, payload)
-	if err != nil || d.isDuplicate(res.MSPID, res.MessageID) {
+		ON CONFLICT (msp_id, message_id) DO NOTHING RETURNING id::text
+	`, res.MSPID, res.MessageID, res.JobID, res.TargetID, data).Scan(&inboxID)
+	if err == sql.ErrNoRows {
+		d.publishResultReceipt(*res)
 		return
 	}
-
-	// Verify ownership and current state
-	var currentStatus string
+	if err != nil {
+		return
+	}
+	var currentStatus, agentID, clientID, siteID, correlationID string
 	var currentAttempt int
-	err = d.db.DB().QueryRow(`
-		SELECT jt.status, jt.attempt FROM job_targets jt
+	err = tx.QueryRow(`
+		SELECT jt.status, COALESCE(jt.agent_id,''), jt.attempt, j.client_id::text,
+		       COALESCE(j.site_id::text,''), COALESCE(j.correlation_id,'')
+		FROM job_targets jt
 		JOIN jobs j ON jt.job_id = j.id
 		WHERE jt.id = $1 AND jt.job_id = $2 AND j.msp_id = $3 AND jt.device_id = $4
-	`, res.TargetID, res.JobID, res.MSPID, res.DeviceID).Scan(&currentStatus, &currentAttempt)
+		FOR UPDATE
+	`, res.TargetID, res.JobID, res.MSPID, res.DeviceID).Scan(&currentStatus, &agentID, &currentAttempt, &clientID, &siteID, &correlationID)
+	if err != nil || agentID != res.AgentID || currentAttempt != res.Attempt ||
+		clientID != res.ClientID || siteID != res.SiteID || correlationID != res.CorrelationID {
+		d.logger.Warn("result ownership mismatch", zap.String("target", res.TargetID), zap.Error(err))
+		return
+	}
+	if err := TransitionJob(currentStatus, res.Status); err != nil {
+		d.logger.Warn("invalid result transition", zap.Error(err))
+		return
+	}
+	resultJSON, err := json.Marshal(res.Result)
 	if err != nil {
-		d.logger.Warn("result for non-existent target",
-			zap.String("job", res.JobID), zap.String("target", res.TargetID))
 		return
 	}
-
-	if res.Attempt < currentAttempt {
-		d.logger.Warn("stale result (older attempt)", zap.Int("got", res.Attempt), zap.Int("have", currentAttempt))
+	if _, err := tx.Exec(`
+		UPDATE job_targets SET status=$1, result=$2, error_message=NULLIF($3,''), exit_code=$4,
+			completed_at=NOW(), lease_owner=NULL, lease_expires=NULL WHERE id=$5
+	`, res.Status, resultJSON, res.Error, res.ExitCode, res.TargetID); err != nil {
 		return
 	}
-
-	// Apply state transition
-	resultJSON, _ := json.Marshal(res.Result)
-	now := time.Now()
-	switch res.Status {
-	case "succeeded":
-		if err := TransitionJob(currentStatus, "succeeded"); err == nil {
-			d.db.DB().Exec(`UPDATE job_targets SET status = 'succeeded', result = $1, exit_code = $2, completed_at = $3, lease_owner = NULL, lease_expires = NULL
-				WHERE id = $4`, resultJSON, res.ExitCode, now, res.TargetID)
-		}
-	case "failed":
-		if err := TransitionJob(currentStatus, "failed"); err == nil {
-			d.db.DB().Exec(`UPDATE job_targets SET status = 'failed', result = $1, error_message = $2, exit_code = $3, completed_at = $4, lease_owner = NULL, lease_expires = NULL
-				WHERE id = $5`, resultJSON, res.Error, res.ExitCode, now, res.TargetID)
-		}
-	case "cancelled":
-		d.db.DB().Exec(`UPDATE job_targets SET status = 'cancelled', completed_at = NOW() WHERE id = $1`, res.TargetID)
-	case "expired":
-		d.db.DB().Exec(`UPDATE job_targets SET status = 'expired', completed_at = NOW() WHERE id = $1`, res.TargetID)
+	if _, err := tx.Exec(`UPDATE job_inbox SET processed_at=NOW() WHERE id::text=$1`, inboxID); err != nil {
+		return
 	}
-
-	d.db.DB().Exec(`UPDATE job_inbox SET processed_at = NOW() WHERE msp_id = $1 AND message_id = $2`, res.MSPID, res.MessageID)
-
-	// Reconcile aggregate job state
-	d.db.DB().Exec(`
+	if _, err := tx.Exec(`
 		UPDATE jobs SET
 			completed_count = (SELECT COUNT(*) FROM job_targets WHERE job_id = $1 AND status = 'succeeded'),
 			failed_count = (SELECT COUNT(*) FROM job_targets WHERE job_id = $1 AND status IN ('failed','expired')),
@@ -437,13 +482,29 @@ func (d *Dispatcher) handleAgentResult(data []byte) {
 			END,
 			updated_at = NOW()
 		WHERE id = $1
-	`, res.JobID)
+	`, res.JobID); err != nil {
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		return
+	}
+	d.publishResultReceipt(*res)
 }
 
-func (d *Dispatcher) isDuplicate(mspID, messageID string) bool {
-	var processed bool
-	d.db.DB().QueryRow(`SELECT EXISTS(SELECT 1 FROM job_inbox WHERE msp_id = $1 AND message_id = $2 AND processed_at IS NOT NULL)`, mspID, messageID).Scan(&processed)
-	return processed
+func (d *Dispatcher) publishResultReceipt(res ResultEnvelope) {
+	data, err := json.Marshal(map[string]interface{}{
+		"schema_version": CurrentSchemaVersion,
+		"message_id":     res.MessageID,
+		"event_id":       res.EventID,
+		"received_at":    time.Now().UTC().Format(time.RFC3339),
+	})
+	if err != nil {
+		return
+	}
+	subject := fmt.Sprintf("tenant.%s.agent.%s.result.ack", res.MSPID, res.AgentID)
+	if err := d.nc.Publish(subject, data); err != nil {
+		d.logger.Warn("publish result receipt", zap.Error(err))
+	}
 }
 
 func backoffDuration(attempt int) time.Duration {

@@ -11,6 +11,7 @@ import (
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/agent/collectors"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/agent/comms"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/agent/core"
+	"github.com/strata-rmm/strata-rmm-orchestrator/internal/agent/jobs"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/agent/remotecontrol"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/agent/scripts"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/agent/software"
@@ -87,6 +88,27 @@ func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 			}
 			defer scriptExec.Stop()
 			logger.Info("script executor started")
+
+			ledger, err := jobs.NewReceiptLedger(agent.Store().DB(), logger)
+			if err != nil {
+				return fmt.Errorf("initializing durable command ledger: %w", err)
+			}
+			registry := jobs.NewHandlerRegistry()
+			registry.Register("script_exec", func(handlerCtx context.Context, command *jobs.CommandEnvelope) (string, int, []byte, error) {
+				return scriptExec.RunJob(handlerCtx, command.Payload)
+			})
+			jobDispatcher := jobs.NewJobDispatcher(
+				natsClient.Conn(), ledger, registry, logger,
+				agent.Identity().TenantID, agent.Identity().AgentID,
+			)
+			if err := jobDispatcher.Start(ctx); err != nil {
+				return fmt.Errorf("starting durable job dispatcher: %w", err)
+			}
+			defer func() {
+				if err := jobDispatcher.Stop(); err != nil {
+					logger.Warn("stopping durable job dispatcher", zap.Error(err))
+				}
+			}()
 
 			swInstaller := software.NewInstaller(natsClient.Conn(), logger, agent.Identity().TenantID, agent.Identity().AgentID)
 			if err := swInstaller.Start(ctx); err != nil {

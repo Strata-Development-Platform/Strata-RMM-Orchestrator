@@ -19,24 +19,19 @@ type HandlerRegistry struct {
 }
 
 func NewHandlerRegistry() *HandlerRegistry {
-	return &HandlerRegistry{
-		handlers: make(map[string]CommandHandler),
-	}
+	return &HandlerRegistry{handlers: make(map[string]CommandHandler)}
 }
-
 func (r *HandlerRegistry) Register(commandType string, handler CommandHandler) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.handlers[commandType] = handler
 }
-
 func (r *HandlerRegistry) Get(commandType string) (CommandHandler, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	h, ok := r.handlers[commandType]
-	return h, ok
+	handler, ok := r.handlers[commandType]
+	return handler, ok
 }
-
 func (r *HandlerRegistry) IsSupported(commandType string) bool {
 	_, ok := r.Get(commandType)
 	return ok
@@ -60,6 +55,14 @@ type CommandEnvelope struct {
 	Payload       json.RawMessage `json:"payload"`
 }
 
+type resultReceipt struct {
+	MessageID string `json:"message_id"`
+}
+type cancelEnvelope struct {
+	EventID  string `json:"event_id"`
+	TargetID string `json:"target_id"`
+}
+
 type JobDispatcher struct {
 	nc       *nats.Conn
 	ledger   *ReceiptLedger
@@ -67,166 +70,224 @@ type JobDispatcher struct {
 	logger   *zap.Logger
 	tenantID string
 	agentID  string
-	mu       sync.Mutex
-	ackSub   *nats.Subscription
-	subs     []*nats.Subscription
+
+	mu      sync.Mutex
+	cancels map[string]context.CancelFunc
+	subs    []*nats.Subscription
+	wg      sync.WaitGroup
 }
 
 func NewJobDispatcher(nc *nats.Conn, ledger *ReceiptLedger, registry *HandlerRegistry, logger *zap.Logger, tenantID, agentID string) *JobDispatcher {
-	return &JobDispatcher{
-		nc:       nc,
-		ledger:   ledger,
-		registry: registry,
-		logger:   logger,
-		tenantID: tenantID,
-		agentID:  agentID,
-	}
+	return &JobDispatcher{nc: nc, ledger: ledger, registry: registry, logger: logger, tenantID: tenantID, agentID: agentID, cancels: make(map[string]context.CancelFunc)}
 }
 
 func (d *JobDispatcher) Start(ctx context.Context) error {
-	subject := fmt.Sprintf("tenant.%s.cmd.%s", d.tenantID, d.agentID)
-	sub, err := d.nc.Subscribe(subject, func(msg *nats.Msg) {
-		d.handleCommand(msg.Data)
-	})
-	if err != nil {
-		return fmt.Errorf("subscribe commands: %w", err)
+	handlers := []struct {
+		subject string
+		handler nats.MsgHandler
+	}{
+		{fmt.Sprintf("tenant.%s.cmd.%s", d.tenantID, d.agentID), func(msg *nats.Msg) { d.handleCommand(ctx, msg.Data) }},
+		{fmt.Sprintf("tenant.%s.agent.%s.result.ack", d.tenantID, d.agentID), func(msg *nats.Msg) { d.handleResultReceipt(msg.Data) }},
+		{fmt.Sprintf("tenant.%s.cmd.%s.cancel", d.tenantID, d.agentID), func(msg *nats.Msg) { d.handleCancellation(msg.Data) }},
 	}
-	d.subs = append(d.subs, sub)
-	d.logger.Info("job dispatcher started", zap.String("subject", subject))
-
-	// Replay unacknowledged results
-	go d.replayResults(ctx)
-
+	for _, item := range handlers {
+		sub, err := d.nc.Subscribe(item.subject, item.handler)
+		if err != nil {
+			_ = d.Stop()
+			return fmt.Errorf("subscribe %s: %w", item.subject, err)
+		}
+		d.subs = append(d.subs, sub)
+	}
+	if err := d.nc.Flush(); err != nil {
+		_ = d.Stop()
+		return fmt.Errorf("flush subscriptions: %w", err)
+	}
+	if err := d.replayResults(ctx); err != nil {
+		d.logger.Warn("replay results", zap.Error(err))
+	}
+	d.logger.Info("durable job dispatcher started")
 	return nil
 }
 
-func (d *JobDispatcher) Stop() {
-	for _, sub := range d.subs {
-		sub.Unsubscribe()
+func (d *JobDispatcher) Stop() error {
+	d.mu.Lock()
+	for _, cancel := range d.cancels {
+		cancel()
 	}
+	d.cancels = make(map[string]context.CancelFunc)
+	d.mu.Unlock()
+	var first error
+	for _, sub := range d.subs {
+		if err := sub.Unsubscribe(); err != nil && first == nil {
+			first = err
+		}
+	}
+	d.wg.Wait()
+	return first
 }
 
-func (d *JobDispatcher) handleCommand(data []byte) {
-	var cmd CommandEnvelope
-	if err := json.Unmarshal(data, &cmd); err != nil {
-		d.logger.Warn("malformed command", zap.Error(err))
+func (d *JobDispatcher) handleCommand(parent context.Context, data []byte) {
+	cmd, err := validateCommand(data, d.tenantID, d.agentID)
+	if err != nil {
+		d.logger.Warn("rejecting command", zap.Error(err))
 		return
 	}
-
-	if cmd.SchemaVersion <= 0 || cmd.SchemaVersion > 1 {
-		d.logger.Warn("unsupported schema version", zap.Int("version", cmd.SchemaVersion))
-		return
-	}
-
-	if cmd.MSPID != d.tenantID {
-		d.logger.Warn("msp_id mismatch", zap.String("got", cmd.MSPID), zap.String("expected", d.tenantID))
-		return
-	}
-
-	if cmd.AgentID != "" && cmd.AgentID != d.agentID {
-		d.logger.Warn("agent_id mismatch", zap.String("got", cmd.AgentID), zap.String("expected", d.agentID))
-		return
-	}
-
-	if d.ledger.IsDuplicate(cmd.EventID) {
-		receipt, err := d.ledger.GetReceipt(cmd.EventID)
-		if err == nil && (receipt.State == StateSucceeded || receipt.State == StateFailed) {
-			resendResult := map[string]interface{}{
-				"schema_version": 1,
-				"event_id":       cmd.EventID,
-				"job_id":         cmd.JobID,
-				"target_id":      cmd.TargetID,
-				"msp_id":         cmd.MSPID,
-				"device_id":      cmd.DeviceID,
-				"agent_id":       d.agentID,
-				"status":         receipt.State,
-				"duplicate":      true,
+	ackSubject := fmt.Sprintf("tenant.%s.agent.%s.ack", d.tenantID, d.agentID)
+	if receipt, getErr := d.ledger.GetReceipt(cmd.EventID); getErr == nil {
+		if err := PublishAcknowledgement(d.nc, ackSubject, cmd.EventID, cmd.JobID, cmd.TargetID, cmd.MSPID, cmd.DeviceID, d.agentID, cmd.CorrelationID, cmd.Attempt, "duplicate"); err != nil {
+			d.logger.Error("publish duplicate acknowledgement", zap.Error(err))
+		}
+		if len(receipt.ResultEnvelope) > 0 && !receipt.ResultAcked {
+			if err := d.nc.Publish(fmt.Sprintf("tenant.%s.agent.%s.result", d.tenantID, d.agentID), receipt.ResultEnvelope); err != nil {
+				d.logger.Error("republish duplicate result", zap.Error(err))
 			}
-			resData, _ := json.Marshal(resendResult)
-			ackSubject := fmt.Sprintf("tenant.%s.agent.%s.ack", d.tenantID, d.agentID)
-			PublishAcknowledgement(d.nc, ackSubject, cmd.EventID, cmd.JobID, cmd.TargetID, cmd.MSPID, cmd.DeviceID, d.agentID, cmd.CorrelationID, cmd.Attempt, "duplicate")
-			d.nc.Publish(fmt.Sprintf("tenant.%s.agent.%s.result", d.tenantID, d.agentID), resData)
 		}
 		return
 	}
-
-	ackSubject := fmt.Sprintf("tenant.%s.agent.%s.ack", d.tenantID, d.agentID)
-	PublishAcknowledgement(d.nc, ackSubject, cmd.EventID, cmd.JobID, cmd.TargetID, cmd.MSPID, cmd.DeviceID, d.agentID, cmd.CorrelationID, cmd.Attempt, "accepted")
 
 	receipt := &CommandReceipt{
-		EventID:       cmd.EventID,
-		JobID:         cmd.JobID,
-		TargetID:     cmd.TargetID,
-		CorrelationID: cmd.CorrelationID,
-		Attempt:      cmd.Attempt,
-		CommandType:  cmd.CommandType,
-		ReceivedAt:   time.Now().UTC().Format(time.RFC3339),
-		State:        StateReceived,
+		EventID: cmd.EventID, JobID: cmd.JobID, TargetID: cmd.TargetID, MSPID: cmd.MSPID,
+		ClientID: cmd.ClientID, SiteID: cmd.SiteID, DeviceID: cmd.DeviceID, AgentID: d.agentID,
+		CorrelationID: cmd.CorrelationID, Attempt: cmd.Attempt, CommandType: cmd.CommandType,
+		ReceivedAt: time.Now().UTC().Format(time.RFC3339), State: StateReceived,
 	}
-	d.ledger.RecordReceipt(receipt)
-
-	go d.execute(cmd)
-}
-
-func (d *JobDispatcher) execute(cmd CommandEnvelope) {
-	handler, ok := d.registry.Get(cmd.CommandType)
-	if !ok {
-		ackSubject := fmt.Sprintf("tenant.%s.agent.%s.ack", d.tenantID, d.agentID)
-		PublishAcknowledgement(d.nc, ackSubject, cmd.EventID, cmd.JobID, cmd.TargetID, cmd.MSPID, cmd.DeviceID, d.agentID, cmd.CorrelationID, cmd.Attempt, "unsupported")
-		d.ledger.MarkComplete(cmd.EventID, StateFailed, "")
+	if err := d.ledger.RecordReceipt(receipt); err != nil {
+		d.logger.Error("persist command before acknowledgement", zap.Error(err))
 		return
 	}
-
-	d.ledger.MarkRunning(cmd.EventID)
-
-	ctx := context.Background()
-	status, exitCode, result, err := handler(ctx, &cmd)
-	if err != nil {
-		status = StateFailed
+	if err := PublishAcknowledgement(d.nc, ackSubject, cmd.EventID, cmd.JobID, cmd.TargetID, cmd.MSPID, cmd.DeviceID, d.agentID, cmd.CorrelationID, cmd.Attempt, "accepted"); err != nil {
+		d.logger.Error("publish accepted acknowledgement", zap.Error(err))
+		return
 	}
-
-	resultSubject := fmt.Sprintf("tenant.%s.agent.%s.result", d.tenantID, d.agentID)
-	now := time.Now()
-	startedAt, _ := time.Parse(time.RFC3339, cmd.IssuedAt)
-	if startedAt.IsZero() {
-		startedAt = now.Add(-time.Second)
-	}
-
-	msgID, pubErr := PublishResult(d.nc, resultSubject, "", cmd.EventID, cmd.JobID, cmd.TargetID,
-		cmd.MSPID, cmd.DeviceID, d.agentID, cmd.CorrelationID, cmd.Attempt,
-		status, exitCode, result, "", startedAt, now)
-
-	finalStatus := status
-	if pubErr != nil {
-		finalStatus = StateSucceeded
-	}
-
-	d.ledger.MarkComplete(cmd.EventID, finalStatus, msgID)
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		d.execute(parent, *cmd)
+	}()
 }
 
-func (d *JobDispatcher) replayResults(ctx context.Context) {
-	receipts := d.ledger.GetUnacknowledgedResults()
-	for _, receipt := range receipts {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			resultSubject := fmt.Sprintf("tenant.%s.agent.%s.result", d.tenantID, d.agentID)
-			resendData := map[string]interface{}{
-				"schema_version": 1,
-				"message_id":     receipt.ResultMsgID,
-				"event_id":       receipt.EventID,
-				"job_id":         receipt.JobID,
-				"target_id":     receipt.TargetID,
-				"msp_id":         d.tenantID,
-				"device_id":      "",
-				"agent_id":       d.agentID,
-				"status":         receipt.State,
-				"retransmitted":  true,
-			}
-			data, _ := json.Marshal(resendData)
-			d.nc.Publish(resultSubject, data)
-			d.logger.Info("retransmitted unacknowledged result", zap.String("event", receipt.EventID))
+func validateCommand(data []byte, tenantID, agentID string) (*CommandEnvelope, error) {
+	var cmd CommandEnvelope
+	if err := json.Unmarshal(data, &cmd); err != nil {
+		return nil, fmt.Errorf("malformed command: %w", err)
+	}
+	if cmd.SchemaVersion != 1 || cmd.EventID == "" || cmd.JobID == "" || cmd.TargetID == "" ||
+		cmd.DeviceID == "" || cmd.CorrelationID == "" || cmd.CommandType == "" || cmd.Attempt < 1 {
+		return nil, fmt.Errorf("invalid command envelope")
+	}
+	if cmd.MSPID != tenantID || (cmd.AgentID != "" && cmd.AgentID != agentID) {
+		return nil, fmt.Errorf("command ownership mismatch")
+	}
+	if cmd.ExpiresAt != "" {
+		expiresAt, err := time.Parse(time.RFC3339, cmd.ExpiresAt)
+		if err != nil || !time.Now().Before(expiresAt) {
+			return nil, fmt.Errorf("command expired or has invalid expiry")
 		}
 	}
+	return &cmd, nil
+}
+
+func (d *JobDispatcher) execute(parent context.Context, cmd CommandEnvelope) {
+	handler, ok := d.registry.Get(cmd.CommandType)
+	if !ok {
+		d.publishTerminal(cmd, StateFailed, -1, nil, "unsupported command type")
+		return
+	}
+	if err := d.ledger.MarkRunning(cmd.EventID); err != nil {
+		d.logger.Error("mark command running", zap.Error(err))
+		return
+	}
+	ctx, cancel := context.WithCancel(parent)
+	if cmd.ExpiresAt != "" {
+		if deadline, err := time.Parse(time.RFC3339, cmd.ExpiresAt); err == nil {
+			ctx, cancel = context.WithDeadline(parent, deadline)
+		}
+	}
+	d.mu.Lock()
+	d.cancels[cmd.EventID] = cancel
+	d.cancels[cmd.TargetID] = cancel
+	d.mu.Unlock()
+	defer func() {
+		cancel()
+		d.mu.Lock()
+		delete(d.cancels, cmd.EventID)
+		delete(d.cancels, cmd.TargetID)
+		d.mu.Unlock()
+	}()
+
+	startedAt := time.Now()
+	status, exitCode, result, runErr := handler(ctx, &cmd)
+	errorText := ""
+	if runErr != nil {
+		status, errorText = StateFailed, runErr.Error()
+	}
+	if ctx.Err() == context.Canceled {
+		status, errorText = StateCancelled, "command cancelled"
+	} else if ctx.Err() == context.DeadlineExceeded {
+		status, errorText = StateExpired, "command deadline exceeded"
+	}
+	if status != StateSucceeded && status != StateFailed && status != StateCancelled && status != StateExpired {
+		status, errorText = StateFailed, "handler returned invalid status"
+	}
+	d.publishTerminalAt(cmd, status, exitCode, result, errorText, startedAt)
+}
+
+func (d *JobDispatcher) publishTerminal(cmd CommandEnvelope, status string, exitCode int, result []byte, errorText string) {
+	d.publishTerminalAt(cmd, status, exitCode, result, errorText, time.Now())
+}
+func (d *JobDispatcher) publishTerminalAt(cmd CommandEnvelope, status string, exitCode int, result []byte, errorText string, startedAt time.Time) {
+	msgID, envelope, err := MarshalResult("", cmd.EventID, cmd.JobID, cmd.TargetID, cmd.MSPID, cmd.ClientID, cmd.SiteID, cmd.DeviceID, d.agentID, cmd.CorrelationID, cmd.Attempt, status, exitCode, result, errorText, startedAt, time.Now())
+	if err != nil {
+		d.logger.Error("marshal command result", zap.Error(err))
+		return
+	}
+	// Persist the exact result before attempting delivery.
+	if err := d.ledger.MarkComplete(cmd.EventID, status, msgID, envelope); err != nil {
+		d.logger.Error("persist command result", zap.Error(err))
+		return
+	}
+	if err := d.nc.Publish(fmt.Sprintf("tenant.%s.agent.%s.result", d.tenantID, d.agentID), envelope); err != nil {
+		d.logger.Warn("publish command result; retained for replay", zap.Error(err))
+	}
+}
+
+func (d *JobDispatcher) handleResultReceipt(data []byte) {
+	var receipt resultReceipt
+	if err := json.Unmarshal(data, &receipt); err != nil || receipt.MessageID == "" {
+		d.logger.Warn("invalid result receipt")
+		return
+	}
+	if err := d.ledger.MarkResultAcknowledged(receipt.MessageID); err != nil {
+		d.logger.Warn("record result receipt", zap.Error(err))
+	}
+}
+func (d *JobDispatcher) handleCancellation(data []byte) {
+	var request cancelEnvelope
+	if err := json.Unmarshal(data, &request); err != nil || (request.EventID == "" && request.TargetID == "") {
+		return
+	}
+	d.mu.Lock()
+	cancel := d.cancels[request.EventID]
+	if cancel == nil {
+		cancel = d.cancels[request.TargetID]
+	}
+	d.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+func (d *JobDispatcher) replayResults(ctx context.Context) error {
+	receipts, err := d.ledger.GetUnacknowledgedResults()
+	if err != nil {
+		return err
+	}
+	for _, receipt := range receipts {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := d.nc.Publish(fmt.Sprintf("tenant.%s.agent.%s.result", d.tenantID, d.agentID), receipt.ResultEnvelope); err != nil {
+			return err
+		}
+	}
+	return nil
 }

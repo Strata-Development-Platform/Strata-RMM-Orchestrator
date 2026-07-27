@@ -9,129 +9,106 @@ import (
 	"go.uber.org/zap"
 )
 
-func newTestDB(t *testing.T) *bbolt.DB {
+func newTestLedger(t *testing.T) *ReceiptLedger {
 	t.Helper()
-	f, err := os.CreateTemp("", "ledger-test-*.db")
+	file, err := os.CreateTemp("", "ledger-test-*.db")
 	if err != nil {
-		t.Fatalf("temp file: %v", err)
+		t.Fatal(err)
 	}
-	f.Close()
-	db, err := bbolt.Open(f.Name(), 0600, &bbolt.Options{Timeout: 1 * time.Second})
+	name := file.Name()
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := bbolt.Open(name, 0600, &bbolt.Options{Timeout: time.Second})
 	if err != nil {
-		t.Fatalf("open db: %v", err)
+		t.Fatal(err)
 	}
-	t.Cleanup(func() { db.Close(); os.Remove(f.Name()) })
-	return db
-}
-
-func TestReceiptLedger(t *testing.T) {
-	db := newTestDB(t)
-	logger := zap.NewNop()
-	ledger := NewReceiptLedger(db, logger)
-
-	r := &CommandReceipt{
-		EventID:       "evt-001",
-		JobID:         "job-001",
-		TargetID:      "tgt-001",
-		CorrelationID: "corr-001",
-		Attempt:       1,
-		CommandType:   "script",
-		ReceivedAt:    time.Now().UTC().Format(time.RFC3339),
-		State:         StateReceived,
-	}
-
-	if err := ledger.RecordReceipt(r); err != nil {
-		t.Fatalf("RecordReceipt: %v", err)
-	}
-
-	if !ledger.IsDuplicate("evt-001") {
-		t.Error("IsDuplicate should return true")
-	}
-
-	if ledger.IsDuplicate("evt-002") {
-		t.Error("IsDuplicate should return false for unknown event")
-	}
-
-	got, err := ledger.GetReceipt("evt-001")
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close db: %v", err)
+		}
+		if err := os.Remove(name); err != nil && !os.IsNotExist(err) {
+			t.Errorf("remove db: %v", err)
+		}
+	})
+	ledger, err := NewReceiptLedger(db, zap.NewNop())
 	if err != nil {
-		t.Fatalf("GetReceipt: %v", err)
+		t.Fatal(err)
 	}
-	if got.JobID != "job-001" {
-		t.Errorf("wrong job_id: %s", got.JobID)
-	}
+	return ledger
+}
 
-	if err := ledger.MarkRunning("evt-001"); err != nil {
-		t.Fatalf("MarkRunning: %v", err)
+func TestReceiptLedgerPersistsExactResultUntilAcknowledged(t *testing.T) {
+	ledger := newTestLedger(t)
+	receipt := &CommandReceipt{
+		EventID: "evt-1", JobID: "job-1", TargetID: "target-1", DeviceID: "device-1",
+		ReceivedAt: time.Now().UTC().Format(time.RFC3339), State: StateReceived,
 	}
-	got, _ = ledger.GetReceipt("evt-001")
-	if got.State != StateRunning {
-		t.Errorf("expected running, got %s", got.State)
+	if err := ledger.RecordReceipt(receipt); err != nil {
+		t.Fatal(err)
 	}
-
-	if err := ledger.MarkComplete("evt-001", StateSucceeded, "res-001"); err != nil {
-		t.Fatalf("MarkComplete: %v", err)
+	if err := ledger.MarkRunning(receipt.EventID); err != nil {
+		t.Fatal(err)
 	}
-	got, _ = ledger.GetReceipt("evt-001")
-	if got.State != StateSucceeded {
-		t.Errorf("expected succeeded, got %s", got.State)
+	envelope := []byte(`{"message_id":"result-1","device_id":"device-1"}`)
+	if err := ledger.MarkComplete(receipt.EventID, StateSucceeded, "result-1", envelope); err != nil {
+		t.Fatal(err)
 	}
-	if got.ResultMsgID != "res-001" {
-		t.Errorf("expected res-001, got %s", got.ResultMsgID)
+	pending, err := ledger.GetUnacknowledgedResults()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 1 || string(pending[0].ResultEnvelope) != string(envelope) {
+		t.Fatalf("unexpected pending results: %#v", pending)
+	}
+	if err := ledger.MarkResultAcknowledged("result-1"); err != nil {
+		t.Fatal(err)
+	}
+	pending, err = ledger.GetUnacknowledgedResults()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 0 {
+		t.Fatalf("acknowledged result was replayable: %#v", pending)
 	}
 }
 
-func TestUnacknowledgedResults(t *testing.T) {
-	db := newTestDB(t)
-	logger := zap.NewNop()
-	ledger := NewReceiptLedger(db, logger)
-
-	r1 := &CommandReceipt{EventID: "evt-001", State: StateSucceeded, ResultMsgID: "res-001"}
-	ledger.RecordReceipt(r1)
-	r2 := &CommandReceipt{EventID: "evt-002", State: StateFailed, ResultMsgID: "res-002"}
-	ledger.RecordReceipt(r2)
-	r3 := &CommandReceipt{EventID: "evt-003", State: StateRunning}
-	ledger.RecordReceipt(r3)
-
-	results := ledger.GetUnacknowledgedResults()
-	if len(results) != 2 {
-		t.Errorf("expected 2 unacknowledged results, got %d", len(results))
+func TestReceiptLedgerRejectsDuplicateWithoutOverwrite(t *testing.T) {
+	ledger := newTestLedger(t)
+	original := &CommandReceipt{EventID: "evt-1", Attempt: 1, ReceivedAt: time.Now().UTC().Format(time.RFC3339)}
+	if err := ledger.RecordReceipt(original); err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.RecordReceipt(&CommandReceipt{EventID: "evt-1", Attempt: 2}); err == nil {
+		t.Fatal("expected duplicate receipt error")
+	}
+	got, err := ledger.GetReceipt("evt-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Attempt != 1 {
+		t.Fatalf("duplicate overwrote receipt: attempt=%d", got.Attempt)
 	}
 }
 
-func TestCleanup(t *testing.T) {
-	db := newTestDB(t)
-	logger := zap.NewNop()
-	ledger := NewReceiptLedger(db, logger)
-
-	old := &CommandReceipt{EventID: "evt-old", ReceivedAt: time.Now().Add(-48 * time.Hour).UTC().Format(time.RFC3339)}
-	ledger.RecordReceipt(old)
-	new := &CommandReceipt{EventID: "evt-new", ReceivedAt: time.Now().UTC().Format(time.RFC3339)}
-	ledger.RecordReceipt(new)
-
-	ledger.Cleanup(time.Now().Add(-24 * time.Hour))
-
-	if ledger.IsDuplicate("evt-old") {
-		t.Error("old receipt should have been cleaned up")
+func TestCleanupOnlyDeletesAcknowledgedResults(t *testing.T) {
+	ledger := newTestLedger(t)
+	old := time.Now().Add(-48 * time.Hour).UTC().Format(time.RFC3339)
+	for _, receipt := range []*CommandReceipt{
+		{EventID: "pending", ReceivedAt: old, State: StateSucceeded, ResultMsgID: "r1", ResultEnvelope: []byte(`{}`)},
+		{EventID: "acked", ReceivedAt: old, State: StateSucceeded, ResultMsgID: "r2", ResultEnvelope: []byte(`{}`), ResultAcked: true},
+	} {
+		if err := ledger.RecordReceipt(receipt); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if !ledger.IsDuplicate("evt-new") {
-		t.Error("new receipt should still exist")
+	if err := ledger.Cleanup(time.Now().Add(-24 * time.Hour)); err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestDuplicateDoesNotOverwrite(t *testing.T) {
-	db := newTestDB(t)
-	logger := zap.NewNop()
-	ledger := NewReceiptLedger(db, logger)
-
-	r1 := &CommandReceipt{EventID: "evt-001", Attempt: 1, State: StateReceived}
-	ledger.RecordReceipt(r1)
-	r2, _ := ledger.GetReceipt("evt-001")
-	r2.Attempt = 2
-	ledger.RecordReceipt(r2)
-
-	got, _ := ledger.GetReceipt("evt-001")
-	// RecordReceipt overwrites — this is intentional for state updates
-	if got.Attempt != 2 {
-		t.Errorf("expected attempt 2, got %d", got.Attempt)
+	if !ledger.IsDuplicate("pending") {
+		t.Fatal("unacknowledged result was deleted")
+	}
+	if ledger.IsDuplicate("acked") {
+		t.Fatal("acknowledged result was not deleted")
 	}
 }

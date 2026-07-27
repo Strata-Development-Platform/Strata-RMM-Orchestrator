@@ -35,6 +35,52 @@ type ScriptResult struct {
 	DurationMs  int64  `json:"duration_ms"`
 }
 
+// RunJob executes a durable job payload without publishing on the legacy
+// script-result subject. The durable jobs dispatcher owns acknowledgement,
+// result persistence and delivery.
+func (e *Executor) RunJob(ctx context.Context, payload json.RawMessage) (string, int, []byte, error) {
+	var cmd ScriptCommand
+	if err := json.Unmarshal(payload, &cmd); err != nil {
+		return "failed", -1, nil, fmt.Errorf("decode script payload: %w", err)
+	}
+	if cmd.Timeout <= 0 {
+		cmd.Timeout = 300
+	}
+	content, err := interpolateParams(cmd.Content, cmd.Parameters)
+	if err != nil {
+		return "failed", -1, nil, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(cmd.Timeout)*time.Second)
+	defer cancel()
+	var stdout, stderr bytes.Buffer
+	exitCode := -1
+	switch cmd.Language {
+	case "powershell":
+		exitCode = e.runPowerShell(ctx, content, &stdout, &stderr)
+	case "bash":
+		exitCode = e.runBash(ctx, content, &stdout, &stderr)
+	case "python":
+		exitCode = e.runPython(ctx, content, &stdout, &stderr)
+	case "batch":
+		exitCode = e.runBatch(ctx, content, &stdout, &stderr)
+	default:
+		return "failed", -1, nil, fmt.Errorf("unsupported language: %s", cmd.Language)
+	}
+	result, err := json.Marshal(map[string]interface{}{
+		"stdout": truncateOutput(stdout.String()), "stderr": truncateOutput(stderr.String()),
+	})
+	if err != nil {
+		return "failed", exitCode, nil, err
+	}
+	if ctx.Err() != nil {
+		return "failed", exitCode, result, ctx.Err()
+	}
+	if exitCode != 0 {
+		return "failed", exitCode, result, fmt.Errorf("script exited with code %d", exitCode)
+	}
+	return "succeeded", exitCode, result, nil
+}
+
 type Executor struct {
 	nc       *nats.Conn
 	logger   *zap.Logger

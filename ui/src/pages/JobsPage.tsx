@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import { useAuth } from '@/hooks/useAuth';
 import { api } from '@/api/client';
 
 type Job = Record<string, unknown>;
@@ -13,8 +12,6 @@ const STATUS_STYLES: Record<string, string> = {
 };
 
 export default function JobsPage() {
-  const { user } = useAuth();
-  const tenantID = user?.accessible_tenants?.[0]?.id || '';
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -25,22 +22,22 @@ export default function JobsPage() {
   const [jobDetail, setJobDetail] = useState<Job | null>(null);
 
   const loadJobs = async () => {
-    if (!tenantID) return;
     setLoading(true);
     setError('');
     try {
-      let url = `/api/v1/jobs?client_id=${tenantID}`;
+      let url = '/api/v1/jobs';
       if (filterStatus) url += `&status=${filterStatus}`;
       if (filterType) url += `&type=${filterType}`;
       const res = await fetch(url, { headers: { 'Authorization': `Bearer ${api.getToken()}` } });
       const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to load jobs');
       if (data.jobs) setJobs(data.jobs);
       else setError(data.error || 'Failed to load');
-    } catch { setError('Connection failed'); }
+    } catch (err) { setError(err instanceof Error ? err.message : 'Connection failed'); }
     setLoading(false);
   };
 
-  useEffect(() => { loadJobs(); }, [tenantID, filterStatus, filterType]);
+  useEffect(() => { loadJobs(); }, [filterStatus, filterType]);
 
   const openJob = async (job: Job) => {
     setSelectedJob(job);
@@ -56,17 +53,27 @@ export default function JobsPage() {
   };
 
   const cancelJob = async (jobId: string) => {
-    await fetch(`/api/v1/jobs/${jobId}/cancel`, {
+    const res = await fetch(`/api/v1/jobs/${jobId}/cancel`, {
       method: 'POST', headers: { 'Authorization': `Bearer ${api.getToken()}` },
     });
+    const data = await res.json();
+    if (!res.ok) {
+      setError(data.error || 'Cancellation failed');
+      return;
+    }
     loadJobs();
     setSelectedJob(null);
   };
 
   const retryJob = async (jobId: string) => {
-    await fetch(`/api/v1/jobs/${jobId}/retry`, {
+    const res = await fetch(`/api/v1/jobs/${jobId}/retry`, {
       method: 'POST', headers: { 'Authorization': `Bearer ${api.getToken()}` },
     });
+    const data = await res.json();
+    if (!res.ok) {
+      setError(data.error || 'Retry failed');
+      return;
+    }
     loadJobs();
   };
 

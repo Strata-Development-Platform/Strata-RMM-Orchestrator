@@ -1,18 +1,18 @@
 import { useState, useEffect } from 'react';
-import { useAuth } from '@/hooks/useAuth';
 import { api } from '@/api/client';
 
 export default function JobHealthPage() {
-  const { user } = useAuth();
-  const tenantID = user?.accessible_tenants?.[0]?.id || '';
   const [stats, setStats] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!tenantID) return;
-    fetch(`/api/v1/jobs?client_id=${tenantID}`, {
+    fetch('/api/v1/jobs', {
       headers: { 'Authorization': `Bearer ${api.getToken()}` },
-    }).then(r => r.json()).then(data => {
+    }).then(async r => {
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'Failed to load job health');
+      return data;
+    }).then(data => {
       if (data.jobs) {
         const s: Record<string, number> = {};
         data.jobs.forEach((j: Record<string, unknown>) => {
@@ -23,7 +23,7 @@ export default function JobHealthPage() {
       }
       setLoading(false);
     }).catch(() => setLoading(false));
-  }, [tenantID]);
+  }, []);
 
   if (loading) return <div className="text-center py-12 text-slate-500">Loading...</div>;
 
