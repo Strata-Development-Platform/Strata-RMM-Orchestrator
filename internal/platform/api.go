@@ -219,6 +219,11 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("POST /api/v1/device-groups", s.handleCreateDeviceGroup)
 	mux.HandleFunc("GET /api/v1/device-groups", s.handleListDeviceGroups)
 	mux.HandleFunc("DELETE /api/v1/device-groups/{groupID}", s.handleDeleteDeviceGroup)
+	mux.HandleFunc("POST /api/v1/policies", s.handleCreatePolicy)
+	mux.HandleFunc("GET /api/v1/policies", s.handleListPolicies)
+	mux.HandleFunc("GET /api/v1/policies/{policyID}", s.handleGetPolicy)
+	mux.HandleFunc("POST /api/v1/policies/{policyID}/publish", s.handlePublishPolicy)
+	mux.HandleFunc("DELETE /api/v1/policies/{policyID}", s.handleDeletePolicy)
 
 	rateLimiter := auth.NewRateLimiter(30, 60)
 

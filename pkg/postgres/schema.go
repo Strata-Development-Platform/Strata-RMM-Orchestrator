@@ -952,6 +952,49 @@ func Migrations() []Migration {
 			`,
 			Down: `DROP TABLE IF EXISTS job_targets CASCADE;`,
 		},
+		{
+			ID:   37,
+			Name: "create_policies_table",
+			Up: `
+				CREATE TABLE IF NOT EXISTS policies (
+					id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					msp_id          UUID REFERENCES msp_tenants(id) ON DELETE CASCADE,
+					client_id       UUID REFERENCES client_organizations(id) ON DELETE CASCADE,
+					site_id         UUID REFERENCES sites(id) ON DELETE CASCADE,
+					name            TEXT NOT NULL,
+					category        TEXT NOT NULL DEFAULT 'agent',
+					description     TEXT NOT NULL DEFAULT '',
+					config          JSONB NOT NULL DEFAULT '{}',
+					version         INT NOT NULL DEFAULT 1,
+					status          TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','active','archived')),
+					is_default      BOOLEAN NOT NULL DEFAULT false,
+					parent_id       UUID REFERENCES policies(id) ON DELETE SET NULL,
+					scope_level     TEXT NOT NULL DEFAULT 'msp' CHECK (scope_level IN ('platform','msp','client','site','device')),
+					created_by      TEXT NOT NULL DEFAULT '',
+					created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+				CREATE INDEX IF NOT EXISTS idx_policies_msp ON policies(msp_id);
+				CREATE INDEX IF NOT EXISTS idx_policies_scope ON policies(category, scope_level);
+			`,
+			Down: `DROP TABLE IF EXISTS policies CASCADE;`,
+		},
+		{
+			ID:   38,
+			Name: "create_policy_assignments",
+			Up: `
+				CREATE TABLE IF NOT EXISTS policy_assignments (
+					id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					policy_id       UUID NOT NULL REFERENCES policies(id) ON DELETE CASCADE,
+					device_id       TEXT NOT NULL,
+					effective_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+				CREATE INDEX IF NOT EXISTS idx_policy_assignments_device ON policy_assignments(device_id);
+				CREATE INDEX IF NOT EXISTS idx_policy_assignments_policy ON policy_assignments(policy_id);
+			`,
+			Down: `DROP TABLE IF EXISTS policy_assignments CASCADE;`,
+		},
 	}
 }
 

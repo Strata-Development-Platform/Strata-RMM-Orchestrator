@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [master, develop]
   pull_request:
-    branches: [main]
+    branches: [master]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -79,6 +79,25 @@ jobs:
         with:
           name: strata-rmm-${{ matrix.os }}-${{ matrix.arch }}
           path: strata-rmm-${{ matrix.os }}-${{ matrix.arch }}
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: npm ci
+        working-directory: ui
+      - run: npx tsc -b
+        working-directory: ui
+      - run: npm run lint || true
+        working-directory: ui
+      - run: npm run build
+        working-directory: ui
 
   security:
     name: Security Scan
