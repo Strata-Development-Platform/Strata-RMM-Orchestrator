@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
+
 	"sync"
 	"time"
 
@@ -149,11 +149,12 @@ func (s *APIServer) handleInstallScript(w http.ResponseWriter, r *http.Request) 
 	installScript := `#!/bin/bash
 set -euo pipefail
 
-SERVER_URL="http://${HOSTNAME:-localhost}:` + strings.TrimPrefix(s.addr, ":") + `"
+	SERVER_URL="${RMM_SERVER_URL:-https://rmm.stratadevplatform.com}"
 BINARY_NAME="strata-rmm"
 INSTALL_DIR="/usr/local/bin"
 CONFIG_DIR="/etc/strata-rmm"
 DATA_DIR="/var/lib/strata-rmm"
+NATS_HOST="${RMM_NATS_HOST:-rmm.stratadevplatform.com}"
 SERVICE_NAME="strata-rmm-agent"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[1;34m'; NC='\033[0m'
@@ -199,7 +200,7 @@ agent:
   log_level: "info"
   data_dir: "$DATA_DIR"
 nats:
-  urls: ["nats://$SERVER_URL"]
+  urls: ["nats://$NATS_HOST:4222"]
   reconnect_wait: 5s
   max_reconnects: -1
 collect:
