@@ -72,14 +72,12 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var mspID string
-	tx, txErr := s.db.DB().BeginTx(r.Context(), nil)
+	tx, _ := s.db.DB().BeginTx(r.Context(), nil)
 	if tx != nil {
 		if _, err := tx.Exec(`SELECT set_config('app.msp_id', $1, true)`, tenantID); err == nil {
 			_ = tx.QueryRow(`SELECT msp_id FROM client_organizations WHERE id = $1`, tenantID).Scan(&mspID)
 		}
 		_ = tx.Rollback()
-	} else if txErr != nil {
-		s.logger.Warn("login MSP lookup transaction unavailable", zap.Error(txErr))
 	}
 
 	ttl := 8 * time.Hour
