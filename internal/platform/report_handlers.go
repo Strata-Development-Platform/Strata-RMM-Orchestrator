@@ -9,7 +9,7 @@ import (
 
 func (s *APIServer) handleListReports(w http.ResponseWriter, r *http.Request) {
 	tenantID := r.PathValue("tenantID")
-	rows, err := s.db.DB().QueryContext(r.Context(), `
+	rows, err := s.requestDB(r).QueryContext(r.Context(), `
 		SELECT id, name, format, storage_key, size_bytes, generated_at
 		FROM generated_reports WHERE tenant_id = $1
 		ORDER BY generated_at DESC LIMIT 20
@@ -53,7 +53,7 @@ func (s *APIServer) handleCreateSchedule(w http.ResponseWriter, r *http.Request)
 	secJSON, _ := json.Marshal(req.Sections)
 
 	var id string
-	err := s.db.DB().QueryRowContext(r.Context(), `
+	err := s.requestDB(r).QueryRowContext(r.Context(), `
 		INSERT INTO report_schedules (tenant_id, name, frequency, sections)
 		VALUES ($1, $2, $3, $4) RETURNING id
 	`, tenantID, req.Name, req.Frequency, secJSON).Scan(&id)
@@ -66,7 +66,7 @@ func (s *APIServer) handleCreateSchedule(w http.ResponseWriter, r *http.Request)
 
 func (s *APIServer) handleListSchedules(w http.ResponseWriter, r *http.Request) {
 	tenantID := r.PathValue("tenantID")
-	rows, err := s.db.DB().QueryContext(r.Context(), `
+	rows, err := s.requestDB(r).QueryContext(r.Context(), `
 		SELECT id, name, frequency, sections, enabled, last_sent, created_at
 		FROM report_schedules WHERE tenant_id = $1 ORDER BY created_at DESC
 	`, tenantID)
@@ -104,7 +104,7 @@ func (s *APIServer) handleListSchedules(w http.ResponseWriter, r *http.Request) 
 
 func (s *APIServer) handleDeleteSchedule(w http.ResponseWriter, r *http.Request) {
 	scheduleID := r.PathValue("scheduleID")
-	_, err := s.db.DB().ExecContext(r.Context(), `DELETE FROM report_schedules WHERE id = $1`, scheduleID)
+	_, err := s.requestDB(r).ExecContext(r.Context(), `DELETE FROM report_schedules WHERE id = $1`, scheduleID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -125,7 +125,7 @@ func (s *APIServer) handleGenerateReport(w http.ResponseWriter, r *http.Request)
 	}
 
 	var tenantName string
-	err := s.db.DB().QueryRowContext(r.Context(), `SELECT name FROM tenants WHERE id = $1`, tenantID).Scan(&tenantName)
+	err := s.requestDB(r).QueryRowContext(r.Context(), `SELECT name FROM tenants WHERE id = $1`, tenantID).Scan(&tenantName)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "tenant not found"})
 		return

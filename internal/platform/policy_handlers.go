@@ -49,7 +49,7 @@ func (s *APIServer) handleCreatePolicy(w http.ResponseWriter, r *http.Request) {
 		siteID = req.SiteID
 	}
 
-	_, err := s.db.DB().ExecContext(r.Context(), `
+	_, err := s.requestDB(r).ExecContext(r.Context(), `
 		INSERT INTO policies (id, msp_id, client_id, site_id, name, category, description, config, scope_level, parent_id, created_by)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 	`, id, mspID, clientID, siteID, req.Name, req.Category, req.Description, configJSON, req.ScopeLevel, parentID, "api")
@@ -68,7 +68,7 @@ func (s *APIServer) handleListPolicies(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := s.db.DB().QueryContext(r.Context(), `
+	rows, err := s.requestDB(r).QueryContext(r.Context(), `
 		SELECT id, name, category, description, scope_level, status, version, created_at
 		FROM policies WHERE msp_id = $1
 		ORDER BY category, name ASC
@@ -105,7 +105,7 @@ func (s *APIServer) handleGetPolicy(w http.ResponseWriter, r *http.Request) {
 	var id, mspID, name, category, desc, scopeLevel, status, configStr string
 	var version int
 	var createdAt time.Time
-	err := s.db.DB().QueryRowContext(r.Context(), `
+	err := s.requestDB(r).QueryRowContext(r.Context(), `
 		SELECT id, msp_id, name, category, description, config::text, scope_level, status, version, created_at
 		FROM policies WHERE id = $1
 	`, policyID).Scan(&id, &mspID, &name, &category, &desc, &configStr, &scopeLevel, &status, &version, &createdAt)
@@ -123,7 +123,7 @@ func (s *APIServer) handleGetPolicy(w http.ResponseWriter, r *http.Request) {
 
 func (s *APIServer) handlePublishPolicy(w http.ResponseWriter, r *http.Request) {
 	policyID := r.PathValue("policyID")
-	_, err := s.db.DB().ExecContext(r.Context(), `
+	_, err := s.requestDB(r).ExecContext(r.Context(), `
 		UPDATE policies SET status = 'active', version = version + 1, updated_at = NOW()
 		WHERE id = $1 AND status = 'draft'
 	`, policyID)
@@ -136,7 +136,7 @@ func (s *APIServer) handlePublishPolicy(w http.ResponseWriter, r *http.Request) 
 
 func (s *APIServer) handleDeletePolicy(w http.ResponseWriter, r *http.Request) {
 	policyID := r.PathValue("policyID")
-	_, err := s.db.DB().ExecContext(r.Context(), `DELETE FROM policies WHERE id = $1`, policyID)
+	_, err := s.requestDB(r).ExecContext(r.Context(), `DELETE FROM policies WHERE id = $1`, policyID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return

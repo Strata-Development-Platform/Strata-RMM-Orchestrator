@@ -15,11 +15,10 @@ import (
 )
 
 type ReportEngine struct {
-	db        *sql.DB
-	logger    *zap.Logger
-	storage   storage.Backend
-	bucket    string
-	tenantID  string
+	db      *sql.DB
+	logger  *zap.Logger
+	storage storage.Backend
+	bucket  string
 }
 
 func NewReportEngine(db *sql.DB, logger *zap.Logger, storage storage.Backend, bucket string) *ReportEngine {
@@ -123,7 +122,11 @@ func (e *ReportEngine) addSummary(pdf *gofpdf.Fpdf, data *ReportData) {
 	colW := 45.0
 	x := pdf.GetX()
 
-	for _, s := range []struct{ label string; value int; color []int }{
+	for _, s := range []struct {
+		label string
+		value int
+		color []int
+	}{
 		{"Total Devices", data.DeviceCount, []int{52, 73, 94}},
 		{"Online", data.OnlineCount, []int{46, 204, 113}},
 		{"Active Alerts", data.AlertCount, []int{231, 76, 60}},
@@ -255,7 +258,7 @@ func (e *ReportEngine) processSchedules(ctx context.Context) {
 			continue
 		}
 		go func(scheduleID, tid, n string, sections []byte) {
-			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 			defer cancel()
 
 			var secs []ReportSection

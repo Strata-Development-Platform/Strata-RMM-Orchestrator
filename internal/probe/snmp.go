@@ -17,11 +17,14 @@ type SNMPResult struct {
 }
 
 func PollSNMP(ctx context.Context, target SNMPTarget) ([]SNMPResult, error) {
+	if target.Port < 1 || target.Port > 65535 {
+		return nil, fmt.Errorf("SNMP port must be between 1 and 65535")
+	}
 	gs := &gosnmp.GoSNMP{
-		Target:    target.Host,
-		Port:      uint16(target.Port),
-		Timeout:   time.Duration(10) * time.Second,
-		Retries:   2,
+		Target:  target.Host,
+		Port:    uint16(target.Port),
+		Timeout: time.Duration(10) * time.Second,
+		Retries: 2,
 	}
 
 	switch target.Version {

@@ -17,7 +17,7 @@ type createMSPRequest struct {
 // --- Platform MSP Management ---
 
 func (s *APIServer) handleListMSPS(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.db.DB().QueryContext(r.Context(), `
+	rows, err := s.requestDB(r).QueryContext(r.Context(), `
 		SELECT m.id, m.name, m.slug, m.plan, m.is_active, m.created_at,
 		       (SELECT COUNT(*) FROM client_organizations co WHERE co.msp_id = m.id) as client_count,
 		       (SELECT COUNT(*) FROM devices d JOIN client_organizations co ON d.client_id = co.id WHERE co.msp_id = m.id) as device_count
@@ -61,14 +61,14 @@ func (s *APIServer) handleCreateMSP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var existingID string
-	err := s.db.DB().QueryRowContext(r.Context(), `SELECT id FROM msp_tenants WHERE slug = $1`, req.Slug).Scan(&existingID)
+	err := s.requestDB(r).QueryRowContext(r.Context(), `SELECT id FROM msp_tenants WHERE slug = $1`, req.Slug).Scan(&existingID)
 	if err == nil {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "msp slug already exists", "existing_id": existingID})
 		return
 	}
 
 	id := uuid.New().String()
-	_, err = s.db.DB().ExecContext(r.Context(), `
+	_, err = s.requestDB(r).ExecContext(r.Context(), `
 		INSERT INTO msp_tenants (id, name, slug, plan) VALUES ($1, $2, $3, $4)
 	`, id, req.Name, req.Slug, req.Plan)
 	if err != nil {
@@ -83,7 +83,7 @@ func (s *APIServer) handleGetMSP(w http.ResponseWriter, r *http.Request) {
 	var id, name, slug, plan string
 	var isActive bool
 	var createdAt time.Time
-	err := s.db.DB().QueryRowContext(r.Context(), `
+	err := s.requestDB(r).QueryRowContext(r.Context(), `
 		SELECT id, name, slug, plan, is_active, created_at FROM msp_tenants WHERE id = $1
 	`, mspID).Scan(&id, &name, &slug, &plan, &isActive, &createdAt)
 	if err != nil {
@@ -98,7 +98,7 @@ func (s *APIServer) handleGetMSP(w http.ResponseWriter, r *http.Request) {
 
 func (s *APIServer) handleSuspendMSP(w http.ResponseWriter, r *http.Request) {
 	mspID := r.PathValue("mspID")
-	_, err := s.db.DB().ExecContext(r.Context(), `UPDATE msp_tenants SET is_active = false WHERE id = $1`, mspID)
+	_, err := s.requestDB(r).ExecContext(r.Context(), `UPDATE msp_tenants SET is_active = false WHERE id = $1`, mspID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -108,7 +108,7 @@ func (s *APIServer) handleSuspendMSP(w http.ResponseWriter, r *http.Request) {
 
 func (s *APIServer) handleActivateMSP(w http.ResponseWriter, r *http.Request) {
 	mspID := r.PathValue("mspID")
-	_, err := s.db.DB().ExecContext(r.Context(), `UPDATE msp_tenants SET is_active = true WHERE id = $1`, mspID)
+	_, err := s.requestDB(r).ExecContext(r.Context(), `UPDATE msp_tenants SET is_active = true WHERE id = $1`, mspID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -120,11 +120,11 @@ func (s *APIServer) handleActivateMSP(w http.ResponseWriter, r *http.Request) {
 
 func (s *APIServer) handleListClients(w http.ResponseWriter, r *http.Request) {
 	mspID := r.PathValue("mspID")
-	if mspID == "" {
-		mspID = r.Header.Get("X-MSP-ID")
+	if !s.AuthorizeMSPAccess(w, r, mspID) {
+		return
 	}
 
-	rows, err := s.db.DB().QueryContext(r.Context(), `
+	rows, err := s.requestDB(r).QueryContext(r.Context(), `
 		SELECT co.id, co.name, co.slug, co.is_active, co.created_at,
 		       (SELECT COUNT(*) FROM sites s WHERE s.client_id = co.id) as site_count,
 		       (SELECT COUNT(*) FROM devices d WHERE d.client_id = co.id) as device_count
@@ -159,6 +159,9 @@ func (s *APIServer) handleListClients(w http.ResponseWriter, r *http.Request) {
 
 func (s *APIServer) handleCreateClient(w http.ResponseWriter, r *http.Request) {
 	mspID := r.PathValue("mspID")
+	if !s.AuthorizeMSPAccess(w, r, mspID) {
+		return
+	}
 	var req struct {
 		Name string `json:"name"`
 		Slug string `json:"slug"`
@@ -168,15 +171,25 @@ func (s *APIServer) handleCreateClient(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var existingID string
-	err := s.db.DB().QueryRowContext(r.Context(), `SELECT id FROM client_organizations WHERE msp_id = $1 AND slug = $2`, mspID, req.Slug).Scan(&existingID)
+	err := s.requestDB(r).QueryRowContext(r.Context(), `SELECT id FROM client_organizations WHERE msp_id = $1 AND slug = $2`, mspID, req.Slug).Scan(&existingID)
 	if err == nil {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "client slug already exists in this MSP", "existing_id": existingID})
 		return
 	}
 
 	id := uuid.New().String()
-	_, err = s.db.DB().ExecContext(r.Context(), `
-		INSERT INTO client_organizations (id, msp_id, name, slug) VALUES ($1, $2, $3, $4)
+	_, err = s.requestDB(r).ExecContext(r.Context(), `
+		WITH new_client AS (
+			INSERT INTO client_organizations (id, msp_id, name, slug)
+			VALUES ($1, $2, $3, $4)
+			RETURNING id
+		), legacy_tenant AS (
+			INSERT INTO tenants (id, name, slug, plan)
+			SELECT id, $3, $2 || '-' || $4, 'managed' FROM new_client
+			ON CONFLICT (id) DO NOTHING
+		)
+		INSERT INTO sites (id, client_id, name, slug)
+		SELECT gen_random_uuid(), id, 'Default Site', 'default' FROM new_client
 	`, id, mspID, req.Name, req.Slug)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -187,10 +200,13 @@ func (s *APIServer) handleCreateClient(w http.ResponseWriter, r *http.Request) {
 
 func (s *APIServer) handleGetClient(w http.ResponseWriter, r *http.Request) {
 	clientID := r.PathValue("clientID")
+	if !s.AuthorizeClientAccess(w, r, clientID) {
+		return
+	}
 	var id, mspID, name, slug string
 	var isActive bool
 	var createdAt time.Time
-	err := s.db.DB().QueryRowContext(r.Context(), `
+	err := s.requestDB(r).QueryRowContext(r.Context(), `
 		SELECT id, msp_id, name, slug, is_active, created_at FROM client_organizations WHERE id = $1
 	`, clientID).Scan(&id, &mspID, &name, &slug, &isActive, &createdAt)
 	if err != nil {
@@ -205,7 +221,10 @@ func (s *APIServer) handleGetClient(w http.ResponseWriter, r *http.Request) {
 
 func (s *APIServer) handleArchiveClient(w http.ResponseWriter, r *http.Request) {
 	clientID := r.PathValue("clientID")
-	_, err := s.db.DB().ExecContext(r.Context(), `UPDATE client_organizations SET is_active = false WHERE id = $1`, clientID)
+	if !s.AuthorizeClientAccess(w, r, clientID) {
+		return
+	}
+	_, err := s.requestDB(r).ExecContext(r.Context(), `UPDATE client_organizations SET is_active = false WHERE id = $1`, clientID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -217,8 +236,11 @@ func (s *APIServer) handleArchiveClient(w http.ResponseWriter, r *http.Request) 
 
 func (s *APIServer) handleListSites(w http.ResponseWriter, r *http.Request) {
 	clientID := r.PathValue("clientID")
+	if !s.AuthorizeClientAccess(w, r, clientID) {
+		return
+	}
 
-	rows, err := s.db.DB().QueryContext(r.Context(), `
+	rows, err := s.requestDB(r).QueryContext(r.Context(), `
 		SELECT s.id, s.name, s.slug, s.is_active, s.created_at,
 		       (SELECT COUNT(*) FROM devices d WHERE d.site_id = s.id) as device_count
 		FROM sites s WHERE s.client_id = $1 ORDER BY s.name ASC
@@ -240,7 +262,7 @@ func (s *APIServer) handleListSites(w http.ResponseWriter, r *http.Request) {
 		}
 		sites = append(sites, map[string]interface{}{
 			"id": id, "name": name, "slug": slug, "is_active": isActive,
-			"created_at": createdAt.UTC().Format(time.RFC3339),
+			"created_at":   createdAt.UTC().Format(time.RFC3339),
 			"device_count": deviceCount,
 		})
 	}
@@ -252,6 +274,9 @@ func (s *APIServer) handleListSites(w http.ResponseWriter, r *http.Request) {
 
 func (s *APIServer) handleCreateSite(w http.ResponseWriter, r *http.Request) {
 	clientID := r.PathValue("clientID")
+	if !s.AuthorizeClientAccess(w, r, clientID) {
+		return
+	}
 	var req struct {
 		Name string `json:"name"`
 		Slug string `json:"slug"`
@@ -261,14 +286,14 @@ func (s *APIServer) handleCreateSite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var existingID string
-	err := s.db.DB().QueryRowContext(r.Context(), `SELECT id FROM sites WHERE client_id = $1 AND slug = $2`, clientID, req.Slug).Scan(&existingID)
+	err := s.requestDB(r).QueryRowContext(r.Context(), `SELECT id FROM sites WHERE client_id = $1 AND slug = $2`, clientID, req.Slug).Scan(&existingID)
 	if err == nil {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "site slug already exists in this client", "existing_id": existingID})
 		return
 	}
 
 	id := uuid.New().String()
-	_, err = s.db.DB().ExecContext(r.Context(), `
+	_, err = s.requestDB(r).ExecContext(r.Context(), `
 		INSERT INTO sites (id, client_id, name, slug) VALUES ($1, $2, $3, $4)
 	`, id, clientID, req.Name, req.Slug)
 	if err != nil {
@@ -280,10 +305,13 @@ func (s *APIServer) handleCreateSite(w http.ResponseWriter, r *http.Request) {
 
 func (s *APIServer) handleGetSite(w http.ResponseWriter, r *http.Request) {
 	siteID := r.PathValue("siteID")
+	if !s.AuthorizeSiteAccess(w, r, siteID) {
+		return
+	}
 	var id, clientID, name, slug string
 	var isActive bool
 	var createdAt time.Time
-	err := s.db.DB().QueryRowContext(r.Context(), `
+	err := s.requestDB(r).QueryRowContext(r.Context(), `
 		SELECT id, client_id, name, slug, is_active, created_at FROM sites WHERE id = $1
 	`, siteID).Scan(&id, &clientID, &name, &slug, &isActive, &createdAt)
 	if err != nil {
@@ -298,7 +326,10 @@ func (s *APIServer) handleGetSite(w http.ResponseWriter, r *http.Request) {
 
 func (s *APIServer) handleArchiveSite(w http.ResponseWriter, r *http.Request) {
 	siteID := r.PathValue("siteID")
-	_, err := s.db.DB().ExecContext(r.Context(), `UPDATE sites SET is_active = false WHERE id = $1`, siteID)
+	if !s.AuthorizeSiteAccess(w, r, siteID) {
+		return
+	}
+	_, err := s.requestDB(r).ExecContext(r.Context(), `UPDATE sites SET is_active = false WHERE id = $1`, siteID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -310,7 +341,10 @@ func (s *APIServer) handleArchiveSite(w http.ResponseWriter, r *http.Request) {
 
 func (s *APIServer) handleListMemberships(w http.ResponseWriter, r *http.Request) {
 	mspID := r.PathValue("mspID")
-	rows, err := s.db.DB().QueryContext(r.Context(), `
+	if !s.AuthorizeMSPAccess(w, r, mspID) {
+		return
+	}
+	rows, err := s.requestDB(r).QueryContext(r.Context(), `
 		SELECT id, user_id, role, scope_type, scope_id, created_at
 		FROM memberships WHERE scope_type = 'msp' AND scope_id = $1
 		ORDER BY created_at DESC
@@ -341,6 +375,10 @@ func (s *APIServer) handleListMemberships(w http.ResponseWriter, r *http.Request
 }
 
 func (s *APIServer) handleCreateMembership(w http.ResponseWriter, r *http.Request) {
+	mspID := r.PathValue("mspID")
+	if !s.AuthorizeMSPAccess(w, r, mspID) {
+		return
+	}
 	var req struct {
 		UserID    string `json:"user_id"`
 		Role      string `json:"role"`
@@ -351,8 +389,12 @@ func (s *APIServer) handleCreateMembership(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user_id, role, scope_type, scope_id required"})
 		return
 	}
+	if req.ScopeType != "msp" || req.ScopeID != mspID {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "membership scope must match route MSP"})
+		return
+	}
 	id := uuid.New().String()
-	_, err := s.db.DB().ExecContext(r.Context(), `
+	_, err := s.requestDB(r).ExecContext(r.Context(), `
 		INSERT INTO memberships (id, user_id, role, scope_type, scope_id, created_by)
 		VALUES ($1, $2, $3, $4, $5, $6)
 	`, id, req.UserID, req.Role, req.ScopeType, req.ScopeID, "api")

@@ -3,14 +3,15 @@ package postgres
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"time"
 )
 
 type Migration struct {
-	ID      int
-	Name    string
-	Up      string
-	Down    string
+	ID   int
+	Name string
+	Up   string
+	Down string
 }
 
 func Migrations() []Migration {
@@ -1219,6 +1220,370 @@ func Migrations() []Migration {
 				DROP FUNCTION IF EXISTS safe_msp_id();
 			`,
 		},
+		{
+			ID:   46,
+			Name: "harden_memberships_and_support_grants",
+			Up: `
+				ALTER TABLE memberships
+					ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
+				ALTER TABLE memberships
+					DROP CONSTRAINT IF EXISTS memberships_status_check;
+				ALTER TABLE memberships
+					ADD CONSTRAINT memberships_status_check
+					CHECK (status IN ('active', 'revoked'));
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_memberships_active_unique
+					ON memberships(user_id, scope_type, scope_id, role)
+					WHERE status = 'active';
+
+				ALTER TABLE support_access_grants
+					ADD COLUMN IF NOT EXISTS requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+				ALTER TABLE support_access_grants
+					ADD COLUMN IF NOT EXISTS revoked_by TEXT NOT NULL DEFAULT '';
+				ALTER TABLE support_access_grants
+					ADD COLUMN IF NOT EXISTS permissions TEXT[] NOT NULL DEFAULT ARRAY['read']::TEXT[];
+
+				CREATE OR REPLACE FUNCTION safe_msp_id() RETURNS uuid AS $$
+					SELECT NULLIF(current_setting('app.msp_id', true), '')::uuid
+				$$ LANGUAGE SQL STABLE;
+			`,
+			Down: `
+				DROP INDEX IF EXISTS idx_memberships_active_unique;
+				ALTER TABLE memberships DROP COLUMN IF EXISTS status;
+				ALTER TABLE support_access_grants DROP COLUMN IF EXISTS requested_at;
+				ALTER TABLE support_access_grants DROP COLUMN IF EXISTS revoked_by;
+				ALTER TABLE support_access_grants DROP COLUMN IF EXISTS permissions;
+			`,
+		},
+		{
+			ID:   47,
+			Name: "enforce_fail_closed_tenant_rls",
+			Up: `
+				-- Migration 45 forced sites before request-scoped settings existed.
+				-- Temporarily restore owner access while normalizing legacy ownership;
+				-- this migration re-enables FORCE RLS below before committing.
+				ALTER TABLE client_organizations NO FORCE ROW LEVEL SECURITY;
+				ALTER TABLE sites NO FORCE ROW LEVEL SECURITY;
+				ALTER TABLE devices NO FORCE ROW LEVEL SECURITY;
+
+				INSERT INTO tenants (id, name, slug, plan, is_active)
+				SELECT c.id, c.name, c.msp_id::text || '-' || c.slug, 'managed', c.is_active
+				FROM client_organizations c
+				WHERE NOT EXISTS (SELECT 1 FROM tenants t WHERE t.id = c.id)
+				ON CONFLICT (id) DO NOTHING;
+
+				INSERT INTO sites (id, client_id, name, slug)
+				SELECT gen_random_uuid(), c.id, 'Default Site', 'default'
+				FROM client_organizations c
+				WHERE NOT EXISTS (
+					SELECT 1 FROM sites s WHERE s.client_id = c.id AND s.is_active = true
+				);
+
+				DO $$
+				BEGIN
+					IF EXISTS (
+						SELECT 1 FROM devices
+						WHERE msp_id IS NULL OR client_id IS NULL OR site_id IS NULL
+					) THEN
+						RAISE EXCEPTION 'cannot enforce tenant RLS: devices with incomplete ownership exist';
+					END IF;
+					IF EXISTS (
+						SELECT 1 FROM sites s
+						LEFT JOIN client_organizations c ON c.id = s.client_id
+						WHERE c.id IS NULL
+					) THEN
+						RAISE EXCEPTION 'cannot enforce tenant RLS: orphan sites exist';
+					END IF;
+				END $$;
+
+				CREATE OR REPLACE FUNCTION safe_app_setting(setting_name text)
+				RETURNS text
+				LANGUAGE SQL STABLE
+				AS $$
+					SELECT NULLIF(current_setting(setting_name, true), '')
+				$$;
+
+				CREATE OR REPLACE FUNCTION safe_msp_id()
+				RETURNS uuid
+				LANGUAGE SQL STABLE
+				AS $$
+					SELECT safe_app_setting('app.msp_id')::uuid
+				$$;
+
+				CREATE OR REPLACE FUNCTION app_is_platform_admin()
+				RETURNS boolean
+				LANGUAGE SQL STABLE
+				AS $$
+					SELECT COALESCE(safe_app_setting('app.role') = 'platform_admin', false)
+				$$;
+
+				CREATE OR REPLACE FUNCTION support_access_allowed(target_msp uuid)
+				RETURNS boolean
+				LANGUAGE SQL STABLE SECURITY DEFINER
+				SET search_path = pg_catalog, public
+				AS $$
+					SELECT EXISTS (
+						SELECT 1
+						FROM public.support_access_grants g
+						JOIN public.msp_tenants m ON m.id = g.msp_id
+						WHERE g.id::text = public.safe_app_setting('app.support_grant_id')
+						  AND g.platform_user_id = public.safe_app_setting('app.user_id')
+						  AND g.msp_id = target_msp
+						  AND g.status = 'active'
+						  AND g.revoked_at IS NULL
+						  AND g.expires_at > statement_timestamp()
+						  AND m.is_active = true
+						  AND COALESCE(public.safe_app_setting('app.permission'), 'read') = ANY(g.permissions)
+					)
+				$$;
+
+				-- Remove every superseded policy, including the legacy tenant policy
+				-- that reads app.tenant_id without missing-setting protection.
+				DROP POLICY IF EXISTS tenant_isolation_devices ON devices;
+				DROP POLICY IF EXISTS msp_isolation_client_orgs ON client_organizations;
+				DROP POLICY IF EXISTS msp_isolation_client_orgs_insert ON client_organizations;
+				DROP POLICY IF EXISTS msp_isolation_client_orgs_update ON client_organizations;
+				DROP POLICY IF EXISTS msp_isolation_sites ON sites;
+				DROP POLICY IF EXISTS msp_isolation_devices ON devices;
+				DROP POLICY IF EXISTS msp_isolation_devices_insert ON devices;
+				DROP POLICY IF EXISTS msp_isolation_devices_update ON devices;
+				DROP POLICY IF EXISTS msp_isolation_memberships ON memberships;
+				DROP POLICY IF EXISTS tenant_scope ON support_access_grants;
+				DROP POLICY IF EXISTS tenant_scope ON jobs;
+				DROP POLICY IF EXISTS tenant_scope ON job_targets;
+				DROP POLICY IF EXISTS tenant_scope ON device_groups;
+				DROP POLICY IF EXISTS tenant_scope ON enrollment_tokens_v2;
+
+				CREATE POLICY tenant_scope ON client_organizations
+					USING (
+						app_is_platform_admin()
+						OR msp_id = safe_msp_id()
+						OR support_access_allowed(msp_id)
+						OR EXISTS (
+							SELECT 1 FROM enrollment_tokens_v2 et
+							WHERE et.client_id = client_organizations.id
+							  AND et.token_hash = safe_app_setting('app.enrollment_hash')
+						)
+						OR EXISTS (
+							SELECT 1
+							FROM devices d
+							JOIN agent_registrations ar ON ar.device_id = d.id
+							WHERE d.client_id = client_organizations.id
+							  AND ar.agent_id = safe_app_setting('app.user_id')
+							  AND ar.approved = true
+						)
+					)
+					WITH CHECK (
+						app_is_platform_admin()
+						OR msp_id = safe_msp_id()
+						OR support_access_allowed(msp_id)
+					);
+
+				CREATE POLICY tenant_scope ON sites
+					USING (
+						app_is_platform_admin()
+						OR EXISTS (
+							SELECT 1 FROM client_organizations c
+							WHERE c.id = sites.client_id
+							  AND (c.msp_id = safe_msp_id() OR support_access_allowed(c.msp_id))
+						)
+					)
+					WITH CHECK (
+						app_is_platform_admin()
+						OR EXISTS (
+							SELECT 1 FROM client_organizations c
+							WHERE c.id = sites.client_id
+							  AND (c.msp_id = safe_msp_id() OR support_access_allowed(c.msp_id))
+						)
+					);
+
+				CREATE POLICY tenant_scope ON devices
+					USING (
+						app_is_platform_admin()
+						OR msp_id = safe_msp_id()
+						OR support_access_allowed(msp_id)
+						OR EXISTS (
+							SELECT 1 FROM agent_registrations ar
+							WHERE ar.device_id = devices.id
+							  AND ar.agent_id = safe_app_setting('app.user_id')
+							  AND ar.approved = true
+						)
+					)
+					WITH CHECK (
+						app_is_platform_admin()
+						OR msp_id = safe_msp_id()
+						OR support_access_allowed(msp_id)
+					);
+
+				CREATE POLICY tenant_scope ON memberships
+					USING (
+						app_is_platform_admin()
+						OR user_id = safe_app_setting('app.user_id')
+						OR (scope_type = 'msp' AND scope_id = safe_msp_id()::text)
+						OR (
+							scope_type = 'client'
+							AND EXISTS (
+								SELECT 1 FROM client_organizations c
+								WHERE c.id::text = memberships.scope_id
+								  AND (c.msp_id = safe_msp_id() OR support_access_allowed(c.msp_id))
+							)
+						)
+						OR (
+							scope_type = 'site'
+							AND EXISTS (
+								SELECT 1 FROM sites s
+								JOIN client_organizations c ON c.id = s.client_id
+								WHERE s.id::text = memberships.scope_id
+								  AND (c.msp_id = safe_msp_id() OR support_access_allowed(c.msp_id))
+							)
+						)
+					)
+					WITH CHECK (
+						app_is_platform_admin()
+						OR (scope_type = 'msp' AND scope_id = safe_msp_id()::text)
+						OR (
+							scope_type = 'client'
+							AND EXISTS (
+								SELECT 1 FROM client_organizations c
+								WHERE c.id::text = memberships.scope_id
+								  AND c.msp_id = safe_msp_id()
+							)
+						)
+						OR (
+							scope_type = 'site'
+							AND EXISTS (
+								SELECT 1 FROM sites s
+								JOIN client_organizations c ON c.id = s.client_id
+								WHERE s.id::text = memberships.scope_id
+								  AND c.msp_id = safe_msp_id()
+							)
+						)
+					);
+
+				CREATE POLICY tenant_scope ON support_access_grants
+					USING (
+						app_is_platform_admin()
+						OR msp_id = safe_msp_id()
+						OR (
+							id::text = safe_app_setting('app.support_grant_id')
+							AND platform_user_id = safe_app_setting('app.user_id')
+							AND status = 'active'
+							AND revoked_at IS NULL
+							AND expires_at > statement_timestamp()
+							AND COALESCE(safe_app_setting('app.permission'), 'read') = ANY(permissions)
+						)
+					)
+					WITH CHECK (app_is_platform_admin() OR msp_id = safe_msp_id());
+
+				CREATE POLICY tenant_scope ON jobs
+					USING (
+						app_is_platform_admin()
+						OR msp_id = safe_msp_id()
+						OR support_access_allowed(msp_id)
+					)
+					WITH CHECK (
+						app_is_platform_admin()
+						OR msp_id = safe_msp_id()
+						OR support_access_allowed(msp_id)
+					);
+
+				CREATE POLICY tenant_scope ON job_targets
+					USING (
+						app_is_platform_admin()
+						OR EXISTS (
+							SELECT 1 FROM jobs j
+							WHERE j.id = job_targets.job_id
+							  AND (j.msp_id = safe_msp_id() OR support_access_allowed(j.msp_id))
+						)
+					)
+					WITH CHECK (
+						app_is_platform_admin()
+						OR EXISTS (
+							SELECT 1 FROM jobs j
+							WHERE j.id = job_targets.job_id
+							  AND (j.msp_id = safe_msp_id() OR support_access_allowed(j.msp_id))
+						)
+					);
+
+				CREATE POLICY tenant_scope ON device_groups
+					USING (
+						app_is_platform_admin()
+						OR msp_id = safe_msp_id()
+						OR support_access_allowed(msp_id)
+					)
+					WITH CHECK (
+						app_is_platform_admin()
+						OR msp_id = safe_msp_id()
+						OR support_access_allowed(msp_id)
+					);
+
+				CREATE POLICY tenant_scope ON enrollment_tokens_v2
+					USING (
+						app_is_platform_admin()
+						OR msp_id = safe_msp_id()
+						OR support_access_allowed(msp_id)
+						OR token_hash = safe_app_setting('app.enrollment_hash')
+					)
+					WITH CHECK (
+						app_is_platform_admin()
+						OR msp_id = safe_msp_id()
+						OR support_access_allowed(msp_id)
+						OR token_hash = safe_app_setting('app.enrollment_hash')
+					);
+
+				ALTER TABLE client_organizations ENABLE ROW LEVEL SECURITY;
+				ALTER TABLE sites ENABLE ROW LEVEL SECURITY;
+				ALTER TABLE devices ENABLE ROW LEVEL SECURITY;
+				ALTER TABLE memberships ENABLE ROW LEVEL SECURITY;
+				ALTER TABLE support_access_grants ENABLE ROW LEVEL SECURITY;
+				ALTER TABLE jobs ENABLE ROW LEVEL SECURITY;
+				ALTER TABLE job_targets ENABLE ROW LEVEL SECURITY;
+				ALTER TABLE device_groups ENABLE ROW LEVEL SECURITY;
+				ALTER TABLE enrollment_tokens_v2 ENABLE ROW LEVEL SECURITY;
+
+				ALTER TABLE client_organizations FORCE ROW LEVEL SECURITY;
+				ALTER TABLE sites FORCE ROW LEVEL SECURITY;
+				ALTER TABLE devices FORCE ROW LEVEL SECURITY;
+				ALTER TABLE memberships FORCE ROW LEVEL SECURITY;
+				ALTER TABLE support_access_grants FORCE ROW LEVEL SECURITY;
+				ALTER TABLE jobs FORCE ROW LEVEL SECURITY;
+				ALTER TABLE job_targets FORCE ROW LEVEL SECURITY;
+				ALTER TABLE device_groups FORCE ROW LEVEL SECURITY;
+				ALTER TABLE enrollment_tokens_v2 FORCE ROW LEVEL SECURITY;
+			`,
+			Down: `
+				ALTER TABLE client_organizations NO FORCE ROW LEVEL SECURITY;
+				ALTER TABLE sites NO FORCE ROW LEVEL SECURITY;
+				ALTER TABLE devices NO FORCE ROW LEVEL SECURITY;
+				ALTER TABLE memberships NO FORCE ROW LEVEL SECURITY;
+				ALTER TABLE support_access_grants NO FORCE ROW LEVEL SECURITY;
+				ALTER TABLE jobs NO FORCE ROW LEVEL SECURITY;
+				ALTER TABLE job_targets NO FORCE ROW LEVEL SECURITY;
+				ALTER TABLE device_groups NO FORCE ROW LEVEL SECURITY;
+				ALTER TABLE enrollment_tokens_v2 NO FORCE ROW LEVEL SECURITY;
+				DROP FUNCTION IF EXISTS support_access_allowed(uuid);
+				DROP FUNCTION IF EXISTS app_is_platform_admin();
+				DROP FUNCTION IF EXISTS safe_app_setting(text);
+			`,
+		},
+		{
+			ID:   48,
+			Name: "synchronize_client_device_ownership",
+			Up: `
+				INSERT INTO tenants (id, name, slug, plan, is_active)
+				SELECT c.id, c.name, c.msp_id::text || '-' || c.slug, 'managed', c.is_active
+				FROM client_organizations c
+				WHERE NOT EXISTS (SELECT 1 FROM tenants t WHERE t.id = c.id)
+				ON CONFLICT (id) DO NOTHING;
+
+				INSERT INTO sites (id, client_id, name, slug)
+				SELECT gen_random_uuid(), c.id, 'Default Site', 'default'
+				FROM client_organizations c
+				WHERE NOT EXISTS (
+					SELECT 1 FROM sites s WHERE s.client_id = c.id AND s.is_active = true
+				);
+			`,
+			Down: `SELECT 1; -- ownership synchronization is intentionally retained`,
+		},
 	}
 }
 
@@ -1252,15 +1617,24 @@ func (m *SchemaManager) Apply() error {
 			continue
 		}
 
-		if _, err := m.db.Exec(mig.Up); err != nil {
+		tx, err := m.db.Begin()
+		if err != nil {
+			return fmt.Errorf("begin migration %d (%s): %w", mig.ID, mig.Name, err)
+		}
+		if _, err := tx.Exec(mig.Up); err != nil {
+			_ = tx.Rollback()
 			return fmt.Errorf("apply migration %d (%s): %w", mig.ID, mig.Name, err)
 		}
 
-		if _, err := m.db.Exec(
+		if _, err := tx.Exec(
 			`INSERT INTO schema_migrations (id, name) VALUES ($1, $2)`,
 			mig.ID, mig.Name,
 		); err != nil {
+			_ = tx.Rollback()
 			return fmt.Errorf("record migration %d: %w", mig.ID, err)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit migration %d (%s): %w", mig.ID, mig.Name, err)
 		}
 	}
 
@@ -1320,6 +1694,11 @@ type Device struct {
 }
 
 func SeedDevTenant(db *sql.DB) error {
+	email := os.Getenv("STRATA_DEV_ADMIN_EMAIL")
+	passwordHash := os.Getenv("STRATA_DEV_ADMIN_PASSWORD_HASH")
+	if email == "" || passwordHash == "" {
+		return fmt.Errorf("STRATA_DEV_ADMIN_EMAIL and STRATA_DEV_ADMIN_PASSWORD_HASH are required")
+	}
 	var exists bool
 	err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM tenants WHERE slug = 'dev')`).Scan(&exists)
 	if err != nil {
@@ -1343,11 +1722,11 @@ func SeedDevTenant(db *sql.DB) error {
 		VALUES (
 			'00000000-0000-0000-0000-000000000010',
 			'00000000-0000-0000-0000-000000000001',
-			'admin@dev.local',
-			'$2a$10$t18ei0i3Sh4ORM66LTpHB.FYUJHH8p4OWcEdW1nyC9tKm2BaAnJQG', -- bootstrap admin password
-			'admin'
+			$1,
+			$2,
+			'viewer'
 		) ON CONFLICT DO NOTHING
-	`)
+	`, email, passwordHash)
 	if err != nil {
 		return fmt.Errorf("seed dev user: %w", err)
 	}

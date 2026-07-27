@@ -19,7 +19,7 @@ func TestBearerTokenExtraction(t *testing.T) {
 		{"", ""},
 		{"Bearer mytoken", "mytoken"},
 		{"bearer mytoken", "mytoken"},
-		{"mytoken", "mytoken"},
+		{"mytoken", ""},
 	}
 	for _, tt := range tests {
 		got := extractBearerToken(tt.header)
@@ -129,7 +129,7 @@ func TestExpiredTokenRejected(t *testing.T) {
 	req := httptest.NewRequest("GET", "/api/v1/auth/me", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	w := httptest.NewRecorder()
-	s := &APIServer{}
+	s := &APIServer{tokenGen: gen, allowClaimPrincipal: true}
 	s.withAccessControl(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})).ServeHTTP(w, req)
@@ -164,19 +164,57 @@ func TestAdminRoutesRejectNonAdmin(t *testing.T) {
 
 	adminPaths := []string{
 		"/api/v1/admin/users",
-		"/api/v1/enrollment/tokens",
 	}
 	for _, path := range adminPaths {
 		t.Run(path, func(t *testing.T) {
 			req := httptest.NewRequest("GET", path, nil)
 			req.Header.Set("Authorization", "Bearer "+token)
 			w := httptest.NewRecorder()
-			s := &APIServer{}
+			s := &APIServer{tokenGen: gen, allowClaimPrincipal: true}
 			s.withAccessControl(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
 			})).ServeHTTP(w, req)
 			if w.Code != http.StatusForbidden {
 				t.Errorf("%s: expected 403 for viewer role, got %d", path, w.Code)
+			}
+		})
+	}
+}
+
+func TestTokenPurposeSeparation(t *testing.T) {
+	gen := auth.NewTokenGenerator("test-secret-that-is-long-enough-for-testing")
+	userToken, err := gen.GenerateUserToken("user-1", "tenant-1", "msp-1", "", "", []string{"msp_admin"}, time.Hour)
+	if err != nil {
+		t.Fatalf("generate user token: %v", err)
+	}
+	agentToken, err := gen.GenerateAgentToken("tenant-1", "agent-1", time.Hour)
+	if err != nil {
+		t.Fatalf("generate agent token: %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		path   string
+		token  string
+		status int
+	}{
+		{name: "user on user route", path: "/api/v1/auth/me", token: userToken, status: http.StatusOK},
+		{name: "agent on user route", path: "/api/v1/auth/me", token: agentToken, status: http.StatusForbidden},
+		{name: "agent on agent route", path: "/api/v1/agent/config", token: agentToken, status: http.StatusOK},
+		{name: "user on agent route", path: "/api/v1/agent/config", token: userToken, status: http.StatusForbidden},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			req := httptest.NewRequest("POST", test.path, nil)
+			req.Header.Set("Authorization", "Bearer "+test.token)
+			w := httptest.NewRecorder()
+			server := &APIServer{tokenGen: gen, allowClaimPrincipal: true}
+			server.withAccessControl(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			})).ServeHTTP(w, req)
+			if w.Code != test.status {
+				t.Errorf("status = %d, want %d", w.Code, test.status)
 			}
 		})
 	}
@@ -208,24 +246,18 @@ func TestJWTConfigValidation(t *testing.T) {
 	}
 }
 
-func TestRawTokenFallback(t *testing.T) {
+func TestRawTokenRejected(t *testing.T) {
 	gen := auth.NewTokenGenerator("test-secret-that-is-long-enough-for-testing")
 	token, err := gen.GenerateUserToken("test-user-id", "t1", "", "", "", []string{"admin"}, time.Hour)
 	if err != nil {
 		t.Fatalf("generate: %v", err)
 	}
 
-	// Test that raw (non-Bearer) tokens are still accepted for compatibility
+	// Raw tokens are rejected; callers must use the Bearer scheme.
 	req := httptest.NewRequest("GET", "/api/v1/auth/me", nil)
 	req.Header.Set("Authorization", token)
-	s := &APIServer{}
-	access := s.classifyRoute("GET", "/api/v1/auth/me")
-	if access != AccessUser {
-		// This test validates extractBearerToken accepts raw tokens
-		result := extractBearerToken(token)
-		if result != token {
-			t.Errorf("expected raw token preserved, got %q", result)
-		}
+	if result := extractBearerToken(req.Header.Get("Authorization")); result != "" {
+		t.Errorf("expected raw token to be rejected, got %q", result)
 	}
 }
 

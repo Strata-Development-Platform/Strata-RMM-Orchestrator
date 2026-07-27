@@ -49,6 +49,9 @@ func NewMinIOBackend(ctx context.Context, cfg Config) (*MinIOBackend, error) {
 		}
 	}
 
+	if cfg.PartSize < 0 {
+		return nil, fmt.Errorf("part size must not be negative")
+	}
 	partSize := uint64(cfg.PartSize)
 	if partSize == 0 {
 		partSize = 64 * 1024 * 1024

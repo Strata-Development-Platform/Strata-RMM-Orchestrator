@@ -49,18 +49,18 @@ func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 			cl := &zapLogger{logger: logger}
 
 			identMgr := core.NewIdentityManager(cfg.Agent.DataDir)
-			if cfg.Agent.DeploymentID != "" && cfg.Agent.TenantID == "" {
+			if (cfg.Agent.DeploymentID != "" || cfg.Agent.EnrollmentToken != "") && cfg.Agent.TenantID == "" {
 				registerURL := cfg.Agent.RegisterURL
 				if registerURL == "" {
 					registerURL = "http://localhost:8080/api/v1/agent/register"
 				}
-				ident, err := identMgr.RegisterWithDeploymentID(registerURL, cfg.Agent.DeploymentID)
+				ident, err := identMgr.RegisterWithDeploymentID(registerURL, cfg.Agent.DeploymentID, cfg.Agent.EnrollmentToken)
 				if err != nil {
 					return fmt.Errorf("registering with deployment ID: %w", err)
 				}
 				cfg.Agent.TenantID = ident.TenantID
 				cfg.Agent.AgentID = ident.AgentID
-				logger.Info("registered with deployment ID", zap.String("tenant_id", ident.TenantID), zap.String("agent_id", ident.AgentID))
+				logger.Info("registered agent", zap.String("tenant_id", ident.TenantID), zap.String("agent_id", ident.AgentID))
 			}
 
 			agent := core.New(cfg, cl)

@@ -45,7 +45,7 @@ func (s *APIServer) handleCreateMaintenanceWindow(w http.ResponseWriter, r *http
 
 	id := uuid.New().String()
 
-	_, err = s.db.DB().ExecContext(r.Context(), `
+	_, err = s.requestDB(r).ExecContext(r.Context(), `
 		INSERT INTO maintenance_windows (id, tenant_id, name, start_time, end_time, tags)
 		VALUES ($1, $2, $3, $4, $5, $6::jsonb)
 	`, id, clientID, req.Name, startTime, endTime, "{}")
@@ -64,7 +64,7 @@ func (s *APIServer) handleListMaintenanceWindows(w http.ResponseWriter, r *http.
 		return
 	}
 
-	rows, err := s.db.DB().QueryContext(r.Context(), `
+	rows, err := s.requestDB(r).QueryContext(r.Context(), `
 		SELECT id, tenant_id, name, start_time, end_time, device_ids::text, created_at
 		FROM maintenance_windows WHERE tenant_id = $1
 		ORDER BY start_time DESC LIMIT 100
@@ -116,7 +116,7 @@ func (s *APIServer) handleCreateDeviceGroup(w http.ResponseWriter, r *http.Reque
 	}
 
 	id := uuid.New().String()
-	_, err := s.db.DB().ExecContext(r.Context(), `
+	_, err := s.requestDB(r).ExecContext(r.Context(), `
 		INSERT INTO device_groups (id, msp_id, client_id, name, description, member_ids)
 		VALUES ($1, $2, $3, $4, $5, $6)
 	`, id, mspID, clientID, req.Name, req.Description, pq.StringArray(req.DeviceIDs))
@@ -135,7 +135,7 @@ func (s *APIServer) handleListDeviceGroups(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	rows, err := s.db.DB().QueryContext(r.Context(), `
+	rows, err := s.requestDB(r).QueryContext(r.Context(), `
 		SELECT id, name, description, member_ids::text, created_at
 		FROM device_groups WHERE msp_id = $1 AND client_id = $2
 		ORDER BY name ASC
@@ -166,7 +166,7 @@ func (s *APIServer) handleListDeviceGroups(w http.ResponseWriter, r *http.Reques
 
 func (s *APIServer) handleDeleteDeviceGroup(w http.ResponseWriter, r *http.Request) {
 	groupID := r.PathValue("groupID")
-	res, err := s.db.DB().ExecContext(r.Context(), `DELETE FROM device_groups WHERE id = $1`, groupID)
+	res, err := s.requestDB(r).ExecContext(r.Context(), `DELETE FROM device_groups WHERE id = $1`, groupID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -182,7 +182,7 @@ func (s *APIServer) handleDeleteDeviceGroup(w http.ResponseWriter, r *http.Reque
 func (s *APIServer) handleDeleteMaintenanceWindow(w http.ResponseWriter, r *http.Request) {
 	windowID := r.PathValue("windowID")
 
-	res, err := s.db.DB().ExecContext(r.Context(), `DELETE FROM maintenance_windows WHERE id = $1`, windowID)
+	res, err := s.requestDB(r).ExecContext(r.Context(), `DELETE FROM maintenance_windows WHERE id = $1`, windowID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return

@@ -1,6 +1,7 @@
 package inventory
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"time"
@@ -10,10 +11,19 @@ import (
 )
 
 type Store struct {
-	db *sql.DB
+	db DB
 }
 
-func NewStore(db *sql.DB) *Store {
+type DB interface {
+	Exec(query string, args ...interface{}) (sql.Result, error)
+	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+	Query(query string, args ...interface{}) (*sql.Rows, error)
+	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
+	QueryRow(query string, args ...interface{}) *sql.Row
+	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
+}
+
+func NewStore(db DB) *Store {
 	return &Store{db: db}
 }
 

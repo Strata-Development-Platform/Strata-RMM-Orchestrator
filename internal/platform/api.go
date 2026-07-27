@@ -39,11 +39,15 @@ type APIServer struct {
 	keyStore       *encrypt.KeyStore
 	recordingStore *remote.RecordingStore
 	storageBackend storage.Backend
+
+	// allowClaimPrincipal is restricted to isolated middleware unit tests. Production
+	// servers always resolve users, memberships, and agents from PostgreSQL.
+	allowClaimPrincipal bool
 }
 
-func NewAPIServer(addr string, db *timescale.Client, nc *nats.Conn, logger *zap.Logger, tokenGen *auth.TokenGenerator) *APIServer {
+func NewAPIServer(addr string, db *timescale.Client, nc *nats.Conn, logger *zap.Logger, tokenGen *auth.TokenGenerator) (*APIServer, error) {
 	if tokenGen == nil {
-		tokenGen = auth.NewTokenGenerator("")
+		return nil, fmt.Errorf("token generator is required")
 	}
 	s := &APIServer{
 		addr:     addr,
@@ -57,7 +61,7 @@ func NewAPIServer(addr string, db *timescale.Client, nc *nats.Conn, logger *zap.
 		s.mfaStore = auth.NewMFAStore(db.DB())
 		s.keyStore = encrypt.NewKeyStore(db.DB())
 	}
-	return s
+	return s, nil
 }
 
 func (s *APIServer) WithAlertEngine(e *alerting.Engine) *APIServer {
@@ -253,13 +257,19 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /api/v2/msps/{mspID}/memberships", s.handleListMemberships)
 	mux.HandleFunc("POST /api/v2/msps/{mspID}/memberships", s.handleCreateMembership)
 
+	// v2 API — time-limited platform support access
+	mux.HandleFunc("POST /api/v2/platform/support-grants", s.handleCreateSupportGrant)
+	mux.HandleFunc("DELETE /api/v2/platform/support-grants/{grantID}", s.handleRevokeSupportGrant)
+
 	rateLimiter := auth.NewRateLimiter(30, 60)
 
 	handler := rateLimiter.Middleware(
 		auth.SecurityHeaders(
 			withLogging(
 				s.withBranding(
-					s.withAccessControl(mux),
+					s.withAccessControl(
+						s.withTenantTransaction(mux),
+					),
 				),
 				s.logger,
 			),
@@ -341,24 +351,45 @@ func (s *APIServer) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tenant_id required"})
 		return
 	}
+	if !s.AuthorizeClientAccess(w, r, req.TenantID) {
+		return
+	}
 
-	rawToken, tokenHash := generateToken()
+	var mspID string
+	if err := s.requestDB(r).QueryRowContext(
+		r.Context(),
+		`SELECT msp_id FROM client_organizations WHERE id = $1`,
+		req.TenantID,
+	).Scan(&mspID); err != nil {
+		writeAuthorizationDenied(w)
+		return
+	}
+
+	rawToken, tokenHash, err := generateToken()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "token generation failed"})
+		return
+	}
 	expiresAt := time.Now().Add(24 * time.Hour)
 
-	_, err := s.db.DB().Exec(`
+	_, err = s.requestDB(r).ExecContext(r.Context(), `
 		INSERT INTO enrollment_tokens_v2 (id, msp_id, client_id, token_hash, expires_at, created_by, max_uses)
-		VALUES (gen_random_uuid(), '00000000-0000-0000-0000-000000000001', $1, $2, $3, 'legacy-enroll', 1)
-	`, req.TenantID, tokenHash, expiresAt)
+		VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, 1)
+	`, mspID, req.TenantID, tokenHash, expiresAt, "legacy-enroll")
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "creating token"})
 		return
 	}
 
+	natsURLs := []string{}
+	if s.nats != nil {
+		natsURLs = append(natsURLs, s.nats.ConnectedUrl())
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"enrollment_token": rawToken,
 		"tenant_id":        req.TenantID,
 		"expires_at":       expiresAt.UTC().Format(time.RFC3339),
-		"nats_urls":        []string{s.nats.ConnectedUrl()},
+		"nats_urls":        natsURLs,
 	})
 }
 
@@ -673,7 +704,7 @@ func (s *APIServer) handleTenantDevices(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "database not available"})
 		return
 	}
-	store := inventory.NewStore(s.db.DB())
+	store := inventory.NewStore(s.requestDB(r))
 	devices, err := store.ListDevices(tenantID, 100, 0)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -688,7 +719,7 @@ func (s *APIServer) handleDeviceInventory(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "database not available"})
 		return
 	}
-	inventoryStore := inventory.NewStore(s.db.DB())
+	inventoryStore := inventory.NewStore(s.requestDB(r))
 	inv, err := inventoryStore.GetDevice(deviceID)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "device not found"})
@@ -1006,7 +1037,7 @@ func (s *APIServer) handleAuditLog(w http.ResponseWriter, r *http.Request) {
 	limit := 50
 	offset := 0
 
-	rows, err := s.db.DB().QueryContext(r.Context(), `
+	rows, err := s.requestDB(r).QueryContext(r.Context(), `
 		SELECT id, tenant_id, user_id, action, resource, details, ip_address, created_at
 		FROM audit_log
 		WHERE tenant_id = $1
@@ -1061,7 +1092,7 @@ func (s *APIServer) handleTenantUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := s.db.DB().QueryContext(r.Context(), `
+	rows, err := s.requestDB(r).QueryContext(r.Context(), `
 		SELECT id, email, role, is_active, last_login, created_at
 		FROM users WHERE tenant_id = $1
 		ORDER BY created_at DESC
@@ -1104,7 +1135,7 @@ func (s *APIServer) handleTenantPermissions(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	rows, err := s.db.DB().QueryContext(r.Context(), `
+	rows, err := s.requestDB(r).QueryContext(r.Context(), `
 		SELECT id, tenant_id, role, resource, action
 		FROM permissions
 		WHERE tenant_id = $1
@@ -1153,9 +1184,9 @@ func (s *APIServer) handleMFAEnroll(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"secret":            secret,
-		"provisioning_uri":  uri,
-		"qr_code_url":       "https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=" + url.QueryEscape(uri),
+		"secret":           secret,
+		"provisioning_uri": uri,
+		"qr_code_url":      "https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=" + url.QueryEscape(uri),
 	})
 }
 

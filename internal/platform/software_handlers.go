@@ -24,14 +24,14 @@ func NewSoftwareEngine(nc *nats.Conn, db *sql.DB, logger *zap.Logger) *SoftwareE
 func (s *APIServer) handleCreatePackage(w http.ResponseWriter, r *http.Request) {
 	tenantID := r.PathValue("tenantID")
 	var req struct {
-		Name         string `json:"name"`
-		Version      string `json:"version"`
-		Description  string `json:"description"`
-		Platform     string `json:"platform"`
-		PackageType  string `json:"package_type"`
-		SourceURL    string `json:"source_url"`
-		Checksum     string `json:"checksum"`
-		InstallArgs  string `json:"install_args"`
+		Name          string `json:"name"`
+		Version       string `json:"version"`
+		Description   string `json:"description"`
+		Platform      string `json:"platform"`
+		PackageType   string `json:"package_type"`
+		SourceURL     string `json:"source_url"`
+		Checksum      string `json:"checksum"`
+		InstallArgs   string `json:"install_args"`
 		UninstallArgs string `json:"uninstall_args"`
 		DetectCommand string `json:"detect_command"`
 	}
@@ -48,7 +48,7 @@ func (s *APIServer) handleCreatePackage(w http.ResponseWriter, r *http.Request) 
 
 	var pkgID string
 	var createdAt time.Time
-	err := s.db.DB().QueryRowContext(r.Context(), `
+	err := s.requestDB(r).QueryRowContext(r.Context(), `
 		INSERT INTO software_packages (tenant_id, name, version, description, platform, package_type, source_url, checksum, install_args, uninstall_args, detect_command)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		RETURNING id, created_at
@@ -67,7 +67,7 @@ func (s *APIServer) handleCreatePackage(w http.ResponseWriter, r *http.Request) 
 
 func (s *APIServer) handleListPackages(w http.ResponseWriter, r *http.Request) {
 	tenantID := r.PathValue("tenantID")
-	rows, err := s.db.DB().QueryContext(r.Context(), `
+	rows, err := s.requestDB(r).QueryContext(r.Context(), `
 		SELECT id, name, version, description, platform, package_type, source_url, checksum, install_args, created_at, updated_at
 		FROM software_packages WHERE tenant_id = $1
 		ORDER BY created_at DESC
@@ -98,7 +98,7 @@ func (s *APIServer) handleListPackages(w http.ResponseWriter, r *http.Request) {
 
 func (s *APIServer) handleDeletePackage(w http.ResponseWriter, r *http.Request) {
 	pkgID := r.PathValue("pkgID")
-	_, err := s.db.DB().ExecContext(r.Context(), `DELETE FROM software_packages WHERE id = $1`, pkgID)
+	_, err := s.requestDB(r).ExecContext(r.Context(), `DELETE FROM software_packages WHERE id = $1`, pkgID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -109,11 +109,11 @@ func (s *APIServer) handleDeletePackage(w http.ResponseWriter, r *http.Request) 
 func (s *APIServer) handleCreateDeployment(w http.ResponseWriter, r *http.Request) {
 	tenantID := r.PathValue("tenantID")
 	var req struct {
-		PackageID   string   `json:"package_id"`
-		Name        string   `json:"name"`
-		DeviceIDs   []string `json:"device_ids"`
-		Action      string   `json:"action"`
-		ScheduleType string  `json:"schedule_type"`
+		PackageID    string   `json:"package_id"`
+		Name         string   `json:"name"`
+		DeviceIDs    []string `json:"device_ids"`
+		Action       string   `json:"action"`
+		ScheduleType string   `json:"schedule_type"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.PackageID == "" || len(req.DeviceIDs) == 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "package_id and device_ids required"})
@@ -127,14 +127,14 @@ func (s *APIServer) handleCreateDeployment(w http.ResponseWriter, r *http.Reques
 	}
 
 	var pkg struct {
-		Name       string `json:"name"`
-		SourceURL  string `json:"source_url"`
-		Checksum   string `json:"checksum"`
-		PkgType    string `json:"package_type"`
-		InstallArgs string `json:"install_args"`
+		Name          string `json:"name"`
+		SourceURL     string `json:"source_url"`
+		Checksum      string `json:"checksum"`
+		PkgType       string `json:"package_type"`
+		InstallArgs   string `json:"install_args"`
 		UninstallArgs string `json:"uninstall_args"`
 	}
-	err := s.db.DB().QueryRowContext(r.Context(), `
+	err := s.requestDB(r).QueryRowContext(r.Context(), `
 		SELECT name, source_url, checksum, package_type, install_args, uninstall_args
 		FROM software_packages WHERE id = $1
 	`, req.PackageID).Scan(&pkg.Name, &pkg.SourceURL, &pkg.Checksum, &pkg.PkgType, &pkg.InstallArgs, &pkg.UninstallArgs)
@@ -149,7 +149,7 @@ func (s *APIServer) handleCreateDeployment(w http.ResponseWriter, r *http.Reques
 	}
 
 	var deployID string
-	err = s.db.DB().QueryRowContext(r.Context(), `
+	err = s.requestDB(r).QueryRowContext(r.Context(), `
 		INSERT INTO software_deployments (package_id, tenant_id, name, schedule_type, status)
 		VALUES ($1, $2, $3, $4, 'deploying')
 		RETURNING id
@@ -161,7 +161,7 @@ func (s *APIServer) handleCreateDeployment(w http.ResponseWriter, r *http.Reques
 
 	var targets []map[string]interface{}
 	for _, deviceID := range req.DeviceIDs {
-		_, err := s.db.DB().ExecContext(r.Context(), `
+		_, err := s.requestDB(r).ExecContext(r.Context(), `
 			INSERT INTO software_deployment_targets (deployment_id, device_id, status)
 			VALUES ($1, $2, 'pending')
 		`, deployID, deviceID)
@@ -170,23 +170,25 @@ func (s *APIServer) handleCreateDeployment(w http.ResponseWriter, r *http.Reques
 		}
 
 		cmdPayload, _ := json.Marshal(map[string]interface{}{
-			"type":          fmt.Sprintf("software_%s", req.Action),
-			"deployment_id": deployID,
-			"action":        req.Action,
-			"source_url":    pkg.SourceURL,
-			"checksum":      pkg.Checksum,
-			"install_args":  pkg.InstallArgs,
+			"type":           fmt.Sprintf("software_%s", req.Action),
+			"deployment_id":  deployID,
+			"action":         req.Action,
+			"source_url":     pkg.SourceURL,
+			"checksum":       pkg.Checksum,
+			"install_args":   pkg.InstallArgs,
 			"uninstall_args": pkg.UninstallArgs,
-			"package_type":  pkg.PkgType,
-			"timeout":       600,
+			"package_type":   pkg.PkgType,
+			"timeout":        600,
 		})
 
 		subject := fmt.Sprintf("tenant.%s.cmd.%s", tenantID, deviceID)
 		if err := s.nats.Publish(subject, cmdPayload); err != nil {
 			s.logger.Warn("publish software command", zap.Error(err))
-			s.db.DB().ExecContext(r.Context(),
+			if _, updateErr := s.requestDB(r).ExecContext(r.Context(),
 				`UPDATE software_deployment_targets SET status = 'failed', error_message = 'NATS publish failed' WHERE deployment_id = $1 AND device_id = $2`,
-				deployID, deviceID)
+				deployID, deviceID); updateErr != nil {
+				s.logger.Error("mark software deployment failed", zap.Error(updateErr))
+			}
 		}
 
 		targets = append(targets, map[string]interface{}{
@@ -206,7 +208,7 @@ func (s *APIServer) handleCreateDeployment(w http.ResponseWriter, r *http.Reques
 
 func (s *APIServer) handleListDeployments(w http.ResponseWriter, r *http.Request) {
 	tenantID := r.PathValue("tenantID")
-	rows, err := s.db.DB().QueryContext(r.Context(), `
+	rows, err := s.requestDB(r).QueryContext(r.Context(), `
 		SELECT d.id, d.name, sp.name as package_name, d.status, d.schedule_type, d.scheduled_for, d.created_at, d.completed_at,
 		       (SELECT COUNT(*) FROM software_deployment_targets t WHERE t.deployment_id = d.id) as total,
 		       (SELECT COUNT(*) FROM software_deployment_targets t WHERE t.deployment_id = d.id AND t.status = 'success') as success_count,
@@ -256,7 +258,7 @@ func (s *APIServer) handleGetDeployment(w http.ResponseWriter, r *http.Request) 
 		ScheduledFor, CompletedAt   sql.NullTime
 		CreatedAt                   time.Time
 	}
-	err := s.db.DB().QueryRowContext(r.Context(), `
+	err := s.requestDB(r).QueryRowContext(r.Context(), `
 		SELECT id, name, status, schedule_type, scheduled_for, completed_at, created_at
 		FROM software_deployments WHERE id = $1
 	`, deployID).Scan(&deploy.ID, &deploy.Name, &deploy.Status, &deploy.SchedType,
@@ -266,7 +268,7 @@ func (s *APIServer) handleGetDeployment(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	rows, err := s.db.DB().QueryContext(r.Context(), `
+	rows, err := s.requestDB(r).QueryContext(r.Context(), `
 		SELECT t.device_id, d.hostname, t.status, t.error_message, t.duration_ms, t.started_at, t.completed_at
 		FROM software_deployment_targets t
 		JOIN devices d ON t.device_id = d.id

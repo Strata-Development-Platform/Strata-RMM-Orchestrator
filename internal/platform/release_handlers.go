@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"strings"
 	"sync"
 	"time"
 
@@ -17,17 +18,17 @@ import (
 )
 
 type ReleaseServer struct {
-	cacheDir  string
-	repoOwner string
-	repoName  string
+	cacheDir   string
+	repoOwner  string
+	repoName   string
 	httpClient *http.Client
-	mu        sync.Mutex
-	cached    map[string]string // platformKey -> localPath
+	mu         sync.Mutex
+	cached     map[string]string // platformKey -> localPath
 }
 
 type githubRelease struct {
-	TagName string         `json:"tag_name"`
-	Assets  []githubAsset  `json:"assets"`
+	TagName string        `json:"tag_name"`
+	Assets  []githubAsset `json:"assets"`
 }
 
 type githubAsset struct {
@@ -48,6 +49,10 @@ func NewReleaseServer(cacheDir, owner, repo string) *ReleaseServer {
 }
 
 func (rs *ReleaseServer) getCachedBinary(ctx context.Context, platformKey string) (string, error) {
+	cacheName, err := releaseCacheName(platformKey)
+	if err != nil {
+		return "", err
+	}
 	rs.mu.Lock()
 	if path, ok := rs.cached[platformKey]; ok {
 		if _, err := os.Stat(path); err == nil {
@@ -57,7 +62,8 @@ func (rs *ReleaseServer) getCachedBinary(ctx context.Context, platformKey string
 	}
 	rs.mu.Unlock()
 
-	cachedPath := filepath.Join(rs.cacheDir, fmt.Sprintf("agent-%s", platformKey))
+	cachedPath := filepath.Join(rs.cacheDir, cacheName)
+	// #nosec G703 -- cacheName is selected from the fixed allowlist in releaseCacheName.
 	if _, err := os.Stat(cachedPath); err == nil {
 		rs.mu.Lock()
 		rs.cached[platformKey] = cachedPath
@@ -77,6 +83,25 @@ func (rs *ReleaseServer) getCachedBinary(ctx context.Context, platformKey string
 		}
 	}
 	return "", fmt.Errorf("no asset found for %s", platformKey)
+}
+
+func releaseCacheName(platformKey string) (string, error) {
+	switch platformKey {
+	case "linux/amd64":
+		return "agent-linux-amd64", nil
+	case "linux/arm64":
+		return "agent-linux-arm64", nil
+	case "windows/amd64":
+		return "agent-windows-amd64.exe", nil
+	case "windows/arm64":
+		return "agent-windows-arm64.exe", nil
+	case "darwin/amd64":
+		return "agent-darwin-amd64", nil
+	case "darwin/arm64":
+		return "agent-darwin-arm64", nil
+	default:
+		return "", fmt.Errorf("unsupported release platform")
+	}
 }
 
 func (rs *ReleaseServer) fetchLatestRelease(ctx context.Context) (*githubRelease, error) {
@@ -99,6 +124,21 @@ func (rs *ReleaseServer) fetchLatestRelease(ctx context.Context) (*githubRelease
 }
 
 func (rs *ReleaseServer) downloadAndCache(ctx context.Context, url, destPath string) (string, error) {
+	cacheRoot, err := filepath.Abs(rs.cacheDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve release cache: %w", err)
+	}
+	cleanDest, err := filepath.Abs(filepath.Clean(destPath))
+	if err != nil {
+		return "", fmt.Errorf("resolve release destination: %w", err)
+	}
+	relative, err := filepath.Rel(cacheRoot, cleanDest)
+	if err != nil || relative == ".." || filepath.IsAbs(relative) ||
+		strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("release destination escapes cache directory")
+	}
+	destPath = cleanDest
+
 	req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
 	resp, err := rs.httpClient.Do(req)
 	if err != nil {
@@ -110,10 +150,12 @@ func (rs *ReleaseServer) downloadAndCache(ctx context.Context, url, destPath str
 		return "", fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
+	// #nosec G703 -- destPath is constrained to the configured cache root above.
 	if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
 		return "", err
 	}
 
+	// #nosec G703 -- destPath is constrained to the configured cache root above.
 	f, err := os.Create(destPath + ".tmp")
 	if err != nil {
 		return "", err
@@ -123,14 +165,17 @@ func (rs *ReleaseServer) downloadAndCache(ctx context.Context, url, destPath str
 	written, err := io.Copy(f, io.TeeReader(resp.Body, h))
 	if err != nil {
 		f.Close()
-		os.Remove(destPath + ".tmp")
+		// #nosec G703 -- destPath is constrained to the configured cache root above.
+		_ = os.Remove(destPath + ".tmp")
 		return "", err
 	}
 	f.Close()
 
+	// #nosec G703 -- both paths are constrained to the configured cache root above.
 	if err := os.Rename(destPath+".tmp", destPath); err != nil {
 		return "", err
 	}
+	// #nosec G703 -- destPath is constrained to the configured cache root above.
 	if err := os.Chmod(destPath, 0755); err != nil {
 		return "", err
 	}
@@ -175,8 +220,9 @@ echo ""
 echo -e "${BLUE}Strata RMM Agent Installer${NC}"
 echo ""
 
-read -p "Enter deployment ID: " DEPLOYMENT_ID
-if [ -z "$DEPLOYMENT_ID" ]; then echo "Deployment ID required"; exit 1; fi
+read -rsp "Enter enrollment token: " ENROLLMENT_TOKEN
+echo ""
+if [ -z "$ENROLLMENT_TOKEN" ]; then echo "Enrollment token required"; exit 1; fi
 
 log_step "Downloading agent..."
 BINARY_URL="$SERVER_URL/releases/latest/agent/$PLATFORM"
@@ -196,7 +242,8 @@ chmod 755 "$CONFIG_DIR"
 chmod 700 "$DATA_DIR"
 cat > "$CONFIG_DIR/agent.yaml" <<EOF
 agent:
-  deployment_id: "$DEPLOYMENT_ID"
+  enrollment_token: "$ENROLLMENT_TOKEN"
+  register_url: "$SERVER_URL/api/v1/agent/register"
   log_level: "info"
   data_dir: "$DATA_DIR"
 nats:
@@ -266,5 +313,6 @@ func (s *APIServer) handleReleaseBinary(w http.ResponseWriter, r *http.Request) 
 
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=strata-rmm-%s-%s", osName, arch))
+	// #nosec G703 -- binaryPath is derived from the fixed platform allowlist and cache-root containment check.
 	http.ServeFile(w, r, binaryPath)
 }

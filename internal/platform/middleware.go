@@ -2,10 +2,10 @@ package platform
 
 import (
 	"context"
+	"database/sql"
+	"fmt"
 	"net/http"
 	"strings"
-
-	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/auth"
 )
 
 const platformDomain = "rmm.stratadevplatform.com"
@@ -13,18 +13,19 @@ const platformDomain = "rmm.stratadevplatform.com"
 type contextKey string
 
 const (
-	ctxKeyUserID        contextKey = "userID"
-	ctxKeyEmail         contextKey = "email"
-	ctxKeyRole          contextKey = "role"
-	ctxKeyTenantID      contextKey = "tenantID"
-	ctxKeyMSPID         contextKey = "mspID"
-	ctxKeyClientID      contextKey = "clientID"
-	ctxKeySiteID        contextKey = "siteID"
-	ctxKeyAuthMethod    contextKey = "authMethod"
-	ctxKeyTokenID       contextKey = "tokenID"
-	ctxKeyPlatformID    contextKey = "platformID"
+	ctxKeyUserID         contextKey = "userID"
+	ctxKeyEmail          contextKey = "email"
+	ctxKeyRole           contextKey = "role"
+	ctxKeyTenantID       contextKey = "tenantID"
+	ctxKeyMSPID          contextKey = "mspID"
+	ctxKeyClientID       contextKey = "clientID"
+	ctxKeySiteID         contextKey = "siteID"
+	ctxKeyAuthMethod     contextKey = "authMethod"
+	ctxKeyTokenID        contextKey = "tokenID"
+	ctxKeyPlatformID     contextKey = "platformID"
 	ctxKeySupportGrantID contextKey = "supportGrantID"
-	ctxKeyTokenUse      contextKey = "tokenUse"
+	ctxKeyTokenUse       contextKey = "tokenUse"
+	ctxKeyDBTransaction  contextKey = "dbTransaction"
 )
 
 type Principal struct {
@@ -46,8 +47,9 @@ type Principal struct {
 type RouteAccess int
 
 const (
-	AccessPublic  RouteAccess = iota
+	AccessPublic RouteAccess = iota
 	AccessUser
+	AccessAgent
 	AccessAdmin
 )
 
@@ -58,15 +60,14 @@ type Route struct {
 }
 
 func extractBearerToken(authHeader string) string {
-	if authHeader == "" {
+	parts := strings.Fields(authHeader)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
 		return ""
 	}
-	for _, prefix := range []string{"Bearer ", "bearer "} {
-		if len(authHeader) > len(prefix) && strings.EqualFold(authHeader[:len(prefix)], prefix) {
-			return authHeader[len(prefix):]
-		}
+	if parts[1] == "" {
+		return ""
 	}
-	return authHeader
+	return parts[1]
 }
 
 func (s *APIServer) resolveMSPByHost(host string) (mspID, slug string) {
@@ -114,15 +115,10 @@ func (s *APIServer) withBranding(next http.Handler) http.Handler {
 }
 
 func (s *APIServer) validateAndBuildPrincipal(rawToken string) (*Principal, error) {
-	tg := s.tokenGen
-	if tg == nil {
-		var err error
-		tg, err = auth.NewTokenGeneratorOrFail("")
-		if err != nil {
-			tg = auth.NewTokenGenerator("")
-		}
+	if s.tokenGen == nil {
+		return nil, fmt.Errorf("authentication is not configured")
 	}
-	claims, err := tg.Validate(rawToken)
+	claims, err := s.tokenGen.Validate(rawToken)
 	if err != nil {
 		return nil, err
 	}
@@ -142,7 +138,175 @@ func (s *APIServer) validateAndBuildPrincipal(rawToken string) (*Principal, erro
 		p.UserID = claims.Subject
 	}
 
+	if s.allowClaimPrincipal {
+		return p, nil
+	}
+	if s.db == nil {
+		return nil, fmt.Errorf("identity database is not configured")
+	}
+	tx, err := s.db.DB().BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, fmt.Errorf("starting identity transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	if _, err := tx.Exec(`
+		SELECT
+			set_config('app.user_id', $1, true),
+			set_config('app.msp_id', $2, true),
+			set_config('app.client_id', $3, true),
+			set_config('app.site_id', $4, true),
+			set_config('app.tenant_id', $5, true)
+	`, claims.Subject, claims.MSPID, claims.ClientID, claims.SiteID, claims.TenantID); err != nil {
+		return nil, fmt.Errorf("establishing identity security context: %w", err)
+	}
+	if claims.TokenUse == "agent" {
+		var tenantID, agentID string
+		err := tx.QueryRow(`
+			SELECT d.tenant_id::text, ar.agent_id
+			FROM agent_registrations ar
+			JOIN devices d ON d.id = ar.device_id
+			JOIN tenants t ON t.id = d.tenant_id
+			JOIN msp_tenants m ON m.id = d.msp_id
+			JOIN client_organizations c ON c.id = d.client_id AND c.msp_id = m.id
+			JOIN sites s ON s.id = d.site_id AND s.client_id = c.id
+			WHERE ar.agent_id = $1
+			  AND ar.approved = true
+			  AND d.status <> 'disabled'
+			  AND t.is_active = true
+			  AND m.is_active = true
+			  AND c.is_active = true
+			  AND s.is_active = true
+		`, claims.Subject).Scan(&tenantID, &agentID)
+		if err != nil || agentID != claims.AgentID {
+			return nil, fmt.Errorf("agent identity is inactive or revoked")
+		}
+		p.LegacyTenantID = tenantID
+		p.Roles = []string{"agent"}
+		if err := tx.Commit(); err != nil {
+			return nil, fmt.Errorf("committing agent identity transaction: %w", err)
+		}
+		committed = true
+		return p, nil
+	}
+
+	var email string
+	if err := tx.QueryRow(
+		`SELECT email FROM users WHERE id = $1 AND is_active = true`,
+		claims.Subject,
+	).Scan(&email); err != nil {
+		return nil, fmt.Errorf("user identity is inactive or revoked")
+	}
+	p.Email = email
+	p.Roles = nil
+
+	rows, err := tx.Query(`
+		SELECT role, scope_type, scope_id
+		FROM memberships
+		WHERE user_id = $1
+		  AND status = 'active'
+		  AND (expires_at IS NULL OR expires_at > NOW())
+		ORDER BY created_at
+	`, claims.Subject)
+	if err != nil {
+		return nil, fmt.Errorf("loading memberships: %w", err)
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	hasClaimedMSP := claims.MSPID == ""
+	hasClaimedClient := claims.ClientID == ""
+	hasClaimedSite := claims.SiteID == ""
+	for rows.Next() {
+		var role, scopeType, scopeID string
+		if err := rows.Scan(&role, &scopeType, &scopeID); err != nil {
+			return nil, fmt.Errorf("reading membership: %w", err)
+		}
+		p.Roles = appendUnique(p.Roles, role)
+		switch scopeType {
+		case "platform":
+			if role == "platform_owner" || role == "platform_admin" {
+				hasClaimedMSP = true
+				hasClaimedClient = true
+				hasClaimedSite = true
+			}
+		case "msp":
+			if scopeID == claims.MSPID {
+				hasClaimedMSP = true
+			}
+		case "client":
+			if scopeID == claims.ClientID {
+				hasClaimedClient = true
+			}
+		case "site":
+			if scopeID == claims.SiteID {
+				hasClaimedSite = true
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating memberships: %w", err)
+	}
+	if len(p.Roles) == 0 {
+		return nil, fmt.Errorf("user has no active memberships")
+	}
+	if !hasClaimedMSP || !hasClaimedClient || !hasClaimedSite {
+		return nil, fmt.Errorf("token scope is no longer authorized")
+	}
+	if claims.MSPID != "" {
+		var active bool
+		if err := tx.QueryRow(
+			`SELECT EXISTS (SELECT 1 FROM msp_tenants WHERE id = $1 AND is_active = true)`,
+			claims.MSPID,
+		).Scan(&active); err != nil || !active {
+			return nil, fmt.Errorf("MSP scope is suspended or inactive")
+		}
+	}
+	if claims.ClientID != "" {
+		var active bool
+		if err := tx.QueryRow(`
+			SELECT EXISTS (
+				SELECT 1 FROM client_organizations c
+				JOIN msp_tenants m ON m.id = c.msp_id
+				WHERE c.id = $1 AND c.is_active = true AND m.is_active = true
+			)
+		`, claims.ClientID).Scan(&active); err != nil || !active {
+			return nil, fmt.Errorf("client scope is archived or inactive")
+		}
+	}
+	if claims.SiteID != "" {
+		var active bool
+		if err := tx.QueryRow(`
+			SELECT EXISTS (
+				SELECT 1 FROM sites s
+				JOIN client_organizations c ON c.id = s.client_id
+				JOIN msp_tenants m ON m.id = c.msp_id
+				WHERE s.id = $1 AND s.is_active = true AND c.is_active = true AND m.is_active = true
+			)
+		`, claims.SiteID).Scan(&active); err != nil || !active {
+			return nil, fmt.Errorf("site scope is archived or inactive")
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("committing user identity transaction: %w", err)
+	}
+	committed = true
+
 	return p, nil
+}
+
+func appendUnique(values []string, value string) []string {
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+	return append(values, value)
 }
 
 func principalToContext(ctx context.Context, p *Principal) context.Context {
@@ -155,6 +319,7 @@ func principalToContext(ctx context.Context, p *Principal) context.Context {
 	ctx = context.WithValue(ctx, ctxKeyAuthMethod, p.AuthMethod)
 	ctx = context.WithValue(ctx, ctxKeyTokenID, p.TokenID)
 	ctx = context.WithValue(ctx, ctxKeyTokenUse, p.TokenUse)
+	ctx = context.WithValue(ctx, ctxKeySupportGrantID, p.SupportGrantID)
 	return ctx
 }
 
@@ -178,18 +343,16 @@ func (s *APIServer) withAccessControl(next http.Handler) http.Handler {
 			return
 		}
 
-		// Enforce token-use separation
-		isAgentPath := strings.HasPrefix(r.URL.Path, "/api/v1/agent/") ||
-			strings.HasPrefix(r.URL.Path, "/releases/") ||
-			r.URL.Path == "/install.sh"
-		isUserPath := !isAgentPath
-
-		if isUserPath && principal.TokenUse == "agent" {
-			http.Error(w, `{"error":"agent tokens cannot access this endpoint"}`, http.StatusForbidden)
+		if access == AccessAgent && principal.TokenUse != "agent" {
+			http.Error(w, "this endpoint requires an agent token", http.StatusForbidden)
 			return
 		}
-		if isAgentPath && principal.TokenUse == "user" {
-			// Agent endpoints may also accept user tokens for admin operations
+		if access != AccessAgent && principal.TokenUse != "user" {
+			http.Error(w, "agent tokens cannot access this endpoint", http.StatusForbidden)
+			return
+		}
+		if hasSupportRole(principal.Roles) {
+			principal.SupportGrantID = strings.TrimSpace(r.Header.Get("X-Support-Grant-ID"))
 		}
 
 		r.Header.Set("X-Tenant-ID", principal.LegacyTenantID)
@@ -209,8 +372,17 @@ func (s *APIServer) withAccessControl(next http.Handler) http.Handler {
 			return
 		}
 
+		if access == AccessAgent && !hasAgentRole(principal.Roles) {
+			http.Error(w, "agent role required", http.StatusForbidden)
+			return
+		}
+		if access == AccessAgent {
+			ctx := principalToContext(r.Context(), principal)
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
 		if access == AccessAdmin {
-			if !hasPlatformRole(principal.Roles) {
+			if !isPlatformGlobal(principal.Roles) {
 				http.Error(w, `{"error":"admin privileges required"}`, http.StatusForbidden)
 				return
 			}
@@ -226,6 +398,7 @@ func (s *APIServer) withAccessControl(next http.Handler) http.Handler {
 
 func (s *APIServer) classifyRoute(method, path string) RouteAccess {
 	allRoutes := s.publicRoutes()
+	allRoutes = append(allRoutes, s.agentRoutes()...)
 	allRoutes = append(allRoutes, s.adminRoutes()...)
 	for _, r := range allRoutes {
 		if r.Method == method && matchPath(r.Path, path) {
@@ -236,6 +409,12 @@ func (s *APIServer) classifyRoute(method, path string) RouteAccess {
 		return AccessAdmin
 	}
 	return AccessUser
+}
+
+func (s *APIServer) agentRoutes() []Route {
+	return []Route{
+		{Method: "POST", Path: "/api/v1/agent/config", Access: AccessAgent},
+	}
 }
 
 func matchPath(pattern, path string) bool {
@@ -260,6 +439,8 @@ func (s *APIServer) publicRoutes() []Route {
 		{Method: "GET", Path: "/", Access: AccessPublic},
 		{Method: "GET", Path: "/health", Access: AccessPublic},
 		{Method: "POST", Path: "/api/v1/auth/login", Access: AccessPublic},
+		{Method: "POST", Path: "/api/v1/agent/register", Access: AccessPublic},
+		{Method: "POST", Path: "/api/v1/enrollment/validate", Access: AccessPublic},
 		{Method: "GET", Path: "/install.sh", Access: AccessPublic},
 		{Method: "GET", Path: "/releases/latest/agent/{os}/{arch}", Access: AccessPublic},
 		{Method: "GET", Path: "/api/v1/auth/me", Access: AccessUser},
@@ -275,6 +456,8 @@ func (s *APIServer) adminRoutes() []Route {
 		{Method: "PATCH", Path: "/api/v2/platform/msps/{mspID}", Access: AccessAdmin},
 		{Method: "POST", Path: "/api/v2/platform/msps/{mspID}/suspend", Access: AccessAdmin},
 		{Method: "POST", Path: "/api/v2/platform/msps/{mspID}/activate", Access: AccessAdmin},
+		{Method: "POST", Path: "/api/v2/platform/support-grants", Access: AccessAdmin},
+		{Method: "DELETE", Path: "/api/v2/platform/support-grants/{grantID}", Access: AccessAdmin},
 		// Legacy admin routes
 		{Method: "GET", Path: "/api/v1/admin/users", Access: AccessAdmin},
 		{Method: "POST", Path: "/api/v1/admin/users", Access: AccessAdmin},
@@ -282,8 +465,6 @@ func (s *APIServer) adminRoutes() []Route {
 		{Method: "POST", Path: "/api/v1/admin/customers", Access: AccessAdmin},
 		{Method: "GET", Path: "/api/v1/admin/update/check", Access: AccessAdmin},
 		{Method: "POST", Path: "/api/v1/admin/update/apply", Access: AccessAdmin},
-		{Method: "POST", Path: "/api/v1/enrollment/tokens", Access: AccessAdmin},
-		{Method: "GET", Path: "/api/v1/enrollment/tokens", Access: AccessAdmin},
 	}
 }
 
@@ -303,6 +484,15 @@ func hasMSPRole(roles []string) bool {
 		switch r {
 		case "msp_owner", "msp_admin", "technician", "patch_manager",
 			"automation_operator", "billing_manager", "auditor", "viewer":
+			return true
+		}
+	}
+	return false
+}
+
+func hasAgentRole(roles []string) bool {
+	for _, role := range roles {
+		if role == "agent" {
 			return true
 		}
 	}
