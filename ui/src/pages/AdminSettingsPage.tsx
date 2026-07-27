@@ -5,6 +5,7 @@ import { Skeleton } from '@/components/shared/Skeleton';
 import type { PlatformOverview } from '@/api/types';
 
 export default function AdminSettingsPage() {
+  const { showToast } = useToast();
   const [overview, setOverview] = useState<PlatformOverview | null>(null);
   const [loading, setLoading] = useState(true);
 

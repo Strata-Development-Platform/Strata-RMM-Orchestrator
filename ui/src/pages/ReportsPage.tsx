@@ -37,8 +37,14 @@ export default function ReportsPage() {
     } catch { alert('Failed'); }
   };
 
-  const handleDeleteSchedule = async (id: string) => {
-    if (!confirm('Delete this schedule?')) return;
+  const confirmScheduleDelete = (id: string) => {
+    setConfirmDelete(id);
+  };
+
+  const doDeleteSchedule = async () => {
+    if (!confirmDelete) return;
+    const id = confirmDelete;
+    setConfirmDelete(null);
     await fetch(`/api/v1/reports/${tenantID}/schedules/${id}`, { method: 'DELETE' });
     load();
   };
@@ -110,7 +116,7 @@ export default function ReportsPage() {
                 <span className="font-medium">{s.name as string}</span>
                 <span className="ml-2 px-2 py-0.5 rounded text-xs bg-slate-100 dark:bg-slate-700 capitalize">{s.frequency as string}</span>
                 <span className={`ml-2 text-xs ${s.enabled ? 'text-green-600' : 'text-slate-400'}`}>{s.enabled ? 'Active' : 'Paused'}</span>
-                {s.last_sent && <span className="ml-2 text-xs text-slate-400">Last: {new Date(s.last_sent as string).toLocaleDateString()}</span>}
+                {s.last_sent ? <span className="ml-2 text-xs text-slate-400">Last: {new Date(String(s.last_sent)).toLocaleDateString()}</span> : null}
               </div>
               <button onClick={() => confirmScheduleDelete(s.id as string)} className="text-red-600 hover:underline text-xs">Delete</button>
             </div>

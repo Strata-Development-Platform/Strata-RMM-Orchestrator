@@ -695,6 +695,30 @@ func Migrations() []Migration {
 				ALTER TABLE tenants DROP COLUMN IF EXISTS update_channel;
 			`,
 		},
+		{
+			ID:   26,
+			Name: "create_alerts_table",
+			Up: `
+				CREATE TABLE IF NOT EXISTS alerts (
+					id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					rule_id       UUID REFERENCES alert_rules(id) ON DELETE SET NULL,
+					tenant_id     UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+					device_id     TEXT,
+					metric_name   TEXT,
+					value         DOUBLE PRECISION,
+					severity      TEXT NOT NULL,
+					message       TEXT,
+					status        TEXT NOT NULL DEFAULT 'firing',
+					fired_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					resolved_at   TIMESTAMPTZ,
+					acknowledged_at TIMESTAMPTZ,
+					created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+				CREATE INDEX IF NOT EXISTS idx_alerts_tenant_status ON alerts(tenant_id, status);
+				CREATE INDEX IF NOT EXISTS idx_alerts_rule_id ON alerts(rule_id);
+			`,
+			Down: `DROP TABLE IF EXISTS alerts CASCADE;`,
+		},
 	}
 }
 

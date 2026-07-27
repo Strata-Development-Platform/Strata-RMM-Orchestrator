@@ -102,8 +102,8 @@ export default function SoftwarePage() {
                     'bg-slate-100 text-slate-800'
                   }`}>{(p.package_type as string)?.toUpperCase()}</span>
                   <span className="font-medium">{String(p.name)}</span>
-                  {p.version && <span className="text-sm text-slate-500">v{String(p.version)}</span>}
-                  {p.description && <span className="text-sm text-slate-400 truncate max-w-xs">— {p.description as string}</span>}
+                  {p.version ? <span className="text-sm text-slate-500">v{String(p.version)}</span> : null}
+                  {p.description ? <span className="text-sm text-slate-400 truncate max-w-xs">— {String(p.description)}</span> : null}
                 </div>
                 <div className="flex items-center gap-2">
                   <button onClick={() => setShowDeploy(p.id as string)}

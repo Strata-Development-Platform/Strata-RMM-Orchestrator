@@ -53,6 +53,32 @@ func (s *APIServer) handleRemoteSessionStart(w http.ResponseWriter, r *http.Requ
 	})
 }
 
+func (s *APIServer) handleRemoteSessionInput(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.PathValue("tenantID")
+	sessionID := r.PathValue("sessionID")
+
+	var input struct {
+		X    float64 `json:"x"`
+		Y    float64 `json:"y"`
+		Type string  `json:"type"`
+		Button string `json:"button,omitempty"`
+		Key   string `json:"key,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid input"})
+		return
+	}
+
+	payload, _ := json.Marshal(input)
+	subject := fmt.Sprintf("tenant.%s.tunnel.%s.input", tenantID, sessionID)
+	if err := s.nats.Publish(subject, payload); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "publish failed"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "sent"})
+}
+
 func (s *APIServer) handleRemoteSessionStop(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.PathValue("sessionID")
 	deviceID := r.URL.Query().Get("device_id")

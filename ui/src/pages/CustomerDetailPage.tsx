@@ -77,7 +77,7 @@ export default function CustomerDetailPage() {
         </nav>
       </div>
 
-      {tab === 'devices' && <DevicesTab devices={devices} />}
+      {tab === 'devices' && <DevicesTab devices={devices} tenantID={tenantID!} />}
       {tab === 'alerts' && <AlertsTab alerts={alerts} tenantID={tenantID!} />}
       {tab === 'vulnerabilities' && <VulnsTab vulns={vulns} tenantID={tenantID!} />}
       {tab === 'recordings' && <RecordingsTab recordings={recordings} />}

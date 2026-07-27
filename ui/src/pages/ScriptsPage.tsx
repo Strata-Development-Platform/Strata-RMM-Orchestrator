@@ -107,7 +107,7 @@ export default function ScriptsPage() {
                     'bg-slate-100 text-slate-800'
                   }`}>{s.language as string}</span>
                   <span className="font-medium">{s.name as string}</span>
-                  {s.description && <span className="text-sm text-slate-500">— {s.description as string}</span>}
+                  {s.description ? <span className="text-sm text-slate-500">— {String(s.description)}</span> : null}
                 </div>
                 <div className="flex items-center gap-2">
                   <button onClick={() => setShowRun(s.id as string)}
@@ -151,7 +151,7 @@ export default function ScriptsPage() {
                   </td>
                   <td className="px-4 py-3 font-mono text-xs">{(e.device_id as string)?.slice(0, 12)}...</td>
                   <td className="px-4 py-3 text-right">{e.duration_ms ? `${e.duration_ms}ms` : '-'}</td>
-                  <td className="px-4 py-3 text-right font-mono">{e.exit_code ?? '-'}</td>
+                  <td className="px-4 py-3 text-right font-mono">{e.exit_code != null ? String(e.exit_code) : '-'}</td>
                   <td className="px-4 py-3 text-right text-slate-500">
                     {e.created_at ? new Date(e.created_at as string).toLocaleString() : '-'}
                   </td>

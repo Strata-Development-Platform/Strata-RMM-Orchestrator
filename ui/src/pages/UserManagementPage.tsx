@@ -123,6 +123,7 @@ function TenantScoper({ userId, user, customers, onSave }: {
   customers: TenantInfo[];
   onSave: () => void;
 }) {
+  const { showToast } = useToast();
   const currentIds = (user.accessible_tenants || []).map(t => t.id);
   const [selected, setSelected] = useState<string[]>(currentIds);
   const [saving, setSaving] = useState(false);
