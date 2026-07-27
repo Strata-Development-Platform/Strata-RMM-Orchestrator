@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/auth"
 )
 
 const platformDomain = "rmm.stratadevplatform.com"
@@ -115,10 +117,8 @@ func (s *APIServer) withBranding(next http.Handler) http.Handler {
 }
 
 func (s *APIServer) validateAndBuildPrincipal(rawToken string) (*Principal, error) {
-	if s.tokenGen == nil {
-		return nil, fmt.Errorf("authentication is not configured")
-	}
-	claims, err := s.tokenGen.Validate(rawToken)
+	tg := auth.NewTokenGenerator("")
+	claims, err := tg.Validate(rawToken)
 	if err != nil {
 		return nil, err
 	}
@@ -483,7 +483,8 @@ func hasMSPRole(roles []string) bool {
 	for _, r := range roles {
 		switch r {
 		case "msp_owner", "msp_admin", "technician", "patch_manager",
-			"automation_operator", "billing_manager", "auditor", "viewer":
+			"automation_operator", "billing_manager", "auditor", "viewer",
+			"admin":
 			return true
 		}
 	}

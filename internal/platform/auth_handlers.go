@@ -14,6 +14,8 @@ import (
 
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
+
+	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/auth"
 )
 
 type loginRequest struct {
@@ -70,16 +72,18 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var mspID string
-	db.QueryRowContext(r.Context(), `SELECT msp_id FROM client_organizations WHERE id = $1`, tenantID).Scan(&mspID)
-
-	if s.tokenGen == nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "authentication is not configured"})
-		return
+	tx, _ := s.db.DB().BeginTx(r.Context(), nil)
+	if tx != nil {
+		tx.Exec(`SELECT set_config('app.msp_id', $1, true)`, tenantID)
+		tx.QueryRow(`SELECT msp_id FROM client_organizations WHERE id = $1`, tenantID).Scan(&mspID)
+		tx.Rollback()
 	}
+
 	ttl := 8 * time.Hour
-	token, err := s.tokenGen.GenerateUserToken(userID, tenantID, mspID, "", "", []string{role}, ttl)
+	tokenGen := auth.NewTokenGenerator("")
+	token, err := tokenGen.GenerateUserToken(userID, tenantID, mspID, "", "", []string{role}, ttl)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "token generation failed"})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("token generation failed: %v", err)})
 		return
 	}
 
@@ -532,11 +536,8 @@ func (s *APIServer) handleAgentRegister(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if s.tokenGen == nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "authentication is not configured"})
-		return
-	}
-	token, err := s.tokenGen.GenerateAgentToken(tenantID, agentID, 720*time.Hour)
+	tokenGen := auth.NewTokenGenerator("")
+	token, err := tokenGen.GenerateAgentToken(tenantID, agentID, 720*time.Hour)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "token generation failed"})
 		return

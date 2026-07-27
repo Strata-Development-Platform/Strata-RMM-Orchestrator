@@ -67,6 +67,9 @@ type TokenGenerator struct {
 }
 
 func NewTokenGenerator(secret string) *TokenGenerator {
+	if secret == "" {
+		secret = jwtSecret()
+	}
 	return &TokenGenerator{secret: []byte(secret)}
 }
 
