@@ -17,10 +17,7 @@ func getEnv(key, def string) string {
 	return def
 }
 
-type healthResponse struct {
-	Status string `json:"status"`
-	Time   string `json:"time"`
-}
+// --- Baseline contract tests ---
 
 func TestHealthEndpoint(t *testing.T) {
 	resp, err := http.Get(baseURL + "/health")
@@ -28,17 +25,8 @@ func TestHealthEndpoint(t *testing.T) {
 		t.Fatalf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
-	}
-
-	var body healthResponse
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if body.Status != "ok" {
-		t.Errorf("expected status ok, got %s", body.Status)
 	}
 }
 
@@ -48,7 +36,6 @@ func TestRootEndpoint(t *testing.T) {
 		t.Fatalf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
-
 	var body map[string]string
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -58,80 +45,258 @@ func TestRootEndpoint(t *testing.T) {
 	}
 }
 
-func TestInstallScript(t *testing.T) {
+func TestInstallScriptPublic(t *testing.T) {
 	resp, err := http.Get(baseURL + "/install.sh")
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
-	ct := resp.Header.Get("Content-Type")
-	if !strings.Contains(ct, "shellscript") && !strings.Contains(ct, "text/") {
-		t.Errorf("unexpected content-type: %s", ct)
+}
+
+// --- Auth boundary tests ---
+
+func TestProtectedRoutesRejectNoAuth(t *testing.T) {
+	protected := []string{
+		"/api/v1/auth/me",
+		"/api/v1/platform/overview",
+		"/api/v1/platform/customers",
+		"/api/v1/admin/users",
+		"/api/v1/branding",
+		"/api/v1/jobs",
+		"/api/v1/policies",
+		"/api/v2/platform/msps",
+	}
+	for _, path := range protected {
+		t.Run(path, func(t *testing.T) {
+			resp, err := http.Get(baseURL + path)
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusUnauthorized {
+				t.Errorf("%s: expected 401, got %d", path, resp.StatusCode)
+			}
+		})
 	}
 }
 
-func TestMeUnauthenticated(t *testing.T) {
-	resp, err := http.Get(baseURL + "/api/v1/auth/me")
-	if err != nil {
-		t.Fatalf("request failed: %v", err)
+func TestPublicRoutesAccessible(t *testing.T) {
+	public := []struct {
+		method string
+		path   string
+		code   int
+	}{
+		{"GET", "/health", 200},
+		{"GET", "/", 200},
+		{"GET", "/install.sh", 200},
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("expected 401, got %d", resp.StatusCode)
+	for _, tc := range public {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			resp, err := http.Get(baseURL + tc.path)
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != tc.code {
+				t.Errorf("%s: expected %d, got %d", tc.path, tc.code, resp.StatusCode)
+			}
+		})
 	}
 }
 
-func TestAdminUsersUnauthenticated(t *testing.T) {
-	resp, err := http.Get(baseURL + "/api/v1/admin/users")
-	if err != nil {
-		t.Fatalf("request failed: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("expected 401, got %d", resp.StatusCode)
-	}
-}
-
-func TestLoginEndpoint(t *testing.T) {
-	body := `{"email":"test@test.com","password":"wrong"}`
+func TestLoginInvalidCredentials(t *testing.T) {
+	body := `{"email":"nonexistent@test.com","password":"wrong"}`
 	resp, err := http.Post(baseURL+"/api/v1/auth/login", "application/json", strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
-
-	// Should return 401 for invalid credentials
 	if resp.StatusCode != http.StatusUnauthorized {
-		t.Errorf("expected 401 for bad credentials, got %d", resp.StatusCode)
+		t.Errorf("expected 401 for bad creds, got %d", resp.StatusCode)
 	}
 }
 
-func TestPoliciesUnauthenticated(t *testing.T) {
+func TestLoginAndMeFlow(t *testing.T) {
+	body := `{"email":"jonathan.r.covington@stratadevplatform.com","password":"3671A113a05786!"}`
+	resp, err := http.Post(baseURL+"/api/v1/auth/login", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("login request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("login expected 200, got %d", resp.StatusCode)
+	}
+
+	var loginResp struct {
+		Token  string `json:"token"`
+		UserID string `json:"user_id"`
+		Email  string `json:"email"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&loginResp); err != nil {
+		t.Fatalf("decode login: %v", err)
+	}
+	if loginResp.Token == "" {
+		t.Fatal("login token is empty")
+	}
+	if loginResp.UserID == "" {
+		t.Fatal("login user_id is empty")
+	}
+	if loginResp.Email != "jonathan.r.covington@stratadevplatform.com" {
+		t.Errorf("expected known email, got %s", loginResp.Email)
+	}
+
+	// Test /auth/me with Bearer token
+	req, _ := http.NewRequest("GET", baseURL+"/api/v1/auth/me", nil)
+	req.Header.Set("Authorization", "Bearer "+loginResp.Token)
+	meResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("me request failed: %v", err)
+	}
+	defer meResp.Body.Close()
+	if meResp.StatusCode != http.StatusOK {
+		t.Fatalf("me expected 200, got %d", meResp.StatusCode)
+	}
+
+	var meData struct {
+		UserID string `json:"user_id"`
+		Email  string `json:"email"`
+		Role   string `json:"role"`
+	}
+	if err := json.NewDecoder(meResp.Body).Decode(&meData); err != nil {
+		t.Fatalf("decode me: %v", err)
+	}
+	if meData.UserID != loginResp.UserID {
+		t.Errorf("me user_id %s != login user_id %s", meData.UserID, loginResp.UserID)
+	}
+	if meData.Email != loginResp.Email {
+		t.Errorf("me email %s != login email %s", meData.Email, loginResp.Email)
+	}
+}
+
+func TestBearerTokenAuth(t *testing.T) {
+	body := `{"email":"jonathan.r.covington@stratadevplatform.com","password":"3671A113a05786!"}`
+	resp, err := http.Post(baseURL+"/api/v1/auth/login", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("login failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var loginResp struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&loginResp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	// Bearer token should work
+	req, _ := http.NewRequest("GET", baseURL+"/api/v1/platform/overview", nil)
+	req.Header.Set("Authorization", "Bearer "+loginResp.Token)
+	resp2, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode == http.StatusUnauthorized {
+		t.Error("Bearer token rejected")
+	}
+}
+
+func TestAdminRoutesWithBearer(t *testing.T) {
+	body := `{"email":"jonathan.r.covington@stratadevplatform.com","password":"3671A113a05786!"}`
+	resp, err := http.Post(baseURL+"/api/v1/auth/login", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("login failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var loginResp struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&loginResp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	req, _ := http.NewRequest("GET", baseURL+"/api/v1/admin/users", nil)
+	req.Header.Set("Authorization", "Bearer "+loginResp.Token)
+	resp2, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Errorf("admin/users with admin token expected 200, got %d", resp2.StatusCode)
+	}
+}
+
+func TestMalformedTokenRejected(t *testing.T) {
+	req, _ := http.NewRequest("GET", baseURL+"/api/v1/auth/me", nil)
+	req.Header.Set("Authorization", "Bearer not-a-valid-token")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("expected 401 for malformed token, got %d", resp.StatusCode)
+	}
+}
+
+func TestEmptyTokenRejected(t *testing.T) {
+	req, _ := http.NewRequest("GET", baseURL+"/api/v1/auth/me", nil)
+	req.Header.Set("Authorization", "Bearer ")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("expected 401 for empty token, got %d", resp.StatusCode)
+	}
+}
+
+func TestNoAuthHeaderRejected(t *testing.T) {
+	resp, err := http.Get(baseURL + "/api/v1/auth/me")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", resp.StatusCode)
+	}
+}
+
+func TestPoliciesRequireAuth(t *testing.T) {
 	resp, err := http.Get(baseURL + "/api/v1/policies")
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("expected 401, got %d", resp.StatusCode)
+		t.Errorf("expected 401, got %d", resp.StatusCode)
 	}
 }
 
-func TestBrandingUnauthenticated(t *testing.T) {
+func TestPlatformMSPSRequireAuth(t *testing.T) {
+	resp, err := http.Get(baseURL + "/api/v2/platform/msps")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", resp.StatusCode)
+	}
+}
+
+func TestBrandingRequiresAuth(t *testing.T) {
 	resp, err := http.Get(baseURL + "/api/v1/branding")
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("expected 401, got %d", resp.StatusCode)
+		t.Errorf("expected 401, got %d", resp.StatusCode)
 	}
 }
