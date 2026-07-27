@@ -4,6 +4,17 @@ All notable changes to this project should be documented here.
 
 The format follows Keep a Changelog principles, and releases should use semantic versioning where applicable.
 
+## [0.6.1] - 2026-07-27
+
+### Added - Phase 5B: Agent Command Protocol
+- **CommandEnvelope** (`internal/platform/command.go`): Typed command envelope with `schema_version`, `event_id`, `job_id`, `target_id`, `msp_id`, `client_id`, `site_id`, `device_id`, `agent_id`, `correlation_id`, `attempt`, `issued_at`, `expires_at`, `command_type`, and structured `payload`.
+- **Acknowledgement types**: `accepted`, `duplicate`, `rejected`, `expired`, `unsupported` with typed `Acknowledgement` struct.
+- **ResultEnvelope**: Typed result with ownership validation and canonical terminal states (`succeeded`, `failed`, `cancelled`, `expired`).
+- **Command validation**: `ValidateCommandEnvelope()` rejects malformed JSON, unsupported schema versions, missing identifiers, wrong MSP/agent/device, expired commands, future-issued commands, invalid attempts, and empty command types.
+- **Result validation**: `ValidateResultEnvelope()` validates ownership fields and restricts to canonical terminal states.
+- **15 protocol tests**: Covering valid envelopes, malformed JSON, unsupported versions, missing fields, wrong tenant/agent/device, expired, future-issued, invalid attempts, empty types, and result status validation.
+- **JWT secret fix**: `NewTokenGenerator` no longer silently reads env var; `NewTokenGeneratorOrFail` is used for env-var-based configuration. Login, middleware, and agent handlers all use the fail-returning constructor.
+
 ## [0.6.0] - 2026-07-27
 
 ### Added - Phase 5: Durable Job Orchestration
