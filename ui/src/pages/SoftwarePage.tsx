@@ -7,6 +7,7 @@ import { Skeleton } from '@/components/shared/Skeleton';
 
 export default function SoftwarePage() {
   const { user } = useAuth();
+  const { showToast } = useToast();
   const tenantID = user?.accessible_tenants?.[0]?.id || '';
   const [packages, setPackages] = useState<Record<string, unknown>[]>([]);
   const [deployments, setDeployments] = useState<Record<string, unknown>[]>([]);
@@ -100,8 +101,8 @@ export default function SoftwarePage() {
                     p.package_type === 'rpm' ? 'bg-red-100 text-red-800' :
                     'bg-slate-100 text-slate-800'
                   }`}>{(p.package_type as string)?.toUpperCase()}</span>
-                  <span className="font-medium">{p.name as string}</span>
-                  {p.version && <span className="text-sm text-slate-500">v{p.version as string}</span>}
+                  <span className="font-medium">{String(p.name)}</span>
+                  {p.version && <span className="text-sm text-slate-500">v{String(p.version)}</span>}
                   {p.description && <span className="text-sm text-slate-400 truncate max-w-xs">— {p.description as string}</span>}
                 </div>
                 <div className="flex items-center gap-2">

@@ -6,6 +6,7 @@ import { EmptyState } from '@/components/shared/EmptyState';
 import type { User, TenantInfo } from '@/api/types';
 
 export default function UserManagementPage() {
+  const { showToast } = useToast();
   const [users, setUsers] = useState<User[]>([]);
   const [customers, setCustomers] = useState<TenantInfo[]>([]);
   const [loading, setLoading] = useState(true);
