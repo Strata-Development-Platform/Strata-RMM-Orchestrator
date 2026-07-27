@@ -4,6 +4,14 @@ All notable changes to this project should be documented here.
 
 The format follows Keep a Changelog principles, and releases should use semantic versioning where applicable.
 
+## [0.6.3] - 2026-07-27
+
+### Added - Phase 5C/5D: Job Center UI + Operational Dashboard
+- **JobsPage** (`ui/src/pages/JobsPage.tsx`): Full Job Center with status/type filters, active/recent job lists, job detail view with per-target results, cancel/retry actions, state badges with color-coded dots, and loading/empty/error states.
+- **JobHealthPage** (`ui/src/pages/JobHealthPage.tsx`): Operational dashboard with job status summary cards (failed, expired, running, queued, succeeded, cancelled), alert banner for failed jobs.
+- **Navigation**: Jobs and Job Health links added to sidebar. Routes registered in App.tsx.
+- **UI verification**: TypeCheck clean, lint 0 errors, production build OK.
+
 ## [0.6.2] - 2026-07-27
 
 ### Added - Phase 5B: Agent Durable Execution (Complete)

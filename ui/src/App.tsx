@@ -12,6 +12,8 @@ import ScriptsPage from '@/pages/ScriptsPage';
 import SoftwarePage from '@/pages/SoftwarePage';
 import ThirdPartyPage from '@/pages/ThirdPartyPage';
 import ReportsPage from '@/pages/ReportsPage';
+import JobsPage from '@/pages/JobsPage';
+import JobHealthPage from '@/pages/JobHealthPage';
 import DeviceRemotePage from '@/pages/DeviceRemotePage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -39,6 +41,8 @@ function AppRoutes() {
       <Route path="/software" element={<ProtectedRoute><SoftwarePage /></ProtectedRoute>} />
       <Route path="/thirdparty" element={<ProtectedRoute><ThirdPartyPage /></ProtectedRoute>} />
       <Route path="/reports" element={<ProtectedRoute><ReportsPage /></ProtectedRoute>} />
+      <Route path="/jobs" element={<ProtectedRoute><JobsPage /></ProtectedRoute>} />
+      <Route path="/jobs/health" element={<ProtectedRoute><JobHealthPage /></ProtectedRoute>} />
       <Route path="/remote/:tid/:did" element={<ProtectedRoute><DeviceRemotePage /></ProtectedRoute>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
