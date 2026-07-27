@@ -112,3 +112,24 @@ func TestCleanupOnlyDeletesAcknowledgedResults(t *testing.T) {
 		t.Fatal("acknowledged result was not deleted")
 	}
 }
+
+func TestMarkCancelledByTarget(t *testing.T) {
+	ledger := newTestLedger(t)
+	receipt := &CommandReceipt{
+		EventID: "event-1", TargetID: "target-1", State: StateReceived,
+		ReceivedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	if err := ledger.RecordReceipt(receipt); err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.MarkCancelled("", "target-1"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ledger.GetReceipt("event-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != StateCancelled {
+		t.Fatalf("expected cancelled, got %s", got.State)
+	}
+}

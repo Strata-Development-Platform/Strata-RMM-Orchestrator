@@ -75,6 +75,7 @@ type JobDispatcher struct {
 	cancels map[string]context.CancelFunc
 	subs    []*nats.Subscription
 	wg      sync.WaitGroup
+	stop    context.CancelFunc
 }
 
 func NewJobDispatcher(nc *nats.Conn, ledger *ReceiptLedger, registry *HandlerRegistry, logger *zap.Logger, tenantID, agentID string) *JobDispatcher {
@@ -82,11 +83,13 @@ func NewJobDispatcher(nc *nats.Conn, ledger *ReceiptLedger, registry *HandlerReg
 }
 
 func (d *JobDispatcher) Start(ctx context.Context) error {
+	runCtx, stop := context.WithCancel(ctx)
+	d.stop = stop
 	handlers := []struct {
 		subject string
 		handler nats.MsgHandler
 	}{
-		{fmt.Sprintf("tenant.%s.cmd.%s", d.tenantID, d.agentID), func(msg *nats.Msg) { d.handleCommand(ctx, msg.Data) }},
+		{fmt.Sprintf("tenant.%s.cmd.%s", d.tenantID, d.agentID), func(msg *nats.Msg) { d.handleCommand(runCtx, msg.Data) }},
 		{fmt.Sprintf("tenant.%s.agent.%s.result.ack", d.tenantID, d.agentID), func(msg *nats.Msg) { d.handleResultReceipt(msg.Data) }},
 		{fmt.Sprintf("tenant.%s.cmd.%s.cancel", d.tenantID, d.agentID), func(msg *nats.Msg) { d.handleCancellation(msg.Data) }},
 	}
@@ -102,14 +105,19 @@ func (d *JobDispatcher) Start(ctx context.Context) error {
 		_ = d.Stop()
 		return fmt.Errorf("flush subscriptions: %w", err)
 	}
-	if err := d.replayResults(ctx); err != nil {
+	if err := d.replayResults(runCtx); err != nil {
 		d.logger.Warn("replay results", zap.Error(err))
 	}
+	d.wg.Add(1)
+	go d.resultReplayLoop(runCtx)
 	d.logger.Info("durable job dispatcher started")
 	return nil
 }
 
 func (d *JobDispatcher) Stop() error {
+	if d.stop != nil {
+		d.stop()
+	}
 	d.mu.Lock()
 	for _, cancel := range d.cancels {
 		cancel()
@@ -188,6 +196,10 @@ func validateCommand(data []byte, tenantID, agentID string) (*CommandEnvelope, e
 }
 
 func (d *JobDispatcher) execute(parent context.Context, cmd CommandEnvelope) {
+	if receipt, err := d.ledger.GetReceipt(cmd.EventID); err == nil && receipt.State == StateCancelled {
+		d.publishTerminal(cmd, StateCancelled, -1, nil, "command cancelled before execution")
+		return
+	}
 	handler, ok := d.registry.Get(cmd.CommandType)
 	if !ok {
 		d.publishTerminal(cmd, StateFailed, -1, nil, "unsupported command type")
@@ -275,6 +287,9 @@ func (d *JobDispatcher) handleCancellation(data []byte) {
 	if cancel != nil {
 		cancel()
 	}
+	if err := d.ledger.MarkCancelled(request.EventID, request.TargetID); err != nil {
+		d.logger.Warn("persist command cancellation", zap.Error(err))
+	}
 }
 func (d *JobDispatcher) replayResults(ctx context.Context) error {
 	receipts, err := d.ledger.GetUnacknowledgedResults()
@@ -290,4 +305,20 @@ func (d *JobDispatcher) replayResults(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (d *JobDispatcher) resultReplayLoop(ctx context.Context) {
+	defer d.wg.Done()
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := d.replayResults(ctx); err != nil && ctx.Err() == nil {
+				d.logger.Warn("periodic result replay", zap.Error(err))
+			}
+		}
+	}
 }

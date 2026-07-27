@@ -147,6 +147,50 @@ func (l *ReceiptLedger) MarkResultAcknowledged(messageID string) error {
 	return nil
 }
 
+func (l *ReceiptLedger) MarkCancelled(eventID, targetID string) error {
+	if eventID == "" && targetID == "" {
+		return errors.New("event_id or target_id is required")
+	}
+	found := false
+	err := l.db.Update(func(tx *bbolt.Tx) error {
+		b := tx.Bucket(receiptsBucket)
+		var matchedKey []byte
+		var matchedReceipt CommandReceipt
+		if err := b.ForEach(func(key, value []byte) error {
+			var receipt CommandReceipt
+			if err := json.Unmarshal(value, &receipt); err != nil {
+				return err
+			}
+			if (eventID == "" || receipt.EventID != eventID) && (targetID == "" || receipt.TargetID != targetID) {
+				return nil
+			}
+			found = true
+			matchedKey = append(matchedKey[:0], key...)
+			matchedReceipt = receipt
+			return nil
+		}); err != nil {
+			return err
+		}
+		if !found || matchedReceipt.State == StateSucceeded || matchedReceipt.State == StateFailed ||
+			matchedReceipt.State == StateCancelled || matchedReceipt.State == StateExpired {
+			return nil
+		}
+		matchedReceipt.State = StateCancelled
+		data, err := json.Marshal(&matchedReceipt)
+		if err != nil {
+			return err
+		}
+		return b.Put(matchedKey, data)
+	})
+	if err != nil {
+		return err
+	}
+	if !found {
+		return errors.New("command receipt not found")
+	}
+	return nil
+}
+
 func (l *ReceiptLedger) update(eventID string, mutate func(*CommandReceipt)) error {
 	return l.db.Update(func(tx *bbolt.Tx) error {
 		b := tx.Bucket(receiptsBucket)

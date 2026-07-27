@@ -14,10 +14,14 @@ Phase 5 uses at-least-once transport with idempotent processing:
    inbox row processed in one serializable PostgreSQL transaction.
 5. Only after that transaction commits does the orchestrator publish a result
    receipt on `tenant.<msp>.agent.<agent>.result.ack`.
-6. The agent retains and replays a result until that receipt is durably stored.
+6. The agent retains and periodically replays a result until that receipt is
+   durably stored.
 
 Duplicate commands never execute twice. Duplicate results are harmless and
 still receive a result receipt so agent retransmission terminates.
+
+Each dispatched command carries a deterministic `event_id` scoped to the job,
+target, and attempt, plus a `command_type` consumed by the agent registry.
 
 Running commands receive cancellation on
 `tenant.<msp>.cmd.<agent>.cancel`. Handlers inherit the agent shutdown context,

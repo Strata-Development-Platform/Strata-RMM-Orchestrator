@@ -83,6 +83,7 @@ func (d *Dispatcher) ensureQueuedOutbox() {
 		SELECT gen_random_uuid(), j.msp_id, j.id, 'job.dispatch',
 		       jsonb_build_object(
 		         'schema_version', 1,
+		         'event_id', j.id::text || ':' || jt.id::text || ':' || (jt.attempt + 1)::text,
 		         'job_id', j.id,
 		         'target_id', jt.id,
 		         'msp_id', j.msp_id,
@@ -94,7 +95,7 @@ func (d *Dispatcher) ensureQueuedOutbox() {
 		         'attempt', jt.attempt + 1,
 		         'issued_at', NOW(),
 		         'expires_at', j.expires_at,
-		         'type', j.type,
+		         'command_type', j.type,
 		         'payload', j.payload
 		       ),
 		       GREATEST(COALESCE(jt.next_retry_at, NOW()), COALESCE(j.scheduled_for, NOW()))
@@ -445,6 +446,20 @@ func (d *Dispatcher) handleAgentResult(subject string, data []byte) {
 		d.logger.Warn("result ownership mismatch", zap.String("target", res.TargetID), zap.Error(err))
 		return
 	}
+	currentTerminal := currentStatus == "succeeded" || currentStatus == "failed" ||
+		currentStatus == "cancelled" || currentStatus == "expired"
+	resultTerminal := res.Status == "succeeded" || res.Status == "failed" ||
+		res.Status == "cancelled" || res.Status == "expired"
+	if currentTerminal && resultTerminal && (currentStatus == res.Status || currentStatus == "cancelled") {
+		if _, err := tx.Exec(`UPDATE job_inbox SET processed_at=NOW() WHERE id::text=$1`, inboxID); err != nil {
+			return
+		}
+		if err := tx.Commit(); err != nil {
+			return
+		}
+		d.publishResultReceipt(*res)
+		return
+	}
 	if err := TransitionJob(currentStatus, res.Status); err != nil {
 		d.logger.Warn("invalid result transition", zap.Error(err))
 		return
@@ -471,6 +486,8 @@ func (d *Dispatcher) handleAgentResult(subject string, data []byte) {
 				THEN CASE
 					WHEN (SELECT COUNT(*) FROM job_targets WHERE job_id = $1 AND status = 'failed') > 0
 					THEN 'failed'
+					WHEN (SELECT COUNT(*) FROM job_targets WHERE job_id = $1 AND status = 'cancelled') > 0
+					THEN 'cancelled'
 					ELSE 'succeeded'
 				END
 				ELSE status
