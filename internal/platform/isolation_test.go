@@ -15,7 +15,7 @@ func TestCrossMSPAccessDenied(t *testing.T) {
 	defer os.Unsetenv("JWT_SECRET")
 
 	gen := auth.NewTokenGenerator("test-secret-that-is-long-enough-for-testing")
-	tokenA, _ := gen.GenerateUserToken("test-user-id", "tenant-a", "msp-a", "client-a", "", []string{"admin"}, time.Hour)
+	tokenA, _ := gen.GenerateUserToken("test-user-id", "tenant-a", "msp-a", "client-a", "", []string{"platform_admin"}, time.Hour)
 
 	// MSP A tries to query MSP B via query param check
 	req := httptest.NewRequest("GET", "/api/v2/platform/msps?msp_id=msp-b", nil)
@@ -35,7 +35,7 @@ func TestCrossClientAccessDenied(t *testing.T) {
 	defer os.Unsetenv("JWT_SECRET")
 
 	gen := auth.NewTokenGenerator("test-secret-that-is-long-enough-for-testing")
-	token, _ := gen.GenerateUserToken("test-user-id", "t1", "msp1", "client-a", "", []string{"admin"}, time.Hour)
+	token, _ := gen.GenerateUserToken("test-user-id", "t1", "msp1", "client-a", "", []string{"platform_admin"}, time.Hour)
 
 	req := httptest.NewRequest("GET", "/api/v2/clients/client-b/sites?client_id=client-b", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -54,7 +54,7 @@ func TestOwnMSPSucceeds(t *testing.T) {
 	defer os.Unsetenv("JWT_SECRET")
 
 	gen := auth.NewTokenGenerator("test-secret-that-is-long-enough-for-testing")
-	token, _ := gen.GenerateUserToken("test-user-id", "t1", "msp-a", "", "", []string{"admin"}, time.Hour)
+	token, _ := gen.GenerateUserToken("test-user-id", "t1", "msp-a", "", "", []string{"platform_admin"}, time.Hour)
 
 	req := httptest.NewRequest("GET", "/api/v2/platform/msps?msp_id=msp-a", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -90,7 +90,7 @@ func TestSuspendedMSPScenario(t *testing.T) {
 	defer os.Unsetenv("JWT_SECRET")
 
 	gen := auth.NewTokenGenerator("test-secret-that-is-long-enough-for-testing")
-	token, _ := gen.GenerateUserToken("test-user-id", "t1", "suspended-msp", "", "", []string{"admin"}, time.Hour)
+	token, _ := gen.GenerateUserToken("test-user-id", "t1", "suspended-msp", "", "", []string{"platform_admin"}, time.Hour)
 
 	req := httptest.NewRequest("GET", "/api/v2/platform/msps?msp_id=suspended-msp", nil)
 	req.Header.Set("Authorization", "Bearer "+token)

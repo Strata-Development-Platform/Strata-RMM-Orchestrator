@@ -288,8 +288,7 @@ func hasPlatformRole(roles []string) bool {
 	for _, r := range roles {
 		switch r {
 		case "platform_owner", "platform_admin", "platform_support",
-			"platform_billing", "platform_security_auditor", "platform_viewer",
-			"admin": // legacy compatibility
+			"platform_billing", "platform_security_auditor", "platform_viewer":
 			return true
 		}
 	}
@@ -301,7 +300,27 @@ func hasMSPRole(roles []string) bool {
 		switch r {
 		case "msp_owner", "msp_admin", "technician", "patch_manager",
 			"automation_operator", "billing_manager", "auditor", "viewer",
-			"admin": // legacy compatibility
+			"admin": // legacy compatibility — MSP-scoped only
+			return true
+		}
+	}
+	return false
+}
+
+// isMSPOwner returns true only for actual MSP owner-level roles.
+func isMSPOwner(roles []string) bool {
+	for _, r := range roles {
+		if r == "msp_owner" || r == "msp_admin" || r == "admin" {
+			return true
+		}
+	}
+	return false
+}
+
+// isPlatformGlobal returns true only for platform-level roles.
+func isPlatformGlobal(roles []string) bool {
+	for _, r := range roles {
+		if r == "platform_owner" || r == "platform_admin" {
 			return true
 		}
 	}
