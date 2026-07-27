@@ -119,7 +119,7 @@ func NewCommand(ctx context.Context, version string, logger *zap.Logger) *cobra.
 			releaseServer := platform.NewReleaseServer("/var/lib/strata-rmm/releases", "Strata-Development-Platform", "Strata-RMM-Orchestrator")
 
 			api := platform.NewAPIServer(apiAddr, tsdb, nc, logger).
-				WithReleaseServer(releaseServer)
+				WithReleaseServer(releaseServer).
 				WithAlertEngine(alertEngine).
 				WithVulnEngine(vulnEngine).
 				WithCVESyncEngine(cveSync).

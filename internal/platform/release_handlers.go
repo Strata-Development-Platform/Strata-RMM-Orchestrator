@@ -258,7 +258,7 @@ func (s *APIServer) handleReleaseBinary(w http.ResponseWriter, r *http.Request) 
 
 	binaryPath, err := s.releaseServer.getCachedBinary(r.Context(), platformKey)
 	if err != nil {
-		s.logger.Warn("release binary not found", "error", err)
+		s.logger.Warn("release binary not found", zap.Error(err))
 		http.Error(w, "binary not found", http.StatusNotFound)
 		return
 	}
