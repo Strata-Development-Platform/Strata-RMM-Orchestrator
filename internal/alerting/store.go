@@ -19,7 +19,7 @@ func (s *Store) LoadRules(ctx context.Context) ([]*Rule, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, tenant_id, name, type, enabled, severity,
 		       COALESCE(metric_name, ''), COALESCE(condition, ''), COALESCE(threshold, 0),
-		       COALESCE(EXTRACT(EPOCH FROM timeout), 0), COALESCE(device_id, ''),
+		       COALESCE(EXTRACT(EPOCH FROM timeout), 0), COALESCE(device_id::text, ''),
 		       COALESCE(EXTRACT(EPOCH FROM cooldown), 0),
 		       COALESCE(channels, '[]'::jsonb), COALESCE(template, ''),
 		       created_at, updated_at
