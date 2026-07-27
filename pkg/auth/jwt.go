@@ -104,14 +104,16 @@ func (g *TokenGenerator) GenerateAgentToken(tenantID, agentID string, ttl time.D
 	return g.encode(claims)
 }
 
-func (g *TokenGenerator) GenerateUserToken(tenantID, mspID, clientID, siteID string, roles []string, ttl time.Duration) (string, error) {
-	now := time.Now()
-	sub := ""
-	if len(roles) > 0 {
-		sub = tenantID
+func (g *TokenGenerator) GenerateUserToken(userID, tenantID, mspID, clientID, siteID string, roles []string, ttl time.Duration) (string, error) {
+	if userID == "" {
+		return "", fmt.Errorf("userID is required")
 	}
+	if len(roles) == 0 {
+		return "", fmt.Errorf("at least one role is required")
+	}
+	now := time.Now()
 	claims := Claims{
-		Subject:   sub,
+		Subject:   userID,
 		TokenID:   generateTokenID(),
 		Issuer:    issuer,
 		Audience:  audience,

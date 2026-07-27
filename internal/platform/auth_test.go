@@ -121,7 +121,7 @@ func TestExpiredTokenRejected(t *testing.T) {
 	os.Setenv("JWT_SECRET", "test-secret-that-is-long-enough-for-testing")
 	defer os.Unsetenv("JWT_SECRET")
 	gen := auth.NewTokenGenerator("test-secret-that-is-long-enough-for-testing")
-	token, err := gen.GenerateUserToken("t1", "", "", "", []string{"admin"}, -1*time.Hour)
+	token, err := gen.GenerateUserToken("test-user-id", "t1", "", "", "", []string{"admin"}, -1*time.Hour)
 	if err != nil {
 		t.Fatalf("generate: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestExpiredTokenRejected(t *testing.T) {
 func TestInvalidSignatureRejected(t *testing.T) {
 	gen1 := auth.NewTokenGenerator("test-secret-that-is-long-enough-for-testing-1")
 	gen2 := auth.NewTokenGenerator("test-secret-that-is-long-enough-for-testing-2")
-	token, err := gen1.GenerateUserToken("t1", "", "", "", []string{"admin"}, time.Hour)
+	token, err := gen1.GenerateUserToken("test-user-id", "t1", "", "", "", []string{"admin"}, time.Hour)
 	if err != nil {
 		t.Fatalf("generate: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestAdminRoutesRejectNonAdmin(t *testing.T) {
 	os.Setenv("JWT_SECRET", "test-secret-that-is-long-enough-for-testing")
 	defer os.Unsetenv("JWT_SECRET")
 	gen := auth.NewTokenGenerator("test-secret-that-is-long-enough-for-testing")
-	token, err := gen.GenerateUserToken("t1", "", "", "", []string{"viewer"}, time.Hour)
+	token, err := gen.GenerateUserToken("test-user-id", "t1", "", "", "", []string{"viewer"}, time.Hour)
 	if err != nil {
 		t.Fatalf("generate: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestJWTConfigValidation(t *testing.T) {
 
 func TestRawTokenFallback(t *testing.T) {
 	gen := auth.NewTokenGenerator("test-secret-that-is-long-enough-for-testing")
-	token, err := gen.GenerateUserToken("t1", "", "", "", []string{"admin"}, time.Hour)
+	token, err := gen.GenerateUserToken("test-user-id", "t1", "", "", "", []string{"admin"}, time.Hour)
 	if err != nil {
 		t.Fatalf("generate: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestLoginThrottling(t *testing.T) {
 func TestSecretNotLogged(t *testing.T) {
 	// Verify that JWT secret does not appear in token output
 	gen := auth.NewTokenGenerator("super-secret-value-not-for-logging")
-	token, err := gen.GenerateUserToken("t1", "", "", "", []string{"admin"}, time.Hour)
+	token, err := gen.GenerateUserToken("test-user-id", "t1", "", "", "", []string{"admin"}, time.Hour)
 	if err != nil {
 		t.Fatalf("generate: %v", err)
 	}

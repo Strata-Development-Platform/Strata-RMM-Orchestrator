@@ -192,29 +192,12 @@ func (s *APIServer) withAccessControl(next http.Handler) http.Handler {
 			return
 		}
 
-		roleOk := false
-		for _, role := range principal.Roles {
-			if role == "admin" {
-				roleOk = true
-				break
-			}
-			if role == "technician" || role == "operator" {
-				roleOk = true
-			}
-		}
 		if access == AccessAdmin {
-			isAdmin := false
-			for _, role := range principal.Roles {
-				if role == "admin" {
-					isAdmin = true
-					break
-				}
-			}
-			if !isAdmin {
+			if !hasPlatformRole(principal.Roles) {
 				http.Error(w, `{"error":"admin privileges required"}`, http.StatusForbidden)
 				return
 			}
-		} else if !roleOk {
+		} else if !hasMSPRole(principal.Roles) && !hasPlatformRole(principal.Roles) {
 			http.Error(w, `{"error":"insufficient permissions"}`, http.StatusForbidden)
 			return
 		}
@@ -268,6 +251,14 @@ func (s *APIServer) publicRoutes() []Route {
 
 func (s *APIServer) adminRoutes() []Route {
 	return []Route{
+		// Platform-only routes
+		{Method: "GET", Path: "/api/v2/platform/msps", Access: AccessAdmin},
+		{Method: "POST", Path: "/api/v2/platform/msps", Access: AccessAdmin},
+		{Method: "GET", Path: "/api/v2/platform/msps/{mspID}", Access: AccessAdmin},
+		{Method: "PATCH", Path: "/api/v2/platform/msps/{mspID}", Access: AccessAdmin},
+		{Method: "POST", Path: "/api/v2/platform/msps/{mspID}/suspend", Access: AccessAdmin},
+		{Method: "POST", Path: "/api/v2/platform/msps/{mspID}/activate", Access: AccessAdmin},
+		// Legacy admin routes
 		{Method: "GET", Path: "/api/v1/admin/users", Access: AccessAdmin},
 		{Method: "POST", Path: "/api/v1/admin/users", Access: AccessAdmin},
 		{Method: "PUT", Path: "/api/v1/admin/users/{userID}/tenants", Access: AccessAdmin},
@@ -277,4 +268,28 @@ func (s *APIServer) adminRoutes() []Route {
 		{Method: "POST", Path: "/api/v1/enrollment/tokens", Access: AccessAdmin},
 		{Method: "GET", Path: "/api/v1/enrollment/tokens", Access: AccessAdmin},
 	}
+}
+
+func hasPlatformRole(roles []string) bool {
+	for _, r := range roles {
+		switch r {
+		case "platform_owner", "platform_admin", "platform_support",
+			"platform_billing", "platform_security_auditor", "platform_viewer",
+			"admin": // legacy compatibility
+			return true
+		}
+	}
+	return false
+}
+
+func hasMSPRole(roles []string) bool {
+	for _, r := range roles {
+		switch r {
+		case "msp_owner", "msp_admin", "technician", "patch_manager",
+			"automation_operator", "billing_manager", "auditor", "viewer",
+			"admin": // legacy compatibility
+			return true
+		}
+	}
+	return false
 }

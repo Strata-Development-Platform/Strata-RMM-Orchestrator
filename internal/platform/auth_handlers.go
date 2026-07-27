@@ -74,7 +74,7 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	tokenGen := auth.NewTokenGenerator("")
 	ttl := 8 * time.Hour
-	token, err := tokenGen.GenerateUserToken(tenantID, mspID, "", "", []string{role}, ttl)
+	token, err := tokenGen.GenerateUserToken(userID, tenantID, mspID, "", "", []string{role}, ttl)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "token generation failed"})
 		return
@@ -96,33 +96,31 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *APIServer) handleMe(w http.ResponseWriter, r *http.Request) {
+	principal, ok := r.Context().Value(ctxKeyUserID).(string)
+	if !ok || principal == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "session required"})
+		return
+	}
+
 	db := s.db.DB()
-	token := r.Header.Get("Authorization")
-	if token == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "no auth token"})
-		return
-	}
-
-	tokenGen := auth.NewTokenGenerator("")
-	claims, err := tokenGen.Validate(token)
-	if err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid token"})
-		return
-	}
-
-	var userID, email, role string
-	err = db.QueryRowContext(r.Context(), `
-		SELECT id, email, role FROM users WHERE tenant_id = $1 AND is_active = true LIMIT 1
-	`, claims.TenantID).Scan(&userID, &email, &role)
+	var userID, email, role, tenantID string
+	var isActive bool
+	err := db.QueryRowContext(r.Context(), `
+		SELECT id, email, role, tenant_id, is_active FROM users WHERE id = $1
+	`, principal).Scan(&userID, &email, &role, &tenantID, &isActive)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
 		return
 	}
+	if !isActive {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "account disabled"})
+		return
+	}
 
-	accessibleTenants, _ := s.getAccessibleTenants(r.Context(), userID, claims.Roles[0], claims.TenantID)
+	accessibleTenants, _ := s.getAccessibleTenants(r.Context(), userID, role, tenantID)
 
 	writeJSON(w, http.StatusOK, loginResponse{
-		Token:          token,
+		Token:          r.Header.Get("Authorization"),
 		UserID:         userID,
 		Email:          email,
 		Role:           role,
