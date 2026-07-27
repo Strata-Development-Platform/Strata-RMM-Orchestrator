@@ -15,6 +15,15 @@ The format follows Keep a Changelog principles, and releases should use semantic
 - **TypeScript fixes**: `tsc -b` now passes cleanly. Fixed 12 errors across 6 files.
 - **Documentation**: `MASTER_PLAN.md`, `IMPLEMENTATION_STATUS.md`, `COMPATIBILITY_MATRIX.md`, `SECURITY_MODEL.md`, `SAAS_TENANCY.md`, `API_COMPATIBILITY.md`, `AGENT_PROTOCOL.md`.
 
+### RMM Vertical Slices — Phase 6
+- **ADDED**: `POST /api/v1/maintenance-windows` — create maintenance windows with time range.
+- **ADDED**: `GET /api/v1/maintenance-windows` — list maintenance windows by client.
+- **ADDED**: `DELETE /api/v1/maintenance-windows/{id}` — delete a maintenance window.
+- **ADDED**: `device_groups` table (migration 36) — MSP/client-scoped device groupings.
+- **ADDED**: `POST /api/v1/device-groups` — create device groups with member devices.
+- **ADDED**: `GET /api/v1/device-groups` — list device groups by client.
+- **ADDED**: `DELETE /api/v1/device-groups/{id}` — delete a device group.
+
 ### Durable Job Orchestration — Phase 5
 - **ADDED**: `jobs` table (migration 34) — unified job tracking with type, status, payload, retries.
 - **ADDED**: `job_targets` table (migration 35) — per-device job status, results, error messages.

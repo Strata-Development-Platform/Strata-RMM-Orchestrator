@@ -216,6 +216,12 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /api/v1/jobs/{jobID}", s.handleGetJob)
 	mux.HandleFunc("POST /api/v1/jobs/{jobID}/cancel", s.handleCancelJob)
 	mux.HandleFunc("POST /api/v1/jobs/result", s.handleNATSResult)
+	mux.HandleFunc("POST /api/v1/maintenance-windows", s.handleCreateMaintenanceWindow)
+	mux.HandleFunc("GET /api/v1/maintenance-windows", s.handleListMaintenanceWindows)
+	mux.HandleFunc("DELETE /api/v1/maintenance-windows/{windowID}", s.handleDeleteMaintenanceWindow)
+	mux.HandleFunc("POST /api/v1/device-groups", s.handleCreateDeviceGroup)
+	mux.HandleFunc("GET /api/v1/device-groups", s.handleListDeviceGroups)
+	mux.HandleFunc("DELETE /api/v1/device-groups/{groupID}", s.handleDeleteDeviceGroup)
 
 	rateLimiter := auth.NewRateLimiter(30, 60)
 

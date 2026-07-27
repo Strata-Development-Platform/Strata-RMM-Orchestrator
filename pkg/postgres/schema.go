@@ -878,6 +878,26 @@ func Migrations() []Migration {
 			Down: `DROP TABLE IF EXISTS enrollment_tokens_v2 CASCADE;`,
 		},
 		{
+			ID:   36,
+			Name: "create_device_groups",
+			Up: `
+				CREATE TABLE IF NOT EXISTS device_groups (
+					id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					msp_id          UUID NOT NULL REFERENCES msp_tenants(id) ON DELETE CASCADE,
+					client_id       UUID NOT NULL REFERENCES client_organizations(id) ON DELETE CASCADE,
+					site_id         UUID REFERENCES sites(id) ON DELETE CASCADE,
+					name            TEXT NOT NULL,
+					description     TEXT NOT NULL DEFAULT '',
+					filter_tags     JSONB DEFAULT '{}',
+					member_ids      TEXT[] NOT NULL DEFAULT '{}',
+					created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+				CREATE INDEX IF NOT EXISTS idx_device_groups_msp ON device_groups(msp_id, client_id);
+			`,
+			Down: `DROP TABLE IF EXISTS device_groups CASCADE;`,
+		},
+		{
 			ID:   34,
 			Name: "create_jobs_table",
 			Up: `
