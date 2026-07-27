@@ -4,6 +4,24 @@ All notable changes to this project should be documented here.
 
 The format follows Keep a Changelog principles, and releases should use semantic versioning where applicable.
 
+## [0.6.0] - 2026-07-27
+
+### Added - Phase 5: Durable Job Orchestration
+- **Job outbox/inbox** (migrations 49-50): Transactional outbox for reliable job event publishing and inbox for deduplicated result processing.
+- **Enhanced job schema** (migration 51): `correlation_id`, `version`, `scheduled_for`, `dispatch_count`, `cancelled_by`, per-target `lease_owner`, `lease_expires`, `next_retry_at`, `dispatched_at`, `acknowledged_at`, `exit_code`, `msp_id`.
+- **State machine engine** (`internal/platform/statemachine.go`): Strict state transitions: `pending→queued→dispatched→running→succeeded/failed/cancelled/expired`.
+- **Dispatcher worker** (`internal/platform/dispatcher.go`): Outbox publisher, dispatch worker with bounded leases, reconciliation worker for expired leases and aggregate state computation.
+- **New API endpoints**: `POST /api/v1/jobs/{jobID}/retry` (retry failed targets), `GET /api/v1/devices/{deviceID}/jobs` (device job history), `GET /api/v1/jobs/{jobID}/events` (job event stream).
+- **Idempotency**: Tenant-scoped idempotency key support — returns existing job on duplicate key, rejects conflicting payloads.
+- **Wrapper script** (`start.sh`): Ensures JWT_SECRET env var is available to the process (systemd Environment= workaround).
+- **Membership seed**: Admin user now has `msp_admin` membership in default MSP, enabling authenticated API access through third-party authorization middleware.
+
+### Fixed
+- **Auth login with FORCE RLS**: Login handler now uses `set_config()` in a transaction to set app context before querying `client_organizations`.
+- **RLS on job creation**: All job handlers use `s.requestDB(r)` to pick up the tenant transaction context.
+- **JWT fallback**: No more hardcoded fallback secret — only env var or explicit secret.
+- **TestTokenPurposeSeparation**: Sets JWT_SECRET env var for test consistency.
+
 ## [0.5.0] - 2026-07-27
 
 ### Added
