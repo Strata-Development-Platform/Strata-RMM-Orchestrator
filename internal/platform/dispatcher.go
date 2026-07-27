@@ -2,10 +2,11 @@ package platform
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"math"
-	"math/rand"
+	"math/big"
 	"os"
 	"sync"
 	"time"
@@ -281,7 +282,10 @@ func backoffDuration(attempt int) time.Duration {
 	base := time.Second * 30
 	max := time.Minute * 30
 	d := float64(base) * math.Pow(2, float64(attempt-1))
-	jitter := rand.Float64() * float64(base)
+	jitter := float64(0)
+	if value, err := rand.Int(rand.Reader, big.NewInt(int64(base))); err == nil {
+		jitter = float64(value.Int64())
+	}
 	return time.Duration(math.Min(d+jitter, float64(max)))
 }
 
