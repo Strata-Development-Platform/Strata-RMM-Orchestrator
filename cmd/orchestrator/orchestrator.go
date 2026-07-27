@@ -17,6 +17,7 @@ import (
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/remote"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/reporting"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/update"
+	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/auth"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/postgres"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/storage"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/timescale"
@@ -40,6 +41,10 @@ func NewCommand(ctx context.Context, version string, logger *zap.Logger) *cobra.
 		Long:  `Starts the core platform services: NATS consumer, TimescaleDB ingestion, REST API, and alerting`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			logger.Info("starting Strata RMM Orchestrator")
+
+			if err := auth.ValidateJWTConfig(); err != nil {
+				return fmt.Errorf("JWT configuration: %w", err)
+			}
 
 			nc, err := nats.Connect(natsURL,
 				nats.Name("StrataRMM-Orchestrator"),

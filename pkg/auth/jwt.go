@@ -14,7 +14,18 @@ func jwtSecret() string {
 	if s := os.Getenv("JWT_SECRET"); s != "" {
 		return s
 	}
-	return "strata-rmm-dev-secret"
+	return ""
+}
+
+func ValidateJWTConfig() error {
+	secret := os.Getenv("JWT_SECRET")
+	if secret == "" {
+		return fmt.Errorf("JWT_SECRET environment variable is required")
+	}
+	if len(secret) < 32 {
+		return fmt.Errorf("JWT_SECRET must be at least 32 characters")
+	}
+	return nil
 }
 
 type Claims struct {
@@ -36,7 +47,23 @@ func NewTokenGenerator(secret string) *TokenGenerator {
 	if secret == "" {
 		secret = jwtSecret()
 	}
+	if secret == "" {
+		return &TokenGenerator{secret: []byte("dev-fallback-not-for-production")}
+	}
 	return &TokenGenerator{secret: []byte(secret)}
+}
+
+func NewTokenGeneratorOrFail(secret string) (*TokenGenerator, error) {
+	if secret == "" {
+		secret = jwtSecret()
+	}
+	if secret == "" {
+		return nil, fmt.Errorf("JWT_SECRET is not configured")
+	}
+	if len(secret) < 32 {
+		return nil, fmt.Errorf("JWT_SECRET must be at least 32 characters")
+	}
+	return &TokenGenerator{secret: []byte(secret)}, nil
 }
 
 func (g *TokenGenerator) GenerateAgentToken(tenantID, agentID string, ttl time.Duration) (string, error) {

@@ -19,7 +19,7 @@ class ApiClient {
 
   private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (this.token) headers['Authorization'] = this.token;
+    if (this.token) headers['Authorization'] = `Bearer ${this.token}`;
 
     const res = await fetch(`${BASE}${path}`, {
       method,

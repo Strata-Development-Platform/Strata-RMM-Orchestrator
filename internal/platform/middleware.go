@@ -13,19 +13,33 @@ const platformDomain = "rmm.stratadevplatform.com"
 type contextKey string
 
 const (
-	ctxKeyUserID   contextKey = "userID"
-	ctxKeyEmail    contextKey = "email"
-	ctxKeyRole     contextKey = "role"
-	ctxKeyTenantID contextKey = "tenantID"
-	ctxKeyMSPID    contextKey = "mspID"
-	ctxKeyClientID contextKey = "clientID"
-	ctxKeySiteID   contextKey = "siteID"
+	ctxKeyUserID     contextKey = "userID"
+	ctxKeyEmail      contextKey = "email"
+	ctxKeyRole       contextKey = "role"
+	ctxKeyTenantID   contextKey = "tenantID"
+	ctxKeyMSPID      contextKey = "mspID"
+	ctxKeyClientID   contextKey = "clientID"
+	ctxKeySiteID     contextKey = "siteID"
+	ctxKeyAuthMethod contextKey = "authMethod"
+	ctxKeyTokenID    contextKey = "tokenID"
 )
+
+type Principal struct {
+	UserID        string
+	Email         string
+	TenantID      string
+	MSPID         string
+	ClientID      string
+	SiteID        string
+	Roles         []string
+	AuthMethod    string
+	TokenID       string
+}
 
 type RouteAccess int
 
 const (
-	AccessPublic   RouteAccess = iota
+	AccessPublic  RouteAccess = iota
 	AccessUser
 	AccessAdmin
 )
@@ -34,6 +48,18 @@ type Route struct {
 	Method string
 	Path   string
 	Access RouteAccess
+}
+
+func extractBearerToken(authHeader string) string {
+	if authHeader == "" {
+		return ""
+	}
+	for _, prefix := range []string{"Bearer ", "bearer "} {
+		if len(authHeader) > len(prefix) && strings.EqualFold(authHeader[:len(prefix)], prefix) {
+			return authHeader[len(prefix):]
+		}
+	}
+	return authHeader
 }
 
 func (s *APIServer) resolveMSPByHost(host string) (mspID, slug string) {
@@ -88,6 +114,33 @@ func (s *APIServer) withBranding(next http.Handler) http.Handler {
 	})
 }
 
+func (s *APIServer) validateAndBuildPrincipal(rawToken string) (*Principal, error) {
+	tokenGen := auth.NewTokenGenerator("")
+	claims, err := tokenGen.Validate(rawToken)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Principal{
+		TenantID:   claims.TenantID,
+		MSPID:      claims.MSPID,
+		ClientID:   claims.ClientID,
+		SiteID:     claims.SiteID,
+		Roles:      claims.Roles,
+		AuthMethod: "jwt",
+	}, nil
+}
+
+func principalToContext(ctx context.Context, p *Principal) context.Context {
+	ctx = context.WithValue(ctx, ctxKeyTenantID, p.TenantID)
+	ctx = context.WithValue(ctx, ctxKeyMSPID, p.MSPID)
+	ctx = context.WithValue(ctx, ctxKeyClientID, p.ClientID)
+	ctx = context.WithValue(ctx, ctxKeySiteID, p.SiteID)
+	ctx = context.WithValue(ctx, ctxKeyRole, strings.Join(p.Roles, ","))
+	ctx = context.WithValue(ctx, ctxKeyAuthMethod, p.AuthMethod)
+	return ctx
+}
+
 func (s *APIServer) withAccessControl(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		access := s.classifyRoute(r.Method, r.URL.Path)
@@ -96,51 +149,51 @@ func (s *APIServer) withAccessControl(next http.Handler) http.Handler {
 			return
 		}
 
-		tokenStr := r.Header.Get("Authorization")
-		if tokenStr == "" {
-			tokenStr = r.URL.Query().Get("token")
+		rawToken := extractBearerToken(r.Header.Get("Authorization"))
+		if rawToken == "" {
+			rawToken = r.URL.Query().Get("token")
 		}
-		if tokenStr == "" {
+		if rawToken == "" {
 			http.Error(w, `{"error":"authorization required"}`, http.StatusUnauthorized)
 			return
 		}
 
-		tokenGen := auth.NewTokenGenerator("")
-		claims, err := tokenGen.Validate(tokenStr)
+		principal, err := s.validateAndBuildPrincipal(rawToken)
 		if err != nil {
 			http.Error(w, `{"error":"invalid or expired token"}`, http.StatusUnauthorized)
 			return
 		}
 
-		r.Header.Set("X-Tenant-ID", claims.TenantID)
-		if claims.MSPID != "" {
-			r.Header.Set("X-MSP-ID", claims.MSPID)
+		r.Header.Set("X-Tenant-ID", principal.TenantID)
+		if principal.MSPID != "" {
+			r.Header.Set("X-MSP-ID", principal.MSPID)
 		}
-		if claims.ClientID != "" {
-			r.Header.Set("X-Client-ID", claims.ClientID)
-		}
-		if claims.AgentID != "" {
-			r.Header.Set("X-Agent-ID", claims.AgentID)
+		if principal.ClientID != "" {
+			r.Header.Set("X-Client-ID", principal.ClientID)
 		}
 
-		ctx := context.WithValue(r.Context(), ctxKeyTenantID, claims.TenantID)
-		ctx = context.WithValue(ctx, ctxKeyMSPID, claims.MSPID)
-		ctx = context.WithValue(ctx, ctxKeyClientID, claims.ClientID)
-		ctx = context.WithValue(ctx, ctxKeySiteID, claims.SiteID)
-		ctx = context.WithValue(ctx, ctxKeyRole, strings.Join(claims.Roles, ","))
-
-		if claims.MSPID != "" && r.URL.Query().Get("msp_id") != "" && r.URL.Query().Get("msp_id") != claims.MSPID {
+		if principal.MSPID != "" && r.URL.Query().Get("msp_id") != "" && r.URL.Query().Get("msp_id") != principal.MSPID {
 			http.Error(w, `{"error":"cross-MSP access denied"}`, http.StatusForbidden)
 			return
 		}
-		if claims.ClientID != "" && r.URL.Query().Get("client_id") != "" && r.URL.Query().Get("client_id") != claims.ClientID {
+		if principal.ClientID != "" && r.URL.Query().Get("client_id") != "" && r.URL.Query().Get("client_id") != principal.ClientID {
 			http.Error(w, `{"error":"cross-client access denied"}`, http.StatusForbidden)
 			return
 		}
 
+		roleOk := false
+		for _, role := range principal.Roles {
+			if role == "admin" {
+				roleOk = true
+				break
+			}
+			if role == "technician" || role == "operator" {
+				roleOk = true
+			}
+		}
 		if access == AccessAdmin {
 			isAdmin := false
-			for _, role := range claims.Roles {
+			for _, role := range principal.Roles {
 				if role == "admin" {
 					isAdmin = true
 					break
@@ -150,8 +203,12 @@ func (s *APIServer) withAccessControl(next http.Handler) http.Handler {
 				http.Error(w, `{"error":"admin privileges required"}`, http.StatusForbidden)
 				return
 			}
+		} else if !roleOk {
+			http.Error(w, `{"error":"insufficient permissions"}`, http.StatusForbidden)
+			return
 		}
 
+		ctx := principalToContext(r.Context(), principal)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -194,8 +251,6 @@ func (s *APIServer) publicRoutes() []Route {
 		{Method: "POST", Path: "/api/v1/auth/login", Access: AccessPublic},
 		{Method: "GET", Path: "/install.sh", Access: AccessPublic},
 		{Method: "GET", Path: "/releases/latest/agent/{os}/{arch}", Access: AccessPublic},
-		{Method: "POST", Path: "/api/v1/agent/register", Access: AccessPublic},
-		{Method: "POST", Path: "/api/v1/agent/config", Access: AccessPublic},
 		{Method: "GET", Path: "/api/v1/auth/me", Access: AccessUser},
 	}
 }
@@ -208,5 +263,7 @@ func (s *APIServer) adminRoutes() []Route {
 		{Method: "POST", Path: "/api/v1/admin/customers", Access: AccessAdmin},
 		{Method: "GET", Path: "/api/v1/admin/update/check", Access: AccessAdmin},
 		{Method: "POST", Path: "/api/v1/admin/update/apply", Access: AccessAdmin},
+		{Method: "POST", Path: "/api/v1/enrollment/tokens", Access: AccessAdmin},
+		{Method: "GET", Path: "/api/v1/enrollment/tokens", Access: AccessAdmin},
 	}
 }
