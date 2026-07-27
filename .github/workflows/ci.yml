@@ -94,7 +94,7 @@ jobs:
         working-directory: ui
       - run: npx tsc -b
         working-directory: ui
-      - run: npm run lint || true
+      - run: npm run lint
         working-directory: ui
       - run: npm run build
         working-directory: ui

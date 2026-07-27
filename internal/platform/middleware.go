@@ -302,8 +302,7 @@ func hasMSPRole(roles []string) bool {
 	for _, r := range roles {
 		switch r {
 		case "msp_owner", "msp_admin", "technician", "patch_manager",
-			"automation_operator", "billing_manager", "auditor", "viewer",
-			"admin": // legacy compatibility — MSP-scoped only
+			"automation_operator", "billing_manager", "auditor", "viewer":
 			return true
 		}
 	}
@@ -313,7 +312,7 @@ func hasMSPRole(roles []string) bool {
 // isMSPOwner returns true only for actual MSP owner-level roles.
 func isMSPOwner(roles []string) bool {
 	for _, r := range roles {
-		if r == "msp_owner" || r == "msp_admin" || r == "admin" {
+		if r == "msp_owner" || r == "msp_admin" {
 			return true
 		}
 	}
