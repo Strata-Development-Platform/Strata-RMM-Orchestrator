@@ -13,27 +13,34 @@ const platformDomain = "rmm.stratadevplatform.com"
 type contextKey string
 
 const (
-	ctxKeyUserID     contextKey = "userID"
-	ctxKeyEmail      contextKey = "email"
-	ctxKeyRole       contextKey = "role"
-	ctxKeyTenantID   contextKey = "tenantID"
-	ctxKeyMSPID      contextKey = "mspID"
-	ctxKeyClientID   contextKey = "clientID"
-	ctxKeySiteID     contextKey = "siteID"
-	ctxKeyAuthMethod contextKey = "authMethod"
-	ctxKeyTokenID    contextKey = "tokenID"
+	ctxKeyUserID        contextKey = "userID"
+	ctxKeyEmail         contextKey = "email"
+	ctxKeyRole          contextKey = "role"
+	ctxKeyTenantID      contextKey = "tenantID"
+	ctxKeyMSPID         contextKey = "mspID"
+	ctxKeyClientID      contextKey = "clientID"
+	ctxKeySiteID        contextKey = "siteID"
+	ctxKeyAuthMethod    contextKey = "authMethod"
+	ctxKeyTokenID       contextKey = "tokenID"
+	ctxKeyPlatformID    contextKey = "platformID"
+	ctxKeySupportGrantID contextKey = "supportGrantID"
+	ctxKeyTokenUse      contextKey = "tokenUse"
 )
 
 type Principal struct {
-	UserID        string
-	Email         string
-	TenantID      string
-	MSPID         string
-	ClientID      string
-	SiteID        string
-	Roles         []string
-	AuthMethod    string
-	TokenID       string
+	UserID         string
+	Email          string
+	TokenID        string
+	TokenUse       string
+	PlatformID     string
+	MSPID          string
+	ClientID       string
+	SiteID         string
+	LegacyTenantID string
+	Roles          []string
+	Permissions    []string
+	AuthMethod     string
+	SupportGrantID string
 }
 
 type RouteAccess int
@@ -66,15 +73,8 @@ func (s *APIServer) resolveMSPByHost(host string) (mspID, slug string) {
 	host = strings.ToLower(strings.Split(host, ":")[0])
 
 	if host == platformDomain || host == "localhost" || host == "127.0.0.1" {
-		if s.db == nil {
-			return "", ""
-		}
-		var id string
-		err := s.db.DB().QueryRow(`SELECT id FROM msp_tenants ORDER BY created_at ASC LIMIT 1`).Scan(&id)
-		if err != nil {
-			return "", ""
-		}
-		return id, "strata"
+		// Platform host — no MSP context. Returns empty to indicate platform scope.
+		return "", ""
 	}
 
 	if strings.HasSuffix(host, "."+platformDomain) {
@@ -121,23 +121,34 @@ func (s *APIServer) validateAndBuildPrincipal(rawToken string) (*Principal, erro
 		return nil, err
 	}
 
-	return &Principal{
-		TenantID:   claims.TenantID,
-		MSPID:      claims.MSPID,
-		ClientID:   claims.ClientID,
-		SiteID:     claims.SiteID,
-		Roles:      claims.Roles,
-		AuthMethod: "jwt",
-	}, nil
+	p := &Principal{
+		TokenID:        claims.TokenID,
+		TokenUse:       claims.TokenUse,
+		LegacyTenantID: claims.TenantID,
+		MSPID:          claims.MSPID,
+		ClientID:       claims.ClientID,
+		SiteID:         claims.SiteID,
+		Roles:          claims.Roles,
+		AuthMethod:     "jwt",
+	}
+
+	if claims.Subject != "" {
+		p.UserID = claims.Subject
+	}
+
+	return p, nil
 }
 
 func principalToContext(ctx context.Context, p *Principal) context.Context {
-	ctx = context.WithValue(ctx, ctxKeyTenantID, p.TenantID)
+	ctx = context.WithValue(ctx, ctxKeyUserID, p.UserID)
+	ctx = context.WithValue(ctx, ctxKeyTenantID, p.LegacyTenantID)
 	ctx = context.WithValue(ctx, ctxKeyMSPID, p.MSPID)
 	ctx = context.WithValue(ctx, ctxKeyClientID, p.ClientID)
 	ctx = context.WithValue(ctx, ctxKeySiteID, p.SiteID)
 	ctx = context.WithValue(ctx, ctxKeyRole, strings.Join(p.Roles, ","))
 	ctx = context.WithValue(ctx, ctxKeyAuthMethod, p.AuthMethod)
+	ctx = context.WithValue(ctx, ctxKeyTokenID, p.TokenID)
+	ctx = context.WithValue(ctx, ctxKeyTokenUse, p.TokenUse)
 	return ctx
 }
 
@@ -164,7 +175,7 @@ func (s *APIServer) withAccessControl(next http.Handler) http.Handler {
 			return
 		}
 
-		r.Header.Set("X-Tenant-ID", principal.TenantID)
+		r.Header.Set("X-Tenant-ID", principal.LegacyTenantID)
 		if principal.MSPID != "" {
 			r.Header.Set("X-MSP-ID", principal.MSPID)
 		}

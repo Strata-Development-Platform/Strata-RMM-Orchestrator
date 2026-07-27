@@ -60,10 +60,16 @@ func (s *APIServer) handleCreateMSP(w http.ResponseWriter, r *http.Request) {
 		req.Plan = "free"
 	}
 
+	var existingID string
+	err := s.db.DB().QueryRowContext(r.Context(), `SELECT id FROM msp_tenants WHERE slug = $1`, req.Slug).Scan(&existingID)
+	if err == nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "msp slug already exists", "existing_id": existingID})
+		return
+	}
+
 	id := uuid.New().String()
-	_, err := s.db.DB().ExecContext(r.Context(), `
+	_, err = s.db.DB().ExecContext(r.Context(), `
 		INSERT INTO msp_tenants (id, name, slug, plan) VALUES ($1, $2, $3, $4)
-		ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name
 	`, id, req.Name, req.Slug, req.Plan)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -161,10 +167,16 @@ func (s *APIServer) handleCreateClient(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name and slug required"})
 		return
 	}
+	var existingID string
+	err := s.db.DB().QueryRowContext(r.Context(), `SELECT id FROM client_organizations WHERE msp_id = $1 AND slug = $2`, mspID, req.Slug).Scan(&existingID)
+	if err == nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "client slug already exists in this MSP", "existing_id": existingID})
+		return
+	}
+
 	id := uuid.New().String()
-	_, err := s.db.DB().ExecContext(r.Context(), `
+	_, err = s.db.DB().ExecContext(r.Context(), `
 		INSERT INTO client_organizations (id, msp_id, name, slug) VALUES ($1, $2, $3, $4)
-		ON CONFLICT (msp_id, slug) DO UPDATE SET name = EXCLUDED.name
 	`, id, mspID, req.Name, req.Slug)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -248,10 +260,16 @@ func (s *APIServer) handleCreateSite(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name and slug required"})
 		return
 	}
+	var existingID string
+	err := s.db.DB().QueryRowContext(r.Context(), `SELECT id FROM sites WHERE client_id = $1 AND slug = $2`, clientID, req.Slug).Scan(&existingID)
+	if err == nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "site slug already exists in this client", "existing_id": existingID})
+		return
+	}
+
 	id := uuid.New().String()
-	_, err := s.db.DB().ExecContext(r.Context(), `
+	_, err = s.db.DB().ExecContext(r.Context(), `
 		INSERT INTO sites (id, client_id, name, slug) VALUES ($1, $2, $3, $4)
-		ON CONFLICT (client_id, slug) DO UPDATE SET name = EXCLUDED.name
 	`, id, clientID, req.Name, req.Slug)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})

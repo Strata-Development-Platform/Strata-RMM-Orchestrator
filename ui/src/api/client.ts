@@ -1,4 +1,4 @@
-import type { LoginResponse, PlatformOverview, CustomerSummary, TenantInfo, User } from './types';
+import type { LoginResponse, PlatformOverview, CustomerSummary, User } from './types';
 
 const BASE = '';
 

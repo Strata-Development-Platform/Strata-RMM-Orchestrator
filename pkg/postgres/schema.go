@@ -1091,6 +1091,35 @@ func Migrations() []Migration {
 				DELETE FROM sites WHERE slug = 'default';
 			`,
 		},
+		{
+			ID:   43,
+			Name: "repair_device_ownership_and_rls",
+			Up: `
+				-- Repair device ownership: map via legacy tenant_id
+				UPDATE devices d SET client_id = co.id
+				FROM client_organizations co
+				WHERE d.client_id IS NULL AND d.tenant_id = co.id;
+
+				UPDATE devices d SET msp_id = co.msp_id
+				FROM client_organizations co
+				WHERE d.msp_id IS NULL AND d.client_id = co.id;
+
+				-- Create default sites for any client missing one
+				INSERT INTO sites (id, client_id, name, slug)
+				SELECT gen_random_uuid(), co.id, 'Default Site', 'default'
+				FROM client_organizations co
+				WHERE NOT EXISTS (SELECT 1 FROM sites s WHERE s.client_id = co.id AND s.slug = 'default');
+
+				UPDATE devices d SET site_id = s.id
+				FROM sites s
+				WHERE d.site_id IS NULL AND d.client_id = s.client_id AND s.slug = 'default';
+
+				-- Report validation
+				SELECT 'orphan devices' as check_name, COUNT(*) FROM devices WHERE client_id IS NULL;
+				SELECT 'orphan sites' as check_name, COUNT(*) FROM sites WHERE client_id IS NULL;
+			`,
+			Down: `SELECT 1; -- no-op; repair is idempotent`,
+		},
 	}
 }
 

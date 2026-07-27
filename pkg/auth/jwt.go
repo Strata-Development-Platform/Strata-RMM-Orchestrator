@@ -2,12 +2,20 @@ package auth
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"crypto/subtle"
 	"fmt"
 	"os"
 	"time"
+)
+
+const (
+	issuer     = "strata-rmm"
+	audience   = "strata-rmm-api"
+	minSecretLen = 32
 )
 
 func jwtSecret() string {
@@ -22,21 +30,34 @@ func ValidateJWTConfig() error {
 	if secret == "" {
 		return fmt.Errorf("JWT_SECRET environment variable is required")
 	}
-	if len(secret) < 32 {
-		return fmt.Errorf("JWT_SECRET must be at least 32 characters")
+	if len(secret) < minSecretLen {
+		return fmt.Errorf("JWT_SECRET must be at least %d characters", minSecretLen)
 	}
 	return nil
 }
 
 type Claims struct {
+	Subject    string   `json:"sub"`
+	TokenID    string   `json:"jti"`
+	Issuer     string   `json:"iss"`
+	Audience   string   `json:"aud"`
+	TokenUse   string   `json:"token_use"`
+	ExpiresAt  int64    `json:"exp"`
+	IssuedAt   int64    `json:"iat"`
+	NotBefore  int64    `json:"nbf,omitempty"`
+
 	TenantID   string   `json:"tid"`
 	MSPID      string   `json:"mid"`
 	ClientID   string   `json:"cid"`
 	SiteID     string   `json:"sid"`
 	AgentID    string   `json:"aid"`
 	Roles      []string `json:"roles"`
-	ExpiresAt  int64    `json:"exp"`
-	IssuedAt   int64    `json:"iat"`
+}
+
+func generateTokenID() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	return base64.RawURLEncoding.EncodeToString(b)
 }
 
 type TokenGenerator struct {
@@ -60,32 +81,48 @@ func NewTokenGeneratorOrFail(secret string) (*TokenGenerator, error) {
 	if secret == "" {
 		return nil, fmt.Errorf("JWT_SECRET is not configured")
 	}
-	if len(secret) < 32 {
-		return nil, fmt.Errorf("JWT_SECRET must be at least 32 characters")
+	if len(secret) < minSecretLen {
+		return nil, fmt.Errorf("JWT_SECRET must be at least %d characters", minSecretLen)
 	}
 	return &TokenGenerator{secret: []byte(secret)}, nil
 }
 
 func (g *TokenGenerator) GenerateAgentToken(tenantID, agentID string, ttl time.Duration) (string, error) {
+	now := time.Now()
 	claims := Claims{
+		Subject:   agentID,
+		TokenID:   generateTokenID(),
+		Issuer:    issuer,
+		Audience:  audience,
+		TokenUse:  "agent",
 		TenantID:  tenantID,
 		AgentID:   agentID,
 		Roles:     []string{"agent"},
-		ExpiresAt: time.Now().Add(ttl).Unix(),
-		IssuedAt:  time.Now().Unix(),
+		IssuedAt:  now.Unix(),
+		ExpiresAt: now.Add(ttl).Unix(),
 	}
 	return g.encode(claims)
 }
 
 func (g *TokenGenerator) GenerateUserToken(tenantID, mspID, clientID, siteID string, roles []string, ttl time.Duration) (string, error) {
+	now := time.Now()
+	sub := ""
+	if len(roles) > 0 {
+		sub = tenantID
+	}
 	claims := Claims{
+		Subject:   sub,
+		TokenID:   generateTokenID(),
+		Issuer:    issuer,
+		Audience:  audience,
+		TokenUse:  "user",
 		TenantID:  tenantID,
 		MSPID:     mspID,
 		ClientID:  clientID,
 		SiteID:    siteID,
 		Roles:     roles,
-		ExpiresAt: time.Now().Add(ttl).Unix(),
-		IssuedAt:  time.Now().Unix(),
+		IssuedAt:  now.Unix(),
+		ExpiresAt: now.Add(ttl).Unix(),
 	}
 	return g.encode(claims)
 }
@@ -96,8 +133,8 @@ func (g *TokenGenerator) Validate(token string) (*Claims, error) {
 		return nil, fmt.Errorf("invalid token format")
 	}
 
-	sig := g.sign(parts[0] + "." + parts[1])
-	if sig != parts[2] {
+	expectedSig := g.sign(parts[0] + "." + parts[1])
+	if subtle.ConstantTimeCompare([]byte(expectedSig), []byte(parts[2])) == 0 {
 		return nil, fmt.Errorf("invalid signature")
 	}
 
@@ -111,8 +148,26 @@ func (g *TokenGenerator) Validate(token string) (*Claims, error) {
 		return nil, fmt.Errorf("unmarshaling claims: %w", err)
 	}
 
-	if time.Now().Unix() > claims.ExpiresAt {
+	now := time.Now().Unix()
+
+	if claims.ExpiresAt > 0 && now > claims.ExpiresAt {
 		return nil, fmt.Errorf("token expired")
+	}
+
+	if claims.NotBefore > 0 && now < claims.NotBefore {
+		return nil, fmt.Errorf("token not yet valid")
+	}
+
+	if claims.Issuer != "" && claims.Issuer != issuer {
+		return nil, fmt.Errorf("invalid issuer: %s", claims.Issuer)
+	}
+
+	if claims.Audience != "" && claims.Audience != audience {
+		return nil, fmt.Errorf("invalid audience: %s", claims.Audience)
+	}
+
+	if claims.TokenUse != "" && claims.TokenUse != "user" && claims.TokenUse != "agent" {
+		return nil, fmt.Errorf("invalid token_use: %s", claims.TokenUse)
 	}
 
 	return &claims, nil

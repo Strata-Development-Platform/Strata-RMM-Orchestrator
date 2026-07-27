@@ -4,7 +4,7 @@ import { ThemeToggle } from '@/components/shared/ThemeToggle';
 import { useState } from 'react';
 import {
   LayoutDashboard, Users, Building2, Terminal, Package,
-  Shield, FileText, Settings, LogOut, ChevronLeft, ChevronRight,
+  FileText, Settings, LogOut, ChevronLeft, ChevronRight,
   UserCheck, RefreshCw
 } from 'lucide-react';
 

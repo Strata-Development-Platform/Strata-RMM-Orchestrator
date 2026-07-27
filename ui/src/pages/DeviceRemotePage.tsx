@@ -1,6 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { api } from '@/api/client';
 
 export default function DeviceRemotePage() {
   const { tenantID, deviceID } = useParams<{ tenantID: string; deviceID: string }>();
@@ -35,7 +34,7 @@ export default function DeviceRemotePage() {
     if (!tenantID || !sessionID || !deviceID) return;
     try {
       await fetch(`/api/v1/remote/${tenantID}/session/${sessionID}?device_id=${deviceID}`, { method: 'DELETE' });
-    } catch {}
+    } catch { /* ignore cleanup errors */ }
     setConnected(false);
     setSessionID(null);
   };
