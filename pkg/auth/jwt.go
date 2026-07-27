@@ -70,9 +70,6 @@ func NewTokenGenerator(secret string) *TokenGenerator {
 	if secret == "" {
 		secret = jwtSecret()
 	}
-	if secret == "" {
-		return &TokenGenerator{secret: []byte("dev-fallback-not-for-production")}
-	}
 	return &TokenGenerator{secret: []byte(secret)}
 }
 

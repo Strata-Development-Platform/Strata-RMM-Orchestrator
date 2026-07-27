@@ -123,7 +123,12 @@ func NewCommand(ctx context.Context, version string, logger *zap.Logger) *cobra.
 
 			releaseServer := platform.NewReleaseServer("/var/lib/strata-rmm/releases", "Strata-Development-Platform", "Strata-RMM-Orchestrator")
 
-			api := platform.NewAPIServer(apiAddr, tsdb, nc, logger).
+			tokenGen, err := auth.NewTokenGeneratorOrFail("")
+			if err != nil {
+				return fmt.Errorf("token generator: %w", err)
+			}
+
+			api := platform.NewAPIServer(apiAddr, tsdb, nc, logger, tokenGen).
 				WithReleaseServer(releaseServer).
 				WithAlertEngine(alertEngine).
 				WithVulnEngine(vulnEngine).

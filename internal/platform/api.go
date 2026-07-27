@@ -27,6 +27,7 @@ type APIServer struct {
 	nats           *nats.Conn
 	totp           *auth.TOTPManager
 	mfaStore       *auth.MFAStore
+	tokenGen       *auth.TokenGenerator
 	logger         *zap.Logger
 	server         *http.Server
 	alertEngine    *alerting.Engine
@@ -40,13 +41,17 @@ type APIServer struct {
 	storageBackend storage.Backend
 }
 
-func NewAPIServer(addr string, db *timescale.Client, nc *nats.Conn, logger *zap.Logger) *APIServer {
+func NewAPIServer(addr string, db *timescale.Client, nc *nats.Conn, logger *zap.Logger, tokenGen *auth.TokenGenerator) *APIServer {
+	if tokenGen == nil {
+		tokenGen = auth.NewTokenGenerator("")
+	}
 	s := &APIServer{
-		addr:   addr,
-		db:     db,
-		nats:   nc,
-		totp:   auth.NewTOTPManager(),
-		logger: logger,
+		addr:     addr,
+		db:       db,
+		nats:     nc,
+		totp:     auth.NewTOTPManager(),
+		logger:   logger,
+		tokenGen: tokenGen,
 	}
 	if db != nil {
 		s.mfaStore = auth.NewMFAStore(db.DB())
