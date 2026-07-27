@@ -15,10 +15,13 @@ The format follows Keep a Changelog principles, and releases should use semantic
 - **TypeScript fixes**: `tsc -b` now passes cleanly. Fixed 12 errors across 6 files.
 - **Documentation**: `MASTER_PLAN.md`, `IMPLEMENTATION_STATUS.md`, `COMPATIBILITY_MATRIX.md`, `SECURITY_MODEL.md`, `SAAS_TENANCY.md`, `API_COMPATIBILITY.md`, `AGENT_PROTOCOL.md`.
 
-### Security
-- **CRITICAL**: Hardcoded JWT secret `strata-rmm-dev-secret` identified in 6 locations (documented, not yet fixed).
-- **CRITICAL**: Placeholder password hash `$2a$10$placeholder` in seed data (documented, not yet fixed).
-- Enrollment tokens stored in-memory only (documented, not yet fixed).
+### Security — Phase 1
+- **FIXED**: Hardcoded JWT secret `strata-rmm-dev-secret` — replaced with `JWT_SECRET` env var (6 locations).
+- **FIXED**: Placeholder password hash `$2a$10$placeholder` — replaced with proper bcrypt hash.
+- **ADDED**: Central auth middleware — classifies routes as Public, User, or Admin.
+- **ADDED**: Route classification table — admin routes require `admin` role.
+- **PENDING**: Non-owner PostgreSQL role for RLS enforcement.
+- Enrollment tokens still stored in-memory only (Phase 4).
 
 ## [0.4.0] - 2026-07-25
 
