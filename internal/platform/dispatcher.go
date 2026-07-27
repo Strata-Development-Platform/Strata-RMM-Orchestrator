@@ -127,7 +127,7 @@ func (d *Dispatcher) processOutbox() {
 		d.logger.Error("claim outbox", zap.Error(err))
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
 		var id, mspID, aggregateID, eventType, payloadStr string
@@ -192,7 +192,7 @@ func (d *Dispatcher) processOutbox() {
 }
 
 func (d *Dispatcher) expireJobs() {
-	d.db.DB().Exec(`
+	if _, err := d.db.DB().Exec(`
 		UPDATE job_targets SET status = 'expired'
 		WHERE status IN ('pending', 'queued', 'dispatched', 'running')
 		      AND id IN (
@@ -201,7 +201,9 @@ func (d *Dispatcher) expireJobs() {
 			WHERE j.expires_at < NOW()
 			LIMIT 50
 		)
-	`)
+	`); err != nil {
+		d.logger.Error("expire jobs", zap.Error(err))
+	}
 }
 
 func (d *Dispatcher) reconciliationWorker(ctx context.Context) {
@@ -223,13 +225,15 @@ func (d *Dispatcher) reconciliationWorker(ctx context.Context) {
 
 func (d *Dispatcher) reconcile() {
 	// Claim expired dispatcher leases
-	d.db.DB().Exec(`
+	if _, err := d.db.DB().Exec(`
 		UPDATE job_targets SET status = 'queued', lease_owner = NULL, lease_expires = NULL
 		WHERE status = 'dispatched' AND lease_owner IS NOT NULL AND lease_expires < NOW()
 		      AND id IN (SELECT id FROM job_targets WHERE lease_expires < NOW() LIMIT 50)
-	`)
+	`); err != nil {
+		d.logger.Error("recover dispatcher leases", zap.Error(err))
+	}
 	// Retry timed-out agent execution while attempts remain.
-	d.db.DB().Exec(`
+	if _, err := d.db.DB().Exec(`
 		UPDATE job_targets jt
 		SET status = CASE WHEN jt.retry_count < j.max_retries THEN 'queued' ELSE 'failed' END,
 		    retry_count = retry_count + 1,
@@ -240,9 +244,11 @@ func (d *Dispatcher) reconcile() {
 		  AND jt.lease_expires < NOW()
 		  AND (j.expires_at IS NULL OR j.expires_at > NOW())
 		  AND jt.id IN (SELECT id FROM job_targets WHERE lease_expires < NOW() LIMIT 50)
-	`)
+	`); err != nil {
+		d.logger.Error("recover timed out execution", zap.Error(err))
+	}
 	// Aggregate job state from target states
-	d.db.DB().Exec(`
+	if _, err := d.db.DB().Exec(`
 		UPDATE jobs j SET status = CASE
 			WHEN (SELECT count(*) FROM job_targets WHERE job_id = j.id AND status IN ('pending','queued','dispatched','running')) = 0
 			     AND (SELECT count(*) FROM job_targets WHERE job_id = j.id AND status = 'failed') > 0
@@ -266,7 +272,9 @@ func (d *Dispatcher) reconcile() {
 			HAVING count(*) = count(*) FILTER (WHERE jt.status IN ('succeeded','failed','cancelled','expired'))
 			LIMIT 50
 		)
-	`)
+	`); err != nil {
+		d.logger.Error("reconcile job aggregates", zap.Error(err))
+	}
 }
 
 func backoffDuration(attempt int) time.Duration {

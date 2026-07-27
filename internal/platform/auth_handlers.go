@@ -72,11 +72,14 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var mspID string
-	tx, _ := s.db.DB().BeginTx(r.Context(), nil)
+	tx, txErr := s.db.DB().BeginTx(r.Context(), nil)
 	if tx != nil {
-		tx.Exec(`SELECT set_config('app.msp_id', $1, true)`, tenantID)
-		tx.QueryRow(`SELECT msp_id FROM client_organizations WHERE id = $1`, tenantID).Scan(&mspID)
-		tx.Rollback()
+		if _, err := tx.Exec(`SELECT set_config('app.msp_id', $1, true)`, tenantID); err == nil {
+			_ = tx.QueryRow(`SELECT msp_id FROM client_organizations WHERE id = $1`, tenantID).Scan(&mspID)
+		}
+		_ = tx.Rollback()
+	} else if txErr != nil {
+		s.logger.Warn("login MSP lookup transaction unavailable", zap.Error(txErr))
 	}
 
 	ttl := 8 * time.Hour
@@ -264,14 +267,6 @@ func (s *APIServer) handleAdminCreateCustomer(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if req.AdminEmail != "" {
-		hash, _ := bcrypt.GenerateFromPassword([]byte("changeme123"), bcrypt.DefaultCost)
-		db.ExecContext(r.Context(), `
-			INSERT INTO users (tenant_id, email, password_hash, role)
-			VALUES ($1, $2, $3, 'admin')
-		`, tenantID, req.AdminEmail, string(hash))
-	}
-
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"id":            tenantID,
 		"name":          req.Name,
@@ -279,6 +274,8 @@ func (s *APIServer) handleAdminCreateCustomer(w http.ResponseWriter, r *http.Req
 		"plan":          req.Plan,
 		"deployment_id": deploymentID,
 		"status":        "created",
+		"admin_email":   req.AdminEmail,
+		"admin_status":  "invitation_required",
 	})
 }
 

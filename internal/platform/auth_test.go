@@ -3,7 +3,6 @@ package platform
 import (
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -118,8 +117,7 @@ func TestMalformedTokenRejected(t *testing.T) {
 }
 
 func TestExpiredTokenRejected(t *testing.T) {
-	os.Setenv("JWT_SECRET", "test-secret-that-is-long-enough-for-testing")
-	defer os.Unsetenv("JWT_SECRET")
+	t.Setenv("JWT_SECRET", "test-secret-that-is-long-enough-for-testing")
 	gen := auth.NewTokenGenerator("test-secret-that-is-long-enough-for-testing")
 	token, err := gen.GenerateUserToken("test-user-id", "t1", "", "", "", []string{"admin"}, -1*time.Hour)
 	if err != nil {
@@ -154,8 +152,7 @@ func TestInvalidSignatureRejected(t *testing.T) {
 }
 
 func TestAdminRoutesRejectNonAdmin(t *testing.T) {
-	os.Setenv("JWT_SECRET", "test-secret-that-is-long-enough-for-testing")
-	defer os.Unsetenv("JWT_SECRET")
+	t.Setenv("JWT_SECRET", "test-secret-that-is-long-enough-for-testing")
 	gen := auth.NewTokenGenerator("test-secret-that-is-long-enough-for-testing")
 	token, err := gen.GenerateUserToken("test-user-id", "t1", "", "", "", []string{"viewer"}, time.Hour)
 	if err != nil {
@@ -182,8 +179,7 @@ func TestAdminRoutesRejectNonAdmin(t *testing.T) {
 }
 
 func TestTokenPurposeSeparation(t *testing.T) {
-	os.Setenv("JWT_SECRET", "test-secret-that-is-long-enough-for-testing")
-	defer os.Unsetenv("JWT_SECRET")
+	t.Setenv("JWT_SECRET", "test-secret-that-is-long-enough-for-testing")
 	gen := auth.NewTokenGenerator("test-secret-that-is-long-enough-for-testing")
 	userToken, err := gen.GenerateUserToken("user-1", "tenant-1", "msp-1", "", "", []string{"msp_admin"}, time.Hour)
 	if err != nil {
@@ -234,9 +230,7 @@ func TestJWTConfigValidation(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			prev := os.Getenv("JWT_SECRET")
-			os.Setenv("JWT_SECRET", tt.secret)
-			defer os.Setenv("JWT_SECRET", prev)
+			t.Setenv("JWT_SECRET", tt.secret)
 			err := auth.ValidateJWTConfig()
 			if tt.wantErr && err == nil {
 				t.Error("expected error")

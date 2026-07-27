@@ -260,7 +260,6 @@ func (s *APIServer) handleListJobs(w http.ResponseWriter, r *http.Request) {
 	if typeFilter != "" {
 		query += fmt.Sprintf(" AND j.type = $%d", argIdx)
 		args = append(args, typeFilter)
-		argIdx++
 	}
 	query += " ORDER BY j.created_at DESC LIMIT 100"
 
@@ -269,7 +268,7 @@ func (s *APIServer) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var jobs []map[string]interface{}
 	for rows.Next() {
@@ -398,7 +397,7 @@ func (s *APIServer) handleListDeviceJobs(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var jobs []map[string]interface{}
 	for rows.Next() {
@@ -440,7 +439,7 @@ func (s *APIServer) handleListJobEvents(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var events []map[string]interface{}
 	for rows.Next() {
