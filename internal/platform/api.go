@@ -225,6 +225,29 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("POST /api/v1/policies/{policyID}/publish", s.handlePublishPolicy)
 	mux.HandleFunc("DELETE /api/v1/policies/{policyID}", s.handleDeletePolicy)
 
+	// v2 API — Platform MSP management
+	mux.HandleFunc("GET /api/v2/platform/msps", s.handleListMSPS)
+	mux.HandleFunc("POST /api/v2/platform/msps", s.handleCreateMSP)
+	mux.HandleFunc("GET /api/v2/platform/msps/{mspID}", s.handleGetMSP)
+	mux.HandleFunc("POST /api/v2/platform/msps/{mspID}/suspend", s.handleSuspendMSP)
+	mux.HandleFunc("POST /api/v2/platform/msps/{mspID}/activate", s.handleActivateMSP)
+
+	// v2 API — Client management
+	mux.HandleFunc("GET /api/v2/msps/{mspID}/clients", s.handleListClients)
+	mux.HandleFunc("POST /api/v2/msps/{mspID}/clients", s.handleCreateClient)
+	mux.HandleFunc("GET /api/v2/msps/{mspID}/clients/{clientID}", s.handleGetClient)
+	mux.HandleFunc("POST /api/v2/msps/{mspID}/clients/{clientID}/archive", s.handleArchiveClient)
+
+	// v2 API — Site management
+	mux.HandleFunc("GET /api/v2/clients/{clientID}/sites", s.handleListSites)
+	mux.HandleFunc("POST /api/v2/clients/{clientID}/sites", s.handleCreateSite)
+	mux.HandleFunc("GET /api/v2/clients/{clientID}/sites/{siteID}", s.handleGetSite)
+	mux.HandleFunc("POST /api/v2/clients/{clientID}/sites/{siteID}/archive", s.handleArchiveSite)
+
+	// v2 API — Memberships
+	mux.HandleFunc("GET /api/v2/msps/{mspID}/memberships", s.handleListMemberships)
+	mux.HandleFunc("POST /api/v2/msps/{mspID}/memberships", s.handleCreateMembership)
+
 	rateLimiter := auth.NewRateLimiter(30, 60)
 
 	handler := rateLimiter.Middleware(

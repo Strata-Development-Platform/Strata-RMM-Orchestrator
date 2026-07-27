@@ -995,6 +995,102 @@ func Migrations() []Migration {
 			`,
 			Down: `DROP TABLE IF EXISTS policy_assignments CASCADE;`,
 		},
+		{
+			ID:   39,
+			Name: "create_platform_memberships",
+			Up: `
+				CREATE TABLE IF NOT EXISTS platforms (
+					id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					name       TEXT NOT NULL DEFAULT 'Strata Platform',
+					slug       TEXT UNIQUE NOT NULL DEFAULT 'strata',
+					created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+
+				CREATE TABLE IF NOT EXISTS memberships (
+					id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					user_id    TEXT NOT NULL,
+					role       TEXT NOT NULL DEFAULT 'viewer',
+					scope_type TEXT NOT NULL CHECK (scope_type IN ('platform','msp','client','site')),
+					scope_id   TEXT NOT NULL,
+					created_by TEXT NOT NULL DEFAULT '',
+					created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					expires_at TIMESTAMPTZ
+				);
+				CREATE INDEX IF NOT EXISTS idx_memberships_user ON memberships(user_id);
+				CREATE INDEX IF NOT EXISTS idx_memberships_scope ON memberships(scope_type, scope_id);
+
+				INSERT INTO platforms (id, name, slug)
+				VALUES ('00000000-0000-0000-0000-000000000001', 'Strata Platform', 'strata')
+				ON CONFLICT (id) DO NOTHING;
+			`,
+			Down: `DROP TABLE IF EXISTS memberships CASCADE; DROP TABLE IF EXISTS platforms CASCADE;`,
+		},
+		{
+			ID:   40,
+			Name: "create_support_grants",
+			Up: `
+				CREATE TABLE IF NOT EXISTS support_access_grants (
+					id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					platform_user_id TEXT NOT NULL,
+					msp_id          UUID NOT NULL REFERENCES msp_tenants(id) ON DELETE CASCADE,
+					client_id       UUID REFERENCES client_organizations(id) ON DELETE CASCADE,
+					site_id         UUID REFERENCES sites(id) ON DELETE CASCADE,
+					reason          TEXT NOT NULL DEFAULT '',
+					ticket_ref      TEXT NOT NULL DEFAULT '',
+					approved_by     TEXT NOT NULL DEFAULT '',
+					approved_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					expires_at      TIMESTAMPTZ NOT NULL,
+					revoked_at      TIMESTAMPTZ,
+					status          TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','expired','revoked'))
+				);
+				CREATE INDEX IF NOT EXISTS idx_support_grants_msp ON support_access_grants(msp_id, status);
+				CREATE INDEX IF NOT EXISTS idx_support_grants_user ON support_access_grants(platform_user_id);
+			`,
+			Down: `DROP TABLE IF EXISTS support_access_grants CASCADE;`,
+		},
+		{
+			ID:   41,
+			Name: "add_site_id_to_devices",
+			Up: `
+				ALTER TABLE devices ADD COLUMN IF NOT EXISTS site_id UUID REFERENCES sites(id) ON DELETE SET NULL;
+				ALTER TABLE devices ADD COLUMN IF NOT EXISTS client_id UUID REFERENCES client_organizations(id) ON DELETE SET NULL;
+				ALTER TABLE devices ADD COLUMN IF NOT EXISTS msp_id UUID REFERENCES msp_tenants(id) ON DELETE SET NULL;
+				CREATE INDEX IF NOT EXISTS idx_devices_site ON devices(site_id);
+				CREATE INDEX IF NOT EXISTS idx_devices_client ON devices(client_id);
+				CREATE INDEX IF NOT EXISTS idx_devices_msp ON devices(msp_id);
+			`,
+			Down: `
+				ALTER TABLE devices DROP COLUMN IF EXISTS site_id;
+				ALTER TABLE devices DROP COLUMN IF EXISTS client_id;
+				ALTER TABLE devices DROP COLUMN IF EXISTS msp_id;
+			`,
+		},
+		{
+			ID:   42,
+			Name: "backfill_device_ownership",
+			Up: `
+				UPDATE devices d SET client_id = co.id
+				FROM client_organizations co
+				WHERE d.client_id IS NULL AND co.slug = 'dev';
+
+				UPDATE devices d SET msp_id = co.msp_id
+				FROM client_organizations co
+				WHERE d.msp_id IS NULL AND d.client_id = co.id;
+
+				INSERT INTO sites (id, client_id, name, slug)
+				SELECT gen_random_uuid(), co.id, 'Default Site', 'default'
+				FROM client_organizations co
+				WHERE NOT EXISTS (SELECT 1 FROM sites s WHERE s.client_id = co.id AND s.slug = 'default');
+
+				UPDATE devices d SET site_id = s.id
+				FROM sites s
+				WHERE d.site_id IS NULL AND d.client_id = s.client_id AND s.slug = 'default';
+			`,
+			Down: `
+				UPDATE devices SET site_id = NULL, client_id = NULL, msp_id = NULL;
+				DELETE FROM sites WHERE slug = 'default';
+			`,
+		},
 	}
 }
 
