@@ -215,7 +215,9 @@ func (s *APIServer) validateAndBuildPrincipal(rawToken string) (*Principal, erro
 	if err != nil {
 		return nil, fmt.Errorf("loading memberships: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	hasClaimedMSP := claims.MSPID == ""
 	hasClaimedClient := claims.ClientID == ""

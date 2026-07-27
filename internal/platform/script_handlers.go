@@ -229,7 +229,13 @@ func (s *APIServer) handleRunScript(w http.ResponseWriter, r *http.Request) {
 		subject := fmt.Sprintf("tenant.%s.cmd.%s", tenantID, deviceID)
 		if err := s.nats.Publish(subject, cmdPayload); err != nil {
 			s.logger.Warn("publish script command", zap.Error(err))
-			s.requestDB(r).ExecContext(r.Context(), `UPDATE script_executions SET status = 'failed', stderr = 'NATS publish failed' WHERE id = $1`, execID)
+			if _, updateErr := s.requestDB(r).ExecContext(
+				r.Context(),
+				`UPDATE script_executions SET status = 'failed', stderr = 'NATS publish failed' WHERE id = $1`,
+				execID,
+			); updateErr != nil {
+				s.logger.Error("mark script execution failed", zap.Error(updateErr))
+			}
 		}
 
 		executions = append(executions, map[string]interface{}{

@@ -15,11 +15,10 @@ import (
 )
 
 type ReportEngine struct {
-	db       *sql.DB
-	logger   *zap.Logger
-	storage  storage.Backend
-	bucket   string
-	tenantID string
+	db      *sql.DB
+	logger  *zap.Logger
+	storage storage.Backend
+	bucket  string
 }
 
 func NewReportEngine(db *sql.DB, logger *zap.Logger, storage storage.Backend, bucket string) *ReportEngine {

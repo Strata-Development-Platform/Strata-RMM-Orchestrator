@@ -184,9 +184,11 @@ func (s *APIServer) handleCreateDeployment(w http.ResponseWriter, r *http.Reques
 		subject := fmt.Sprintf("tenant.%s.cmd.%s", tenantID, deviceID)
 		if err := s.nats.Publish(subject, cmdPayload); err != nil {
 			s.logger.Warn("publish software command", zap.Error(err))
-			s.requestDB(r).ExecContext(r.Context(),
+			if _, updateErr := s.requestDB(r).ExecContext(r.Context(),
 				`UPDATE software_deployment_targets SET status = 'failed', error_message = 'NATS publish failed' WHERE deployment_id = $1 AND device_id = $2`,
-				deployID, deviceID)
+				deployID, deviceID); updateErr != nil {
+				s.logger.Error("mark software deployment failed", zap.Error(updateErr))
+			}
 		}
 
 		targets = append(targets, map[string]interface{}{

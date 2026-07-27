@@ -55,10 +55,13 @@ func (s *APIServer) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 
 	for _, deviceID := range req.DeviceIDs {
 		targetID := uuid.New().String()
-		s.requestDB(r).ExecContext(r.Context(), `
+		if _, err := s.requestDB(r).ExecContext(r.Context(), `
 			INSERT INTO job_targets (id, job_id, device_id)
 			VALUES ($1, $2, $3)
-		`, targetID, id, deviceID)
+		`, targetID, id, deviceID); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "creating job target"})
+			return
+		}
 	}
 
 	// Dispatch to NATS for each device
