@@ -133,3 +133,31 @@ func TestMarkCancelledByTarget(t *testing.T) {
 		t.Fatalf("expected cancelled, got %s", got.State)
 	}
 }
+
+func TestBeginExecutionDoesNotOverwriteCancellation(t *testing.T) {
+	ledger := newTestLedger(t)
+	receipt := &CommandReceipt{
+		EventID: "event-1", TargetID: "target-1", State: StateReceived,
+		ReceivedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	if err := ledger.RecordReceipt(receipt); err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.MarkCancelled("event-1", ""); err != nil {
+		t.Fatal(err)
+	}
+	started, err := ledger.BeginExecution("event-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if started {
+		t.Fatal("cancelled command was allowed to start")
+	}
+	got, err := ledger.GetReceipt("event-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != StateCancelled {
+		t.Fatalf("expected cancelled state to be preserved, got %s", got.State)
+	}
+}

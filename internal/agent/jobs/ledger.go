@@ -105,6 +105,22 @@ func (l *ReceiptLedger) MarkRunning(eventID string) error {
 	})
 }
 
+// BeginExecution atomically transitions a received command to running. A
+// cancellation may arrive after the accepted acknowledgement but before the
+// execution goroutine is scheduled, so callers must not overwrite a terminal
+// cancellation with StateRunning.
+func (l *ReceiptLedger) BeginExecution(eventID string) (bool, error) {
+	started := false
+	err := l.update(eventID, func(receipt *CommandReceipt) {
+		if receipt.State != StateReceived {
+			return
+		}
+		receipt.State = StateRunning
+		started = true
+	})
+	return started, err
+}
+
 func (l *ReceiptLedger) MarkComplete(eventID, status, resultMsgID string, envelope []byte) error {
 	return l.update(eventID, func(receipt *CommandReceipt) {
 		receipt.State = status

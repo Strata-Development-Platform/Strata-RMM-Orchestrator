@@ -196,17 +196,9 @@ func validateCommand(data []byte, tenantID, agentID string) (*CommandEnvelope, e
 }
 
 func (d *JobDispatcher) execute(parent context.Context, cmd CommandEnvelope) {
-	if receipt, err := d.ledger.GetReceipt(cmd.EventID); err == nil && receipt.State == StateCancelled {
-		d.publishTerminal(cmd, StateCancelled, -1, nil, "command cancelled before execution")
-		return
-	}
 	handler, ok := d.registry.Get(cmd.CommandType)
 	if !ok {
 		d.publishTerminal(cmd, StateFailed, -1, nil, "unsupported command type")
-		return
-	}
-	if err := d.ledger.MarkRunning(cmd.EventID); err != nil {
-		d.logger.Error("mark command running", zap.Error(err))
 		return
 	}
 	ctx, cancel := context.WithCancel(parent)
@@ -226,6 +218,23 @@ func (d *JobDispatcher) execute(parent context.Context, cmd CommandEnvelope) {
 		delete(d.cancels, cmd.TargetID)
 		d.mu.Unlock()
 	}()
+
+	started, err := d.ledger.BeginExecution(cmd.EventID)
+	if err != nil {
+		d.logger.Error("mark command running", zap.Error(err))
+		return
+	}
+	if !started {
+		receipt, getErr := d.ledger.GetReceipt(cmd.EventID)
+		if getErr != nil {
+			d.logger.Error("read command state before execution", zap.Error(getErr))
+			return
+		}
+		if receipt.State == StateCancelled {
+			d.publishTerminal(cmd, StateCancelled, -1, nil, "command cancelled before execution")
+		}
+		return
+	}
 
 	startedAt := time.Now()
 	status, exitCode, result, runErr := handler(ctx, &cmd)
