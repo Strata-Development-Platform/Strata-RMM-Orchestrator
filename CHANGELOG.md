@@ -20,6 +20,9 @@ The format follows Keep a Changelog principles, and releases should use semantic
 - **FIXED**: Old in-memory EnrollmentManager replaced with DB-backed `enrollment_tokens_v2`.
 - **FIXED**: `handleEnroll` (legacy endpoint) now creates persisted enrollment tokens.
 - **REMOVED**: `auth.EnrollmentManager` dependency from APIServer struct (fully DB-backed).
+- **ADDED**: Non-owner PostgreSQL role `strata_rmm_app` with SELECT/INSERT/UPDATE/DELETE only.
+- **ADDED**: Default privileges for future tables.
+- **FIXED**: All systemd services enabled for auto-start on boot.
 
 ### RMM Vertical Slices — Phase 6
 - **ADDED**: `POST /api/v1/maintenance-windows` — create maintenance windows with time range.
