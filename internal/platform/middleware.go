@@ -117,7 +117,14 @@ func (s *APIServer) withBranding(next http.Handler) http.Handler {
 }
 
 func (s *APIServer) validateAndBuildPrincipal(rawToken string) (*Principal, error) {
-	tg := auth.NewTokenGenerator("")
+	tg := s.tokenGen
+	if tg == nil {
+		var err error
+		tg, err = auth.NewTokenGeneratorOrFail("")
+		if err != nil {
+			return nil, err
+		}
+	}
 	claims, err := tg.Validate(rawToken)
 	if err != nil {
 		return nil, err

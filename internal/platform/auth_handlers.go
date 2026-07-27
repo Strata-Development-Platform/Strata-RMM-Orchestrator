@@ -81,7 +81,11 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ttl := 8 * time.Hour
-	tokenGen := auth.NewTokenGenerator("")
+	tokenGen, err := auth.NewTokenGeneratorOrFail("")
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "authentication configuration error"})
+		return
+	}
 	token, err := tokenGen.GenerateUserToken(userID, tenantID, mspID, "", "", []string{role}, ttl)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("token generation failed: %v", err)})
@@ -531,7 +535,11 @@ func (s *APIServer) handleAgentRegister(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	tokenGen := auth.NewTokenGenerator("")
+	tokenGen, err := auth.NewTokenGeneratorOrFail("")
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "authentication configuration error"})
+		return
+	}
 	token, err := tokenGen.GenerateAgentToken(tenantID, agentID, 720*time.Hour)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "token generation failed"})
