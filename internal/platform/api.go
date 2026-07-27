@@ -262,6 +262,7 @@ func (s *APIServer) Start(ctx context.Context) error {
 	// v2 API — time-limited platform support access
 	mux.HandleFunc("POST /api/v2/platform/support-grants", s.handleCreateSupportGrant)
 	mux.HandleFunc("DELETE /api/v2/platform/support-grants/{grantID}", s.handleRevokeSupportGrant)
+	mux.HandleFunc("GET /api/v2/context", s.handleContext)
 
 	rateLimiter := auth.NewRateLimiter(30, 60)
 
