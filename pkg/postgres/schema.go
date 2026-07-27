@@ -1120,6 +1120,63 @@ func Migrations() []Migration {
 			`,
 			Down: `SELECT 1; -- no-op; repair is idempotent`,
 		},
+		{
+			ID:   44,
+			Name: "ownership_constraints_and_rls",
+			Up: `
+				-- Validate ownership before adding constraints
+				DO $$ BEGIN
+					-- Check for orphans
+					IF EXISTS (SELECT 1 FROM devices WHERE client_id IS NULL OR msp_id IS NULL OR site_id IS NULL) THEN
+						RAISE WARNING 'devices with missing ownership exist; run validation';
+					END IF;
+					IF EXISTS (SELECT 1 FROM client_organizations WHERE msp_id IS NULL) THEN
+						RAISE WARNING 'client_organizations with missing msp_id exist';
+					END IF;
+				END $$;
+
+				-- Enable RLS on tenant-owned tables
+				ALTER TABLE IF EXISTS client_organizations ENABLE ROW LEVEL SECURITY;
+				ALTER TABLE IF EXISTS sites ENABLE ROW LEVEL SECURITY;
+				ALTER TABLE IF EXISTS devices ENABLE ROW LEVEL SECURITY;
+				ALTER TABLE IF EXISTS memberships ENABLE ROW LEVEL SECURITY;
+				ALTER TABLE IF EXISTS support_access_grants ENABLE ROW LEVEL SECURITY;
+				ALTER TABLE IF EXISTS jobs ENABLE ROW LEVEL SECURITY;
+				ALTER TABLE IF EXISTS job_targets ENABLE ROW LEVEL SECURITY;
+				ALTER TABLE IF EXISTS device_groups ENABLE ROW LEVEL SECURITY;
+				ALTER TABLE IF EXISTS enrollment_tokens_v2 ENABLE ROW LEVEL SECURITY;
+
+				-- Drop existing policies if any to allow idempotent re-apply
+				DROP POLICY IF EXISTS msp_isolation_client_orgs ON client_organizations;
+				DROP POLICY IF EXISTS msp_isolation_sites ON sites;
+				DROP POLICY IF EXISTS msp_isolation_devices ON devices;
+
+				-- MSP isolation policies
+				CREATE POLICY msp_isolation_client_orgs ON client_organizations
+					USING (msp_id = current_setting('app.msp_id')::uuid OR current_setting('app.role') = 'platform_admin');
+
+				CREATE POLICY msp_isolation_sites ON sites
+					USING (client_id IN (SELECT id FROM client_organizations WHERE msp_id = current_setting('app.msp_id')::uuid)
+					       OR current_setting('app.role') = 'platform_admin');
+
+				CREATE POLICY msp_isolation_devices ON devices
+					USING (msp_id = current_setting('app.msp_id')::uuid OR current_setting('app.role') = 'platform_admin');
+
+				CREATE POLICY msp_isolation_memberships ON memberships
+					USING (scope_id = current_setting('app.msp_id')::text OR current_setting('app.role') = 'platform_admin');
+			`,
+			Down: `
+				ALTER TABLE IF EXISTS client_organizations DISABLE ROW LEVEL SECURITY;
+				ALTER TABLE IF EXISTS sites DISABLE ROW LEVEL SECURITY;
+				ALTER TABLE IF EXISTS devices DISABLE ROW LEVEL SECURITY;
+				ALTER TABLE IF EXISTS memberships DISABLE ROW LEVEL SECURITY;
+				ALTER TABLE IF EXISTS support_access_grants DISABLE ROW LEVEL SECURITY;
+				ALTER TABLE IF EXISTS jobs DISABLE ROW LEVEL SECURITY;
+				ALTER TABLE IF EXISTS job_targets DISABLE ROW LEVEL SECURITY;
+				ALTER TABLE IF EXISTS device_groups DISABLE ROW LEVEL SECURITY;
+				ALTER TABLE IF EXISTS enrollment_tokens_v2 DISABLE ROW LEVEL SECURITY;
+			`,
+		},
 	}
 }
 
