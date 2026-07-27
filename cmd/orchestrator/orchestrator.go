@@ -179,6 +179,11 @@ func NewCommand(ctx context.Context, version string, logger *zap.Logger) *cobra.
 					api = api.WithRecordingStore(recStore).WithStorageBackend(sb)
 				}
 			}
+			dispatcher := platform.NewDispatcher(tsdb, nc, logger)
+			dispatcher.Start(ctx)
+			defer dispatcher.Stop()
+			logger.Info("job dispatcher started")
+
 			if err := api.Start(ctx); err != nil {
 				return fmt.Errorf("starting API server: %w", err)
 			}

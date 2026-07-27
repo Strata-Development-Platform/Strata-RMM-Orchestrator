@@ -1,5 +1,45 @@
 # Job System
 
+## Delivery and recovery contract
+
+Phase 5 uses at-least-once transport with idempotent processing:
+
+1. The orchestrator writes the command to PostgreSQL before publication.
+2. An agent validates tenant and agent ownership, then durably records the
+   command in its BoltDB receipt ledger before publishing `accepted`.
+3. The agent persists the complete immutable result envelope before publishing
+   it. A publish failure leaves the envelope pending for restart replay.
+4. The orchestrator atomically claims each `(msp_id, message_id)`, validates the
+   subject and stored target identity, updates target/job state, and marks the
+   inbox row processed in one serializable PostgreSQL transaction.
+5. Only after that transaction commits does the orchestrator publish a result
+   receipt on `tenant.<msp>.agent.<agent>.result.ack`.
+6. The agent retains and periodically replays a result until that receipt is
+   durably stored.
+
+Duplicate commands never execute twice. Duplicate results are harmless and
+still receive a result receipt so agent retransmission terminates.
+
+Each dispatched command carries a deterministic `event_id` scoped to the job,
+target, and attempt, plus a `command_type` consumed by the agent registry.
+
+Running commands receive cancellation on
+`tenant.<msp>.cmd.<agent>.cancel`. Handlers inherit the agent shutdown context,
+the command expiry deadline, and explicit job cancellation.
+
+Operational recovery:
+
+- Restarting an agent replays all complete, unacknowledged result envelopes.
+- Restarting the orchestrator is safe because inbox claims and state changes
+  commit atomically.
+- Never delete an unacknowledged ledger record during cleanup.
+- Investigate repeated pending results as a NATS connectivity or server inbox
+  processing failure; do not manually mark them successful.
+
+CI exercises the protocol against real PostgreSQL and NATS containers with the
+`jobintegration` build tag. It covers the complete round trip, duplicate
+delivery, restart replay, result receipts, and running-command cancellation.
+
 ## Overview
 
 The durable job system provides reliable, asynchronous execution of operations across managed devices. It supports dispatch via NATS, per-device status tracking, retry with backoff, idempotency enforcement, and automatic expiration.

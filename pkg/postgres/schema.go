@@ -1584,6 +1584,118 @@ func Migrations() []Migration {
 			`,
 			Down: `SELECT 1; -- ownership synchronization is intentionally retained`,
 		},
+		{
+			ID:   49,
+			Name: "create_job_outbox",
+			Up: `
+				CREATE TABLE IF NOT EXISTS job_outbox (
+					id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					msp_id          UUID NOT NULL REFERENCES msp_tenants(id) ON DELETE CASCADE,
+					aggregate_type  TEXT NOT NULL DEFAULT 'job',
+					aggregate_id    UUID NOT NULL,
+					event_type      TEXT NOT NULL,
+					schema_version  INT NOT NULL DEFAULT 1,
+					payload         JSONB NOT NULL DEFAULT '{}',
+					available_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					attempt_count   INT NOT NULL DEFAULT 0,
+					lease_owner     TEXT,
+					lease_expires   TIMESTAMPTZ,
+					published_at    TIMESTAMPTZ,
+					last_error      TEXT,
+					created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+				CREATE INDEX IF NOT EXISTS idx_job_outbox_available ON job_outbox(available_at, published_at) WHERE published_at IS NULL;
+				CREATE INDEX IF NOT EXISTS idx_job_outbox_msp ON job_outbox(msp_id);
+			`,
+			Down: `DROP TABLE IF EXISTS job_outbox CASCADE;`,
+		},
+		{
+			ID:   50,
+			Name: "create_job_inbox",
+			Up: `
+				CREATE TABLE IF NOT EXISTS job_inbox (
+					id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					msp_id          UUID NOT NULL REFERENCES msp_tenants(id) ON DELETE CASCADE,
+					message_id      TEXT NOT NULL,
+					job_id          UUID NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+					target_id       UUID REFERENCES job_targets(id) ON DELETE CASCADE,
+					event_type      TEXT NOT NULL,
+					payload         JSONB NOT NULL DEFAULT '{}',
+					processed_at    TIMESTAMPTZ,
+					created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_job_inbox_message ON job_inbox(msp_id, message_id);
+				CREATE INDEX IF NOT EXISTS idx_job_inbox_job ON job_inbox(job_id);
+			`,
+			Down: `DROP TABLE IF EXISTS job_inbox CASCADE;`,
+		},
+		{
+			ID:   51,
+			Name: "enhance_jobs_for_durable_dispatch",
+			Up: `
+				ALTER TABLE jobs ADD COLUMN IF NOT EXISTS correlation_id TEXT;
+				ALTER TABLE jobs ADD COLUMN IF NOT EXISTS version INT NOT NULL DEFAULT 1;
+				ALTER TABLE jobs ADD COLUMN IF NOT EXISTS scheduled_for TIMESTAMPTZ;
+				ALTER TABLE jobs ADD COLUMN IF NOT EXISTS cancelled_by TEXT;
+				ALTER TABLE jobs ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ;
+				ALTER TABLE jobs ADD COLUMN IF NOT EXISTS cancel_reason TEXT;
+				ALTER TABLE jobs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+				ALTER TABLE jobs ADD COLUMN IF NOT EXISTS dispatch_count INT NOT NULL DEFAULT 0;
+
+				ALTER TABLE job_targets ADD COLUMN IF NOT EXISTS agent_id TEXT;
+				ALTER TABLE job_targets ADD COLUMN IF NOT EXISTS attempt INT NOT NULL DEFAULT 0;
+				ALTER TABLE job_targets ADD COLUMN IF NOT EXISTS lease_owner TEXT;
+				ALTER TABLE job_targets ADD COLUMN IF NOT EXISTS lease_expires TIMESTAMPTZ;
+				ALTER TABLE job_targets ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMPTZ;
+				ALTER TABLE job_targets ADD COLUMN IF NOT EXISTS dispatched_at TIMESTAMPTZ;
+				ALTER TABLE job_targets ADD COLUMN IF NOT EXISTS acknowledged_at TIMESTAMPTZ;
+				ALTER TABLE job_targets ADD COLUMN IF NOT EXISTS exit_code INT;
+				ALTER TABLE job_targets ADD COLUMN IF NOT EXISTS msp_id UUID REFERENCES msp_tenants(id) ON DELETE CASCADE;
+
+				UPDATE job_targets jt SET msp_id = j.msp_id FROM jobs j WHERE jt.job_id = j.id AND jt.msp_id IS NULL;
+
+				ALTER TABLE jobs ALTER COLUMN correlation_id SET DEFAULT gen_random_uuid()::text;
+
+				DROP INDEX IF EXISTS idx_jobs_idempotency;
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_idempotency_msp ON jobs(msp_id, idempotency_key) WHERE idempotency_key IS NOT NULL;
+
+				CREATE INDEX IF NOT EXISTS idx_jobs_correlation ON jobs(correlation_id);
+				CREATE INDEX IF NOT EXISTS idx_job_targets_lease ON job_targets(status, lease_expires) WHERE lease_owner IS NOT NULL;
+				CREATE INDEX IF NOT EXISTS idx_job_targets_retry ON job_targets(status, next_retry_at) WHERE next_retry_at IS NOT NULL;
+			`,
+			Down: `
+				ALTER TABLE jobs DROP COLUMN IF EXISTS correlation_id;
+				ALTER TABLE jobs DROP COLUMN IF EXISTS version;
+				ALTER TABLE jobs DROP COLUMN IF EXISTS scheduled_for;
+				ALTER TABLE jobs DROP COLUMN IF EXISTS cancelled_by;
+				ALTER TABLE jobs DROP COLUMN IF EXISTS cancelled_at;
+				ALTER TABLE jobs DROP COLUMN IF EXISTS cancel_reason;
+				ALTER TABLE jobs DROP COLUMN IF EXISTS updated_at;
+				ALTER TABLE jobs DROP COLUMN IF EXISTS dispatch_count;
+				ALTER TABLE job_targets DROP COLUMN IF EXISTS agent_id;
+				ALTER TABLE job_targets DROP COLUMN IF EXISTS attempt;
+				ALTER TABLE job_targets DROP COLUMN IF EXISTS lease_owner;
+				ALTER TABLE job_targets DROP COLUMN IF EXISTS lease_expires;
+				ALTER TABLE job_targets DROP COLUMN IF EXISTS next_retry_at;
+				ALTER TABLE job_targets DROP COLUMN IF EXISTS dispatched_at;
+				ALTER TABLE job_targets DROP COLUMN IF EXISTS acknowledged_at;
+				ALTER TABLE job_targets DROP COLUMN IF EXISTS exit_code;
+				ALTER TABLE job_targets DROP COLUMN IF EXISTS msp_id;
+			`,
+		},
+		{
+			ID:   52,
+			Name: "harden_durable_job_orchestration",
+			Up: `
+				ALTER TABLE jobs ADD COLUMN IF NOT EXISTS request_hash TEXT;
+				CREATE INDEX IF NOT EXISTS idx_job_targets_agent ON job_targets(msp_id, agent_id);
+
+			`,
+			Down: `
+				DROP INDEX IF EXISTS idx_job_targets_agent;
+				ALTER TABLE jobs DROP COLUMN IF EXISTS request_hash;
+			`,
+		},
 	}
 }
 

@@ -5,7 +5,7 @@ import { useState } from 'react';
 import {
   LayoutDashboard, Users, Building2, Terminal, Package,
   FileText, Settings, LogOut, ChevronLeft, ChevronRight,
-  UserCheck, RefreshCw
+  UserCheck, RefreshCw, ListChecks, Activity
 } from 'lucide-react';
 
 const navItems = [
@@ -15,6 +15,8 @@ const navItems = [
   { path: '/scripts', label: 'Scripts', icon: Terminal },
   { path: '/software', label: 'Software', icon: Package },
   { path: '/thirdparty', label: 'Patch Mgmt', icon: RefreshCw },
+  { path: '/jobs', label: 'Jobs', icon: ListChecks },
+  { path: '/jobs/health', label: 'Job Health', icon: Activity },
   { path: '/reports', label: 'Reports', icon: FileText },
   { path: '/admin/settings', label: 'Settings', icon: Settings },
 ];

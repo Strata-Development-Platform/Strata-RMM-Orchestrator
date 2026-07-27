@@ -1,8 +1,67 @@
 # Changelog
 
+## Unreleased
+
+- Wired the durable jobs dispatcher into the managed-agent lifecycle.
+- Enforced persistence-before-acknowledgement and exact result replay.
+- Added server result receipts and agent-side acknowledgement tracking.
+- Made inbox deduplication and job state updates transactional.
+- Added strict NATS subject, ownership, correlation, and attempt validation.
+- Propagated job cancellation, expiry deadlines, and agent shutdown to handlers.
+- Corrected Job Center tenant/client filtering and surfaced action failures.
+- Removed generated TypeScript build metadata from source control.
+
 All notable changes to this project should be documented here.
 
 The format follows Keep a Changelog principles, and releases should use semantic versioning where applicable.
+
+## [0.6.3] - 2026-07-27
+
+### Added - Phase 5C/5D: Job Center UI + Operational Dashboard
+- **JobsPage** (`ui/src/pages/JobsPage.tsx`): Full Job Center with status/type filters, active/recent job lists, job detail view with per-target results, cancel/retry actions, state badges with color-coded dots, and loading/empty/error states.
+- **JobHealthPage** (`ui/src/pages/JobHealthPage.tsx`): Operational dashboard with job status summary cards (failed, expired, running, queued, succeeded, cancelled), alert banner for failed jobs.
+- **Navigation**: Jobs and Job Health links added to sidebar. Routes registered in App.tsx.
+- **UI verification**: TypeCheck clean, lint 0 errors, production build OK.
+
+## [0.6.2] - 2026-07-27
+
+### Added - Phase 5B: Agent Durable Execution (Complete)
+- **Agent ReceiptLedger** (`internal/agent/jobs/ledger.go`): BBolt-backed command receipt tracking with `command_receipts` bucket. Supports `RecordReceipt`, `GetReceipt`, `IsDuplicate`, `MarkRunning`, `MarkComplete`, `GetUnacknowledgedResults` (for result retransmission), and `Cleanup` (bounded retention).
+- **Agent HandlerRegistry** (`internal/agent/jobs/handler.go`): Maps `command_type` strings to typed `CommandHandler` functions. Supports `Register()`, `Get()`, and `IsSupported()` checks.
+- **Agent JobDispatcher**: NATS subscriber for `tenant.{tid}.cmd.{aid}` commands. Validates envelope, deduplicates via BBolt ledger, publishes typed acknowledgements (`accepted`/`duplicate`/`unsupported`), dispatches to handler registry, publishes typed results. `replayResults()` retransmits unacknowledged completed results on startup.
+- **Orchestrator inbox processing** (`internal/platform/dispatcher.go`): NATS subscriptions for `.ack` and `.result` subjects. Inserts into `job_inbox` for deduplication, validates ownership (MSP, job, target, device), applies state transitions, updates aggregate job state.
+- **Cancellation handling**: Orchestrator updates target to `cancelled` state; agent dispatcher framework supports context cancellation in handlers.
+- **4 ledger tests**: Record/get/duplicate detection, state transitions (received→running→succeeded), unacknowledged result filtering, retention cleanup.
+- **9 Go packages**: All tests pass including new `internal/agent/jobs` package.
+
+## [0.6.1] - 2026-07-27
+
+### Added - Phase 5B: Agent Command Protocol
+- **CommandEnvelope** (`internal/platform/command.go`): Typed command envelope with `schema_version`, `event_id`, `job_id`, `target_id`, `msp_id`, `client_id`, `site_id`, `device_id`, `agent_id`, `correlation_id`, `attempt`, `issued_at`, `expires_at`, `command_type`, and structured `payload`.
+- **Acknowledgement types**: `accepted`, `duplicate`, `rejected`, `expired`, `unsupported` with typed `Acknowledgement` struct.
+- **ResultEnvelope**: Typed result with ownership validation and canonical terminal states (`succeeded`, `failed`, `cancelled`, `expired`).
+- **Command validation**: `ValidateCommandEnvelope()` rejects malformed JSON, unsupported schema versions, missing identifiers, wrong MSP/agent/device, expired commands, future-issued commands, invalid attempts, and empty command types.
+- **Result validation**: `ValidateResultEnvelope()` validates ownership fields and restricts to canonical terminal states.
+- **15 protocol tests**: Covering valid envelopes, malformed JSON, unsupported versions, missing fields, wrong tenant/agent/device, expired, future-issued, invalid attempts, empty types, and result status validation.
+- **JWT secret fix**: `NewTokenGenerator` no longer silently reads env var; `NewTokenGeneratorOrFail` is used for env-var-based configuration. Login, middleware, and agent handlers all use the fail-returning constructor.
+
+## [0.6.0] - 2026-07-27
+
+### Added - Phase 5: Durable Job Orchestration
+- **Job outbox/inbox** (migrations 49-50): Transactional outbox for reliable job event publishing and inbox for deduplicated result processing.
+- **Enhanced job schema** (migration 51): `correlation_id`, `version`, `scheduled_for`, `dispatch_count`, `cancelled_by`, per-target `lease_owner`, `lease_expires`, `next_retry_at`, `dispatched_at`, `acknowledged_at`, `exit_code`, `msp_id`.
+- **State machine engine** (`internal/platform/statemachine.go`): Strict state transitions: `pending→queued→dispatched→running→succeeded/failed/cancelled/expired`.
+- **Dispatcher worker** (`internal/platform/dispatcher.go`): Outbox publisher, dispatch worker with bounded leases, reconciliation worker for expired leases and aggregate state computation.
+- **New API endpoints**: `POST /api/v1/jobs/{jobID}/retry` (retry failed targets), `GET /api/v1/devices/{deviceID}/jobs` (device job history), `GET /api/v1/jobs/{jobID}/events` (job event stream).
+- **Idempotency**: Tenant-scoped idempotency key support — returns existing job on duplicate key, rejects conflicting payloads.
+- **Wrapper script** (`start.sh`): Ensures JWT_SECRET env var is available to the process (systemd Environment= workaround).
+- **Membership seed**: Admin user now has `msp_admin` membership in default MSP, enabling authenticated API access through third-party authorization middleware.
+
+### Fixed
+- **Auth login with FORCE RLS**: Login handler now uses `set_config()` in a transaction to set app context before querying `client_organizations`.
+- **RLS on job creation**: All job handlers use `s.requestDB(r)` to pick up the tenant transaction context.
+- **JWT fallback**: No more hardcoded fallback secret — only env var or explicit secret.
+- **TestTokenPurposeSeparation**: Sets JWT_SECRET env var for test consistency.
 
 ## [0.5.0] - 2026-07-27
 
