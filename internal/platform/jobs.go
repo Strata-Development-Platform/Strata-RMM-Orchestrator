@@ -312,13 +312,7 @@ func (s *APIServer) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := db.BeginTx(r.Context(), nil)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	defer func() { _ = tx.Rollback() }()
-	res, err := tx.ExecContext(r.Context(), `
+	res, err := db.ExecContext(r.Context(), `
 		UPDATE jobs SET status = 'cancelled', completed_at = NOW(), cancelled_at=NOW(), updated_at = NOW()
 		WHERE id = $1 AND status IN ('pending', 'queued', 'dispatched', 'running')
 	`, jobID)
@@ -336,7 +330,7 @@ func (s *APIServer) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := tx.QueryContext(r.Context(), `
+	rows, err := db.QueryContext(r.Context(), `
 		UPDATE job_targets SET status = 'cancelled', completed_at=NOW(), lease_owner=NULL, lease_expires=NULL
 		WHERE job_id = $1 AND status IN ('pending', 'queued', 'dispatched', 'running')
 		RETURNING id::text, COALESCE(agent_id,'')
@@ -359,10 +353,6 @@ func (s *APIServer) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 	rowsErr := rows.Err()
 	if err := rows.Close(); err != nil || rowsErr != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "reading cancelled targets"})
-		return
-	}
-	if err := tx.Commit(); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "committing cancellation"})
 		return
 	}
 	for _, target := range targets {
