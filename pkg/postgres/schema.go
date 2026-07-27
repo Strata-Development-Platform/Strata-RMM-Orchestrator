@@ -1696,6 +1696,53 @@ func Migrations() []Migration {
 				ALTER TABLE jobs DROP COLUMN IF EXISTS request_hash;
 			`,
 		},
+		{
+			ID:   53,
+			Name: "create_plans_and_entitlements",
+			Up: `
+				CREATE TABLE IF NOT EXISTS plans (
+					id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					name        TEXT NOT NULL,
+					slug        TEXT UNIQUE NOT NULL,
+					description TEXT NOT NULL DEFAULT '',
+					is_active   BOOLEAN NOT NULL DEFAULT true,
+					features    JSONB NOT NULL DEFAULT '{}',
+					max_devices INT NOT NULL DEFAULT 0,
+					max_users   INT NOT NULL DEFAULT 0,
+					created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+
+				CREATE TABLE IF NOT EXISTS plan_entitlements (
+					id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					msp_id          UUID NOT NULL REFERENCES msp_tenants(id) ON DELETE CASCADE,
+					plan_id         UUID NOT NULL REFERENCES plans(id) ON DELETE SET NULL,
+					status          TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','past_due','suspended','cancelled')),
+					device_count    INT NOT NULL DEFAULT 0,
+					user_count      INT NOT NULL DEFAULT 0,
+					started_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					expires_at      TIMESTAMPTZ,
+					created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					UNIQUE(msp_id)
+				);
+				CREATE INDEX IF NOT EXISTS idx_entitlements_msp ON plan_entitlements(msp_id);
+
+				-- Seed default plans
+				INSERT INTO plans (id, name, slug, description, max_devices, max_users, features)
+				VALUES
+					('00000000-0000-0000-0000-000000000001', 'Free', 'free', 'Up to 5 devices', 5, 2, '{"scripting":true,"patching":false,"remote":false,"reporting":false}'::jsonb),
+					('00000000-0000-0000-0000-000000000002', 'Starter', 'starter', 'Up to 25 devices', 25, 5, '{"scripting":true,"patching":true,"remote":false,"reporting":true}'::jsonb),
+					('00000000-0000-0000-0000-000000000003', 'Professional', 'professional', 'Up to 100 devices', 100, 15, '{"scripting":true,"patching":true,"remote":true,"reporting":true}'::jsonb)
+				ON CONFLICT (id) DO NOTHING;
+
+				-- Assign default Free plan to existing MSPs
+				INSERT INTO plan_entitlements (msp_id, plan_id, device_count, user_count)
+				SELECT id, '00000000-0000-0000-0000-000000000001', 0, 0
+				FROM msp_tenants
+				ON CONFLICT (msp_id) DO NOTHING;
+			`,
+			Down: `DROP TABLE IF EXISTS plan_entitlements CASCADE; DROP TABLE IF EXISTS plans CASCADE;`,
+		},
 	}
 }
 

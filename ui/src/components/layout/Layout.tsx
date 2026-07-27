@@ -5,12 +5,13 @@ import { useState } from 'react';
 import {
   LayoutDashboard, Users, Building2, Terminal, Package,
   FileText, Settings, LogOut, ChevronLeft, ChevronRight,
-  UserCheck, RefreshCw, ListChecks, Activity
+  UserCheck, RefreshCw, ListChecks, Activity, Globe
 } from 'lucide-react';
 
 const navItems = [
   { path: '/', label: 'Overview', icon: LayoutDashboard },
   { path: '/customers', label: 'Customers', icon: Building2 },
+  { path: '/platform/msps', label: 'MSP Tenants', icon: Globe },
   { path: '/admin/users', label: 'Users', icon: Users },
   { path: '/scripts', label: 'Scripts', icon: Terminal },
   { path: '/software', label: 'Software', icon: Package },
