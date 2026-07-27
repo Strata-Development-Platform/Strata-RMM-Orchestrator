@@ -129,14 +129,14 @@ func (m *Manager) Start(ctx context.Context) error {
 	m.logger.Info("patch policies loaded", zap.Int("count", len(policies)))
 
 	// Subscribe to patch result events from agents
-	sub, err := m.nats.Subscribe("tenant.>.agent.>.patch.result", m.handlePatchResult)
+	sub, err := m.nats.Subscribe("tenant.*.agent.*.patch.result", m.handlePatchResult)
 	if err != nil {
 		return fmt.Errorf("subscribe patch results: %w", err)
 	}
 	defer sub.Unsubscribe()
 
 	// Subscribe to patch inventory reports
-	invSub, err := m.nats.Subscribe("tenant.>.agent.>.patch.inventory", m.handlePatchInventory)
+	invSub, err := m.nats.Subscribe("tenant.*.agent.*.patch.inventory", m.handlePatchInventory)
 	if err != nil {
 		return fmt.Errorf("subscribe patch inventory: %w", err)
 	}

@@ -53,13 +53,13 @@ func (e *Engine) Start(ctx context.Context) error {
 	e.mu.Unlock()
 	e.logger.Info("rules loaded", zap.Int("count", len(rules)))
 
-	metricsSub, err := e.nats.Subscribe("tenant.>.agent.>.metrics", e.handleMetrics)
+	metricsSub, err := e.nats.Subscribe("tenant.*.agent.*.metrics", e.handleMetrics)
 	if err != nil {
 		return fmt.Errorf("subscribe metrics: %w", err)
 	}
 	e.subs = append(e.subs, metricsSub)
 
-	heartbeatSub, err := e.nats.Subscribe("tenant.>.agent.>.heartbeat", e.handleHeartbeat)
+	heartbeatSub, err := e.nats.Subscribe("tenant.*.agent.*.heartbeat", e.handleHeartbeat)
 	if err != nil {
 		return fmt.Errorf("subscribe heartbeat: %w", err)
 	}

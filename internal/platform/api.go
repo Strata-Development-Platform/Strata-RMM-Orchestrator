@@ -212,7 +212,7 @@ func (s *APIServer) Start(ctx context.Context) error {
 	)
 
 	if s.nats != nil {
-		sub, err := s.nats.Subscribe("tenant.>.agent.>.script.result", s.handleScriptResultNATS)
+		sub, err := s.nats.Subscribe("tenant.*.agent.*.script.result", s.handleScriptResultNATS)
 		if err != nil {
 			s.logger.Warn("subscribe script results", zap.Error(err))
 		} else {
@@ -220,7 +220,7 @@ func (s *APIServer) Start(ctx context.Context) error {
 			defer sub.Unsubscribe()
 		}
 
-		swSub, err := s.nats.Subscribe("tenant.>.agent.>.software.result", s.handleSoftwareResultNATS)
+		swSub, err := s.nats.Subscribe("tenant.*.agent.*.software.result", s.handleSoftwareResultNATS)
 		if err != nil {
 			s.logger.Warn("subscribe software results", zap.Error(err))
 		} else {

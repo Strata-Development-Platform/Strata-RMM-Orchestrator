@@ -31,37 +31,37 @@ func NewIngestService(nc *nats.Conn, tsdb *timescale.Client, logger *zap.Logger)
 func (s *IngestService) Start(ctx context.Context) error {
 	s.logger.Info("starting metrics ingestion service")
 
-	agentMetricsSub, err := s.nats.Subscribe("tenant.>.agent.>.metrics", s.handleAgentMetrics)
+	agentMetricsSub, err := s.nats.Subscribe("tenant.*.agent.*.metrics", s.handleAgentMetrics)
 	if err != nil {
 		return fmt.Errorf("subscribing to agent metrics: %w", err)
 	}
 	s.subs = append(s.subs, agentMetricsSub)
 
-	agentEventsSub, err := s.nats.Subscribe("tenant.>.agent.>.events", s.handleAgentEvents)
+	agentEventsSub, err := s.nats.Subscribe("tenant.*.agent.*.events", s.handleAgentEvents)
 	if err != nil {
 		return fmt.Errorf("subscribing to agent events: %w", err)
 	}
 	s.subs = append(s.subs, agentEventsSub)
 
-	heartbeatSub, err := s.nats.Subscribe("tenant.>.agent.>.heartbeat", s.handleAgentHeartbeat)
+	heartbeatSub, err := s.nats.Subscribe("tenant.*.agent.*.heartbeat", s.handleAgentHeartbeat)
 	if err != nil {
 		return fmt.Errorf("subscribing to heartbeats: %w", err)
 	}
 	s.subs = append(s.subs, heartbeatSub)
 
-	probeSNMPSub, err := s.nats.Subscribe("tenant.>.probe.>.snmp", s.handleProbeSNMP)
+	probeSNMPSub, err := s.nats.Subscribe("tenant.*.probe.*.snmp", s.handleProbeSNMP)
 	if err != nil {
 		return fmt.Errorf("subscribing to probe snmp: %w", err)
 	}
 	s.subs = append(s.subs, probeSNMPSub)
 
-	probeFlowSub, err := s.nats.Subscribe("tenant.>.probe.>.flow", s.handleProbeFlow)
+	probeFlowSub, err := s.nats.Subscribe("tenant.*.probe.*.flow", s.handleProbeFlow)
 	if err != nil {
 		return fmt.Errorf("subscribing to probe flow: %w", err)
 	}
 	s.subs = append(s.subs, probeFlowSub)
 
-	probeDiscSub, err := s.nats.Subscribe("tenant.>.probe.>.discovery", s.handleProbeDiscovery)
+	probeDiscSub, err := s.nats.Subscribe("tenant.*.probe.*.discovery", s.handleProbeDiscovery)
 	if err != nil {
 		return fmt.Errorf("subscribing to probe discovery: %w", err)
 	}
