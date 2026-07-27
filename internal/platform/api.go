@@ -101,6 +101,7 @@ func (s *APIServer) WithStorageBackend(sb storage.Backend) *APIServer {
 func (s *APIServer) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
 
+	mux.HandleFunc("GET /", s.handleRoot)
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("POST /api/v1/enroll", s.handleEnroll)
 	mux.HandleFunc("POST /api/v1/agent/register", s.handleAgentRegister)
@@ -252,6 +253,18 @@ func (s *APIServer) Stop(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	return s.server.Shutdown(ctx)
+}
+
+func (s *APIServer) handleRoot(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{
+		"service": "Strata RMM Orchestrator",
+		"status":  "running",
+		"docs":    "https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator",
+	})
 }
 
 func (s *APIServer) handleHealth(w http.ResponseWriter, r *http.Request) {
