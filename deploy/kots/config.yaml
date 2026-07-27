@@ -57,7 +57,7 @@ spec:
         - name: jwt_secret
           title: JWT Secret
           type: password
-          default: "strata-rmm-dev-secret"
+          default: ""
         - name: nvd_api_key
           title: NVD API Key (optional)
           type: password

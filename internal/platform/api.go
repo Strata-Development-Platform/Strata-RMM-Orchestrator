@@ -25,7 +25,6 @@ type APIServer struct {
 	addr           string
 	db             *timescale.Client
 	nats           *nats.Conn
-	auth           *auth.EnrollmentManager
 	totp           *auth.TOTPManager
 	mfaStore       *auth.MFAStore
 	logger         *zap.Logger
@@ -42,12 +41,10 @@ type APIServer struct {
 }
 
 func NewAPIServer(addr string, db *timescale.Client, nc *nats.Conn, logger *zap.Logger) *APIServer {
-	em := auth.NewEnrollmentManager("")
 	s := &APIServer{
 		addr:   addr,
 		db:     db,
 		nats:   nc,
-		auth:   em,
 		totp:   auth.NewTOTPManager(),
 		logger: logger,
 	}
@@ -307,17 +304,27 @@ func (s *APIServer) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
 		return
 	}
+	if req.TenantID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tenant_id required"})
+		return
+	}
 
-	token, err := s.auth.CreateEnrollmentToken(req.TenantID, 24*time.Hour)
+	rawToken, tokenHash := generateToken()
+	expiresAt := time.Now().Add(24 * time.Hour)
+
+	_, err := s.db.DB().Exec(`
+		INSERT INTO enrollment_tokens_v2 (id, msp_id, client_id, token_hash, expires_at, created_by, max_uses)
+		VALUES (gen_random_uuid(), '00000000-0000-0000-0000-000000000001', $1, $2, $3, 'legacy-enroll', 1)
+	`, req.TenantID, tokenHash, expiresAt)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "creating token"})
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"enrollment_token": token.Token,
+		"enrollment_token": rawToken,
 		"tenant_id":        req.TenantID,
-		"expires_at":       token.ExpiresAt,
+		"expires_at":       expiresAt.UTC().Format(time.RFC3339),
 		"nats_urls":        []string{s.nats.ConnectedUrl()},
 	})
 }

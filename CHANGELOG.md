@@ -15,6 +15,12 @@ The format follows Keep a Changelog principles, and releases should use semantic
 - **TypeScript fixes**: `tsc -b` now passes cleanly. Fixed 12 errors across 6 files.
 - **Documentation**: `MASTER_PLAN.md`, `IMPLEMENTATION_STATUS.md`, `COMPATIBILITY_MATRIX.md`, `SECURITY_MODEL.md`, `SAAS_TENANCY.md`, `API_COMPATIBILITY.md`, `AGENT_PROTOCOL.md`.
 
+### Production Hardening — Phase 7
+- **FIXED**: KOTS config — removed hardcoded `strata-rmm-dev-secret` default.
+- **FIXED**: Old in-memory EnrollmentManager replaced with DB-backed `enrollment_tokens_v2`.
+- **FIXED**: `handleEnroll` (legacy endpoint) now creates persisted enrollment tokens.
+- **REMOVED**: `auth.EnrollmentManager` dependency from APIServer struct (fully DB-backed).
+
 ### RMM Vertical Slices — Phase 6
 - **ADDED**: `POST /api/v1/maintenance-windows` — create maintenance windows with time range.
 - **ADDED**: `GET /api/v1/maintenance-windows` — list maintenance windows by client.
