@@ -1683,6 +1683,19 @@ func Migrations() []Migration {
 				ALTER TABLE job_targets DROP COLUMN IF EXISTS msp_id;
 			`,
 		},
+		{
+			ID:   52,
+			Name: "harden_durable_job_orchestration",
+			Up: `
+				ALTER TABLE jobs ADD COLUMN IF NOT EXISTS request_hash TEXT;
+				CREATE INDEX IF NOT EXISTS idx_job_targets_agent ON job_targets(msp_id, agent_id);
+
+			`,
+			Down: `
+				DROP INDEX IF EXISTS idx_job_targets_agent;
+				ALTER TABLE jobs DROP COLUMN IF EXISTS request_hash;
+			`,
+		},
 	}
 }
 

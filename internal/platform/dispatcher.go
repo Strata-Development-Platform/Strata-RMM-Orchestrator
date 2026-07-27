@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"os"
 	"sync"
 	"time"
 
@@ -22,22 +23,23 @@ type Dispatcher struct {
 	logger *zap.Logger
 	stopCh chan struct{}
 	wg     sync.WaitGroup
+	workerID string
 }
 
 func NewDispatcher(db *timescale.Client, nc *nats.Conn, logger *zap.Logger) *Dispatcher {
+	host, _ := os.Hostname()
 	return &Dispatcher{
 		db:     db,
 		nc:     nc,
 		logger: logger,
 		stopCh: make(chan struct{}),
+		workerID: fmt.Sprintf("%s-%s", host, uuid.NewString()),
 	}
 }
 
 func (d *Dispatcher) Start(ctx context.Context) {
 	d.wg.Add(1)
 	go d.outboxPublisher(ctx)
-	d.wg.Add(1)
-	go d.dispatchWorker(ctx)
 	d.wg.Add(1)
 	go d.reconciliationWorker(ctx)
 	d.logger.Info("job dispatcher started")
@@ -61,14 +63,56 @@ func (d *Dispatcher) outboxPublisher(ctx context.Context) {
 		case <-d.stopCh:
 			return
 		case <-ticker.C:
+			d.ensureQueuedOutbox()
 			d.processOutbox()
+			d.expireJobs()
 		}
+	}
+}
+
+func (d *Dispatcher) ensureQueuedOutbox() {
+	_, err := d.db.DB().Exec(`
+		INSERT INTO job_outbox (id, msp_id, aggregate_id, event_type, payload, available_at)
+		SELECT gen_random_uuid(), j.msp_id, j.id, 'job.dispatch',
+		       jsonb_build_object(
+		         'schema_version', 1,
+		         'job_id', j.id,
+		         'target_id', jt.id,
+		         'msp_id', j.msp_id,
+		         'client_id', j.client_id,
+		         'site_id', j.site_id,
+		         'device_id', jt.device_id,
+		         'agent_id', jt.agent_id,
+		         'correlation_id', j.correlation_id,
+		         'attempt', jt.attempt + 1,
+		         'issued_at', NOW(),
+		         'expires_at', j.expires_at,
+		         'type', j.type,
+		         'payload', j.payload
+		       ),
+		       GREATEST(COALESCE(jt.next_retry_at, NOW()), COALESCE(j.scheduled_for, NOW()))
+		FROM job_targets jt
+		JOIN jobs j ON j.id = jt.job_id
+		WHERE jt.status = 'queued'
+		  AND (jt.next_retry_at IS NULL OR jt.next_retry_at <= NOW())
+		  AND (j.expires_at IS NULL OR j.expires_at > NOW())
+		  AND jt.retry_count <= j.max_retries
+		  AND NOT EXISTS (
+		    SELECT 1 FROM job_outbox o
+		    WHERE o.event_type = 'job.dispatch'
+		      AND o.payload->>'target_id' = jt.id::text
+		      AND COALESCE((o.payload->>'attempt')::int, 0) = jt.attempt + 1
+		  )
+		LIMIT 100
+	`)
+	if err != nil {
+		d.logger.Error("ensure queued outbox", zap.Error(err))
 	}
 }
 
 func (d *Dispatcher) processOutbox() {
 	rows, err := d.db.DB().Query(`
-		UPDATE job_outbox SET lease_owner = 'dispatcher', lease_expires = NOW() + INTERVAL '30 seconds',
+		UPDATE job_outbox SET lease_owner = $1, lease_expires = NOW() + INTERVAL '30 seconds',
 		                       attempt_count = attempt_count + 1
 		WHERE id IN (
 			SELECT id FROM job_outbox
@@ -78,8 +122,9 @@ func (d *Dispatcher) processOutbox() {
 			FOR UPDATE SKIP LOCKED
 		)
 		RETURNING id, msp_id, aggregate_id, event_type, payload::text
-	`)
+	`, d.workerID)
 	if err != nil {
+		d.logger.Error("claim outbox", zap.Error(err))
 		return
 	}
 	defer rows.Close()
@@ -91,106 +136,69 @@ func (d *Dispatcher) processOutbox() {
 		}
 
 		var payload map[string]interface{}
-		json.Unmarshal([]byte(payloadStr), &payload)
-
-		deviceID, _ := payload["device_id"].(string)
-		if deviceID == "" {
+		if err := json.Unmarshal([]byte(payloadStr), &payload); err != nil {
+			d.failOutbox(id, fmt.Errorf("invalid payload: %w", err), 1)
 			continue
 		}
 
-		subject := fmt.Sprintf("tenant.%s.cmd.%s", mspID, deviceID)
+		agentID, _ := payload["agent_id"].(string)
+		targetID, _ := payload["target_id"].(string)
+		attempt := intFromJSON(payload["attempt"])
+		if agentID == "" || targetID == "" || attempt < 1 {
+			d.failOutbox(id, fmt.Errorf("missing agent_id, target_id, or attempt"), 1)
+			continue
+		}
+
+		subject := fmt.Sprintf("tenant.%s.cmd.%s", mspID, agentID)
 		if err := d.nc.Publish(subject, []byte(payloadStr)); err != nil {
-			d.logger.Warn("outbox publish failed", zap.String("id", id), zap.Error(err))
-			d.db.DB().Exec(`UPDATE job_outbox SET last_error = $1 WHERE id = $2`, err.Error(), id)
+			d.failOutbox(id, err, attempt)
+			continue
+		}
+		if err := d.nc.FlushTimeout(5 * time.Second); err != nil {
+			d.failOutbox(id, err, attempt)
 			continue
 		}
 
-		d.db.DB().Exec(`UPDATE job_outbox SET published_at = NOW(), lease_owner = NULL, lease_expires = NULL WHERE id = $1`, id)
-	}
-
-	for rows.NextResultSet() {
-	}
-}
-
-func (d *Dispatcher) dispatchWorker(ctx context.Context) {
-	defer d.wg.Done()
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-d.stopCh:
-			return
-		case <-ticker.C:
-			d.processDispatches()
-			d.expireStaleWork()
-		}
-	}
-}
-
-func (d *Dispatcher) processDispatches() {
-	rows, err := d.db.DB().Query(`
-		UPDATE job_targets SET status = 'dispatched', dispatched_at = NOW(),
-		                       attempt = attempt + 1,
-		                       lease_owner = 'dispatcher',
-		                       lease_expires = CASE WHEN lease_owner IS NULL THEN NOW() + INTERVAL '2 minutes'
-		                                            ELSE lease_expires + INTERVAL '1 minute' END
-		WHERE id IN (
-			SELECT id FROM job_targets
-			WHERE status = 'queued'
-			      AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-			      AND retry_count <= (SELECT COALESCE(max_retries, 3) FROM jobs WHERE id = job_id)
-			ORDER BY created_at ASC LIMIT 10
-			FOR UPDATE SKIP LOCKED
-		)
-		RETURNING id, job_id, device_id, msp_id
-	`)
-	if err != nil {
-		return
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var targetID, jobID, deviceID, mspID string
-		if err := rows.Scan(&targetID, &jobID, &deviceID, &mspID); err != nil {
+		tx, err := d.db.DB().Begin()
+		if err != nil {
+			d.failOutbox(id, err, attempt)
 			continue
 		}
-
-		// Build command envelope
-		cmd := map[string]interface{}{
-			"schema_version": 1,
-			"event_id":       uuid.New().String(),
-			"job_id":         jobID,
-			"target_id":      targetID,
-			"msp_id":         mspID,
-			"device_id":      deviceID,
-			"attempt":        1,
-			"issued_at":      time.Now().UTC().Format(time.RFC3339),
-			"command_type":   "execute",
+		if _, err = tx.Exec(`
+			UPDATE job_outbox
+			SET published_at = NOW(), lease_owner = NULL, lease_expires = NULL, last_error = NULL
+			WHERE id = $1 AND lease_owner = $2
+		`, id, d.workerID); err == nil {
+			_, err = tx.Exec(`
+				UPDATE job_targets
+				SET status = 'dispatched', dispatched_at = NOW(), attempt = $2,
+				    lease_owner = NULL, lease_expires = NOW() + INTERVAL '2 minutes'
+				WHERE id = $1 AND status = 'queued' AND attempt < $2
+			`, targetID, attempt)
 		}
-		cmdJSON, _ := json.Marshal(cmd)
-
-		subject := fmt.Sprintf("tenant.%s.cmd.%s", mspID, deviceID)
-		if err := d.nc.Publish(subject, cmdJSON); err != nil {
-			d.logger.Warn("dispatch publish failed", zap.String("target", targetID), zap.Error(err))
+		if err == nil {
+			_, err = tx.Exec(`UPDATE jobs SET dispatch_count = dispatch_count + 1, status = 'dispatched', updated_at = NOW() WHERE id = $1`, aggregateID)
 		}
-
-		d.db.DB().Exec(`UPDATE jobs SET dispatch_count = dispatch_count + 1, updated_at = NOW() WHERE id = $1`, jobID)
+		if err != nil {
+			_ = tx.Rollback()
+			d.logger.Error("finalize outbox publish", zap.String("id", id), zap.Error(err))
+			continue
+		}
+		if err := tx.Commit(); err != nil {
+			d.logger.Error("commit outbox publish", zap.String("id", id), zap.Error(err))
+		}
 	}
+
 }
 
-func (d *Dispatcher) expireStaleWork() {
+func (d *Dispatcher) expireJobs() {
 	d.db.DB().Exec(`
 		UPDATE job_targets SET status = 'expired'
 		WHERE status IN ('pending', 'queued', 'dispatched', 'running')
 		      AND id IN (
 			SELECT jt.id FROM job_targets jt
 			JOIN jobs j ON jt.job_id = j.id
-			WHERE j.expires_at < NOW() OR (
-			      jt.lease_owner IS NOT NULL AND jt.lease_expires < NOW()
-			)
+			WHERE j.expires_at < NOW()
 			LIMIT 50
 		)
 	`)
@@ -220,11 +228,18 @@ func (d *Dispatcher) reconcile() {
 		WHERE status = 'dispatched' AND lease_owner IS NOT NULL AND lease_expires < NOW()
 		      AND id IN (SELECT id FROM job_targets WHERE lease_expires < NOW() LIMIT 50)
 	`)
-	// Claim expired agent leases (running but no heartbeat)
+	// Retry timed-out agent execution while attempts remain.
 	d.db.DB().Exec(`
-		UPDATE job_targets SET status = 'failed', error_message = 'execution timeout'
-		WHERE status = 'running' AND lease_expires < NOW() - INTERVAL '10 minutes'
-		      AND id IN (SELECT id FROM job_targets WHERE lease_expires < NOW() LIMIT 50)
+		UPDATE job_targets jt
+		SET status = CASE WHEN jt.retry_count < j.max_retries THEN 'queued' ELSE 'failed' END,
+		    retry_count = retry_count + 1,
+		    next_retry_at = CASE WHEN jt.retry_count < j.max_retries THEN NOW() + INTERVAL '30 seconds' ELSE NULL END,
+		    lease_owner = NULL, lease_expires = NULL, error_message = 'execution acknowledgement timeout'
+		FROM jobs j
+		WHERE jt.job_id = j.id AND jt.status IN ('dispatched','running')
+		  AND jt.lease_expires < NOW()
+		  AND (j.expires_at IS NULL OR j.expires_at > NOW())
+		  AND jt.id IN (SELECT id FROM job_targets WHERE lease_expires < NOW() LIMIT 50)
 	`)
 	// Aggregate job state from target states
 	d.db.DB().Exec(`
@@ -260,4 +275,28 @@ func backoffDuration(attempt int) time.Duration {
 	d := float64(base) * math.Pow(2, float64(attempt-1))
 	jitter := rand.Float64() * float64(base)
 	return time.Duration(math.Min(d+jitter, float64(max)))
+}
+
+func (d *Dispatcher) failOutbox(id string, publishErr error, attempt int) {
+	delay := backoffDuration(attempt)
+	_, err := d.db.DB().Exec(`
+		UPDATE job_outbox
+		SET last_error = $1, lease_owner = NULL, lease_expires = NULL,
+		    available_at = NOW() + $2::interval
+		WHERE id = $3 AND lease_owner = $4
+	`, publishErr.Error(), delay.String(), id, d.workerID)
+	if err != nil {
+		d.logger.Error("record outbox failure", zap.String("id", id), zap.Error(err))
+	}
+}
+
+func intFromJSON(value interface{}) int {
+	switch v := value.(type) {
+	case float64:
+		return int(v)
+	case int:
+		return v
+	default:
+		return 0
+	}
 }

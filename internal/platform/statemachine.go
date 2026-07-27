@@ -33,9 +33,6 @@ func IsValidState(s string) bool {
 }
 
 func CanTransition(from, to JobState) bool {
-	if to == JobSucceeded || to == JobFailed || to == JobCancelled || to == JobExpired {
-		return true
-	}
 	allowed, ok := allowedTransitions[from]
 	if !ok {
 		return false
