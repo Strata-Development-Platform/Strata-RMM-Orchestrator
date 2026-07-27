@@ -1,0 +1,12 @@
+{
+  "subject": "tenant.00000000-0000-0000-0000-000000000001.agent.test-agent-001.heartbeat",
+  "data": {
+    "status": "online",
+    "timestamp": "2026-07-27T12:00:00Z",
+    "uptime_seconds": 3600,
+    "hostname": "test-device-001",
+    "os": "linux",
+    "arch": "amd64",
+    "agent_version": "0.1.0"
+  }
+}

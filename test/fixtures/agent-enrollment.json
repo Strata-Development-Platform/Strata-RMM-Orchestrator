@@ -1,0 +1,8 @@
+{
+  "deployment_id": "test-deployment-001",
+  "hostname": "test-device-001",
+  "os": "linux",
+  "arch": "amd64",
+  "version": "0.1.0",
+  "public_key": ""
+}
