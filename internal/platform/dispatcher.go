@@ -43,6 +43,10 @@ func (d *Dispatcher) Start(ctx context.Context) {
 	go d.outboxPublisher(ctx)
 	d.wg.Add(1)
 	go d.reconciliationWorker(ctx)
+	if d.nc != nil {
+		d.wg.Add(1)
+		go d.subscribeResults(ctx)
+	}
 	d.logger.Info("job dispatcher started")
 }
 
@@ -276,6 +280,170 @@ func (d *Dispatcher) reconcile() {
 	`); err != nil {
 		d.logger.Error("reconcile job aggregates", zap.Error(err))
 	}
+}
+
+func (d *Dispatcher) subscribeResults(ctx context.Context) {
+	defer d.wg.Done()
+	sub, err := d.nc.Subscribe("tenant.*.agent.*.result", func(msg *nats.Msg) {
+		d.handleAgentResult(msg.Data)
+	})
+	if err != nil {
+		d.logger.Error("subscribe agent results", zap.Error(err))
+		return
+	}
+	defer sub.Unsubscribe()
+
+	ackSub, err := d.nc.Subscribe("tenant.*.agent.*.ack", func(msg *nats.Msg) {
+		d.handleAgentAck(msg.Data)
+	})
+	if err != nil {
+		d.logger.Error("subscribe agent acknowledgements", zap.Error(err))
+		return
+	}
+	defer ackSub.Unsubscribe()
+
+	<-ctx.Done()
+}
+
+func (d *Dispatcher) handleAgentAck(data []byte) {
+	var ack Acknowledgement
+	if err := json.Unmarshal(data, &ack); err != nil {
+		d.logger.Warn("malformed acknowledgement", zap.Error(err))
+		return
+	}
+	if ack.EventID == "" || ack.JobID == "" || ack.TargetID == "" {
+		return
+	}
+
+	// Verify job and target exist
+	var currentStatus string
+	err := d.db.DB().QueryRow(`
+		SELECT jt.status FROM job_targets jt
+		JOIN jobs j ON jt.job_id = j.id
+		WHERE jt.id = $1 AND jt.job_id = $2 AND j.msp_id = $3 AND jt.device_id = $4
+	`, ack.TargetID, ack.JobID, ack.MSPID, ack.DeviceID).Scan(&currentStatus)
+	if err != nil {
+		d.logger.Warn("acknowledgement for non-existent target",
+			zap.String("job", ack.JobID), zap.String("target", ack.TargetID))
+		return
+	}
+
+	// Insert into inbox for deduplication
+	payload, _ := json.Marshal(ack)
+	d.db.DB().Exec(`
+		INSERT INTO job_inbox (msp_id, message_id, job_id, target_id, event_type, payload)
+		VALUES ($1, $2, $3, $4, 'ack', $5)
+		ON CONFLICT (msp_id, message_id) DO NOTHING
+	`, ack.MSPID, ack.MessageID, ack.JobID, ack.TargetID, payload)
+
+	// Apply state transition based on ack status
+	switch ack.Status {
+	case AckAccepted:
+		TransitionJob(currentStatus, "running")
+		d.db.DB().Exec(`UPDATE job_targets SET status = 'running', acknowledged_at = NOW(), lease_expires = NOW() + INTERVAL '5 minutes' WHERE id = $1 AND status IN ('queued','dispatched')`, ack.TargetID)
+	case AckDuplicate:
+		// Already processed — no-op
+	case AckRejected, AckUnsupported:
+		TransitionJob(currentStatus, "failed")
+		d.db.DB().Exec(`UPDATE job_targets SET status = 'failed', error_message = $1, completed_at = NOW() WHERE id = $2`, "target rejected by agent: "+ack.Status, ack.TargetID)
+	case AckExpired:
+		TransitionJob(currentStatus, "expired")
+		d.db.DB().Exec(`UPDATE job_targets SET status = 'expired', completed_at = NOW() WHERE id = $1`, ack.TargetID)
+	}
+
+	d.db.DB().Exec(`UPDATE job_inbox SET processed_at = NOW() WHERE msp_id = $1 AND message_id = $2`, ack.MSPID, ack.MessageID)
+}
+
+func (d *Dispatcher) handleAgentResult(data []byte) {
+	var res ResultEnvelope
+	if err := json.Unmarshal(data, &res); err != nil {
+		d.logger.Warn("malformed result", zap.Error(err))
+		return
+	}
+	if res.EventID == "" || res.JobID == "" || res.TargetID == "" {
+		return
+	}
+
+	// Insert into inbox (dedup)
+	payload, _ := json.Marshal(res)
+	_, err := d.db.DB().Exec(`
+		INSERT INTO job_inbox (msp_id, message_id, job_id, target_id, event_type, payload)
+		VALUES ($1, $2, $3, $4, 'result', $5)
+		ON CONFLICT (msp_id, message_id) DO NOTHING
+	`, res.MSPID, res.MessageID, res.JobID, res.TargetID, payload)
+	if err != nil || d.isDuplicate(res.MSPID, res.MessageID) {
+		return
+	}
+
+	// Verify ownership and current state
+	var currentStatus string
+	var currentAttempt int
+	err = d.db.DB().QueryRow(`
+		SELECT jt.status, jt.attempt FROM job_targets jt
+		JOIN jobs j ON jt.job_id = j.id
+		WHERE jt.id = $1 AND jt.job_id = $2 AND j.msp_id = $3 AND jt.device_id = $4
+	`, res.TargetID, res.JobID, res.MSPID, res.DeviceID).Scan(&currentStatus, &currentAttempt)
+	if err != nil {
+		d.logger.Warn("result for non-existent target",
+			zap.String("job", res.JobID), zap.String("target", res.TargetID))
+		return
+	}
+
+	if res.Attempt < currentAttempt {
+		d.logger.Warn("stale result (older attempt)", zap.Int("got", res.Attempt), zap.Int("have", currentAttempt))
+		return
+	}
+
+	// Apply state transition
+	resultJSON, _ := json.Marshal(res.Result)
+	now := time.Now()
+	switch res.Status {
+	case "succeeded":
+		if err := TransitionJob(currentStatus, "succeeded"); err == nil {
+			d.db.DB().Exec(`UPDATE job_targets SET status = 'succeeded', result = $1, exit_code = $2, completed_at = $3, lease_owner = NULL, lease_expires = NULL
+				WHERE id = $4`, resultJSON, res.ExitCode, now, res.TargetID)
+		}
+	case "failed":
+		if err := TransitionJob(currentStatus, "failed"); err == nil {
+			d.db.DB().Exec(`UPDATE job_targets SET status = 'failed', result = $1, error_message = $2, exit_code = $3, completed_at = $4, lease_owner = NULL, lease_expires = NULL
+				WHERE id = $5`, resultJSON, res.Error, res.ExitCode, now, res.TargetID)
+		}
+	case "cancelled":
+		d.db.DB().Exec(`UPDATE job_targets SET status = 'cancelled', completed_at = NOW() WHERE id = $1`, res.TargetID)
+	case "expired":
+		d.db.DB().Exec(`UPDATE job_targets SET status = 'expired', completed_at = NOW() WHERE id = $1`, res.TargetID)
+	}
+
+	d.db.DB().Exec(`UPDATE job_inbox SET processed_at = NOW() WHERE msp_id = $1 AND message_id = $2`, res.MSPID, res.MessageID)
+
+	// Reconcile aggregate job state
+	d.db.DB().Exec(`
+		UPDATE jobs SET
+			completed_count = (SELECT COUNT(*) FROM job_targets WHERE job_id = $1 AND status = 'succeeded'),
+			failed_count = (SELECT COUNT(*) FROM job_targets WHERE job_id = $1 AND status IN ('failed','expired')),
+			status = CASE
+				WHEN (SELECT COUNT(*) FROM job_targets WHERE job_id = $1 AND status IN ('pending','queued','dispatched','running')) = 0
+				THEN CASE
+					WHEN (SELECT COUNT(*) FROM job_targets WHERE job_id = $1 AND status = 'failed') > 0
+					THEN 'failed'
+					ELSE 'succeeded'
+				END
+				ELSE status
+			END,
+			completed_at = CASE
+				WHEN (SELECT COUNT(*) FROM job_targets WHERE job_id = $1 AND status IN ('pending','queued','dispatched','running')) = 0
+				THEN NOW()
+				ELSE NULL
+			END,
+			updated_at = NOW()
+		WHERE id = $1
+	`, res.JobID)
+}
+
+func (d *Dispatcher) isDuplicate(mspID, messageID string) bool {
+	var processed bool
+	d.db.DB().QueryRow(`SELECT EXISTS(SELECT 1 FROM job_inbox WHERE msp_id = $1 AND message_id = $2 AND processed_at IS NOT NULL)`, mspID, messageID).Scan(&processed)
+	return processed
 }
 
 func backoffDuration(attempt int) time.Duration {
