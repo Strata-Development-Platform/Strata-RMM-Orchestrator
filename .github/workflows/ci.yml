@@ -116,3 +116,7 @@ jobs:
         uses: securego/gosec@master
         with:
           args: ./...
+      - name: Secret scanning
+        uses: trufflesecurity/trufflehog@main
+        with:
+          extra_args: --results=verified,unknown --fail

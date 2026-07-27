@@ -2,6 +2,7 @@ package test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -9,6 +10,8 @@ import (
 )
 
 var baseURL = getEnv("API_URL", "http://localhost:8080")
+var testAdminEmail = getEnv("TEST_ADMIN_EMAIL", "")
+var testAdminPassword = getEnv("TEST_ADMIN_PASSWORD", "")
 
 func getEnv(key, def string) string {
 	if v := os.Getenv(key); v != "" {
@@ -119,9 +122,19 @@ func TestLoginInvalidCredentials(t *testing.T) {
 	}
 }
 
+func requireTestCredentials(t *testing.T) {
+	if testAdminEmail == "" || testAdminPassword == "" {
+		t.Skip("TEST_ADMIN_EMAIL and TEST_ADMIN_PASSWORD not set")
+	}
+}
+
+func adminLoginBody() string {
+	return fmt.Sprintf(`{"email":"%s","password":"%s"}`, testAdminEmail, testAdminPassword)
+}
+
 func TestLoginAndMeFlow(t *testing.T) {
-	body := `{"email":"jonathan.r.covington@stratadevplatform.com","password":"3671A113a05786!"}`
-	resp, err := http.Post(baseURL+"/api/v1/auth/login", "application/json", strings.NewReader(body))
+	requireTestCredentials(t)
+	resp, err := http.Post(baseURL+"/api/v1/auth/login", "application/json", strings.NewReader(adminLoginBody()))
 	if err != nil {
 		t.Fatalf("login request failed: %v", err)
 	}
@@ -144,8 +157,8 @@ func TestLoginAndMeFlow(t *testing.T) {
 	if loginResp.UserID == "" {
 		t.Fatal("login user_id is empty")
 	}
-	if loginResp.Email != "jonathan.r.covington@stratadevplatform.com" {
-		t.Errorf("expected known email, got %s", loginResp.Email)
+	if loginResp.Email != testAdminEmail {
+		t.Errorf("expected email %s, got %s", testAdminEmail, loginResp.Email)
 	}
 
 	// Test /auth/me with Bearer token
@@ -177,7 +190,8 @@ func TestLoginAndMeFlow(t *testing.T) {
 }
 
 func TestBearerTokenAuth(t *testing.T) {
-	body := `{"email":"jonathan.r.covington@stratadevplatform.com","password":"3671A113a05786!"}`
+	requireTestCredentials(t)
+	body := adminLoginBody()
 	resp, err := http.Post(baseURL+"/api/v1/auth/login", "application/json", strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("login failed: %v", err)
@@ -205,7 +219,8 @@ func TestBearerTokenAuth(t *testing.T) {
 }
 
 func TestAdminRoutesWithBearer(t *testing.T) {
-	body := `{"email":"jonathan.r.covington@stratadevplatform.com","password":"3671A113a05786!"}`
+	requireTestCredentials(t)
+	body := adminLoginBody()
 	resp, err := http.Post(baseURL+"/api/v1/auth/login", "application/json", strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("login failed: %v", err)
