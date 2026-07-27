@@ -175,6 +175,20 @@ func (s *APIServer) withAccessControl(next http.Handler) http.Handler {
 			return
 		}
 
+		// Enforce token-use separation
+		isAgentPath := strings.HasPrefix(r.URL.Path, "/api/v1/agent/") ||
+			strings.HasPrefix(r.URL.Path, "/releases/") ||
+			r.URL.Path == "/install.sh"
+		isUserPath := !isAgentPath
+
+		if isUserPath && principal.TokenUse == "agent" {
+			http.Error(w, `{"error":"agent tokens cannot access this endpoint"}`, http.StatusForbidden)
+			return
+		}
+		if isAgentPath && principal.TokenUse == "user" {
+			// Agent endpoints may also accept user tokens for admin operations
+		}
+
 		r.Header.Set("X-Tenant-ID", principal.LegacyTenantID)
 		if principal.MSPID != "" {
 			r.Header.Set("X-MSP-ID", principal.MSPID)

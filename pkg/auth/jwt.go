@@ -54,10 +54,12 @@ type Claims struct {
 	Roles      []string `json:"roles"`
 }
 
-func generateTokenID() string {
+func generateTokenID() (string, error) {
 	b := make([]byte, 16)
-	rand.Read(b)
-	return base64.RawURLEncoding.EncodeToString(b)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("crypto/rand: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
 type TokenGenerator struct {
@@ -88,10 +90,14 @@ func NewTokenGeneratorOrFail(secret string) (*TokenGenerator, error) {
 }
 
 func (g *TokenGenerator) GenerateAgentToken(tenantID, agentID string, ttl time.Duration) (string, error) {
+	tokenID, err := generateTokenID()
+	if err != nil {
+		return "", fmt.Errorf("generating token id: %w", err)
+	}
 	now := time.Now()
 	claims := Claims{
 		Subject:   agentID,
-		TokenID:   generateTokenID(),
+		TokenID:   tokenID,
 		Issuer:    issuer,
 		Audience:  audience,
 		TokenUse:  "agent",
@@ -111,10 +117,14 @@ func (g *TokenGenerator) GenerateUserToken(userID, tenantID, mspID, clientID, si
 	if len(roles) == 0 {
 		return "", fmt.Errorf("at least one role is required")
 	}
+	tokenID, err := generateTokenID()
+	if err != nil {
+		return "", fmt.Errorf("generating token id: %w", err)
+	}
 	now := time.Now()
 	claims := Claims{
 		Subject:   userID,
-		TokenID:   generateTokenID(),
+		TokenID:   tokenID,
 		Issuer:    issuer,
 		Audience:  audience,
 		TokenUse:  "user",
@@ -135,6 +145,22 @@ func (g *TokenGenerator) Validate(token string) (*Claims, error) {
 		return nil, fmt.Errorf("invalid token format")
 	}
 
+	// Reject algorithm confusion: header must be valid JSON with alg=HS256
+	headerJSON, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return nil, fmt.Errorf("decoding header: %w", err)
+	}
+	var header struct {
+		Alg string `json:"alg"`
+		Typ string `json:"typ"`
+	}
+	if err := json.Unmarshal(headerJSON, &header); err != nil {
+		return nil, fmt.Errorf("unmarshaling header: %w", err)
+	}
+	if header.Alg != "HS256" {
+		return nil, fmt.Errorf("unsupported algorithm: %s", header.Alg)
+	}
+
 	expectedSig := g.sign(parts[0] + "." + parts[1])
 	if subtle.ConstantTimeCompare([]byte(expectedSig), []byte(parts[2])) == 0 {
 		return nil, fmt.Errorf("invalid signature")
@@ -152,7 +178,46 @@ func (g *TokenGenerator) Validate(token string) (*Claims, error) {
 
 	now := time.Now().Unix()
 
-	if claims.ExpiresAt > 0 && now > claims.ExpiresAt {
+	// Require mandatory claims
+	if claims.Subject == "" {
+		return nil, fmt.Errorf("missing required claim: sub")
+	}
+	if claims.TokenID == "" {
+		return nil, fmt.Errorf("missing required claim: jti")
+	}
+	if claims.Issuer == "" {
+		return nil, fmt.Errorf("missing required claim: iss")
+	}
+	if claims.Audience == "" {
+		return nil, fmt.Errorf("missing required claim: aud")
+	}
+	if claims.TokenUse == "" {
+		return nil, fmt.Errorf("missing required claim: token_use")
+	}
+	if claims.ExpiresAt == 0 {
+		return nil, fmt.Errorf("missing required claim: exp")
+	}
+	if claims.IssuedAt == 0 {
+		return nil, fmt.Errorf("missing required claim: iat")
+	}
+
+	// Validate issuer
+	if claims.Issuer != issuer {
+		return nil, fmt.Errorf("invalid issuer: %s", claims.Issuer)
+	}
+
+	// Validate audience
+	if claims.Audience != audience {
+		return nil, fmt.Errorf("invalid audience: %s", claims.Audience)
+	}
+
+	// Validate token use
+	if claims.TokenUse != "user" && claims.TokenUse != "agent" {
+		return nil, fmt.Errorf("unsupported token_use: %s", claims.TokenUse)
+	}
+
+	// Validate timestamps
+	if now > claims.ExpiresAt {
 		return nil, fmt.Errorf("token expired")
 	}
 
@@ -160,16 +225,10 @@ func (g *TokenGenerator) Validate(token string) (*Claims, error) {
 		return nil, fmt.Errorf("token not yet valid")
 	}
 
-	if claims.Issuer != "" && claims.Issuer != issuer {
-		return nil, fmt.Errorf("invalid issuer: %s", claims.Issuer)
-	}
-
-	if claims.Audience != "" && claims.Audience != audience {
-		return nil, fmt.Errorf("invalid audience: %s", claims.Audience)
-	}
-
-	if claims.TokenUse != "" && claims.TokenUse != "user" && claims.TokenUse != "agent" {
-		return nil, fmt.Errorf("invalid token_use: %s", claims.TokenUse)
+	// Reject tokens issued far in the future (clock drift tolerance: 5 minutes)
+	maxIatSkew := int64(300)
+	if claims.IssuedAt > now+maxIatSkew {
+		return nil, fmt.Errorf("token issued in the future")
 	}
 
 	return &claims, nil
