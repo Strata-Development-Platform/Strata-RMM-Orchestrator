@@ -844,7 +844,7 @@ func SeedDevTenant(db *sql.DB) error {
 			'00000000-0000-0000-0000-000000000010',
 			'00000000-0000-0000-0000-000000000001',
 			'admin@dev.local',
-			'$2a$10$placeholder', -- change-me: admin123
+			'$2a$10$t18ei0i3Sh4ORM66LTpHB.FYUJHH8p4OWcEdW1nyC9tKm2BaAnJQG', -- bootstrap admin password
 			'admin'
 		) ON CONFLICT DO NOTHING
 	`)

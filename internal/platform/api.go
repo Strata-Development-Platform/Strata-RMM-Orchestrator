@@ -42,7 +42,7 @@ type APIServer struct {
 }
 
 func NewAPIServer(addr string, db *timescale.Client, nc *nats.Conn, logger *zap.Logger) *APIServer {
-	em := auth.NewEnrollmentManager("strata-rmm-dev-secret")
+	em := auth.NewEnrollmentManager("")
 	s := &APIServer{
 		addr:   addr,
 		db:     db,
@@ -209,7 +209,10 @@ func (s *APIServer) Start(ctx context.Context) error {
 
 	handler := rateLimiter.Middleware(
 		auth.SecurityHeaders(
-			withLogging(mux, s.logger),
+			withLogging(
+				s.withAccessControl(mux),
+				s.logger,
+			),
 		),
 	)
 
@@ -411,26 +414,6 @@ func withLogging(next http.Handler, logger *zap.Logger) http.Handler {
 			zap.String("remote", r.RemoteAddr),
 			zap.Duration("duration", time.Since(start)),
 		)
-	})
-}
-
-func (s *APIServer) AuthMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		token := r.Header.Get("Authorization")
-		if token == "" {
-			token = r.URL.Query().Get("token")
-		}
-
-		if token != "" {
-			gen := auth.NewTokenGenerator("strata-rmm-dev-secret")
-			claims, err := gen.Validate(token)
-			if err == nil && claims != nil {
-				r.Header.Set("X-Tenant-ID", claims.TenantID)
-				r.Header.Set("X-Agent-ID", claims.AgentID)
-			}
-		}
-
-		next.ServeHTTP(w, r)
 	})
 }
 

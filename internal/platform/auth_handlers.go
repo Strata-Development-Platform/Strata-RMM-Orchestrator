@@ -69,7 +69,7 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tokenGen := auth.NewTokenGenerator("strata-rmm-dev-secret")
+	tokenGen := auth.NewTokenGenerator("")
 	ttl := 8 * time.Hour
 	token, err := tokenGen.GenerateUserToken(tenantID, []string{role}, ttl)
 	if err != nil {
@@ -100,7 +100,7 @@ func (s *APIServer) handleMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tokenGen := auth.NewTokenGenerator("strata-rmm-dev-secret")
+	tokenGen := auth.NewTokenGenerator("")
 	claims, err := tokenGen.Validate(token)
 	if err != nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid token"})
@@ -471,7 +471,7 @@ func (s *APIServer) handleAgentRegister(w http.ResponseWriter, r *http.Request) 
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true)
 	`, req.DeploymentID, deviceID, agentID, pubKey, req.Hostname, req.OS, req.Arch, r.RemoteAddr)
 
-	tokenGen := auth.NewTokenGenerator("strata-rmm-dev-secret")
+	tokenGen := auth.NewTokenGenerator("")
 	token, _ := tokenGen.GenerateAgentToken(tenantID, agentID, 720*time.Hour)
 
 	writeJSON(w, http.StatusCreated, map[string]interface{}{

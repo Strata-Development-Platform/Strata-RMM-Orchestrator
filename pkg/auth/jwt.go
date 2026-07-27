@@ -6,8 +6,16 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
 	"time"
 )
+
+func jwtSecret() string {
+	if s := os.Getenv("JWT_SECRET"); s != "" {
+		return s
+	}
+	return "strata-rmm-dev-secret"
+}
 
 type Claims struct {
 	TenantID   string   `json:"tid"`
@@ -22,6 +30,9 @@ type TokenGenerator struct {
 }
 
 func NewTokenGenerator(secret string) *TokenGenerator {
+	if secret == "" {
+		secret = jwtSecret()
+	}
 	return &TokenGenerator{secret: []byte(secret)}
 }
 
@@ -107,6 +118,9 @@ type EnrollmentManager struct {
 }
 
 func NewEnrollmentManager(secret string) *EnrollmentManager {
+	if secret == "" {
+		secret = jwtSecret()
+	}
 	return &EnrollmentManager{
 		generator: NewTokenGenerator(secret),
 		tokens:    make(map[string]*EnrollmentToken),
