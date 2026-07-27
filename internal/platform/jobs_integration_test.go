@@ -149,18 +149,15 @@ func TestDurableJobRoundTripWithRealPostgresAndNATS(t *testing.T) {
 		t.Fatalf("duplicate command executed handler %d times", executions.Load())
 	}
 
-	receipts, err := ledger.GetUnacknowledgedResults()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(receipts) != 0 {
-		t.Fatalf("server result receipt did not terminate replay: %#v", receipts)
-	}
+	waitForResultReceipt(t, ledger)
 }
 
 func waitForTargetStatus(t *testing.T, db *sql.DB, targetID, want string) {
 	t.Helper()
-	deadline := time.Now().Add(15 * time.Second)
+	// The agent replays an unacknowledged terminal result every 15 seconds.
+	// Allow one complete replay interval so a transient serializable-transaction
+	// conflict still exercises and proves the durable recovery path.
+	deadline := time.Now().Add(25 * time.Second)
 	for time.Now().Before(deadline) {
 		var status string
 		if err := db.QueryRow(`SELECT status FROM job_targets WHERE id=$1`, targetID).Scan(&status); err == nil && status == want {
@@ -171,4 +168,21 @@ func waitForTargetStatus(t *testing.T, db *sql.DB, targetID, want string) {
 	var status string
 	_ = db.QueryRow(`SELECT status FROM job_targets WHERE id=$1`, targetID).Scan(&status)
 	t.Fatalf("target status=%q, want %q", status, want)
+}
+
+func waitForResultReceipt(t *testing.T, ledger *agentjobs.ReceiptLedger) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		receipts, err := ledger.GetUnacknowledgedResults()
+		if err == nil && len(receipts) == 0 {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	receipts, err := ledger.GetUnacknowledgedResults()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Fatalf("server result receipt did not terminate replay: %#v", receipts)
 }
