@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -258,15 +259,18 @@ func (b *S3Backend) Stat(ctx context.Context, key string) (ObjectInfo, error) {
 }
 
 func (b *S3Backend) List(ctx context.Context, prefix string, opts ListOptions) ([]ObjectInfo, error) {
-	maxKeys := int32(opts.MaxKeys)
+	maxKeys := opts.MaxKeys
 	if maxKeys <= 0 {
 		maxKeys = 100
+	}
+	if maxKeys > math.MaxInt32 {
+		maxKeys = math.MaxInt32
 	}
 
 	input := &s3.ListObjectsV2Input{
 		Bucket:  aws.String(b.bucket),
 		Prefix:  aws.String(prefix),
-		MaxKeys: aws.Int32(maxKeys),
+		MaxKeys: aws.Int32(int32(maxKeys)),
 	}
 
 	if opts.Cursor != "" {

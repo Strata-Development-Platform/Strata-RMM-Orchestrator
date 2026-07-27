@@ -27,6 +27,16 @@ func TestTenantRLSMigration(t *testing.T) {
 	if err := NewSchemaManager(db).Apply(); err != nil {
 		t.Fatalf("apply migrations: %v", err)
 	}
+	if _, err := db.Exec(`
+		DROP ROLE IF EXISTS strata_runtime;
+		CREATE ROLE strata_runtime NOLOGIN NOSUPERUSER NOBYPASSRLS;
+		GRANT USAGE ON SCHEMA public TO strata_runtime;
+		GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO strata_runtime;
+		GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO strata_runtime;
+		GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO strata_runtime
+	`); err != nil {
+		t.Fatalf("create runtime database role: %v", err)
+	}
 
 	const (
 		mspA    = "10000000-0000-0000-0000-000000000001"
@@ -85,6 +95,9 @@ func TestTenantRLSMigration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin cross-tenant update: %v", err)
 	}
+	if _, err := tx.Exec(`SET LOCAL ROLE strata_runtime`); err != nil {
+		t.Fatalf("set runtime role: %v", err)
+	}
 	if _, err := tx.Exec(`SELECT set_config('app.msp_id', $1, true)`, mspA); err != nil {
 		t.Fatalf("set MSP context: %v", err)
 	}
@@ -109,6 +122,9 @@ func assertVisibleClients(t *testing.T, db *sql.DB, mspID, userID, grantID strin
 		t.Fatalf("begin visibility transaction: %v", err)
 	}
 	defer tx.Rollback()
+	if _, err := tx.Exec(`SET LOCAL ROLE strata_runtime`); err != nil {
+		t.Fatalf("set runtime role: %v", err)
+	}
 	if _, err := tx.Exec(`
 		SELECT
 			set_config('app.msp_id', $1, true),

@@ -45,7 +45,11 @@ func (m *TOTPManager) GenerateCode(secret string, t time.Time) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("decode secret: %w", err)
 	}
-	counter := uint64(t.Unix()) / 30
+	unixTime := t.Unix()
+	if unixTime < 0 {
+		return "", fmt.Errorf("TOTP timestamps before the Unix epoch are unsupported")
+	}
+	counter := uint64(unixTime) / 30
 	return m.generateCode(key, counter), nil
 }
 
