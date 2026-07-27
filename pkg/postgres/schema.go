@@ -877,6 +877,61 @@ func Migrations() []Migration {
 			`,
 			Down: `DROP TABLE IF EXISTS enrollment_tokens_v2 CASCADE;`,
 		},
+		{
+			ID:   34,
+			Name: "create_jobs_table",
+			Up: `
+				CREATE TABLE IF NOT EXISTS jobs (
+					id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					msp_id          UUID NOT NULL REFERENCES msp_tenants(id) ON DELETE CASCADE,
+					client_id       UUID NOT NULL REFERENCES client_organizations(id) ON DELETE CASCADE,
+					site_id         UUID REFERENCES sites(id) ON DELETE CASCADE,
+					created_by      TEXT NOT NULL DEFAULT '',
+					type            TEXT NOT NULL,
+					status          TEXT NOT NULL DEFAULT 'pending'
+						CHECK (status IN ('pending','queued','dispatched','running','succeeded','failed','cancelled','expired')),
+					priority        INT NOT NULL DEFAULT 0,
+					payload         JSONB NOT NULL DEFAULT '{}',
+					result          JSONB,
+					idempotency_key TEXT,
+					max_retries     INT NOT NULL DEFAULT 3,
+					retry_count     INT NOT NULL DEFAULT 0,
+					max_devices     INT NOT NULL DEFAULT 0,
+					completed_count INT NOT NULL DEFAULT 0,
+					failed_count    INT NOT NULL DEFAULT 0,
+					expires_at      TIMESTAMPTZ,
+					created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					started_at      TIMESTAMPTZ,
+					completed_at    TIMESTAMPTZ
+				);
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_idempotency ON jobs(idempotency_key) WHERE idempotency_key IS NOT NULL;
+				CREATE INDEX IF NOT EXISTS idx_jobs_msp_status ON jobs(msp_id, status);
+				CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs(created_at DESC);
+			`,
+			Down: `DROP TABLE IF EXISTS jobs CASCADE;`,
+		},
+		{
+			ID:   35,
+			Name: "create_job_targets_table",
+			Up: `
+				CREATE TABLE IF NOT EXISTS job_targets (
+					id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					job_id          UUID NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+					device_id       TEXT NOT NULL,
+					status          TEXT NOT NULL DEFAULT 'pending'
+						CHECK (status IN ('pending','queued','dispatched','acknowledged','running','succeeded','failed','cancelled','expired')),
+					result          JSONB,
+					error_message   TEXT,
+					started_at      TIMESTAMPTZ,
+					completed_at    TIMESTAMPTZ,
+					retry_count     INT NOT NULL DEFAULT 0,
+					created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+				CREATE INDEX IF NOT EXISTS idx_job_targets_job ON job_targets(job_id);
+				CREATE INDEX IF NOT EXISTS idx_job_targets_device ON job_targets(device_id);
+			`,
+			Down: `DROP TABLE IF EXISTS job_targets CASCADE;`,
+		},
 	}
 }
 

@@ -15,6 +15,17 @@ The format follows Keep a Changelog principles, and releases should use semantic
 - **TypeScript fixes**: `tsc -b` now passes cleanly. Fixed 12 errors across 6 files.
 - **Documentation**: `MASTER_PLAN.md`, `IMPLEMENTATION_STATUS.md`, `COMPATIBILITY_MATRIX.md`, `SECURITY_MODEL.md`, `SAAS_TENANCY.md`, `API_COMPATIBILITY.md`, `AGENT_PROTOCOL.md`.
 
+### Durable Job Orchestration — Phase 5
+- **ADDED**: `jobs` table (migration 34) — unified job tracking with type, status, payload, retries.
+- **ADDED**: `job_targets` table (migration 35) — per-device job status, results, error messages.
+- **ADDED**: `POST /api/v1/jobs` — create and dispatch a job to devices via NATS.
+- **ADDED**: `GET /api/v1/jobs` — list jobs filtered by MSP and client.
+- **ADDED**: `GET /api/v1/jobs/{jobID}` — get job details with per-target status.
+- **ADDED**: `POST /api/v1/jobs/{jobID}/cancel` — cancel a pending/queued job.
+- **ADDED**: `POST /api/v1/jobs/result` — receive job results from agents via NATS callback.
+- **ADDED**: Idempotency key support for safe retries.
+- **ADDED**: Automatic job completion tracking via target status counts.
+
 ### Secure Enrollment — Phase 4
 - **ADDED**: `enrollment_tokens_v2` table (migration 33) — DB-backed, MSP/client/site-scoped.
 - **ADDED**: `POST /api/v1/enrollment/tokens` — create scoped enrollment token with max uses.
