@@ -4,6 +4,17 @@ All notable changes to this project should be documented here.
 
 The format follows Keep a Changelog principles, and releases should use semantic versioning where applicable.
 
+## [0.6.2] - 2026-07-27
+
+### Added - Phase 5B: Agent Durable Execution (Complete)
+- **Agent ReceiptLedger** (`internal/agent/jobs/ledger.go`): BBolt-backed command receipt tracking with `command_receipts` bucket. Supports `RecordReceipt`, `GetReceipt`, `IsDuplicate`, `MarkRunning`, `MarkComplete`, `GetUnacknowledgedResults` (for result retransmission), and `Cleanup` (bounded retention).
+- **Agent HandlerRegistry** (`internal/agent/jobs/handler.go`): Maps `command_type` strings to typed `CommandHandler` functions. Supports `Register()`, `Get()`, and `IsSupported()` checks.
+- **Agent JobDispatcher**: NATS subscriber for `tenant.{tid}.cmd.{aid}` commands. Validates envelope, deduplicates via BBolt ledger, publishes typed acknowledgements (`accepted`/`duplicate`/`unsupported`), dispatches to handler registry, publishes typed results. `replayResults()` retransmits unacknowledged completed results on startup.
+- **Orchestrator inbox processing** (`internal/platform/dispatcher.go`): NATS subscriptions for `.ack` and `.result` subjects. Inserts into `job_inbox` for deduplication, validates ownership (MSP, job, target, device), applies state transitions, updates aggregate job state.
+- **Cancellation handling**: Orchestrator updates target to `cancelled` state; agent dispatcher framework supports context cancellation in handlers.
+- **4 ledger tests**: Record/get/duplicate detection, state transitions (received→running→succeeded), unacknowledged result filtering, retention cleanup.
+- **9 Go packages**: All tests pass including new `internal/agent/jobs` package.
+
 ## [0.6.1] - 2026-07-27
 
 ### Added - Phase 5B: Agent Command Protocol
