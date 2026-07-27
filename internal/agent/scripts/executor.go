@@ -53,7 +53,7 @@ func (e *Executor) RunJob(ctx context.Context, payload json.RawMessage) (string,
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(cmd.Timeout)*time.Second)
 	defer cancel()
 	var stdout, stderr bytes.Buffer
-	exitCode := -1
+	var exitCode int
 	switch cmd.Language {
 	case "powershell":
 		exitCode = e.runPowerShell(ctx, content, &stdout, &stderr)
