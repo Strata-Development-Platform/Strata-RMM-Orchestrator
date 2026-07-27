@@ -69,9 +69,12 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var mspID string
+	db.QueryRowContext(r.Context(), `SELECT msp_id FROM client_organizations WHERE id = $1`, tenantID).Scan(&mspID)
+
 	tokenGen := auth.NewTokenGenerator("")
 	ttl := 8 * time.Hour
-	token, err := tokenGen.GenerateUserToken(tenantID, []string{role}, ttl)
+	token, err := tokenGen.GenerateUserToken(tenantID, mspID, "", "", []string{role}, ttl)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "token generation failed"})
 		return

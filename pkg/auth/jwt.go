@@ -19,6 +19,9 @@ func jwtSecret() string {
 
 type Claims struct {
 	TenantID   string   `json:"tid"`
+	MSPID      string   `json:"mid"`
+	ClientID   string   `json:"cid"`
+	SiteID     string   `json:"sid"`
 	AgentID    string   `json:"aid"`
 	Roles      []string `json:"roles"`
 	ExpiresAt  int64    `json:"exp"`
@@ -47,9 +50,12 @@ func (g *TokenGenerator) GenerateAgentToken(tenantID, agentID string, ttl time.D
 	return g.encode(claims)
 }
 
-func (g *TokenGenerator) GenerateUserToken(tenantID string, roles []string, ttl time.Duration) (string, error) {
+func (g *TokenGenerator) GenerateUserToken(tenantID, mspID, clientID, siteID string, roles []string, ttl time.Duration) (string, error) {
 	claims := Claims{
 		TenantID:  tenantID,
+		MSPID:     mspID,
+		ClientID:  clientID,
+		SiteID:    siteID,
 		Roles:     roles,
 		ExpiresAt: time.Now().Add(ttl).Unix(),
 		IssuedAt:  time.Now().Unix(),

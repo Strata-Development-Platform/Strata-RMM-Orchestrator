@@ -719,6 +719,86 @@ func Migrations() []Migration {
 			`,
 			Down: `DROP TABLE IF EXISTS alerts CASCADE;`,
 		},
+		{
+			ID:   27,
+			Name: "create_msp_tenants",
+			Up: `
+				CREATE TABLE IF NOT EXISTS msp_tenants (
+					id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					name           TEXT NOT NULL,
+					slug           TEXT UNIQUE NOT NULL,
+					plan           TEXT NOT NULL DEFAULT 'free',
+					is_active      BOOLEAN NOT NULL DEFAULT true,
+					settings       JSONB DEFAULT '{}',
+					billing_email  TEXT,
+					created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+				CREATE INDEX IF NOT EXISTS idx_msp_tenants_slug ON msp_tenants(slug);
+			`,
+			Down: `DROP TABLE IF EXISTS msp_tenants CASCADE;`,
+		},
+		{
+			ID:   28,
+			Name: "create_client_organizations",
+			Up: `
+				CREATE TABLE IF NOT EXISTS client_organizations (
+					id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					msp_id         UUID NOT NULL REFERENCES msp_tenants(id) ON DELETE CASCADE,
+					name           TEXT NOT NULL,
+					slug           TEXT NOT NULL,
+					is_active      BOOLEAN NOT NULL DEFAULT true,
+					settings       JSONB DEFAULT '{}',
+					contact_email  TEXT,
+					created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					UNIQUE(msp_id, slug)
+				);
+				CREATE INDEX IF NOT EXISTS idx_client_orgs_msp ON client_organizations(msp_id);
+			`,
+			Down: `DROP TABLE IF EXISTS client_organizations CASCADE;`,
+		},
+		{
+			ID:   29,
+			Name: "create_sites",
+			Up: `
+				CREATE TABLE IF NOT EXISTS sites (
+					id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					client_id        UUID NOT NULL REFERENCES client_organizations(id) ON DELETE CASCADE,
+					name             TEXT NOT NULL,
+					slug             TEXT NOT NULL,
+					address          TEXT,
+					city             TEXT,
+					state            TEXT,
+					country          TEXT DEFAULT 'US',
+					is_active        BOOLEAN NOT NULL DEFAULT true,
+					contact_name     TEXT,
+					contact_phone    TEXT,
+					created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					UNIQUE(client_id, slug)
+				);
+				CREATE INDEX IF NOT EXISTS idx_sites_client ON sites(client_id);
+			`,
+			Down: `DROP TABLE IF EXISTS sites CASCADE;`,
+		},
+		{
+			ID:   30,
+			Name: "seed_default_msp",
+			Up: `
+				INSERT INTO msp_tenants (id, name, slug, plan)
+				VALUES ('00000000-0000-0000-0000-000000000001', 'Strata Platform', 'strata', 'enterprise')
+				ON CONFLICT (id) DO NOTHING;
+				INSERT INTO client_organizations (id, msp_id, name, slug)
+				SELECT id, '00000000-0000-0000-0000-000000000001', name, slug
+				FROM tenants
+				ON CONFLICT DO NOTHING;
+			`,
+			Down: `
+				DELETE FROM client_organizations WHERE msp_id = '00000000-0000-0000-0000-000000000001';
+				DELETE FROM msp_tenants WHERE id = '00000000-0000-0000-0000-000000000001';
+			`,
+		},
 	}
 }
 

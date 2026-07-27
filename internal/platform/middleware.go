@@ -15,6 +15,9 @@ const (
 	ctxKeyEmail    contextKey = "email"
 	ctxKeyRole     contextKey = "role"
 	ctxKeyTenantID contextKey = "tenantID"
+	ctxKeyMSPID    contextKey = "mspID"
+	ctxKeyClientID contextKey = "clientID"
+	ctxKeySiteID   contextKey = "siteID"
 )
 
 type RouteAccess int
@@ -56,12 +59,30 @@ func (s *APIServer) withAccessControl(next http.Handler) http.Handler {
 		}
 
 		r.Header.Set("X-Tenant-ID", claims.TenantID)
+		if claims.MSPID != "" {
+			r.Header.Set("X-MSP-ID", claims.MSPID)
+		}
+		if claims.ClientID != "" {
+			r.Header.Set("X-Client-ID", claims.ClientID)
+		}
 		if claims.AgentID != "" {
 			r.Header.Set("X-Agent-ID", claims.AgentID)
 		}
 
 		ctx := context.WithValue(r.Context(), ctxKeyTenantID, claims.TenantID)
+		ctx = context.WithValue(ctx, ctxKeyMSPID, claims.MSPID)
+		ctx = context.WithValue(ctx, ctxKeyClientID, claims.ClientID)
+		ctx = context.WithValue(ctx, ctxKeySiteID, claims.SiteID)
 		ctx = context.WithValue(ctx, ctxKeyRole, strings.Join(claims.Roles, ","))
+
+		if claims.MSPID != "" && r.URL.Query().Get("msp_id") != "" && r.URL.Query().Get("msp_id") != claims.MSPID {
+			http.Error(w, `{"error":"cross-MSP access denied"}`, http.StatusForbidden)
+			return
+		}
+		if claims.ClientID != "" && r.URL.Query().Get("client_id") != "" && r.URL.Query().Get("client_id") != claims.ClientID {
+			http.Error(w, `{"error":"cross-client access denied"}`, http.StatusForbidden)
+			return
+		}
 
 		if access == AccessAdmin {
 			isAdmin := false

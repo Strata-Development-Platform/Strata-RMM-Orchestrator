@@ -15,6 +15,16 @@ The format follows Keep a Changelog principles, and releases should use semantic
 - **TypeScript fixes**: `tsc -b` now passes cleanly. Fixed 12 errors across 6 files.
 - **Documentation**: `MASTER_PLAN.md`, `IMPLEMENTATION_STATUS.md`, `COMPATIBILITY_MATRIX.md`, `SECURITY_MODEL.md`, `SAAS_TENANCY.md`, `API_COMPATIBILITY.md`, `AGENT_PROTOCOL.md`.
 
+### SaaS — Phase 2
+- **ADDED**: `msp_tenants` table (migration 27) — MSP tenant model.
+- **ADDED**: `client_organizations` table (migration 28) — client orgs under MSPs.
+- **ADDED**: `sites` table (migration 29) — sites/locations under client orgs.
+- **ADDED**: Default MSP seed (migration 30) — creates "Strata Platform" MSP.
+- **ADDED**: Legacy tenant backfill — existing tenants become client orgs under default MSP.
+- **ADDED**: JWT claims now include `mid` (MSP ID), `cid` (client ID), `sid` (site ID).
+- **ADDED**: Auth middleware checks cross-MSP and cross-client access denial via query params.
+- **UPDATED**: `GenerateUserToken` — includes MSP/client/site scope.
+
 ### Security — Phase 1
 - **FIXED**: Hardcoded JWT secret `strata-rmm-dev-secret` — replaced with `JWT_SECRET` env var (6 locations).
 - **FIXED**: Placeholder password hash `$2a$10$placeholder` — replaced with proper bcrypt hash.
