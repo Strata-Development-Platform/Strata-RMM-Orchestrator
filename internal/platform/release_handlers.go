@@ -313,5 +313,6 @@ func (s *APIServer) handleReleaseBinary(w http.ResponseWriter, r *http.Request) 
 
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=strata-rmm-%s-%s", osName, arch))
+	// #nosec G703 -- binaryPath is derived from the fixed platform allowlist and cache-root containment check.
 	http.ServeFile(w, r, binaryPath)
 }
