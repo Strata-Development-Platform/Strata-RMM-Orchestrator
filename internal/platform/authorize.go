@@ -17,7 +17,7 @@ func getRoles(r *http.Request) []string {
 func hasAdminRole(roles []string) bool {
 	for _, r := range roles {
 		switch r {
-		case "admin", "platform_owner", "platform_admin", "msp_owner", "msp_admin":
+		case "platform_owner", "platform_admin":
 			return true
 		}
 	}

@@ -102,11 +102,10 @@ func (s *APIServer) resolveMSPByHost(host string) (mspID, slug string) {
 
 func (s *APIServer) withBranding(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mspID, slug := s.resolveMSPByHost(r.Host)
+		mspID, _ := s.resolveMSPByHost(r.Host)
 		if mspID != "" {
+			// Store branding in a separate context key, not security headers
 			ctx := context.WithValue(r.Context(), ctxKeyMSPID, mspID)
-			r.Header.Set("X-MSP-ID", mspID)
-			r.Header.Set("X-MSP-Slug", slug)
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
@@ -168,9 +167,6 @@ func (s *APIServer) withAccessControl(next http.Handler) http.Handler {
 		}
 
 		rawToken := extractBearerToken(r.Header.Get("Authorization"))
-		if rawToken == "" {
-			rawToken = r.URL.Query().Get("token")
-		}
 		if rawToken == "" {
 			http.Error(w, `{"error":"authorization required"}`, http.StatusUnauthorized)
 			return
