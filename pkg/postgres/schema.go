@@ -2162,8 +2162,8 @@ func (m *SchemaManager) acquireLock(ctx context.Context) error {
 	for i := 0; i < maxAttempts; i++ {
 		select {
 		case <-ctx.Done():
-			conn.Close()
-			return fmt.Errorf("advisory lock cancelled: %w", ctx.Err())
+		_ = conn.Close()
+		return fmt.Errorf("advisory lock cancelled: %w", ctx.Err())
 		default:
 		}
 
@@ -2174,7 +2174,7 @@ func (m *SchemaManager) acquireLock(ctx context.Context) error {
 				<-ticker.C
 				continue
 			}
-			conn.Close()
+			_ = conn.Close()
 			return fmt.Errorf("lock attempt %d/%d: %w", i+1, maxAttempts, err)
 		}
 		if acquired {
@@ -2186,7 +2186,7 @@ func (m *SchemaManager) acquireLock(ctx context.Context) error {
 		}
 	}
 
-	conn.Close()
+	_ = conn.Close()
 	return fmt.Errorf("lock attempt %d/%d: %w", maxAttempts, maxAttempts, ErrLockTimeout)
 }
 
