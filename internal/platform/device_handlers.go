@@ -1,9 +1,13 @@
 package platform
 
 import (
+	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -35,6 +39,45 @@ type bulkActionReq struct {
 	Action    string   `json:"action"`
 	Reason    string   `json:"reason,omitempty"`
 	Schedule  string   `json:"schedule_at,omitempty"`
+}
+
+func validateIdempotencyKey(r *http.Request) (string, error) {
+	key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if len(key) > 128 {
+		return "", fmt.Errorf("idempotency key is too long")
+	}
+	return key, nil
+}
+
+func endpointRequestHash(value interface{}) (string, error) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", sha256.Sum256(encoded)), nil
+}
+
+func writeIdempotentEndpointResult(w http.ResponseWriter, r *http.Request, db dbExecutor, mspID, key, requestHash string) (bool, error) {
+	if key == "" {
+		return false, nil
+	}
+	var jobID, status, existingHash string
+	err := db.QueryRowContext(r.Context(), `
+		SELECT id::text, status, COALESCE(request_hash, '')
+		FROM jobs WHERE msp_id = $1 AND idempotency_key = $2
+	`, mspID, key).Scan(&jobID, &status, &existingHash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if existingHash != requestHash {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "idempotency key already used for a different request"})
+		return true, nil
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"job_id": jobID, "status": status, "duplicate": true})
+	return true, nil
 }
 
 func (s *APIServer) handleListDevices(w http.ResponseWriter, r *http.Request) {
@@ -340,20 +383,38 @@ func (s *APIServer) handleDeviceAction(w http.ResponseWriter, r *http.Request) {
 	payloadMap := map[string]interface{}{
 		"action": rawReq.Action, "reason": rawReq.Reason,
 		"service": rawReq.Service, "process_id": rawReq.ProcessID,
+		"schedule_at": rawReq.Schedule,
 	}
 	payload, err := json.Marshal(payloadMap)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "encode job failed"})
 		return
 	}
+	idempotencyKey, err := validateIdempotencyKey(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	requestHash, err := endpointRequestHash(map[string]interface{}{"device_id": deviceID, "job_type": op.JobType, "payload": payloadMap})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "encode idempotency fingerprint failed"})
+		return
+	}
 
 	db := s.requestDB(r)
+	if handled, err := writeIdempotentEndpointResult(w, r, db, mspID, idempotencyKey, requestHash); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "idempotency lookup failed"})
+		return
+	} else if handled {
+		return
+	}
 	if _, err := db.ExecContext(r.Context(), `
 		INSERT INTO jobs (id, msp_id, client_id, site_id, created_by, type, status, priority,
-		                  payload, max_retries, max_devices, expires_at, correlation_id)
-		VALUES ($1, $2, $3, $4, $5, $6, 'queued', 10, $7, 1, 1, $8, $9)
+		                  payload, max_retries, max_devices, expires_at, correlation_id,
+		                  idempotency_key, request_hash, scheduled_for)
+		VALUES ($1, $2, $3, $4, $5, $6, 'queued', 10, $7, 1, 1, $8, $9, NULLIF($10,''), $11, $12)
 	`, jobID, mspID, clientID, siteID, "api:"+rawReq.Action, op.JobType,
-		payload, expiresAt, correlationID); err != nil {
+		payload, expiresAt, correlationID, idempotencyKey, requestHash, availableAt); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create job failed"})
 		return
 	}
@@ -481,6 +542,8 @@ func (s *APIServer) handleBulkDeviceAction(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no valid device ids supplied"})
 		return
 	}
+	sort.Strings(uniqueIDs)
+	req.DeviceIDs = append([]string(nil), uniqueIDs...)
 
 	// All targets must resolve inside the authorized MSP scope; mixed or missing sets fail atomically.
 	for _, deviceID := range uniqueIDs {
@@ -500,13 +563,30 @@ func (s *APIServer) handleBulkDeviceAction(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "encode job failed"})
 		return
 	}
+	idempotencyKey, err := validateIdempotencyKey(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	requestHash, err := endpointRequestHash(map[string]interface{}{"device_ids": uniqueIDs, "job_type": op.JobType, "payload": req})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "encode idempotency fingerprint failed"})
+		return
+	}
 	db := s.requestDB(r)
+	if handled, err := writeIdempotentEndpointResult(w, r, db, mspID, idempotencyKey, requestHash); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "idempotency lookup failed"})
+		return
+	} else if handled {
+		return
+	}
 	if _, err := db.ExecContext(r.Context(), `
 		INSERT INTO jobs (id, msp_id, created_by, type, status, priority,
-		                  payload, max_retries, max_devices, expires_at, correlation_id)
-		VALUES ($1, $2, $3, $4, 'queued', 10, $5, 1, $6, $7, $8)
+		                  payload, max_retries, max_devices, expires_at, correlation_id,
+		                  idempotency_key, request_hash, scheduled_for)
+		VALUES ($1, $2, $3, $4, 'queued', 10, $5, 1, $6, $7, $8, NULLIF($9,''), $10, $11)
 	`, jobID, mspID, "api:bulk:"+req.Action, op.JobType,
-		payload, len(uniqueIDs), expires, correlationID); err != nil {
+		payload, len(uniqueIDs), expires, correlationID, idempotencyKey, requestHash, availableAt); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create job failed"})
 		return
 	}
