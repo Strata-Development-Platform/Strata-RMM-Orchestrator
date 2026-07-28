@@ -17,11 +17,12 @@ const (
 	ModeProduction  RuntimeMode = "production"
 )
 
+func (m RuntimeMode) String() string {
+	return string(m)
+}
+
 func ParseRuntimeMode(s string) (RuntimeMode, error) {
 	cleaned := strings.TrimSpace(s)
-	if cleaned == "" {
-		return ModeDevelopment, nil
-	}
 	switch strings.ToLower(cleaned) {
 	case "development", "dev":
 		return ModeDevelopment, nil
@@ -29,72 +30,11 @@ func ParseRuntimeMode(s string) (RuntimeMode, error) {
 		return ModeTest, nil
 	case "production", "prod":
 		return ModeProduction, nil
+	case "":
+		return ModeDevelopment, nil
 	default:
-		return "", fmt.Errorf("unknown runtime mode %q: valid values are development, test, production", cleaned)
+		return "", fmt.Errorf("unknown runtime mode %q: valid values are development, test, production", s)
 	}
-}
-
-type TypedValue struct {
-	Present   bool
-	Value     interface{}
-	Error     error
-	FieldName string
-}
-
-func parseBool(raw string) (bool, error) {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "true", "t", "yes", "1":
-		return true, nil
-	case "false", "f", "no", "0", "":
-		return false, nil
-	default:
-		return false, fmt.Errorf("invalid boolean value %q", raw)
-	}
-}
-
-func parseInt(raw string, bitSize int) (int64, error) {
-	cleaned := strings.TrimSpace(raw)
-	if cleaned == "" {
-		return 0, fmt.Errorf("empty value")
-	}
-	v, err := strconv.ParseInt(cleaned, 10, bitSize)
-	if err != nil {
-		return 0, fmt.Errorf("invalid integer %q: %w", cleaned, err)
-	}
-	return v, nil
-}
-
-func parseDuration(raw string) (time.Duration, error) {
-	cleaned := strings.TrimSpace(raw)
-	if cleaned == "" {
-		return 0, fmt.Errorf("empty duration")
-	}
-	d, err := time.ParseDuration(cleaned)
-	if err != nil {
-		return 0, fmt.Errorf("invalid duration %q: %w", cleaned, err)
-	}
-	if d < 0 {
-		return 0, fmt.Errorf("negative duration %q", cleaned)
-	}
-	return d, nil
-}
-
-func parseURL(raw string) (*url.URL, error) {
-	cleaned := strings.TrimSpace(raw)
-	if cleaned == "" {
-		return nil, fmt.Errorf("empty URL")
-	}
-	u, err := url.Parse(cleaned)
-	if err != nil {
-		return nil, fmt.Errorf("invalid URL %q: %w", cleaned, err)
-	}
-	if u.Scheme == "" {
-		return nil, fmt.Errorf("URL missing scheme: %q", cleaned)
-	}
-	if u.Host == "" {
-		return nil, fmt.Errorf("URL missing host: %q", cleaned)
-	}
-	return u, nil
 }
 
 type NATSConfig struct {
@@ -108,73 +48,11 @@ type NATSConfig struct {
 	MaxReconnects   int
 }
 
-func (n *NATSConfig) Validate(mode RuntimeMode) error {
-	if n.URL == "" {
-		return fmt.Errorf("NATS.URL is required")
-	}
-	u, err := parseURL(n.URL)
-	if err != nil {
-		return fmt.Errorf("NATS.URL: %w", err)
-	}
-	if u.Scheme != "nats" && u.Scheme != "nats+tls" && u.Scheme != "tls" {
-		return fmt.Errorf("NATS.URL: unsupported scheme %q (use nats, nats+tls, or tls)", u.Scheme)
-	}
-	if mode == ModeProduction && n.TLSEnabled && (n.TLSCertFile == "" || n.TLSKeyFile == "") {
-		return fmt.Errorf("NATS.TLS: cert and key files required when TLS is enabled")
-	}
-	if n.ReconnectWait <= 0 {
-		return fmt.Errorf("NATS.ReconnectWait must be positive")
-	}
-	return nil
-}
-
 type DatabaseConfig struct {
 	DSN             string
 	MaxOpenConns    int
 	MaxIdleConns    int
 	ConnMaxLifetime time.Duration
-}
-
-func (d *DatabaseConfig) Validate(mode RuntimeMode) error {
-	if d.DSN == "" {
-		return fmt.Errorf("DB.DSN is required")
-	}
-	u, err := url.Parse(d.DSN)
-	if err != nil {
-		return fmt.Errorf("DB.DSN: %w", err)
-	}
-	if u.Host == "" {
-		return fmt.Errorf("DB.DSN: missing host")
-	}
-	dbName := strings.TrimPrefix(u.Path, "/")
-	if dbName == "" {
-		return fmt.Errorf("DB.DSN: missing database name")
-	}
-	if mode == ModeProduction {
-		q := u.Query()
-		if q.Get("sslmode") == "disable" {
-			return fmt.Errorf("DB.DSN: sslmode=disable is not allowed in production without explicit policy override")
-		}
-		if u.User != nil {
-			pwd, _ := u.User.Password()
-			if pwd == "password" || pwd == "postgres" || pwd == "strata" {
-				return fmt.Errorf("DB.DSN: contains a known default password")
-			}
-		}
-	}
-	if d.MaxOpenConns <= 0 {
-		return fmt.Errorf("DB.MaxOpenConns must be positive")
-	}
-	if d.MaxIdleConns < 0 {
-		return fmt.Errorf("DB.MaxIdleConns must be non-negative")
-	}
-	if d.MaxIdleConns > d.MaxOpenConns {
-		return fmt.Errorf("DB.MaxIdleConns (%d) must not exceed DB.MaxOpenConns (%d)", d.MaxIdleConns, d.MaxOpenConns)
-	}
-	if d.ConnMaxLifetime <= 0 {
-		return fmt.Errorf("DB.ConnMaxLifetime must be positive")
-	}
-	return nil
 }
 
 type StorageConfig struct {
@@ -188,53 +66,11 @@ type StorageConfig struct {
 	KMSKeyID  string
 }
 
-func (s *StorageConfig) Validate(mode RuntimeMode) error {
-	if s.Backend == "" || s.Backend == "none" {
-		return nil
-	}
-	if s.Bucket == "" {
-		return fmt.Errorf("Storage.Bucket is required for backend %q", s.Backend)
-	}
-	if mode == ModeProduction {
-		switch s.Backend {
-		case "minio":
-			if s.Endpoint == "" {
-				return fmt.Errorf("Storage.Endpoint is required for MinIO backend")
-			}
-			if s.AccessKey == "" || s.SecretKey == "" {
-				return fmt.Errorf("storage: access key and secret key required for MinIO backend")
-			}
-		case "s3":
-			if s.AccessKey == "" || s.SecretKey == "" {
-				return fmt.Errorf("storage: access key and secret key required for S3 backend")
-			}
-		case "local":
-			return fmt.Errorf("storage: local backend is not allowed in production")
-		}
-	}
-	return nil
-}
-
 type JWTConfig struct {
 	Secret        string
 	Issuer        string
 	Audience      string
 	TokenDuration time.Duration
-}
-
-func (j *JWTConfig) Validate(mode RuntimeMode) error {
-	if j.Secret == "" {
-		return fmt.Errorf("JWT.Secret is required")
-	}
-	if mode == ModeProduction {
-		if len(j.Secret) < 32 {
-			return fmt.Errorf("JWT.Secret must be at least 32 characters")
-		}
-		if j.Secret == "strata-rmm-dev-secret" || strings.HasPrefix(j.Secret, "dev-") || strings.HasPrefix(j.Secret, "test-") {
-			return fmt.Errorf("JWT.Secret contains a development placeholder")
-		}
-	}
-	return nil
 }
 
 type HTTPConfig struct {
@@ -249,52 +85,10 @@ type HTTPConfig struct {
 	MaxBodySizeBytes int64
 }
 
-func (h *HTTPConfig) Validate(mode RuntimeMode) error {
-	if h.APIAddr == "" {
-		return fmt.Errorf("HTTP.APIAddr is required")
-	}
-	if mode == ModeProduction {
-		if h.PublicURL != "" {
-			u, err := parseURL(h.PublicURL)
-			if err != nil {
-				return fmt.Errorf("HTTP.PublicURL: %w", err)
-			}
-			if u.Scheme != "https" {
-				return fmt.Errorf("HTTP.PublicURL must use https scheme")
-			}
-			if u.Host == "" {
-				return fmt.Errorf("HTTP.PublicURL missing host")
-			}
-		}
-		for _, origin := range h.CORSOrigins {
-			if origin == "*" {
-				return fmt.Errorf("HTTP.CORSOrigins: wildcard origin not allowed in production")
-			}
-		}
-	}
-	if h.ReadTimeout <= 0 {
-		return fmt.Errorf("HTTP.ReadTimeout must be positive")
-	}
-	if h.WriteTimeout <= 0 {
-		return fmt.Errorf("HTTP.WriteTimeout must be positive")
-	}
-	if h.MaxBodySizeBytes <= 0 {
-		return fmt.Errorf("HTTP.MaxBodySizeBytes must be positive")
-	}
-	return nil
-}
-
 type SeedingConfig struct {
-	SeedDev        bool
-	DevAdminEmail  string
-	DevAdminPwd    string
-}
-
-func (s *SeedingConfig) Validate(mode RuntimeMode) error {
-	if mode == ModeProduction && s.SeedDev {
-		return fmt.Errorf("Seeding.SeedDev must not be enabled in production")
-	}
-	return nil
+	SeedDev       bool
+	DevAdminEmail string
+	DevAdminPwd   string
 }
 
 type OrchestratorConfig struct {
@@ -309,26 +103,128 @@ type OrchestratorConfig struct {
 
 func (c *OrchestratorConfig) Validate() error {
 	var errs []string
-	if err := c.NATS.Validate(c.RuntimeMode); err != nil {
-		errs = append(errs, err.Error())
+	check := func(label string, err error) {
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", label, err))
+		}
 	}
-	if err := c.DB.Validate(c.RuntimeMode); err != nil {
-		errs = append(errs, err.Error())
+
+	if c.RuntimeMode == "" {
+		errs = append(errs, "RuntimeMode: not set")
 	}
-	if err := c.Storage.Validate(c.RuntimeMode); err != nil {
-		errs = append(errs, err.Error())
+	if c.JWT.Secret == "" {
+		errs = append(errs, "JWT.Secret: required")
 	}
-	if err := c.JWT.Validate(c.RuntimeMode); err != nil {
-		errs = append(errs, err.Error())
+	if c.DB.DSN == "" {
+		errs = append(errs, "DB.DSN: required")
+	} else {
+		check("DB.DSN", validateDSN(c.DB.DSN))
+		if c.DB.MaxOpenConns <= 0 {
+			errs = append(errs, "DB.MaxOpenConns: must be positive")
+		}
+		if c.DB.MaxIdleConns < 0 {
+			errs = append(errs, "DB.MaxIdleConns: must be non-negative")
+		}
+		if c.DB.MaxIdleConns > c.DB.MaxOpenConns {
+			errs = append(errs, fmt.Sprintf("DB.MaxIdleConns (%d) > DB.MaxOpenConns (%d)", c.DB.MaxIdleConns, c.DB.MaxOpenConns))
+		}
+		if c.DB.ConnMaxLifetime <= 0 {
+			errs = append(errs, "DB.ConnMaxLifetime: must be positive")
+		}
 	}
-	if err := c.HTTP.Validate(c.RuntimeMode); err != nil {
-		errs = append(errs, err.Error())
+	if c.NATS.URL == "" {
+		errs = append(errs, "NATS.URL: required")
+	} else {
+		check("NATS.URL", validateURL(c.NATS.URL, []string{"nats", "nats+tls", "tls"}))
+		if c.NATS.ReconnectWait <= 0 {
+			errs = append(errs, "NATS.ReconnectWait: must be positive")
+		}
 	}
-	if err := c.Seeding.Validate(c.RuntimeMode); err != nil {
-		errs = append(errs, err.Error())
+	if c.HTTP.APIAddr == "" {
+		errs = append(errs, "HTTP.APIAddr: required")
 	}
+	if c.HTTP.ReadTimeout <= 0 {
+		errs = append(errs, "HTTP.ReadTimeout: must be positive")
+	}
+	if c.HTTP.WriteTimeout <= 0 {
+		errs = append(errs, "HTTP.WriteTimeout: must be positive")
+	}
+	if c.HTTP.MaxBodySizeBytes <= 0 {
+		errs = append(errs, "HTTP.MaxBodySizeBytes: must be positive")
+	}
+
+	check("Storage", c.Storage.validate())
+	check("JWT.Secret", c.JWT.validate())
+	check("Seeding", c.Seeding.validate(c.RuntimeMode))
+
 	if len(errs) > 0 {
 		return fmt.Errorf("configuration validation failed:\n  - %s", strings.Join(errs, "\n  - "))
+	}
+	return nil
+}
+
+func validateURL(raw string, schemes []string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+	if u.Scheme == "" {
+		return fmt.Errorf("missing scheme")
+	}
+	if u.Host == "" {
+		return fmt.Errorf("missing host")
+	}
+	allowed := false
+	for _, s := range schemes {
+		if u.Scheme == s {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		return fmt.Errorf("unsupported scheme %q (valid: %s)", u.Scheme, strings.Join(schemes, ", "))
+	}
+	return nil
+}
+
+func validateDSN(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("invalid DSN: %w", err)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("missing host")
+	}
+	dbName := strings.TrimPrefix(u.Path, "/")
+	if dbName == "" {
+		return fmt.Errorf("missing database name")
+	}
+	return nil
+}
+
+func (s *StorageConfig) validate() error {
+	if s.Backend == "" || s.Backend == "none" {
+		return nil
+	}
+	if s.Bucket == "" {
+		return fmt.Errorf("bucket required for backend %q", s.Backend)
+	}
+	return nil
+}
+
+func (j *JWTConfig) validate() error {
+	if j.Secret == "" {
+		return nil
+	}
+	if len(j.Secret) < 32 {
+		return fmt.Errorf("must be at least 32 characters")
+	}
+	return nil
+}
+
+func (s *SeedingConfig) validate(mode RuntimeMode) error {
+	if mode == ModeProduction && s.SeedDev {
+		return fmt.Errorf("SeedDev must not be enabled in production")
 	}
 	return nil
 }
@@ -337,17 +233,61 @@ func (c *OrchestratorConfig) ProductionValidate() error {
 	if c.RuntimeMode != ModeProduction {
 		return nil
 	}
-	return c.Validate()
-}
+	var errs []string
 
-func envOr(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
+	if c.HTTP.PublicURL == "" {
+		errs = append(errs, "HTTP.PublicURL: required in production")
+	} else {
+		u, err := url.Parse(c.HTTP.PublicURL)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("HTTP.PublicURL: invalid: %v", err))
+		} else {
+			if u.Scheme != "https" {
+				errs = append(errs, "HTTP.PublicURL: must use https")
+			}
+			if u.User != nil {
+				errs = append(errs, "HTTP.PublicURL: must not contain credentials")
+			}
+			if u.Host == "" {
+				errs = append(errs, "HTTP.PublicURL: missing host")
+			}
+		}
 	}
-	return def
+	for _, origin := range c.HTTP.CORSOrigins {
+		if origin == "*" {
+			errs = append(errs, "HTTP.CORSOrigins: wildcard not allowed in production")
+		}
+	}
+
+	if c.NATS.TLSEnabled {
+		if c.NATS.TLSCertFile == "" || c.NATS.TLSKeyFile == "" {
+			errs = append(errs, "NATS: TLS enabled but cert or key file missing")
+		}
+	}
+	if strings.Contains(c.DB.DSN, "sslmode=disable") {
+		errs = append(errs, "DB.DSN: sslmode=disable not allowed in production")
+	}
+	u, _ := url.Parse(c.DB.DSN)
+	if u != nil && u.User != nil {
+		if pwd, _ := u.User.Password(); pwd == "password" || pwd == "postgres" || pwd == "strata" {
+			errs = append(errs, "DB.DSN: contains a known default password")
+		}
+	}
+
+	if c.JWT.Secret != "" && (strings.HasPrefix(c.JWT.Secret, "dev-") || strings.HasPrefix(c.JWT.Secret, "test-")) {
+		errs = append(errs, "JWT.Secret: contains a development placeholder (dev- or test- prefix)")
+	}
+	if err := c.Seeding.validate(c.RuntimeMode); err != nil {
+		errs = append(errs, fmt.Sprintf("Seeding: %v", err))
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("production configuration rejected:\n  - %s", strings.Join(errs, "\n  - "))
+	}
+	return nil
 }
 
-func LoadOrchestratorConfig() *OrchestratorConfig {
+func LoadOrchestratorConfig() (*OrchestratorConfig, error) {
 	cfg := &OrchestratorConfig{
 		HTTP: HTTPConfig{
 			APIAddr:          ":8080",
@@ -362,7 +302,7 @@ func LoadOrchestratorConfig() *OrchestratorConfig {
 			ConnMaxLifetime: 5 * time.Minute,
 		},
 		NATS: NATSConfig{
-			URL:           envOr("NATS_URL", "nats://localhost:4222"),
+			URL:           "nats://localhost:4222",
 			ReconnectWait: 5 * time.Second,
 			MaxReconnects: -1,
 		},
@@ -373,100 +313,166 @@ func LoadOrchestratorConfig() *OrchestratorConfig {
 		},
 	}
 
-	// Runtime mode
 	if modeRaw := os.Getenv("STRATA_RUNTIME_MODE"); modeRaw != "" {
-		if mode, err := ParseRuntimeMode(modeRaw); err == nil {
-			cfg.RuntimeMode = mode
+		mode, err := ParseRuntimeMode(modeRaw)
+		if err != nil {
+			return nil, fmt.Errorf("STRATA_RUNTIME_MODE: %w", err)
 		}
-	}
-	if cfg.RuntimeMode == "" {
+		cfg.RuntimeMode = mode
+	} else {
 		cfg.RuntimeMode = ModeDevelopment
 	}
 
-	// Database DSN — multiple aliases
-	cfg.DB.DSN = envOr("TIMESCALE_DSN", envOr("STRATA_DB_DSN", envOr("DATABASE_URL", "postgres://localhost:5432/strata_rmm?sslmode=disable")))
-
-	if pi := envInt("DB_MAX_OPEN_CONNS", 0); pi > 0 {
-		cfg.DB.MaxOpenConns = pi
-	}
-	if pi := envInt("DB_MAX_IDLE_CONNS", 0); pi >= 0 {
-		cfg.DB.MaxIdleConns = pi
-	}
-	if d := envDuration("DB_CONN_MAX_LIFETIME"); d > 0 {
-		cfg.DB.ConnMaxLifetime = d
-	}
-
-	// NATS
-	if v := envOr("NATS_URL", ""); v != "" {
-		cfg.NATS.URL = v
-	}
-	cfg.NATS.Token = envOr("NATS_TOKEN", "")
+	cfg.DB.DSN = resolveDSN()
+	cfg.NATS.URL = envStr("NATS_URL", cfg.NATS.URL)
+	cfg.NATS.Token = os.Getenv("NATS_TOKEN")
 	cfg.NATS.TLSEnabled = envBool("NATS_TLS_ENABLED")
-	cfg.NATS.TLSCertFile = envOr("NATS_TLS_CERT", "")
-	cfg.NATS.TLSKeyFile = envOr("NATS_TLS_KEY", "")
-	cfg.NATS.TLSCAFile = envOr("NATS_TLS_CA", "")
-	if d := envDuration("NATS_RECONNECT_WAIT"); d > 0 {
-		cfg.NATS.ReconnectWait = d
-	}
-	if pi := envInt("NATS_MAX_RECONNECTS", 0); pi != 0 {
-		cfg.NATS.MaxReconnects = pi
+	cfg.NATS.TLSCertFile = envStr("NATS_TLS_CERT", "")
+	cfg.NATS.TLSKeyFile = envStr("NATS_TLS_KEY", "")
+	cfg.NATS.TLSCAFile = envStr("NATS_TLS_CA", "")
+	cfg.NATS.ReconnectWait = envDuration("NATS_RECONNECT_WAIT", cfg.NATS.ReconnectWait)
+	if v := envInt("NATS_MAX_RECONNECTS"); v != nil {
+		cfg.NATS.MaxReconnects = *v
 	}
 
-	// Storage
-	cfg.Storage.Backend = envOr("STORAGE_BACKEND", "local")
-	cfg.Storage.Bucket = envOr("STORAGE_BUCKET", "strata-recordings")
-	cfg.Storage.Region = envOr("STORAGE_REGION", "")
-	cfg.Storage.Endpoint = envOr("STORAGE_ENDPOINT", "")
-	cfg.Storage.AccessKey = envOr("STORAGE_ACCESS_KEY", "")
-	cfg.Storage.SecretKey = envOr("STORAGE_SECRET_KEY", "")
+	cfg.DB.MaxOpenConns = envIntDef("DB_MAX_OPEN_CONNS", cfg.DB.MaxOpenConns)
+	cfg.DB.MaxIdleConns = envIntDef("DB_MAX_IDLE_CONNS", cfg.DB.MaxIdleConns)
+	cfg.DB.ConnMaxLifetime = envDuration("DB_CONN_MAX_LIFETIME", cfg.DB.ConnMaxLifetime)
+
+	cfg.Storage.Backend = envStr("STORAGE_BACKEND", "local")
+	cfg.Storage.Bucket = envStr("STORAGE_BUCKET", "strata-recordings")
+	cfg.Storage.Region = os.Getenv("STORAGE_REGION")
+	cfg.Storage.Endpoint = os.Getenv("STORAGE_ENDPOINT")
+	cfg.Storage.AccessKey = os.Getenv("STORAGE_ACCESS_KEY")
+	cfg.Storage.SecretKey = os.Getenv("STORAGE_SECRET_KEY")
 	cfg.Storage.UseSSL = envBool("STORAGE_USE_SSL")
-	cfg.Storage.KMSKeyID = envOr("STORAGE_KMS_KEY_ID", "")
+	cfg.Storage.KMSKeyID = os.Getenv("STORAGE_KMS_KEY_ID")
 
-	// JWT
-	cfg.JWT.Secret = envOr("JWT_SECRET", "")
-	if v := envOr("JWT_ISSUER", ""); v != "" {
+	cfg.JWT.Secret = os.Getenv("JWT_SECRET")
+	if v := os.Getenv("JWT_ISSUER"); v != "" {
 		cfg.JWT.Issuer = v
 	}
-	if v := envOr("JWT_AUDIENCE", ""); v != "" {
+	if v := os.Getenv("JWT_AUDIENCE"); v != "" {
 		cfg.JWT.Audience = v
 	}
-	if d := envDuration("JWT_TOKEN_DURATION"); d > 0 {
-		cfg.JWT.TokenDuration = d
-	}
+	cfg.JWT.TokenDuration = envDuration("JWT_TOKEN_DURATION", cfg.JWT.TokenDuration)
 
-	// HTTP
-	if v := envOr("STRATA_API_ADDR", envOr("API_ADDR", "")); v != "" {
+	if v := envStr("STRATA_API_ADDR", ""); v != "" {
+		cfg.HTTP.APIAddr = v
+	} else if v := os.Getenv("API_ADDR"); v != "" {
 		cfg.HTTP.APIAddr = v
 	}
-	if v := envOr("STRATA_TUNNEL_ADDR", envOr("TUNNEL_ADDR", "")); v != "" {
+	if v := envStr("STRATA_TUNNEL_ADDR", ""); v != "" {
+		cfg.HTTP.TunnelAddr = v
+	} else if v := os.Getenv("TUNNEL_ADDR"); v != "" {
 		cfg.HTTP.TunnelAddr = v
 	}
-	cfg.HTTP.PublicURL = envOr("STRATA_PUBLIC_URL", "")
-	if corsStr := envOr("CORS_ORIGINS", ""); corsStr != "" {
-		cfg.HTTP.CORSOrigins = strings.Split(corsStr, ",")
+	cfg.HTTP.PublicURL = os.Getenv("STRATA_PUBLIC_URL")
+	if corsStr := os.Getenv("CORS_ORIGINS"); corsStr != "" {
+		cfg.HTTP.CORSOrigins = splitTrim(corsStr, ",")
 	}
-	if proxyStr := envOr("TRUSTED_PROXIES", ""); proxyStr != "" {
-		cfg.HTTP.TrustedProxies = strings.Split(proxyStr, ",")
+	if proxyStr := os.Getenv("TRUSTED_PROXIES"); proxyStr != "" {
+		cfg.HTTP.TrustedProxies = splitTrim(proxyStr, ",")
 	}
-	if d := envDuration("HTTP_READ_TIMEOUT"); d > 0 {
-		cfg.HTTP.ReadTimeout = d
-	}
-	if d := envDuration("HTTP_WRITE_TIMEOUT"); d > 0 {
-		cfg.HTTP.WriteTimeout = d
-	}
-	if d := envDuration("HTTP_IDLE_TIMEOUT"); d > 0 {
-		cfg.HTTP.IdleTimeout = d
-	}
-	if pi := envInt("HTTP_MAX_BODY_SIZE", 0); pi > 0 {
-		cfg.HTTP.MaxBodySizeBytes = int64(pi)
+	cfg.HTTP.ReadTimeout = envDuration("HTTP_READ_TIMEOUT", cfg.HTTP.ReadTimeout)
+	cfg.HTTP.WriteTimeout = envDuration("HTTP_WRITE_TIMEOUT", cfg.HTTP.WriteTimeout)
+	cfg.HTTP.IdleTimeout = envDuration("HTTP_IDLE_TIMEOUT", cfg.HTTP.IdleTimeout)
+	if v := envInt64("HTTP_MAX_BODY_SIZE", cfg.HTTP.MaxBodySizeBytes); v != nil {
+		cfg.HTTP.MaxBodySizeBytes = *v
 	}
 
-	// Seeding
 	cfg.Seeding.SeedDev = envBool("STRATA_SEED_DEV")
-	cfg.Seeding.DevAdminEmail = envOr("STRATA_DEV_ADMIN_EMAIL", "")
-	cfg.Seeding.DevAdminPwd = envOr("STRATA_DEV_ADMIN_PASSWORD_HASH", "")
+	cfg.Seeding.DevAdminEmail = os.Getenv("STRATA_DEV_ADMIN_EMAIL")
+	cfg.Seeding.DevAdminPwd = os.Getenv("STRATA_DEV_ADMIN_PASSWORD_HASH")
 
-	return cfg
+	return cfg, nil
+}
+
+func resolveDSN() string {
+	if v := os.Getenv("TIMESCALE_DSN"); v != "" {
+		return v
+	}
+	if v := os.Getenv("STRATA_DB_DSN"); v != "" {
+		return v
+	}
+	if v := os.Getenv("DATABASE_URL"); v != "" {
+		return v
+	}
+	return "postgres://localhost:5432/strata_rmm?sslmode=disable"
+}
+
+func envStr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
+func envBool(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "true", "t", "yes", "1":
+		return true
+	default:
+		return false
+	}
+}
+
+func envInt(key string) *int {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return nil
+	}
+	return &n
+}
+
+func envIntDef(key string, def int) int {
+	p := envInt(key)
+	if p == nil {
+		return def
+	}
+	return *p
+}
+
+func envInt64(key string, def int64) *int64 {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return nil
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return nil
+	}
+	return &n
+}
+
+func envDuration(key string, def time.Duration) time.Duration {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return def
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return def
+	}
+	if d <= 0 {
+		return def
+	}
+	return d
+}
+
+func splitTrim(s, sep string) []string {
+	var out []string
+	for _, p := range strings.Split(s, sep) {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func (c *OrchestratorConfig) RedactedSummary() map[string]interface{} {
@@ -484,7 +490,6 @@ func (c *OrchestratorConfig) RedactedSummary() map[string]interface{} {
 		"public_url":      c.HTTP.PublicURL,
 		"cors_origins":    c.HTTP.CORSOrigins,
 		"jwt_configured":  c.JWT.Secret != "",
-		"jwt_secret_len":  len(c.JWT.Secret),
 		"seed_dev":        c.Seeding.SeedDev,
 	}
 }
@@ -517,37 +522,4 @@ func redactDSN(dsn string) string {
 	}
 	u.RawQuery = q.Encode()
 	return u.String()
-}
-
-func envBool(key string) bool {
-	switch strings.ToLower(os.Getenv(key)) {
-	case "true", "t", "yes", "1":
-		return true
-	default:
-		return false
-	}
-}
-
-func envInt(key string, def int) int {
-	v := os.Getenv(key)
-	if v == "" {
-		return def
-	}
-	n, err := strconv.Atoi(strings.TrimSpace(v))
-	if err != nil {
-		return def
-	}
-	return n
-}
-
-func envDuration(key string) time.Duration {
-	v := os.Getenv(key)
-	if v == "" {
-		return 0
-	}
-	d, err := time.ParseDuration(strings.TrimSpace(v))
-	if err != nil {
-		return 0
-	}
-	return d
 }

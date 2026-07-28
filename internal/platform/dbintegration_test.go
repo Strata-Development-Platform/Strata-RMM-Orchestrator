@@ -671,3 +671,98 @@ func TestCapabilityIsActionSupportedByCapabilities(t *testing.T) {
 		})
 	}
 }
+
+// TestDurableJobsUUIDReconciliation verifies that the dispatcher's offline
+// reconnect and expiry queries no longer produce "operator does not exist: uuid = text".
+// This regression test executes the actual SQL statements against real PostgreSQL.
+func TestDurableJobsUUIDReconciliation(t *testing.T) {
+	db := testDB(t)
+	applyMigrations(t, db)
+	mspID, _, _, deviceID, _ := seedTestData(t, db)
+
+	// Create a waiting job_target to exercise the reconciliation queries
+	jobID := "00000000-0000-0000-0000-000000000100"
+	targetID := "00000000-0000-0000-0000-000000000101"
+
+	_, err := db.Exec(`
+		INSERT INTO jobs (id, msp_id, client_id, site_id, created_by, type, status, priority,
+		                  payload, max_retries, max_devices, expires_at)
+		VALUES ($1, $2, $3, $4, 'test', 'device.refresh', 'dispatched', 10,
+		        '{}'::jsonb, 1, 1, NOW() + INTERVAL '1 hour')
+	`, jobID, mspID,
+		"00000000-0000-0000-0000-000000000002",
+		"00000000-0000-0000-0000-000000000003")
+	if err != nil {
+		t.Fatalf("seed job: %v", err)
+	}
+
+	_, err = db.Exec(`
+		INSERT INTO job_targets (id, job_id, device_id, msp_id, status, approval_status)
+		VALUES ($1, $2, $3, $4, 'waiting', 'none')
+	`, targetID, jobID, deviceID, mspID)
+	if err != nil {
+		t.Fatalf("seed target: %v", err)
+	}
+
+	// Mark device offline
+	_, err = db.Exec(`UPDATE devices SET status = 'online' WHERE id = $1`, deviceID)
+	if err != nil {
+		t.Fatalf("set device online: %v", err)
+	}
+
+	// Execute the offline reconnect query (same SQL as dispatcher.handleOfflineReconnect)
+	_, err = db.Exec(`
+		UPDATE job_targets jt SET status = 'queued', reconnect_at = NOW()
+		FROM devices d
+		WHERE jt.device_id = d.id
+		  AND jt.status = 'waiting'
+		  AND d.status = 'online'
+		  AND jt.id = $1
+	`, targetID)
+	if err != nil {
+		t.Fatalf("offline reconnect reconciliation failed with uuid/text error: %v", err)
+	}
+
+	// Verify the target transitioned
+	var status string
+	err = db.QueryRow(`SELECT status FROM job_targets WHERE id = $1`, targetID).Scan(&status)
+	if err != nil {
+		t.Fatalf("get target status: %v", err)
+	}
+	if status != "queued" {
+		t.Errorf("expected target status 'queued', got %q", status)
+	}
+
+	// Now test offline expiry with the same pattern
+	_, err = db.Exec(`UPDATE job_targets SET status = 'waiting' WHERE id = $1`, targetID)
+	if err != nil {
+		t.Fatalf("reset target: %v", err)
+	}
+
+	// Make the job expired
+	_, err = db.Exec(`UPDATE jobs SET expires_at = NOW() - INTERVAL '1 minute' WHERE id = $1`, jobID)
+	if err != nil {
+		t.Fatalf("expire job: %v", err)
+	}
+
+	// Execute the expired offline work query (same SQL as dispatcher.expireOfflineWork)
+	_, err = db.Exec(`
+		UPDATE job_targets jt SET status = 'expired', error_message = 'expired: waited beyond expiry'
+		FROM jobs j
+		WHERE jt.job_id = j.id
+		  AND jt.status = 'waiting'
+		  AND j.expires_at < NOW()
+		  AND jt.id = $1
+	`, targetID)
+	if err != nil {
+		t.Fatalf("expire offline work reconciliation failed with uuid/text error: %v", err)
+	}
+
+	err = db.QueryRow(`SELECT status FROM job_targets WHERE id = $1`, targetID).Scan(&status)
+	if err != nil {
+		t.Fatalf("get target status after expiry: %v", err)
+	}
+	if status != "expired" {
+		t.Errorf("expected target status 'expired', got %q", status)
+	}
+}

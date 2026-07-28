@@ -58,6 +58,18 @@ func NewClient(ctx context.Context, dsn string) (*Client, error) {
 	return &Client{db: db}, nil
 }
 
+func (c *Client) SetPoolConfig(maxOpen, maxIdle int, maxLifetime time.Duration) {
+	if maxOpen > 0 {
+		c.db.SetMaxOpenConns(maxOpen)
+	}
+	if maxIdle >= 0 {
+		c.db.SetMaxIdleConns(maxIdle)
+	}
+	if maxLifetime > 0 {
+		c.db.SetConnMaxLifetime(maxLifetime)
+	}
+}
+
 func (c *Client) DB() *sql.DB {
 	return c.db
 }

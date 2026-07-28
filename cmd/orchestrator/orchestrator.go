@@ -42,10 +42,9 @@ func NewCommand(ctx context.Context, version string, logger *zap.Logger) *cobra.
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Stage 1: Load and validate configuration
 			logger.Info("loading configuration")
-			cfg := config.LoadOrchestratorConfig()
-
-			if cfg.RuntimeMode == "" {
-				cfg.RuntimeMode = config.ModeDevelopment
+			cfg, err := config.LoadOrchestratorConfig()
+			if err != nil {
+				return fmt.Errorf("loading configuration: %w", err)
 			}
 			logger.Info("runtime mode", zap.String("mode", string(cfg.RuntimeMode)))
 
@@ -119,6 +118,7 @@ func NewCommand(ctx context.Context, version string, logger *zap.Logger) *cobra.
 			if err != nil {
 				return fmt.Errorf("connecting to database: %w", err)
 			}
+			tsdb.SetPoolConfig(cfg.DB.MaxOpenConns, cfg.DB.MaxIdleConns, cfg.DB.ConnMaxLifetime)
 			defer tsdb.Close()
 			logger.Info("connected to database")
 
@@ -190,6 +190,10 @@ func NewCommand(ctx context.Context, version string, logger *zap.Logger) *cobra.
 			if err != nil {
 				return fmt.Errorf("creating API server: %w", err)
 			}
+			api.WithHTTPConfig(
+				cfg.HTTP.ReadTimeout, cfg.HTTP.WriteTimeout, cfg.HTTP.IdleTimeout,
+				cfg.HTTP.MaxBodySizeBytes, cfg.HTTP.CORSOrigins, cfg.HTTP.TrustedProxies,
+			)
 			api.WithReleaseServer(releaseServer).
 				WithAlertEngine(alertEngine).
 				WithVulnEngine(vulnEngine).

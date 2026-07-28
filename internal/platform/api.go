@@ -45,6 +45,13 @@ type APIServer struct {
 	mu        sync.RWMutex
 	ready     bool
 
+	httpReadTimeout  time.Duration
+	httpWriteTimeout time.Duration
+	httpIdleTimeout  time.Duration
+	httpBodyLimit    int64
+	corsOrigins      []string
+	trustedProxies   []string
+
 	// allowClaimPrincipal is restricted to isolated middleware unit tests. Production
 	// servers always resolve users, memberships, and agents from PostgreSQL.
 	allowClaimPrincipal bool
@@ -67,6 +74,16 @@ func NewAPIServer(addr string, db *timescale.Client, nc *nats.Conn, logger *zap.
 		s.keyStore = encrypt.NewKeyStore(db.DB())
 	}
 	return s, nil
+}
+
+func (s *APIServer) WithHTTPConfig(readTimeout, writeTimeout, idleTimeout time.Duration, bodyLimit int64, corsOrigins, trustedProxies []string) *APIServer {
+	s.httpReadTimeout = readTimeout
+	s.httpWriteTimeout = writeTimeout
+	s.httpIdleTimeout = idleTimeout
+	s.httpBodyLimit = bodyLimit
+	s.corsOrigins = corsOrigins
+	s.trustedProxies = trustedProxies
+	return s
 }
 
 func (s *APIServer) WithAlertEngine(e *alerting.Engine) *APIServer {
@@ -344,12 +361,29 @@ func (s *APIServer) Start(ctx context.Context) error {
 		}
 	}
 
+	bodyLimit := int64(10 << 20)
+	if s.httpBodyLimit > 0 {
+		bodyLimit = s.httpBodyLimit
+	}
+	readTimeout := 10 * time.Second
+	if s.httpReadTimeout > 0 {
+		readTimeout = s.httpReadTimeout
+	}
+	writeTimeout := 10 * time.Second
+	if s.httpWriteTimeout > 0 {
+		writeTimeout = s.httpWriteTimeout
+	}
+	idleTimeout := 60 * time.Second
+	if s.httpIdleTimeout > 0 {
+		idleTimeout = s.httpIdleTimeout
+	}
+
 	s.server = &http.Server{
 		Addr:         s.addr,
-		Handler:      auth.MaxBodySize(10 << 20)(handler),
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Handler:      auth.MaxBodySize(bodyLimit)(handler),
+		ReadTimeout:  readTimeout,
+		WriteTimeout: writeTimeout,
+		IdleTimeout:  idleTimeout,
 	}
 
 	s.logger.Info("API server starting", zap.String("addr", s.addr))
