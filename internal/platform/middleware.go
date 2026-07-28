@@ -463,6 +463,8 @@ func (s *APIServer) adminRoutes() []Route {
 		{Method: "PATCH", Path: "/api/v2/platform/msps/{mspID}", Access: AccessAdmin},
 		{Method: "POST", Path: "/api/v2/platform/msps/{mspID}/suspend", Access: AccessAdmin},
 		{Method: "POST", Path: "/api/v2/platform/msps/{mspID}/activate", Access: AccessAdmin},
+		{Method: "PATCH", Path: "/api/v2/platform/msps/{mspID}/entitlement", Access: AccessAdmin},
+		{Method: "PATCH", Path: "/api/v2/platform/domains/{domainID}/certificate", Access: AccessAdmin},
 		{Method: "POST", Path: "/api/v2/platform/support-grants", Access: AccessAdmin},
 		{Method: "DELETE", Path: "/api/v2/platform/support-grants/{grantID}", Access: AccessAdmin},
 		// Legacy admin routes

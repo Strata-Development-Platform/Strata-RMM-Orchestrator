@@ -2,7 +2,7 @@ export type LoginResponse = {
   token: string;
   user_id: string;
   email: string;
-  role: 'admin' | 'technician' | 'viewer';
+  role: string;
   accessible_tenants: TenantInfo[];
   expires_at?: string;
 };
@@ -46,4 +46,153 @@ export type User = {
   last_login?: string;
   created_at: string;
   accessible_tenants?: TenantInfo[];
+};
+
+export type MSPTenant = {
+  id: string;
+  name: string;
+  slug: string;
+  plan?: string;
+  client_count: number;
+  device_count: number;
+  is_active: boolean;
+  created_at: string;
+};
+
+export type WorkspaceScope = {
+  type: 'platform' | 'msp' | 'client' | 'site';
+  id: string;
+  name: string;
+  parent_id?: string;
+  role: string;
+};
+
+export type WorkspaceContext = {
+  user_id: string;
+  email: string;
+  roles: string[];
+  permissions: string[];
+  available_scopes: WorkspaceScope[];
+  msp_id: string;
+  msp_name: string;
+  msp_active: boolean;
+  client_id: string;
+  client_name: string;
+  site_id: string;
+  site_name: string;
+  branding?: Record<string, unknown>;
+  entitlement?: {
+    plan_slug: string;
+    status: string;
+    max_devices: number;
+    max_users: number;
+    features: Record<string, unknown>;
+  };
+  platform_role: boolean;
+  authenticated_at: string;
+};
+
+export type ClientOrganization = {
+  id: string;
+  msp_id: string;
+  name: string;
+  slug: string;
+  is_active: boolean;
+  site_count?: number;
+  device_count?: number;
+  created_at: string;
+};
+
+export type Site = {
+  id: string;
+  client_id: string;
+  name: string;
+  slug: string;
+  is_active: boolean;
+  device_count?: number;
+  created_at: string;
+};
+
+export type Membership = {
+  id: string;
+  user_id: string;
+  role: string;
+  scope_type: string;
+  scope_id: string;
+  created_at: string;
+};
+
+export type BrandingProfile = {
+  id: string;
+  msp_id: string;
+  display_name: string;
+  logo_light?: string;
+  logo_dark?: string;
+  favicon?: string;
+  primary_color: string;
+  accent_color: string;
+  sidebar_bg: string;
+  header_bg: string;
+  login_bg: string;
+  portal_title: string;
+  welcome_text: string;
+  support_email?: string;
+  terms_url?: string;
+  privacy_url?: string;
+};
+
+export type CustomDomain = {
+  id: string;
+  hostname: string;
+  domain_type: string;
+  verification_status: string;
+  certificate_status: string;
+  is_primary: boolean;
+  verification_token?: string;
+  txt_name?: string;
+};
+
+export type EnrollmentToken = {
+  id: string;
+  client_id: string;
+  site_id: string;
+  max_uses: number;
+  use_count: number;
+  expires_at: string;
+  is_revoked: boolean;
+  created_at: string;
+};
+
+export type Entitlement = {
+  plan_slug: string;
+  status: string;
+  max_devices: number;
+  max_users: number;
+  device_count: number;
+  user_count: number;
+  features: Record<string, boolean>;
+};
+
+export type Usage = {
+  msp_id: string;
+  device_count: number;
+  user_count: number;
+  client_count: number;
+  site_count: number;
+  recorded_at: string;
+};
+
+export type ManagedDevice = {
+  id: string;
+  tenant_id: string;
+  hostname: string;
+  os: string;
+  arch: string;
+  status: string;
+  agent_version: string;
+  client_id: string;
+  client_name: string;
+  site_id: string;
+  site_name: string;
+  last_heartbeat?: string;
 };

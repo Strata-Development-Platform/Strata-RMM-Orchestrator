@@ -504,6 +504,17 @@ func (s *APIServer) handleAgentRegister(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "database security context unavailable"})
 		return
 	}
+	var quotaAllowed bool
+	if err := tx.QueryRowContext(r.Context(), `
+		SELECT pe.status = 'active'
+		   AND (p.max_devices = 0 OR (SELECT COUNT(*) FROM devices WHERE msp_id = pe.msp_id) < p.max_devices)
+		FROM plan_entitlements pe
+		JOIN plans p ON p.id = pe.plan_id AND p.is_active = true
+		WHERE pe.msp_id = $1
+	`, mspID).Scan(&quotaAllowed); err != nil || !quotaAllowed {
+		writeJSON(w, http.StatusPaymentRequired, map[string]string{"error": "subscription inactive or device quota reached"})
+		return
+	}
 
 	agentID := uuid.NewString()
 	pubKey, err := hex.DecodeString(req.PublicKey)

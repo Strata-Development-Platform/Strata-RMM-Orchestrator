@@ -1,4 +1,20 @@
-import type { LoginResponse, PlatformOverview, CustomerSummary, User } from './types';
+import type {
+  CustomerSummary,
+  BrandingProfile,
+  ClientOrganization,
+  CustomDomain,
+  EnrollmentToken,
+  Entitlement,
+  LoginResponse,
+  ManagedDevice,
+  Membership,
+  MSPTenant,
+  PlatformOverview,
+  Site,
+  Usage,
+  User,
+  WorkspaceContext,
+} from './types';
 
 const BASE = '';
 
@@ -47,6 +63,63 @@ class ApiClient {
   // Platform
   getOverview = () => this.request<PlatformOverview>('GET', '/api/v1/platform/overview');
   getCustomers = () => this.request<{ customers: CustomerSummary[] }>('GET', '/api/v1/platform/customers');
+  getWorkspaceContext = () => this.request<WorkspaceContext>('GET', '/api/v2/context');
+  switchWorkspace = (msp_id: string, client_id = '', site_id = '') =>
+    this.request<{ token: string; msp_id: string; client_id: string; site_id: string; expires_at: string }>(
+      'POST', '/api/v2/context/switch', { msp_id, client_id, site_id }
+    );
+  getMSPs = () => this.request<{ msps: MSPTenant[] }>('GET', '/api/v2/platform/msps');
+  createMSP = (name: string, slug: string, plan: string) =>
+    this.request<{ id: string; status: string }>('POST', '/api/v2/platform/msps', { name, slug, plan });
+  getClients = (mspID: string) =>
+    this.request<{ clients: ClientOrganization[] }>('GET', `/api/v2/msps/${mspID}/clients`);
+  createClient = (mspID: string, name: string, slug: string) =>
+    this.request<{ id: string; status: string }>('POST', `/api/v2/msps/${mspID}/clients`, { name, slug });
+  archiveClient = (mspID: string, clientID: string) =>
+    this.request<{ status: string }>('POST', `/api/v2/msps/${mspID}/clients/${clientID}/archive`);
+  getSites = (clientID: string) =>
+    this.request<{ sites: Site[] }>('GET', `/api/v2/clients/${clientID}/sites`);
+  createSite = (clientID: string, name: string, slug: string) =>
+    this.request<{ id: string; status: string }>('POST', `/api/v2/clients/${clientID}/sites`, { name, slug });
+  archiveSite = (clientID: string, siteID: string) =>
+    this.request<{ status: string }>('POST', `/api/v2/clients/${clientID}/sites/${siteID}/archive`);
+  getMemberships = (mspID: string) =>
+    this.request<{ memberships: Membership[] }>('GET', `/api/v2/msps/${mspID}/memberships`);
+  createMembership = (mspID: string, user_id: string, role: string) =>
+    this.request<{ id: string; status: string }>('POST', `/api/v2/msps/${mspID}/memberships`, {
+      user_id, role, scope_type: 'msp', scope_id: mspID,
+    });
+  revokeMembership = (mspID: string, membershipID: string) =>
+    this.request<{ status: string }>('DELETE', `/api/v2/msps/${mspID}/memberships/${membershipID}`);
+  getBranding = () => this.request<BrandingProfile>('GET', '/api/v1/branding');
+  updateBranding = (branding: Partial<BrandingProfile>) =>
+    this.request<{ status: string }>('PUT', '/api/v1/branding', branding);
+  getDomains = () => this.request<{ domains: CustomDomain[] }>('GET', '/api/v1/domains');
+  createDomain = (hostname: string) =>
+    this.request<{ id: string; hostname: string; verification_token: string; txt_name: string }>(
+      'POST', '/api/v1/domains', { hostname }
+    );
+  verifyDomain = (domainID: string) =>
+    this.request<{ status: string; certificate_status: string }>('POST', `/api/v1/domains/${domainID}/verify`);
+  deleteDomain = (domainID: string) =>
+    this.request<{ status: string }>('DELETE', `/api/v1/domains/${domainID}`);
+  getEnrollmentTokens = () =>
+    this.request<{ tokens: EnrollmentToken[] }>('GET', '/api/v1/enrollment/tokens');
+  createEnrollmentToken = (client_id: string, site_id: string, max_uses: number, description: string) =>
+    this.request<{ id: string; token: string; expires_at: string; max_uses: number }>(
+      'POST', '/api/v1/enrollment/tokens', { client_id, site_id, max_uses, description }
+    );
+  revokeEnrollmentToken = (tokenID: string) =>
+    this.request<{ status: string }>('DELETE', `/api/v1/enrollment/tokens/${tokenID}`);
+  getEntitlement = (mspID: string) =>
+    this.request<Entitlement>('GET', `/api/v2/msps/${mspID}/entitlement`);
+  updateEntitlement = (mspID: string, plan_slug: string, status: string) =>
+    this.request<{ status: string }>('PATCH', `/api/v2/platform/msps/${mspID}/entitlement`, { plan_slug, status });
+  getUsage = (mspID: string) => this.request<Usage>('GET', `/api/v2/msps/${mspID}/usage`);
+  getControlPlaneAudit = (mspID: string) =>
+    this.request<{ entries: Record<string, unknown>[] }>('GET', `/api/v2/msps/${mspID}/audit`);
+  getMSPDevices = (mspID: string) =>
+    this.request<{ devices: ManagedDevice[] }>('GET', `/api/v2/msps/${mspID}/devices`);
 
   // Admin
   getUsers = () => this.request<{ users: User[] }>('GET', '/api/v1/admin/users');

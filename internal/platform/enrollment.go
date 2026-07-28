@@ -41,7 +41,7 @@ func (s *APIServer) handleCreateEnrollmentToken(w http.ResponseWriter, r *http.R
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "client_id required"})
 		return
 	}
-	if !s.AuthorizeClientAccess(w, r, req.ClientID) {
+	if _, ok := s.authorizeClientManage(w, r, req.ClientID); !ok {
 		return
 	}
 
@@ -82,6 +82,8 @@ func (s *APIServer) handleCreateEnrollmentToken(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	s.auditControlPlane(r, mspID, "enrollment.created", "enrollment_token", id,
+		map[string]interface{}{"client_id": req.ClientID, "site_id": req.SiteID, "max_uses": req.MaxUses})
 	writeJSON(w, http.StatusCreated, enrollmentTokenResponse{
 		ID:        id,
 		Token:     rawToken,
@@ -173,7 +175,7 @@ func (s *APIServer) handleListEnrollmentTokens(w http.ResponseWriter, r *http.Re
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var tokens []map[string]interface{}
 	for rows.Next() {
@@ -195,4 +197,27 @@ func (s *APIServer) handleListEnrollmentTokens(w http.ResponseWriter, r *http.Re
 		tokens = []map[string]interface{}{}
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"tokens": tokens})
+}
+
+func (s *APIServer) handleRevokeEnrollmentToken(w http.ResponseWriter, r *http.Request) {
+	mspID, _ := r.Context().Value(ctxKeyMSPID).(string)
+	if !s.AuthorizeMSPManage(w, r, mspID) {
+		return
+	}
+	tokenID := r.PathValue("tokenID")
+	result, err := s.requestDB(r).ExecContext(r.Context(), `
+		UPDATE enrollment_tokens_v2 SET is_revoked = true
+		WHERE id = $1 AND msp_id = $2 AND is_revoked = false
+	`, tokenID, mspID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "token revocation failed"})
+		return
+	}
+	affected, err := result.RowsAffected()
+	if err != nil || affected != 1 {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "active token not found"})
+		return
+	}
+	s.auditControlPlane(r, mspID, "enrollment.revoked", "enrollment_token", tokenID, nil)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "revoked"})
 }
