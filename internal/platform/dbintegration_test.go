@@ -675,14 +675,20 @@ func TestCapabilityIsActionSupportedByCapabilities(t *testing.T) {
 // TestDurableJobsUUIDReconciliation verifies that the dispatcher's offline
 // reconnect and expiry queries no longer produce "operator does not exist: uuid = text".
 // This regression test executes the actual SQL statements against real PostgreSQL.
+//
+// Column type confirmation (native uuid comparison via ::uuid cast):
+//   - job_targets.device_id is text (cast to uuid for comparison)
+//   - devices.id is uuid
+//   - job_targets.job_id is uuid
+//   - jobs.id is uuid
 func TestDurableJobsUUIDReconciliation(t *testing.T) {
 	db := testDB(t)
 	applyMigrations(t, db)
 	mspID, _, _, deviceID, _ := seedTestData(t, db)
 
-	// Create a waiting job_target to exercise the reconciliation queries
 	jobID := "00000000-0000-0000-0000-000000000100"
 	targetID := "00000000-0000-0000-0000-000000000101"
+	rejectedTargetID := "00000000-0000-0000-0000-000000000102"
 
 	_, err := db.Exec(`
 		INSERT INTO jobs (id, msp_id, client_id, site_id, created_by, type, status, priority,
@@ -701,59 +707,176 @@ func TestDurableJobsUUIDReconciliation(t *testing.T) {
 		VALUES ($1, $2, $3, $4, 'waiting', 'none')
 	`, targetID, jobID, deviceID, mspID)
 	if err != nil {
-		t.Fatalf("seed target: %v", err)
+		t.Fatalf("seed target (approval=none): %v", err)
 	}
 
-	// Mark device offline
+	_, err = db.Exec(`
+		INSERT INTO job_targets (id, job_id, device_id, msp_id, status, approval_status)
+		VALUES ($1, $2, $3, $4, 'waiting', 'rejected')
+	`, rejectedTargetID, jobID, deviceID, mspID)
+	if err != nil {
+		t.Fatalf("seed target (approval=rejected): %v", err)
+	}
+
 	_, err = db.Exec(`UPDATE devices SET status = 'online' WHERE id = $1`, deviceID)
 	if err != nil {
 		t.Fatalf("set device online: %v", err)
 	}
 
-	// Execute the offline reconnect query (same SQL as dispatcher.handleOfflineReconnect)
+	// --- Offline reconnect (same SQL as dispatcher.handleOfflineReconnect) ---
 	_, err = db.Exec(`
 		UPDATE job_targets jt SET status = 'queued', reconnect_at = NOW()
 		FROM devices d
-		WHERE jt.device_id = d.id
+		WHERE jt.device_id::uuid = d.id
 		  AND jt.status = 'waiting'
 		  AND d.status = 'online'
-		  AND jt.id = $1
-	`, targetID)
+		  AND jt.approval_status IN ('none', 'approved')
+		  AND (jt.offline_at IS NULL OR jt.offline_at < NOW() - INTERVAL '30 seconds')
+	`)
 	if err != nil {
 		t.Fatalf("offline reconnect reconciliation failed with uuid/text error: %v", err)
 	}
 
-	// Verify the target transitioned
 	var status string
 	err = db.QueryRow(`SELECT status FROM job_targets WHERE id = $1`, targetID).Scan(&status)
 	if err != nil {
-		t.Fatalf("get target status: %v", err)
+		t.Fatalf("get main target status: %v", err)
 	}
 	if status != "queued" {
-		t.Errorf("expected target status 'queued', got %q", status)
+		t.Errorf("expected target with approval='none' to transition to 'queued', got %q", status)
 	}
 
-	// Now test offline expiry with the same pattern
+	err = db.QueryRow(`SELECT status FROM job_targets WHERE id = $1`, rejectedTargetID).Scan(&status)
+	if err != nil {
+		t.Fatalf("get rejected target status: %v", err)
+	}
+	if status != "waiting" {
+		t.Errorf("expected target with approval='rejected' to stay 'waiting', got %q", status)
+	}
+
+	// --- Cross-tenant isolation (RLS prevents other-MSP updates) ---
+	otherMSPID := "00000000-0000-0000-0000-000000000099"
+	otherDeviceID := "00000000-0000-0000-0000-000000000005"
+	otherTargetID := "00000000-0000-0000-0000-000000000103"
+	otherJobID := "00000000-0000-0000-0000-000000000104"
+
+	// Seed other-MSP data inside a transaction with RLS context set to other-MSP
+	seedTx, err := db.Begin()
+	if err != nil {
+		t.Fatalf("begin seed tx: %v", err)
+	}
+	defer seedTx.Rollback()
+	setRLSContext(t, seedTx, otherMSPID, "00000000-0000-0000-0000-000000000010", "msp_admin", "write")
+
+	_, err = seedTx.Exec(`INSERT INTO msp_tenants (id, name, slug, is_active) VALUES ($1, 'Other MSP', 'other-msp', true)`, otherMSPID)
+	if err != nil {
+		t.Fatalf("seed other msp: %v", err)
+	}
+	_, err = seedTx.Exec(`INSERT INTO devices (id, msp_id, client_id, site_id, tenant_id, hostname, status)
+		VALUES ($1, $2, '00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', 'other-device', 'online')`,
+		otherDeviceID, otherMSPID)
+	if err != nil {
+		t.Fatalf("seed other device: %v", err)
+	}
+	_, err = seedTx.Exec(`
+		INSERT INTO jobs (id, msp_id, client_id, site_id, created_by, type, status, priority,
+		                  payload, max_retries, max_devices, expires_at)
+		VALUES ($1, $2, $3, $4, 'test', 'device.refresh', 'dispatched', 10,
+		        '{}'::jsonb, 1, 1, NOW() + INTERVAL '1 hour')
+	`, otherJobID, otherMSPID,
+		"00000000-0000-0000-0000-000000000002",
+		"00000000-0000-0000-0000-000000000003")
+	if err != nil {
+		t.Fatalf("seed other job: %v", err)
+	}
+	_, err = seedTx.Exec(`
+		INSERT INTO job_targets (id, job_id, device_id, msp_id, status, approval_status)
+		VALUES ($1, $2, $3, $4, 'waiting', 'none')
+	`, otherTargetID, otherJobID, otherDeviceID, otherMSPID)
+	if err != nil {
+		t.Fatalf("seed other target: %v", err)
+	}
+	if err := seedTx.Commit(); err != nil {
+		t.Fatalf("commit seed tx: %v", err)
+	}
+
+	// Reset main target to waiting for cross-tenant assertion
 	_, err = db.Exec(`UPDATE job_targets SET status = 'waiting' WHERE id = $1`, targetID)
 	if err != nil {
-		t.Fatalf("reset target: %v", err)
+		t.Fatalf("reset main target: %v", err)
 	}
 
-	// Make the job expired
+	// Execute reconnect under RLS restricted to main MSP
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	defer tx.Rollback()
+
+	setRLSContext(t, tx, mspID, "00000000-0000-0000-0000-000000000010", "msp_admin", "write")
+
+	_, err = tx.Exec(`
+		UPDATE job_targets jt SET status = 'queued', reconnect_at = NOW()
+		FROM devices d
+		WHERE jt.device_id::uuid = d.id
+		  AND jt.status = 'waiting'
+		  AND d.status = 'online'
+		  AND jt.approval_status IN ('none', 'approved')
+		  AND (jt.offline_at IS NULL OR jt.offline_at < NOW() - INTERVAL '30 seconds')
+	`)
+	if err != nil {
+		t.Fatalf("reconnect with RLS failed: %v", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	// Main target (same MSP) should have transitioned inside RLS
+	err = db.QueryRow(`SELECT status FROM job_targets WHERE id = $1`, targetID).Scan(&status)
+	if err != nil {
+		t.Fatalf("get main target status after RLS: %v", err)
+	}
+	if status != "queued" {
+		t.Errorf("expected main-MSP target to transition to 'queued' under RLS, got %q", status)
+	}
+
+	// Other-MSP target should be untouched (RLS isolation).
+	// Query within a transaction with other-MSP context to see it.
+	verifyTx, err := db.Begin()
+	if err != nil {
+		t.Fatalf("begin verify tx: %v", err)
+	}
+	defer verifyTx.Rollback()
+	setRLSContext(t, verifyTx, otherMSPID, "00000000-0000-0000-0000-000000000010", "msp_admin", "read")
+
+	err = verifyTx.QueryRow(`SELECT status FROM job_targets WHERE id = $1`, otherTargetID).Scan(&status)
+	if err != nil {
+		t.Fatalf("get other target status: %v", err)
+	}
+	if status != "waiting" {
+		t.Errorf("expected other-MSP target to stay 'waiting' (RLS isolation), got %q", status)
+	}
+	verifyTx.Rollback()
+
+	// --- Offline expiry (same SQL as dispatcher.expireOfflineWork) ---
+	_, err = db.Exec(`UPDATE job_targets SET status = 'waiting' WHERE id = $1`, targetID)
+	if err != nil {
+		t.Fatalf("reset target for expiry: %v", err)
+	}
+
 	_, err = db.Exec(`UPDATE jobs SET expires_at = NOW() - INTERVAL '1 minute' WHERE id = $1`, jobID)
 	if err != nil {
 		t.Fatalf("expire job: %v", err)
 	}
 
-	// Execute the expired offline work query (same SQL as dispatcher.expireOfflineWork)
 	_, err = db.Exec(`
 		UPDATE job_targets jt SET status = 'expired', error_message = 'expired: waited beyond expiry'
 		FROM jobs j
 		WHERE jt.job_id = j.id
 		  AND jt.status = 'waiting'
 		  AND j.expires_at < NOW()
-		  AND jt.id = $1
-	`, targetID)
+	`)
 	if err != nil {
 		t.Fatalf("expire offline work reconciliation failed with uuid/text error: %v", err)
 	}

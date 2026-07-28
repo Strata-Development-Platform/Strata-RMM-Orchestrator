@@ -43,10 +43,26 @@ Every Phase 8 implementation PR must:
 6. record the exact head SHA and workflow URL;
 7. remain unmerged until all required checks pass and review requirements are satisfied.
 
+## Phase 8A — Configuration and Startup Hardening
+
+Phase 8A acceptance criteria and verification status:
+
+| ID | Acceptance Criterion | Status |
+|---|---|---|
+| A8-01 | Centralized configuration with runtime modes — `LoadOrchestratorConfig()` parses all settings from env vars with typed validation | Verified |
+| A8-02 | Production fail-closed validation — `ProductionValidate()` rejects insecure settings in production mode | Verified |
+| A8-03 | Liveness/readiness with dependency checks — health endpoints return correct status during startup and runtime | Verified |
+| A8-04 | Staged startup — orchestrator initializes subsystems in order, health returns `starting` until complete | In progress |
+| A8-05 | Secret redaction — `RedactedSummary()` masks sensitive values before logging | Verified |
+| A8-06 | CLI compatibility — existing CLI flags and env vars continue to work with the new configuration layer | Verified |
+| A8-07 | UUID/text defect correction — configuration parsing uses strict typed parsing | Verified |
+| A8-08 | Configuration inventory — exhaustive inventory table documented in `docs/CONFIGURATION.md` | Verified |
+| A8-09 | Expanded test coverage — configuration loading, validation, and redaction have unit tests | Verified |
+
 ## Evidence index
 
 Populate this table during implementation.
 
 | Acceptance ID | Evidence URL | Commit/release | Date | Owner | Result |
-|---|---|---|---|---|---|
+|---|---|---|---|---|---|---|
 | A8-01…A8-26 | Pending | Pending | Pending | Pending | Pending |

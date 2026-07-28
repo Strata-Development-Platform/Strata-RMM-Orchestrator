@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.2.0-beta] — 2026-07-28
+
+### Added
+- Phase 8A: Production configuration and startup hardening
+- Runtime modes (development/test/production) with fail-closed validation
+- Centralized configuration loading with strict typed parsing
+- Liveness and readiness health endpoints with dependency checks
+- Configuration inventory and documentation
+
 ## Unreleased
 
 ### Added

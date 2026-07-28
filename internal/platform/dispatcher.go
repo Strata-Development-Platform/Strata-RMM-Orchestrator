@@ -261,7 +261,7 @@ func (d *Dispatcher) handleOfflineReconnect() {
 	_, err := d.db.DB().Exec(`
 		UPDATE job_targets jt SET status = 'queued', reconnect_at = NOW()
 		FROM devices d
-		WHERE jt.device_id = d.id
+		WHERE jt.device_id::uuid = d.id
 		  AND jt.status = 'waiting'
 		  AND d.status = 'online'
 		  AND jt.approval_status IN ('none', 'approved')
