@@ -23,7 +23,7 @@ async function installApi(page: Page, actionHandler?: (route: Route) => Promise<
     localStorage.setItem('theme', 'dark');
   });
 
-  await page.route('**/api/**', async route => {
+  await page.route(/\/api\/v\d+\//, async route => {
     const url = new URL(route.request().url());
     const path = url.pathname;
 
