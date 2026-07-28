@@ -73,7 +73,7 @@ func maintenanceWindowAllows(db dbExecutor, mspID, clientID, siteID, deviceID st
 			EXISTS (
 				SELECT 1 FROM maintenance_windows
 				WHERE (msp_id = $1 OR client_id = $2 OR site_id = $3 OR device_id = $4)
-				  AND end_time >= NOW() AND expires_at IS NULL OR expires_at >= NOW()
+				  AND end_time >= NOW() AND (expires_at IS NULL OR expires_at >= NOW())
 			),
 			EXISTS (
 				SELECT 1 FROM maintenance_windows
