@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"io"
+	"sort"
 	"strings"
 	"time"
 
@@ -124,9 +126,8 @@ func parsePolicySnapshot(snap json.RawMessage) (*policySnapshot, error) {
 func (s *APIServer) handleCreateApprovalRequest(w http.ResponseWriter, r *http.Request) {
 	mspID, _ := r.Context().Value(ctxKeyMSPID).(string)
 	userID, _ := r.Context().Value(ctxKeyUserID).(string)
-	clientID, _ := r.Context().Value(ctxKeyClientID).(string)
-	siteID, _ := r.Context().Value(ctxKeySiteID).(string)
-
+	requestClientID, _ := r.Context().Value(ctxKeyClientID).(string)
+	requestSiteID, _ := r.Context().Value(ctxKeySiteID).(string)
 	if mspID == "" || userID == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no msp or user context"})
 		return
@@ -135,37 +136,46 @@ func (s *APIServer) handleCreateApprovalRequest(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
 		ActionName string   `json:"action_name"`
 		Reason     string   `json:"reason"`
 		DeviceIDs  []string `json:"device_ids"`
 		ScheduleAt string   `json:"schedule_at,omitempty"`
 		Emergency  bool     `json:"emergency"`
+		Service    string   `json:"service,omitempty"`
+		ProcessID  int      `json:"process_id,omitempty"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
-	if req.ActionName == "" || len(req.DeviceIDs) == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "action_name and device_ids required"})
-		return
-	}
-	if len(req.DeviceIDs) > 100 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "max 100 devices per request"})
-		return
-	}
-
 	op, ok := operationRegistry[req.ActionName]
-	if !ok {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported action"})
+	if !ok || len(req.DeviceIDs) == 0 || len(req.DeviceIDs) > 100 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "supported action and 1-100 device_ids required"})
 		return
 	}
 	if op.RequiresReason && strings.TrimSpace(req.Reason) == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "reason required"})
 		return
 	}
+	if req.ScheduleAt != "" && !op.SupportsSchedule {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "action does not support scheduling"})
+		return
+	}
+	if req.ActionName == "process_kill" && req.ProcessID <= 1 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "valid non-system process_id required"})
+		return
+	}
+	if strings.HasPrefix(req.ActionName, "service_") && strings.TrimSpace(req.Service) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "service required"})
+		return
+	}
 
-	policy, err := loadApprovalPolicy(s.requestDB(r), mspID, req.ActionName)
+	db := s.requestDB(r)
+	policy, err := loadApprovalPolicy(db, mspID, req.ActionName)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "load approval policy failed"})
 		return
@@ -173,51 +183,40 @@ func (s *APIServer) handleCreateApprovalRequest(w http.ResponseWriter, r *http.R
 	if policy == nil {
 		policy = defaultApprovalPolicy(req.ActionName)
 	}
-	policy.ActionName = req.ActionName
-
 	if !policy.ApprovalRequired {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "approval not required for this action"})
 		return
 	}
-
 	if req.Emergency && !policy.AllowEmergency {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "emergency override not allowed by policy"})
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "emergency override is not allowed by policy"})
 		return
 	}
 	if req.Emergency && strings.TrimSpace(req.Reason) == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "reason required for emergency override"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "emergency override reason required"})
 		return
 	}
 
 	now := time.Now().UTC()
-	var availableAt *time.Time
+	var scheduleAt *time.Time
 	if req.ScheduleAt != "" {
-		t, err := time.Parse(time.RFC3339, req.ScheduleAt)
-		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid schedule_at"})
+		parsed, err := time.Parse(time.RFC3339, req.ScheduleAt)
+		if err != nil || !parsed.After(now) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "schedule_at must be a future RFC3339 timestamp"})
 			return
 		}
-		if t.Before(now) {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "schedule_at must be in the future"})
-			return
-		}
-		availableAt = &t
+		utc := parsed.UTC()
+		scheduleAt = &utc
 	}
-
 	var mspActive bool
-	if err := s.requestDB(r).QueryRow(`SELECT is_active FROM msp_tenants WHERE id = $1`, mspID).Scan(&mspActive); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "msp check failed"})
-		return
-	}
-	if !mspActive {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "msp is suspended"})
+	if err := db.QueryRowContext(r.Context(), `SELECT is_active FROM msp_tenants WHERE id=$1`, mspID).Scan(&mspActive); err != nil || !mspActive {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "msp is suspended or unavailable"})
 		return
 	}
 
-	uniqueIDs := make([]string, 0, len(req.DeviceIDs))
 	seen := make(map[string]bool)
-	for _, id := range req.DeviceIDs {
-		id = strings.TrimSpace(id)
+	uniqueIDs := make([]string, 0, len(req.DeviceIDs))
+	for _, value := range req.DeviceIDs {
+		id := strings.TrimSpace(value)
 		if id == "" || seen[id] {
 			continue
 		}
@@ -228,73 +227,128 @@ func (s *APIServer) handleCreateApprovalRequest(w http.ResponseWriter, r *http.R
 		seen[id] = true
 		uniqueIDs = append(uniqueIDs, id)
 	}
+	sort.Strings(uniqueIDs)
+	if len(uniqueIDs) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no valid device ids supplied"})
+		return
+	}
 
+	var approvalClientID, approvalSiteID string
 	for _, deviceID := range uniqueIDs {
-		var devClientID, devSiteID, status string
-		err := s.requestDB(r).QueryRow(`
-			SELECT COALESCE(client_id::text, ''), COALESCE(site_id::text, ''), status
-			FROM devices WHERE id = $1 AND msp_id = $2
-		`, deviceID, mspID).Scan(&devClientID, &devSiteID, &status)
-		if errors.Is(err, sql.ErrNoRows) {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "one or more devices not found"})
+		var clientID, siteID, status string
+		err := db.QueryRowContext(r.Context(), `
+			SELECT COALESCE(client_id::text,''), COALESCE(site_id::text,''), status
+			FROM devices WHERE id=$1 AND msp_id=$2
+		`, deviceID, mspID).Scan(&clientID, &siteID, &status)
+		if err != nil || status == "disabled" {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "one or more devices are unavailable"})
 			return
 		}
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "device validation failed"})
-			return
-		}
-		if status == "disabled" {
-			writeJSON(w, http.StatusConflict, map[string]string{"error": "one or more devices are disabled"})
-			return
-		}
-		if (clientID != "" && devClientID != clientID) || (siteID != "" && devSiteID != siteID) {
+		if (requestClientID != "" && requestClientID != clientID) ||
+			(requestSiteID != "" && requestSiteID != siteID) {
 			writeAuthorizationDenied(w)
+			return
+		}
+		if approvalClientID == "" {
+			approvalClientID, approvalSiteID = clientID, siteID
+		} else if approvalClientID != clientID || approvalSiteID != siteID {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "approval targets must share one client and site scope"})
+			return
+		}
+		capabilities, err := loadAgentCapabilities(db, deviceID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "load capabilities failed"})
+			return
+		}
+		if !isActionSupportedByCapabilities(req.ActionName, capabilities) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "one or more devices do not report support for this action"})
 			return
 		}
 	}
 
-	correlationID := uuid.New().String()
-	targetHashRaw, _ := json.Marshal(map[string]interface{}{
-		"device_ids": uniqueIDs, "action": req.ActionName,
+	operationPayload := map[string]interface{}{
+		"action": req.ActionName, "reason": req.Reason, "service": req.Service,
+		"process_id": req.ProcessID, "schedule_at": req.ScheduleAt,
+	}
+	operationJSON, err := json.Marshal(operationPayload)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "encode operation payload failed"})
+		return
+	}
+	policyJSON, err := json.Marshal(policy)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "encode policy snapshot failed"})
+		return
+	}
+	requestHash, err := endpointRequestHash(map[string]interface{}{
+		"device_ids": uniqueIDs, "operation": operationPayload, "policy": policy,
 	})
-	targetHash := fmt.Sprintf("%x", sha256.Sum256(targetHashRaw))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "encode request fingerprint failed"})
+		return
+	}
+	idempotencyKey, err := validateIdempotencyKey(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if idempotencyKey != "" {
+		var existingID, existingHash, existingStatus string
+		err := db.QueryRowContext(r.Context(), `
+			SELECT id::text, request_hash, status FROM endpoint_approval_requests
+			WHERE msp_id=$1 AND idempotency_key=$2
+		`, mspID, idempotencyKey).Scan(&existingID, &existingHash, &existingStatus)
+		if err == nil {
+			if existingHash != requestHash {
+				writeJSON(w, http.StatusConflict, map[string]string{"error": "idempotency key already used for a different approval request"})
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]interface{}{"approval_id": existingID, "status": existingStatus, "duplicate": true})
+			return
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "idempotency lookup failed"})
+			return
+		}
+	}
 
-	policySnap, _ := json.Marshal(policy)
+	approvalID := uuid.NewString()
+	correlationID := uuid.NewString()
 	expiresAt := now.Add(time.Duration(policy.ApprovalExpiresSec) * time.Second)
-
-	approvalID := uuid.New().String()
-	_, err = s.requestDB(r).ExecContext(r.Context(), `
+	_, err = db.ExecContext(r.Context(), `
 		INSERT INTO endpoint_approval_requests
-			(id, msp_id, requester_user_id, action_name, reason, device_ids, device_count,
-			 schedule_at, target_hash, status, policy_snapshot, correlation_id, request_hash,
-			 expires_at, emergency_override)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', $10, $11, $12, $13, $14)
-	`, approvalID, mspID, userID, req.ActionName, req.Reason,
-		"{"+strings.Join(uniqueIDs, ",")+"}", len(uniqueIDs),
-		availableAt, targetHash, string(policySnap),
-		correlationID, targetHash, expiresAt, req.Emergency)
+			(id,msp_id,client_id,site_id,requester_user_id,action_name,reason,device_ids,
+			 device_count,schedule_at,target_hash,status,policy_snapshot,operation_payload,
+			 correlation_id,request_hash,idempotency_key,expires_at,emergency_override)
+		VALUES ($1,$2,NULLIF($3,'')::uuid,NULLIF($4,'')::uuid,$5,$6,$7,$8,$9,$10,$11,
+		        'pending',$12,$13,$14,$15,NULLIF($16,''),$17,$18)
+	`, approvalID, mspID, approvalClientID, approvalSiteID, userID, req.ActionName,
+		req.Reason, "{"+strings.Join(uniqueIDs, ",")+"}", len(uniqueIDs), scheduleAt,
+		requestHash, string(policyJSON), string(operationJSON), correlationID,
+		requestHash, idempotencyKey, expiresAt, req.Emergency)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create approval request failed"})
 		return
 	}
-
-	_ = s.requestDB(r).QueryRow(`SELECT slug FROM msp_tenants WHERE id = $1`, mspID).Scan(new(string))
-	if err := writeEndpointAudit(r, s.requestDB(r), mspID, "endpoint.approval.created",
-		fmt.Sprintf("approval:%s", approvalID), map[string]interface{}{
-			"approval_id": approvalID, "action": req.ActionName, "device_count": len(uniqueIDs),
-			"correlation_id": correlationID, "requires_approval": true, "emergency": req.Emergency,
-		}); err != nil {
-		s.logger.Warn("write approval audit", zap.Error(err))
+	targets, _ := json.Marshal(uniqueIDs)
+	if err := writeEndpointAuditEvidence(r, db, &EndpointAuditEntry{
+		MSPID: mspID, ClientID: approvalClientID, SiteID: approvalSiteID,
+		ActorUserID: userID, ActorRole: strings.Join(getRoles(r), ","),
+		RequestSource: "api", NormalizedIP: requestIPAddress(r),
+		Action: "endpoint.approval.created", Targets: targets, Reason: req.Reason,
+		RequestHash: requestHash, IdempotencyKey: idempotencyKey,
+		PolicySnapshot: policyJSON, ApprovalState: "pending",
+		CorrelationID: correlationID, ScheduleAt: scheduleAt,
+		StateTransition: "created->pending",
+	}); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "write audit evidence failed"})
+		return
 	}
-
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
-		"approval_id": approvalID, "status": "pending",
-		"correlation_id": correlationID, "expires_at": expiresAt.UTC().Format(time.RFC3339),
-		"min_approvers": policy.MinApprovers, "allowed_roles": policy.AllowedRoles,
-		"require_separation": policy.RequireSeparation,
+		"approval_id": approvalID, "status": "pending", "correlation_id": correlationID,
+		"expires_at": expiresAt.Format(time.RFC3339), "min_approvers": policy.MinApprovers,
 	})
 }
-
 func (s *APIServer) handleListApprovalRequests(w http.ResponseWriter, r *http.Request) {
 	mspID, _ := r.Context().Value(ctxKeyMSPID).(string)
 	clientID, _ := r.Context().Value(ctxKeyClientID).(string)
@@ -457,264 +511,243 @@ func (s *APIServer) handleApproveRequest(w http.ResponseWriter, r *http.Request)
 	approvalID := r.PathValue("approvalID")
 	mspID, _ := r.Context().Value(ctxKeyMSPID).(string)
 	userID, _ := r.Context().Value(ctxKeyUserID).(string)
-	roles := getRoles(r)
-	if mspID == "" || userID == "" || approvalID == "" {
+	if mspID == "" || userID == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+		return
+	}
+	if _, err := uuid.Parse(approvalID); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid approval id"})
 		return
 	}
 	if !s.AuthorizeMSPManage(w, r, mspID) {
 		return
 	}
-
-	var req struct {
-		Reason string `json:"reason"`
-	}
-	_ = json.NewDecoder(r.Body).Decode(&req)
-
-	// Use the middleware-provided tenant transaction (s.requestDB(r)) for RLS context.
-	// For the atomic approval+dispatch operation, we need the raw DB since we're
-	// doing a multi-step transaction that includes job creation.
-	// We use serializable isolation to prevent race conditions.
-	db := s.db.DB()
-	tx, err := db.BeginTx(r.Context(), &sql.TxOptions{Isolation: sql.LevelSerializable})
-	if err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "transaction unavailable"})
+	var decisionReq struct{ Reason string `json:"reason"` }
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&decisionReq); err != nil && !errors.Is(err, io.EOF) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
-	defer func() { _ = tx.Rollback() }()
 
-	// 1. Lock the request row
-	var requesterID, status, actionName, policySnapStr, correlationID, targetHash, deviceIDsStr string
+	db := s.requestDB(r)
+	var requesterID, status, actionName, policyText, operationText, correlationID, requestHash, deviceIDsText string
+	var clientID, siteID sql.NullString
+	var scheduleAt sql.NullTime
 	var expiresAt time.Time
-	err = tx.QueryRowContext(r.Context(), `
-		SELECT requester_user_id, status, action_name, policy_snapshot::text,
-		       correlation_id, COALESCE(target_hash, ''), expires_at,
-		       array_to_string(device_ids, ',')
+	err := db.QueryRowContext(r.Context(), `
+		SELECT requester_user_id,status,action_name,policy_snapshot::text,operation_payload::text,
+		       COALESCE(correlation_id,''),COALESCE(request_hash,''),array_to_string(device_ids,','),
+		       client_id::text,site_id::text,schedule_at,expires_at
 		FROM endpoint_approval_requests
-		WHERE id = $1 AND msp_id = $2
-		FOR UPDATE
-	`, approvalID, mspID).Scan(&requesterID, &status, &actionName, &policySnapStr,
-		&correlationID, &targetHash, &expiresAt, &deviceIDsStr)
+		WHERE id=$1 AND msp_id=$2 FOR UPDATE
+	`, approvalID, mspID).Scan(&requesterID,&status,&actionName,&policyText,&operationText,
+		&correlationID,&requestHash,&deviceIDsText,&clientID,&siteID,&scheduleAt,&expiresAt)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "approval request not found"})
 		return
 	}
-
-	// 2. Verify pending status under lock
 	if status != "pending" {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "request is " + status})
 		return
 	}
-
-	// 3. Verify not expired
-	if time.Now().After(expiresAt) {
-		_, _ = tx.Exec(`UPDATE endpoint_approval_requests SET status='expired', updated_at=NOW() WHERE id=$1`, approvalID)
-		if err := tx.Commit(); err == nil {
-			_ = tx.Commit()
-		}
+	if !expiresAt.After(time.Now().UTC()) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "approval request has expired"})
 		return
 	}
-
-	// 4. Parse and enforce stored policy snapshot (NOT live policy)
-	ps, err := parsePolicySnapshot(json.RawMessage(policySnapStr))
-	if err != nil {
+	policy, err := parsePolicySnapshot(json.RawMessage(policyText))
+	if err != nil || policy.MinApprovers < 1 {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "invalid stored approval policy"})
 		return
 	}
-
-	// 5. Separation of duties from snapshot
-	if requesterID == userID && ps.RequireSeparation {
+	if requesterID == userID && policy.RequireSeparation {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "requester cannot self-approve"})
 		return
 	}
-
-	// 6. Role authorization from snapshot
-	hasAllowedRole := false
-	for _, role := range roles {
-		for _, allowed := range ps.AllowedRoles {
-			if role == allowed {
-				hasAllowedRole = true
-				break
+	allowed := false
+	for _, role := range getRoles(r) {
+		for _, permitted := range policy.AllowedRoles {
+			if role == permitted {
+				allowed = true
 			}
 		}
-		if hasAllowedRole {
-			break
-		}
 	}
-	if !hasAllowedRole {
+	if !allowed {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "insufficient role to approve"})
 		return
 	}
-
-	// 7. Unique decision per approver
-	var existingDecision string
-	err = tx.QueryRowContext(r.Context(), `
-		SELECT decision FROM endpoint_approval_decisions
-		WHERE request_id = $1 AND approver_user_id = $2
-		FOR UPDATE
-	`, approvalID, userID).Scan(&existingDecision)
-	if err == nil {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "already submitted a decision"})
-		return
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "check decision failed"})
-		return
-	}
-
-	// 8. Count existing approvals under lock
-	var approvedCount int
-	err = tx.QueryRowContext(r.Context(), `
-		SELECT COUNT(*) FROM endpoint_approval_decisions
-		WHERE request_id = $1 AND decision = 'approved'
-	`, approvalID).Scan(&approvedCount)
+	_, err = db.ExecContext(r.Context(), `
+		INSERT INTO endpoint_approval_decisions(id,request_id,msp_id,approver_user_id,decision,reason)
+		VALUES(gen_random_uuid(),$1,$2,$3,'approved',$4)
+	`, approvalID, mspID, userID, decisionReq.Reason)
 	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "approval decision already recorded or invalid"})
+		return
+	}
+	var approvedCount int
+	if err := db.QueryRowContext(r.Context(), `
+		SELECT COUNT(*) FROM endpoint_approval_decisions WHERE request_id=$1 AND decision='approved'
+	`, approvalID).Scan(&approvedCount); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "count approvals failed"})
 		return
 	}
-
-	// 9. Insert this decision
-	if _, err := tx.ExecContext(r.Context(), `
-		INSERT INTO endpoint_approval_decisions (id, request_id, msp_id, approver_user_id, decision, reason)
-		VALUES (gen_random_uuid(), $1, $2, $3, 'approved', $4)
-	`, approvalID, mspID, userID, req.Reason); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "record decision failed"})
-		return
-	}
-	approvedCount++
-
-	// 10. If enough approvals, create job + targets + outbox + audit in same transaction
-	if approvedCount >= ps.MinApprovers {
-		op, ok := operationRegistry[actionName]
-		if !ok {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "operation not found in registry"})
+	if approvedCount < policy.MinApprovers {
+		if _, err := db.ExecContext(r.Context(), `
+			UPDATE endpoint_approval_requests SET updated_at=NOW() WHERE id=$1 AND status='pending'
+		`, approvalID); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "update approval request failed"})
 			return
 		}
-
-		now := time.Now().UTC()
-		availableAt := now
-		jobExpiresAt := now.Add(24 * time.Hour)
-		jobID := uuid.New().String()
-		deviceIDs := strings.Split(deviceIDsStr, ",")
-
-		payloadMap := map[string]interface{}{
-			"action": actionName, "approval_id": approvalID,
-		}
-		payload, err := json.Marshal(payloadMap)
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "encode job failed"})
-			return
-		}
-
-		_, err = tx.Exec(`
-			INSERT INTO jobs (id, msp_id, client_id, site_id, created_by, type, status, priority,
-			                  payload, max_retries, max_devices, expires_at, correlation_id,
-			                  request_hash, scheduled_for, approval_request_id)
-			VALUES ($1, $2, NULL, NULL, $3, $4, 'queued', 10, $5, 1, $6, $7, $8, $9, $10, $11)
-		`, jobID, mspID, "api:approval:"+actionName, op.JobType,
-			payload, len(deviceIDs), jobExpiresAt, correlationID, targetHash, availableAt, approvalID)
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create job failed"})
-			return
-		}
-
-		for _, deviceID := range deviceIDs {
-			deviceID = strings.TrimSpace(deviceID)
-			if deviceID == "" {
-				continue
-			}
-			targetID := uuid.New().String()
-			_, err = tx.Exec(`
-				INSERT INTO job_targets (id, job_id, device_id, msp_id, status)
-				VALUES ($1, $2, $3, $4, 'queued')
-			`, targetID, jobID, deviceID, mspID)
-			if err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create target failed"})
-				return
-			}
-
-			outboxPayload, _ := json.Marshal(map[string]interface{}{
-				"job_id": jobID, "target_id": targetID, "device_id": deviceID,
-				"type": op.JobType, "payload": payloadMap,
-			})
-			_, err = tx.Exec(`
-				INSERT INTO job_outbox (id, msp_id, aggregate_id, event_type, payload, available_at)
-				VALUES (gen_random_uuid(), $1, $2, 'job.dispatch', $3, $4)
-			`, mspID, jobID, outboxPayload, availableAt)
-			if err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create dispatch failed"})
-				return
-			}
-		}
-
-		// Transition request to approved then dispatched
-		_, err = tx.Exec(`
-			UPDATE endpoint_approval_requests
-			SET status = 'dispatched', decided_at = $1, decided_by = $2, updated_at = $1
-			WHERE id = $3 AND status = 'pending'
-		`, now, userID, approvalID)
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "approve failed"})
-			return
-		}
-
-		// Audit evidence — write to endpoint_audit_evidence via direct INSERT
-		auditEntry := EndpointAuditEntry{
-			MSPID: mspID, ActorUserID: userID, Action: "endpoint.approval.approved",
-			JobID: jobID, CorrelationID: correlationID,
-			ApprovalState: "dispatched", StateTransition: "approved->dispatched",
-			PolicySnapshot: json.RawMessage(policySnapStr),
-		}
-		if err := writeEndpointAuditEvidence(r, tx, &auditEntry); err != nil {
+		if err := writeEndpointAuditEvidence(r, db, &EndpointAuditEntry{
+			MSPID: mspID, ClientID: clientID.String, SiteID: siteID.String,
+			ActorUserID: userID, ActorRole: strings.Join(getRoles(r), ","),
+			RequestSource: "api", NormalizedIP: requestIPAddress(r),
+			Action: "endpoint.approval.decision", Reason: decisionReq.Reason,
+			RequestHash: requestHash, PolicySnapshot: json.RawMessage(policyText),
+			ApprovalState: "pending", CorrelationID: correlationID,
+			StateTransition: "pending->pending",
+			ResultSummary: fmt.Sprintf("%d of %d approvals recorded", approvedCount, policy.MinApprovers),
+		}); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "write audit evidence failed"})
 			return
 		}
-
-		if err := tx.Commit(); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "commit failed"})
-			return
-		}
-
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"status": "approved", "approval_id": approvalID,
-			"job_id": jobID, "dispatched": true,
+			"status": "pending", "approval_id": approvalID,
+			"approvals_remaining": policy.MinApprovers - approvedCount,
 		})
 		return
 	}
 
-	// Not enough approvals yet — just approve the decision
-	_, err = tx.Exec(`
-		UPDATE endpoint_approval_requests
-		SET status = 'approved', decided_at = $1, decided_by = $2, updated_at = $1
-		WHERE id = $3 AND status = 'pending'
-	`, time.Now(), userID, approvalID)
+	op, ok := operationRegistry[actionName]
+	if !ok {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "operation is no longer registered"})
+		return
+	}
+	var operationPayload map[string]interface{}
+	if err := json.Unmarshal([]byte(operationText), &operationPayload); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "invalid stored operation payload"})
+		return
+	}
+	now := time.Now().UTC()
+	availableAt := now
+	if scheduleAt.Valid && scheduleAt.Time.After(now) {
+		availableAt = scheduleAt.Time.UTC()
+	}
+	jobExpiresAt := availableAt.Add(24 * time.Hour)
+	deviceIDs := strings.Split(deviceIDsText, ",")
+	jobID := uuid.NewString()
+	payloadJSON, err := json.Marshal(operationPayload)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "approve failed"})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "encode operation payload failed"})
+		return
+	}
+	_, err = db.ExecContext(r.Context(), `
+		INSERT INTO jobs(id,msp_id,client_id,site_id,created_by,type,status,priority,payload,
+		                 max_retries,max_devices,expires_at,correlation_id,request_hash,
+		                 scheduled_for,approval_request_id)
+		VALUES($1,$2,$3,$4,$5,$6,'queued',10,$7,1,$8,$9,$10,$11,$12,$13)
+	`, jobID,mspID,clientID,siteID,"api:approval:"+actionName,op.JobType,payloadJSON,
+		len(deviceIDs),jobExpiresAt,correlationID,requestHash,availableAt,approvalID)
+	if err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "approved operation already dispatched or job creation failed"})
 		return
 	}
 
-	auditEntry := EndpointAuditEntry{
-		MSPID: mspID, ActorUserID: userID, Action: "endpoint.approval.approved",
-		CorrelationID: correlationID, ApprovalState: "approved",
-		StateTransition: "pending->approved", PolicySnapshot: json.RawMessage(policySnapStr),
+	for _, value := range deviceIDs {
+		deviceID := strings.TrimSpace(value)
+		var targetClientID, targetSiteID, deviceStatus, agentID string
+		err := db.QueryRowContext(r.Context(), `
+			SELECT COALESCE(client_id::text,''),COALESCE(site_id::text,''),status,COALESCE(agent_id,'')
+			FROM devices WHERE id=$1 AND msp_id=$2
+		`, deviceID,mspID).Scan(&targetClientID,&targetSiteID,&deviceStatus,&agentID)
+		if err != nil || targetClientID != clientID.String || targetSiteID != siteID.String ||
+			deviceStatus == "disabled" || agentID == "" {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "approved target scope or agent state changed"})
+			return
+		}
+		capabilities, err := loadAgentCapabilities(db, deviceID)
+		if err != nil || !isActionSupportedByCapabilities(actionName, capabilities) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "approved target no longer supports this action"})
+			return
+		}
+		if op.Destructive {
+			covered, err := maintenanceWindowAllows(db, targetClientID, deviceID, availableAt)
+			if err != nil || !covered {
+				writeJSON(w, http.StatusConflict, map[string]string{"error": "approved target is outside an applicable maintenance window"})
+				return
+			}
+		}
+		targetStatus := "queued"
+		if deviceStatus != "online" {
+			if !op.AllowOffline {
+				writeJSON(w, http.StatusConflict, map[string]string{"error": "approved target is offline"})
+				return
+			}
+			targetStatus = "waiting"
+		}
+		targetID := uuid.NewString()
+		_, err = db.ExecContext(r.Context(), `
+			INSERT INTO job_targets(id,job_id,device_id,agent_id,msp_id,status,approval_status,
+			                        offline_at)
+			VALUES($1,$2,$3,$4,$5,$6,'approved',
+			       CASE WHEN $6='waiting' THEN NOW() ELSE NULL END)
+		`,targetID,jobID,deviceID,agentID,mspID,targetStatus)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create approved target failed"})
+			return
+		}
+		if targetStatus == "queued" {
+			eventID := jobID+":"+targetID+":1"
+			outboxPayload, err := json.Marshal(map[string]interface{}{
+				"schema_version":1,"event_id":eventID,"job_id":jobID,"target_id":targetID,
+				"msp_id":mspID,"client_id":targetClientID,"site_id":targetSiteID,
+				"device_id":deviceID,"agent_id":agentID,"correlation_id":correlationID,
+				"attempt":1,"issued_at":now.Format(time.RFC3339),
+				"expires_at":jobExpiresAt.Format(time.RFC3339),
+				"command_type":op.JobType,"type":op.JobType,"payload":operationPayload,
+			})
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "encode dispatch failed"})
+				return
+			}
+			if _, err := db.ExecContext(r.Context(), `
+				INSERT INTO job_outbox(id,msp_id,aggregate_id,event_type,payload,available_at)
+				VALUES(gen_random_uuid(),$1,$2,'job.dispatch',$3,$4)
+			`,mspID,jobID,outboxPayload,availableAt); err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create dispatch failed"})
+				return
+			}
+		}
 	}
-	if err := writeEndpointAuditEvidence(r, tx, &auditEntry); err != nil {
+	result, err := db.ExecContext(r.Context(), `
+		UPDATE endpoint_approval_requests SET status='dispatched',decided_at=NOW(),
+		       decided_by=$1,updated_at=NOW() WHERE id=$2 AND status='pending'
+	`,userID,approvalID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "finalize approval failed"})
+		return
+	}
+	if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "approval state changed"})
+		return
+	}
+	targets, _ := json.Marshal(deviceIDs)
+	if err := writeEndpointAuditEvidence(r, db, &EndpointAuditEntry{
+		MSPID:mspID,ClientID:clientID.String,SiteID:siteID.String,
+		ActorUserID:userID,ActorRole:strings.Join(getRoles(r),","),
+		RequestSource:"api",NormalizedIP:requestIPAddress(r),
+		Action:"endpoint.approval.dispatched",Targets:targets,
+		Reason:decisionReq.Reason,RequestHash:requestHash,
+		PolicySnapshot:json.RawMessage(policyText),ApprovalState:"dispatched",
+		JobID:jobID,CorrelationID:correlationID,ScheduleAt:&availableAt,
+		StateTransition:"pending->dispatched",
+		ResultSummary:fmt.Sprintf("%d approvals satisfied",approvedCount),
+	}); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "write audit evidence failed"})
 		return
 	}
-
-	if err := tx.Commit(); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "commit failed"})
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"status": "approved", "approval_id": approvalID,
-		"approvals_remaining": ps.MinApprovers - approvedCount,
-	})
+	writeJSON(w,http.StatusOK,map[string]interface{}{"status":"dispatched","approval_id":approvalID,"job_id":jobID})
 }
-
 func (s *APIServer) handleRejectRequest(w http.ResponseWriter, r *http.Request) {
 	approvalID := r.PathValue("approvalID")
 	mspID, _ := r.Context().Value(ctxKeyMSPID).(string)
