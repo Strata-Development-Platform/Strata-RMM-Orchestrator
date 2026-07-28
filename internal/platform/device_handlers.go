@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"sort"
 	"strings"
@@ -55,6 +56,51 @@ func endpointRequestHash(value interface{}) (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("%x", sha256.Sum256(encoded)), nil
+}
+
+func requestIPAddress(r *http.Request) string {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
+	if err == nil {
+		return host
+	}
+	return strings.TrimSpace(r.RemoteAddr)
+}
+
+func maintenanceWindowAllows(db dbExecutor, clientID, deviceID string, executeAt time.Time) (bool, error) {
+	var configured, covered bool
+	err := db.QueryRow(`
+		SELECT
+			EXISTS (
+				SELECT 1 FROM maintenance_windows
+				WHERE tenant_id = $1 AND end_time >= NOW()
+			),
+			EXISTS (
+				SELECT 1 FROM maintenance_windows
+				WHERE tenant_id = $1
+				  AND start_time <= $3 AND end_time >= $3
+				  AND (COALESCE(cardinality(device_ids), 0) = 0 OR $2 = ANY(device_ids))
+			)
+	`, clientID, deviceID, executeAt).Scan(&configured, &covered)
+	if err != nil {
+		return false, err
+	}
+	return !configured || covered, nil
+}
+
+func writeEndpointAudit(r *http.Request, db dbExecutor, tenantID, action, resource string, details interface{}) error {
+	userID, _ := r.Context().Value(ctxKeyUserID).(string)
+	if tenantID == "" || userID == "" {
+		return fmt.Errorf("missing audit identity")
+	}
+	encoded, err := json.Marshal(details)
+	if err != nil {
+		return err
+	}
+	_, err = db.ExecContext(r.Context(), `
+		INSERT INTO audit_log (id, tenant_id, user_id, action, resource, details, ip_address)
+		VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, NULLIF($6, '')::inet)
+	`, tenantID, userID, action, resource, encoded, requestIPAddress(r))
+	return err
 }
 
 func writeIdempotentEndpointResult(w http.ResponseWriter, r *http.Request, db dbExecutor, mspID, key, requestHash string) (bool, error) {
@@ -304,13 +350,13 @@ func (s *APIServer) handleDeviceAction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify device exists and belongs to the authorized request scope.
-	var clientID, siteID, devStatus string
+	var clientID, siteID, tenantID, devStatus string
 	var isActive bool
 	err := s.requestDB(r).QueryRow(`
 		SELECT COALESCE(d.client_id::text,''), COALESCE(d.site_id::text,''),
-		       d.status, COALESCE(d.status, '') != 'disabled' FROM devices d
+		       COALESCE(d.tenant_id::text,''), d.status, COALESCE(d.status, '') != 'disabled' FROM devices d
 		WHERE d.id = $1 AND d.msp_id = $2
-	`, deviceID, mspID).Scan(&clientID, &siteID, &devStatus, &isActive)
+	`, deviceID, mspID).Scan(&clientID, &siteID, &tenantID, &devStatus, &isActive)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "device not found"})
 		return
@@ -374,6 +420,18 @@ func (s *APIServer) handleDeviceAction(w http.ResponseWriter, r *http.Request) {
 		expiresAt = availableAt.Add(24 * time.Hour)
 	} else {
 		expiresAt = now.Add(24 * time.Hour)
+	}
+
+	if op.Destructive {
+		allowed, err := maintenanceWindowAllows(s.requestDB(r), clientID, deviceID, availableAt)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "maintenance-window check failed"})
+			return
+		}
+		if !allowed {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "action must execute within an applicable maintenance window"})
+			return
+		}
 	}
 
 	jobID := uuid.New().String()
@@ -440,6 +498,13 @@ func (s *APIServer) handleDeviceAction(w http.ResponseWriter, r *http.Request) {
 		VALUES (gen_random_uuid(), $1, $2, 'job.dispatch', $3, $4)
 	`, mspID, jobID, outboxPayload, availableAt); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create dispatch failed"})
+		return
+	}
+	if err := writeEndpointAudit(r, db, tenantID, "endpoint.action.queued", "job:"+jobID, map[string]interface{}{
+		"job_id": jobID, "device_id": deviceID, "action": rawReq.Action,
+		"reason": rawReq.Reason, "scheduled_for": availableAt, "correlation_id": correlationID,
+	}); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "write audit evidence failed"})
 		return
 	}
 
