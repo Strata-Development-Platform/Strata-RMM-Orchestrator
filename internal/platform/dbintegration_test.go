@@ -109,8 +109,8 @@ func TestApprovalUniquenessAndConcurrency(t *testing.T) {
 		t.Fatalf("seed other membership: %v", err)
 	}
 
-	_, err = db.Exec(`INSERT INTO endpoint_approval_decisions (id, request_id, approver_user_id, decision)
-		VALUES (gen_random_uuid(), $1, $2, 'approved')`, reqID, otherUserID)
+	_, err = db.Exec(`INSERT INTO endpoint_approval_decisions (id, request_id, msp_id, approver_user_id, decision)
+		VALUES (gen_random_uuid(), $1, $2, $3, 'approved')`, reqID, mspID, otherUserID)
 	if err != nil {
 		t.Fatalf("first approval: %v", err)
 	}
