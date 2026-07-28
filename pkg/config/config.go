@@ -64,21 +64,6 @@ func parseInt(raw string, bitSize int) (int64, error) {
 	return v, nil
 }
 
-func parseUint(raw string, bitSize int) (uint64, error) {
-	cleaned := strings.TrimSpace(raw)
-	if cleaned == "" {
-		return 0, fmt.Errorf("empty value")
-	}
-	if cleaned[0] == '-' {
-		return 0, fmt.Errorf("negative value not allowed: %s", cleaned)
-	}
-	v, err := strconv.ParseUint(cleaned, 10, bitSize)
-	if err != nil {
-		return 0, fmt.Errorf("invalid unsigned integer %q: %w", cleaned, err)
-	}
-	return v, nil
-}
-
 func parseDuration(raw string) (time.Duration, error) {
 	cleaned := strings.TrimSpace(raw)
 	if cleaned == "" {
@@ -217,14 +202,14 @@ func (s *StorageConfig) Validate(mode RuntimeMode) error {
 				return fmt.Errorf("Storage.Endpoint is required for MinIO backend")
 			}
 			if s.AccessKey == "" || s.SecretKey == "" {
-				return fmt.Errorf("Storage: access key and secret key required for MinIO backend")
+				return fmt.Errorf("storage: access key and secret key required for MinIO backend")
 			}
 		case "s3":
 			if s.AccessKey == "" || s.SecretKey == "" {
-				return fmt.Errorf("Storage: access key and secret key required for S3 backend")
+				return fmt.Errorf("storage: access key and secret key required for S3 backend")
 			}
 		case "local":
-			return fmt.Errorf("Storage: local backend is not allowed in production")
+			return fmt.Errorf("storage: local backend is not allowed in production")
 		}
 	}
 	return nil
@@ -353,15 +338,6 @@ func (c *OrchestratorConfig) ProductionValidate() error {
 		return nil
 	}
 	return c.Validate()
-}
-
-type envSource struct {
-	key   string
-	value string
-}
-
-func env(key string) envSource {
-	return envSource{key: key, value: os.Getenv(key)}
 }
 
 func envOr(key, def string) string {

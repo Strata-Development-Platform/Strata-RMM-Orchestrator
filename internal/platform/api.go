@@ -385,12 +385,6 @@ func (s *APIServer) handleRoot(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-type healthResponse struct {
-	Status    string `json:"status"`
-	Time      string `json:"time"`
-	Ready     string `json:"ready,omitempty"`
-}
-
 type healthLivenessResponse struct {
 	Status string `json:"status"`
 	Time   string `json:"time"`
