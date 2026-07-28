@@ -2,8 +2,12 @@ package orchestrator
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"net/url"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -18,9 +22,17 @@ import (
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/reporting"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/update"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/auth"
+	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/config"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/postgres"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/storage"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/timescale"
+)
+
+type StorageMode string
+
+const (
+	StorageDisabled StorageMode = "disabled"
+	StorageRequired StorageMode = "required"
 )
 
 func NewCommand(ctx context.Context, version string, logger *zap.Logger) *cobra.Command {
@@ -40,65 +52,144 @@ func NewCommand(ctx context.Context, version string, logger *zap.Logger) *cobra.
 		Short: "Start the RMM orchestrator platform services",
 		Long:  `Starts the core platform services: NATS consumer, TimescaleDB ingestion, REST API, and alerting`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			logger.Info("starting Strata RMM Orchestrator")
-
-			if err := auth.ValidateJWTConfig(); err != nil {
-				return fmt.Errorf("JWT configuration: %w", err)
+			var startupStage int32
+			advanceStage := func(stage int32) {
+				atomic.StoreInt32(&startupStage, stage)
+				logger.Info("startup stage", zap.Int32("stage", stage))
 			}
 
-			nc, err := nats.Connect(natsURL,
-				nats.Name("StrataRMM-Orchestrator"),
-				nats.ReconnectWait(5*time.Second),
-				nats.MaxReconnects(-1),
-				nats.RetryOnFailedConnect(true),
-			)
+			// Stage 1: Load and validate configuration
+			advanceStage(1)
+			logger.Info("loading configuration")
+			cfg, err := config.LoadOrchestratorConfig()
 			if err != nil {
-				return fmt.Errorf("connecting to NATS: %w", err)
+				return fmt.Errorf("stage %d: loading configuration: %w", atomic.LoadInt32(&startupStage), err)
+			}
+			logger.Info("runtime mode", zap.String("mode", string(cfg.RuntimeMode)))
+
+			// Stage 2: Apply CLI flag overrides (flags take highest precedence)
+			// Precedence: CLI flag > canonical env var > legacy alias > default
+			if cmd.Flags().Changed("nats-url") {
+				cfg.NATS.URL = natsURL
+			}
+			if cmd.Flags().Changed("timescale-dsn") {
+				cfg.DB.DSN = timescaleDSN
+			}
+			if cmd.Flags().Changed("api-addr") {
+				cfg.HTTP.APIAddr = apiAddr
+			}
+			if cmd.Flags().Changed("tunnel-addr") {
+				cfg.HTTP.TunnelAddr = tunnelAddr
+			}
+			if cmd.Flags().Changed("storage-backend") {
+				cfg.Storage.Backend = storageBackend
+			}
+			if cmd.Flags().Changed("storage-bucket") {
+				cfg.Storage.Bucket = storageBucket
+			}
+			if cmd.Flags().Changed("storage-region") {
+				cfg.Storage.Region = storageRegion
+			}
+			if cmd.Flags().Changed("storage-endpoint") {
+				cfg.Storage.Endpoint = storageEndpoint
+			}
+
+			// Stage 3: Validate configuration
+			advanceStage(3)
+			if err := cfg.Validate(); err != nil {
+				return fmt.Errorf("stage %d: configuration validation failed: %w", atomic.LoadInt32(&startupStage), err)
+			}
+
+			// Stage 4: Log redacted summary
+			advanceStage(4)
+			summary := cfg.RedactedSummary()
+			logger.Info("configuration validated", zap.Any("summary", summary))
+
+			// Stage 5: Verify runtime mode governance (fail closed)
+			advanceStage(5)
+			if cfg.RuntimeMode == config.ModeProduction {
+				if err := cfg.ProductionValidate(); err != nil {
+					return fmt.Errorf("stage %d: production configuration rejected: %w", atomic.LoadInt32(&startupStage), err)
+				}
+				if cfg.Seeding.SeedDev {
+					return fmt.Errorf("stage %d: production startup rejected: development seeding must not be enabled", atomic.LoadInt32(&startupStage))
+				}
+			}
+
+			// Stage 6: Initialize JWT
+			advanceStage(6)
+			logger.Info("initializing JWT")
+			if err := auth.ValidateJWTConfig(); err != nil {
+				return fmt.Errorf("stage %d: JWT configuration: %w", atomic.LoadInt32(&startupStage), err)
+			}
+			tokenGen, err := auth.NewTokenGeneratorOrFail("")
+			if err != nil {
+				return fmt.Errorf("stage %d: token generator: %w", atomic.LoadInt32(&startupStage), err)
+			}
+
+			// Stage 7: Connect NATS
+			advanceStage(7)
+			logger.Info("connecting to NATS", zap.String("url", redactURL(cfg.NATS.URL)))
+			nc, err := connectNATS(cfg)
+			if err != nil {
+				return fmt.Errorf("stage %d: connecting to NATS: %w", atomic.LoadInt32(&startupStage), err)
 			}
 			defer nc.Close()
-			logger.Info("connected to NATS", zap.String("url", nc.ConnectedUrl()))
+			logger.Info("connected to NATS")
 
-			tsdb, err := timescale.NewClient(ctx, timescaleDSN)
+			// Stage 8: Connect database and apply migrations
+			advanceStage(8)
+			logger.Info("connecting to database")
+			tsdb, err := timescale.NewClient(ctx, cfg.DB.DSN)
 			if err != nil {
-				return fmt.Errorf("connecting to TimescaleDB: %w", err)
+				return fmt.Errorf("stage %d: connecting to database: %w", atomic.LoadInt32(&startupStage), err)
 			}
+			tsdb.SetPoolConfig(cfg.DB.MaxOpenConns, cfg.DB.MaxIdleConns, cfg.DB.ConnMaxLifetime)
 			defer tsdb.Close()
-			logger.Info("connected to TimescaleDB")
+			logger.Info("connected to database")
 
 			if err := tsdb.ApplyMigrations(ctx); err != nil {
-				return fmt.Errorf("applying migrations: %w", err)
+				return fmt.Errorf("stage %d: applying TimescaleDB migrations: %w", atomic.LoadInt32(&startupStage), err)
 			}
 			logger.Info("TimescaleDB migrations applied")
 
 			sm := postgres.NewSchemaManager(tsdb.DB())
 			if err := sm.Apply(); err != nil {
-				return fmt.Errorf("applying relational schema: %w", err)
+				return fmt.Errorf("stage %d: applying relational schema: %w", atomic.LoadInt32(&startupStage), err)
 			}
 			logger.Info("relational schema migrations applied")
 
-			if os.Getenv("STRATA_SEED_DEV") == "true" {
+			if cfg.Seeding.SeedDev && cfg.RuntimeMode != config.ModeProduction {
 				if err := postgres.SeedDevTenant(tsdb.DB()); err != nil {
-					return fmt.Errorf("seed development tenant: %w", err)
+					return fmt.Errorf("stage %d: seed development tenant: %w", atomic.LoadInt32(&startupStage), err)
 				}
 				logger.Info("development tenant seeded")
 			}
 
+			// Stage 9: Start ingestion
+			advanceStage(9)
+			logger.Info("starting metrics ingestion")
 			ingest := monitoring.NewIngestService(nc, tsdb, logger)
 			if err := ingest.Start(ctx); err != nil {
-				return fmt.Errorf("starting ingestion: %w", err)
+				return fmt.Errorf("stage %d: starting ingestion: %w", atomic.LoadInt32(&startupStage), err)
 			}
 			defer ingest.Stop()
 			logger.Info("metrics ingestion started")
 
+			// Stage 10: Alerting
+			advanceStage(10)
+			logger.Info("starting alerting engine")
 			alertStore := alerting.NewStore(tsdb.DB())
 			alertNotifier := alerting.NewNotifier()
 			alertEngine := alerting.NewEngine(nc, tsdb, alertStore, alertNotifier, logger)
 			if err := alertEngine.Start(ctx); err != nil {
-				return fmt.Errorf("starting alerting engine: %w", err)
+				return fmt.Errorf("stage %d: starting alerting engine: %w", atomic.LoadInt32(&startupStage), err)
 			}
 			defer alertEngine.Stop()
 			logger.Info("alerting engine started")
 
+			// Stage 11: Vulnerability engines
+			advanceStage(11)
 			vulnEngine := inventory.NewVulnerabilityEngine(tsdb.DB(), logger).
 				WithAlertCallback(func(tenantID, deviceID, cveID, pkg, severity, currentVer, fixedVer string) {
 					alertEngine.FireCVEAlert(tenantID, deviceID, cveID, pkg, severity, currentVer, fixedVer)
@@ -120,19 +211,19 @@ func NewCommand(ctx context.Context, version string, logger *zap.Logger) *cobra.
 			go thirdParty.Start(ctx)
 			logger.Info("third-party patching engine started")
 
-			updateMgr := platform.NewUpdateManager(version, "Strata-Development-Platform", "Strata-RMM-Orchestrator", apiAddr, logger)
-
+			// Stage 12: API server and storage policy
+			advanceStage(12)
+			updateMgr := platform.NewUpdateManager(version, "Strata-Development-Platform", "Strata-RMM-Orchestrator", cfg.HTTP.APIAddr, logger)
 			releaseServer := platform.NewReleaseServer("/var/lib/strata-rmm/releases", "Strata-Development-Platform", "Strata-RMM-Orchestrator")
 
-			tokenGen, err := auth.NewTokenGeneratorOrFail("")
+			api, err := platform.NewAPIServer(cfg.HTTP.APIAddr, tsdb, nc, logger, tokenGen)
 			if err != nil {
-				return fmt.Errorf("token generator: %w", err)
+				return fmt.Errorf("stage %d: creating API server: %w", atomic.LoadInt32(&startupStage), err)
 			}
-
-			api, err := platform.NewAPIServer(apiAddr, tsdb, nc, logger, tokenGen)
-			if err != nil {
-				return fmt.Errorf("creating API server: %w", err)
-			}
+			api.WithHTTPConfig(
+				cfg.HTTP.ReadTimeout, cfg.HTTP.WriteTimeout, cfg.HTTP.IdleTimeout,
+				cfg.HTTP.MaxBodySizeBytes, cfg.HTTP.CORSOrigins,
+			)
 			api.WithReleaseServer(releaseServer).
 				WithAlertEngine(alertEngine).
 				WithVulnEngine(vulnEngine).
@@ -140,55 +231,84 @@ func NewCommand(ctx context.Context, version string, logger *zap.Logger) *cobra.
 				WithThirdPartyEngine(thirdParty).
 				WithUpdateManager(updateMgr)
 
-			if storageBackend != "" && storageBackend != "none" {
-				storageCfg := storage.Config{
-					Type:      storageBackend,
-					Bucket:    storageBucket,
-					Region:    storageRegion,
-					Endpoint:  storageEndpoint,
-					AccessKey: os.Getenv("STORAGE_ACCESS_KEY"),
-					SecretKey: os.Getenv("STORAGE_SECRET_KEY"),
-					UseSSL:    os.Getenv("STORAGE_USE_SSL") == "true",
-					KMSKeyID:  os.Getenv("STORAGE_KMS_KEY_ID"),
+			api.RegisterHealth("db", func(ctx context.Context) error {
+				pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+				defer cancel()
+				return tsdb.DB().PingContext(pingCtx)
+			})
+			api.RegisterHealth("nats", func(ctx context.Context) error {
+				if !nc.IsConnected() {
+					return fmt.Errorf("NATS not connected")
 				}
+				return nil
+			})
+			api.RegisterHealth("migrations", func(ctx context.Context) error {
+				if !api.MigrationsComplete() {
+					return fmt.Errorf("migrations not complete")
+				}
+				return nil
+			})
+			api.RegisterHealth("jetstream", platform.JetStreamHealthCheck(nc))
+			api.SetMigrationsComplete(true)
 
-				sb, err := storage.NewBackend(ctx, storageCfg)
+			if cfg.Storage.Backend == "" || cfg.Storage.Backend == "none" {
+				logger.Info("storage disabled — recording/report features unavailable")
+			} else {
+				storeCfg := storage.Config{
+					Type:      cfg.Storage.Backend,
+					Bucket:    cfg.Storage.Bucket,
+					Region:    cfg.Storage.Region,
+					Endpoint:  cfg.Storage.Endpoint,
+					AccessKey: cfg.Storage.AccessKey,
+					SecretKey: cfg.Storage.SecretKey,
+					UseSSL:    cfg.Storage.UseSSL,
+					KMSKeyID:  cfg.Storage.KMSKeyID,
+				}
+				sb, err := storage.NewBackend(ctx, storeCfg)
 				if err != nil {
-					logger.Warn("storage backend init (continuing without recordings)", zap.Error(err))
-				} else {
-					logger.Info("storage backend initialized", zap.String("type", storageBackend), zap.String("bucket", storageBucket))
-
-					recStore := remote.NewRecordingStore(tsdb.DB())
-					recorder := remote.NewRecorder(sb, logger)
-
-					gw := remote.NewGateway(nc, tunnelAddr, logger).
-						WithRecorder(recorder).
-						WithRecordingStore(recStore)
-					if err := gw.Start(ctx); err != nil {
-						return fmt.Errorf("starting tunnel gateway: %w", err)
-					}
-					logger.Info("tunnel gateway started", zap.String("addr", tunnelAddr))
-
-					cleanup := remote.NewCleanupJob(recStore, sb, logger)
-					cleanup.Start(ctx)
-
-					reportEngine := reporting.NewReportEngine(tsdb.DB(), logger, sb, storageBucket)
-					go reportEngine.Start(ctx)
-					logger.Info("report engine started")
-
-					api = api.WithRecordingStore(recStore).WithStorageBackend(sb)
+					return fmt.Errorf("stage %d: storage backend initialization failed: %w", atomic.LoadInt32(&startupStage), err)
 				}
+				logger.Info("storage backend initialized", zap.String("type", cfg.Storage.Backend), zap.String("bucket", cfg.Storage.Bucket))
+				recStore := remote.NewRecordingStore(tsdb.DB())
+				recorder := remote.NewRecorder(sb, logger)
+				gw := remote.NewGateway(nc, cfg.HTTP.TunnelAddr, logger).
+					WithRecorder(recorder).
+					WithRecordingStore(recStore)
+				if err := gw.Start(ctx); err != nil {
+					return fmt.Errorf("stage %d: starting tunnel gateway: %w", atomic.LoadInt32(&startupStage), err)
+				}
+				logger.Info("tunnel gateway started", zap.String("addr", cfg.HTTP.TunnelAddr))
+				cleanup := remote.NewCleanupJob(recStore, sb, logger)
+				cleanup.Start(ctx)
+				reportEngine := reporting.NewReportEngine(tsdb.DB(), logger, sb, cfg.Storage.Bucket)
+				go reportEngine.Start(ctx)
+				logger.Info("report engine started")
+				api = api.WithRecordingStore(recStore).WithStorageBackend(sb)
+				api.RegisterHealth("storage", func(ctx context.Context) error {
+					_, err := sb.Stat(ctx, "health-check")
+					if err != nil && err != storage.ErrNotFound {
+						return fmt.Errorf("storage backend unreachable: %w", err)
+					}
+					return nil
+				})
+				api.RegisterHealth("jetstream", platform.JetStreamHealthCheck(nc))
 			}
+
+			// Stage 13: Job dispatcher
+			advanceStage(13)
 			dispatcher := platform.NewDispatcher(tsdb, nc, logger)
 			dispatcher.Start(ctx)
 			defer dispatcher.Stop()
+			api.RegisterHealth("dispatcher", dispatcher.Healthy)
 			logger.Info("job dispatcher started")
 
+			// Stage 14: API server
+			advanceStage(14)
 			if err := api.Start(ctx); err != nil {
-				return fmt.Errorf("starting API server: %w", err)
+				return fmt.Errorf("stage %d: starting API server: %w", atomic.LoadInt32(&startupStage), err)
 			}
 			defer api.Stop(ctx)
-			logger.Info("API server started", zap.String("addr", apiAddr))
+			logger.Info("orchestrator ready", zap.String("addr", cfg.HTTP.APIAddr))
 
 			logger.Info("orchestrator running, waiting for signals")
 			<-ctx.Done()
@@ -197,18 +317,17 @@ func NewCommand(ctx context.Context, version string, logger *zap.Logger) *cobra.
 		},
 	}
 
-	cmd.Flags().StringVar(&natsURL, "nats-url", "nats://localhost:4222", "NATS server URL")
-	cmd.Flags().StringVar(&timescaleDSN, "timescale-dsn", "postgres://localhost:5432/strata_rmm?sslmode=disable", "TimescaleDB DSN")
-	cmd.Flags().StringVar(&apiAddr, "api-addr", ":8080", "API server listen address")
-	cmd.Flags().StringVar(&tunnelAddr, "tunnel-addr", ":8443", "Tunnel gateway listen address")
-
-	cmd.Flags().StringVar(&storageBackend, "storage-backend", envOrDefault("STORAGE_BACKEND", "local"), "Storage backend (minio, s3, local, none)")
-	cmd.Flags().StringVar(&storageBucket, "storage-bucket", envOrDefault("STORAGE_BUCKET", "strata-recordings"), "Storage bucket name")
-	cmd.Flags().StringVar(&storageRegion, "storage-region", envOrDefault("STORAGE_REGION", ""), "Storage region")
-	cmd.Flags().StringVar(&storageEndpoint, "storage-endpoint", envOrDefault("STORAGE_ENDPOINT", ""), "Storage endpoint (for MinIO/S3-compatible)")
+	// Restore all original CLI flags
+	cmd.Flags().StringVar(&natsURL, "nats-url", "", "NATS server URL (overrides NATS_URL env)")
+	cmd.Flags().StringVar(&timescaleDSN, "timescale-dsn", "", "TimescaleDB DSN (overrides TIMESCALE_DSN env)")
+	cmd.Flags().StringVar(&apiAddr, "api-addr", "", "API server listen address (overrides STRATA_API_ADDR env)")
+	cmd.Flags().StringVar(&tunnelAddr, "tunnel-addr", "", "Tunnel gateway listen address (overrides STRATA_TUNNEL_ADDR env)")
+	cmd.Flags().StringVar(&storageBackend, "storage-backend", "", "Storage backend (minio, s3, local, none) (overrides STORAGE_BACKEND env)")
+	cmd.Flags().StringVar(&storageBucket, "storage-bucket", "", "Storage bucket name (overrides STORAGE_BUCKET env)")
+	cmd.Flags().StringVar(&storageRegion, "storage-region", "", "Storage region (overrides STORAGE_REGION env)")
+	cmd.Flags().StringVar(&storageEndpoint, "storage-endpoint", "", "Storage endpoint (overrides STORAGE_ENDPOINT env)")
 
 	cmd.AddCommand(NewUpdateCommand(ctx, version, logger))
-
 	return cmd
 }
 
@@ -218,32 +337,22 @@ func NewUpdateCommand(ctx context.Context, version string, logger *zap.Logger) *
 		Short: "Check and apply orchestrator updates",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			checkOnly, _ := cmd.Flags().GetBool("check")
-
 			updater := update.NewOrchestratorUpdater(version, "Strata-Development-Platform", "Strata-RMM-Orchestrator")
 			logger.Info("checking for updates", zap.String("current", version))
-
 			release, err := updater.Check(ctx)
 			if err != nil {
 				return fmt.Errorf("check failed: %w", err)
 			}
-
 			if release == nil {
 				logger.Info("already up to date", zap.String("version", version))
 				return nil
 			}
-
-			logger.Info("update available",
-				zap.String("current", version),
-				zap.String("latest", release.Version),
-			)
-
+			logger.Info("update available", zap.String("current", version), zap.String("latest", release.Version))
 			if checkOnly {
 				return nil
 			}
-
 			mode := updater.DetectMode()
 			logger.Info("deployment mode", zap.String("mode", mode))
-
 			switch mode {
 			case "docker":
 				logger.Info("run: docker compose pull && docker compose up -d")
@@ -252,39 +361,78 @@ func NewUpdateCommand(ctx context.Context, version string, logger *zap.Logger) *
 				logger.Info("run: helm upgrade strata-rmm ...")
 				return nil
 			}
-
-			logger.Info("downloading update", zap.String("version", release.Version))
 			binaryPath, err := updater.Download(ctx, release)
 			if err != nil {
 				return fmt.Errorf("download failed: %w", err)
 			}
-
-			logger.Info("applying update")
 			if err := updater.Apply(binaryPath); err != nil {
 				updater.Rollback()
 				return fmt.Errorf("apply failed: %w", err)
 			}
-
-			logger.Info("verifying health")
 			healthURL := fmt.Sprintf("http://localhost:%s/health", "8080")
 			if err := updater.Verify(ctx, healthURL); err != nil {
 				updater.Rollback()
 				return fmt.Errorf("verification failed, rolled back: %w", err)
 			}
-
 			updater.Cleanup()
 			logger.Info("update successful, restarting")
 			return updater.TriggerRestart()
 		},
 	}
-
 	cmd.Flags().Bool("check", false, "Only check for updates, don't apply")
 	return cmd
 }
 
-func envOrDefault(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
+func connectNATS(cfg *config.OrchestratorConfig) (*nats.Conn, error) {
+	natsOpts := []nats.Option{
+		nats.Name("StrataRMM-Orchestrator"),
+		nats.ReconnectWait(cfg.NATS.ReconnectWait),
+		nats.MaxReconnects(cfg.NATS.MaxReconnects),
+		nats.RetryOnFailedConnect(true),
 	}
-	return def
+	if cfg.NATS.Token != "" {
+		natsOpts = append(natsOpts, nats.Token(cfg.NATS.Token))
+	}
+	if cfg.NATS.TLSEnabled {
+		u, err := url.Parse(cfg.NATS.URL)
+		if err != nil || u.Hostname() == "" {
+			return nil, fmt.Errorf("NATS TLS URL: invalid server hostname")
+		}
+		serverName := u.Hostname()
+		tlsConfig := &tls.Config{
+			ServerName: serverName,
+			MinVersion: tls.VersionTLS12,
+		}
+		if cfg.NATS.TLSCAFile != "" {
+			caCert, err := os.ReadFile(cfg.NATS.TLSCAFile)
+			if err != nil {
+				return nil, fmt.Errorf("NATS CA cert: %w", err)
+			}
+			caPool := x509.NewCertPool()
+			if ok := caPool.AppendCertsFromPEM(caCert); !ok {
+				return nil, fmt.Errorf("NATS CA cert: no valid certificates found")
+			}
+			tlsConfig.RootCAs = caPool
+		}
+		if cfg.NATS.TLSCertFile != "" && cfg.NATS.TLSKeyFile != "" {
+			cert, err := tls.LoadX509KeyPair(cfg.NATS.TLSCertFile, cfg.NATS.TLSKeyFile)
+			if err != nil {
+				return nil, fmt.Errorf("NATS cert/key: %w", err)
+			}
+			tlsConfig.Certificates = []tls.Certificate{cert}
+		}
+		natsOpts = append(natsOpts, nats.Secure(tlsConfig))
+	}
+	return nats.Connect(cfg.NATS.URL, natsOpts...)
+}
+
+func redactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "<invalid>"
+	}
+	if u.User != nil {
+		u.User = url.UserPassword(u.User.Username(), "***")
+	}
+	return u.String()
 }

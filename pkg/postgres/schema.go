@@ -2112,6 +2112,20 @@ func Migrations() []Migration {
 				ALTER TABLE endpoint_approval_requests DROP COLUMN IF EXISTS operation_payload;
 			`,
 		},
+		{
+			ID:   62,
+			Name: "add_waiting_status_to_job_targets",
+			Up: `
+				ALTER TABLE job_targets DROP CONSTRAINT IF EXISTS job_targets_status_check;
+				ALTER TABLE job_targets ADD CONSTRAINT job_targets_status_check
+					CHECK (status IN ('pending','queued','dispatched','acknowledged','running','succeeded','failed','cancelled','expired','waiting'));
+			`,
+			Down: `
+				ALTER TABLE job_targets DROP CONSTRAINT IF EXISTS job_targets_status_check;
+				ALTER TABLE job_targets ADD CONSTRAINT job_targets_status_check
+					CHECK (status IN ('pending','queued','dispatched','acknowledged','running','succeeded','failed','cancelled','expired'));
+			`,
+		},
 	}
 }
 

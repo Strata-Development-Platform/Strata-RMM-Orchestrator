@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -24,8 +25,10 @@ type Dispatcher struct {
 	db     *timescale.Client
 	nc     *nats.Conn
 	logger *zap.Logger
-	stopCh chan struct{}
-	wg     sync.WaitGroup
+	stopCh   chan struct{}
+	stopOnce sync.Once
+	wg       sync.WaitGroup
+	running  atomic.Bool
 	workerID string
 }
 
@@ -49,13 +52,36 @@ func (d *Dispatcher) Start(ctx context.Context) {
 		d.wg.Add(1)
 		go d.subscribeResults(ctx)
 	}
+	d.running.Store(true)
 	d.logger.Info("job dispatcher started")
 }
 
 func (d *Dispatcher) Stop() {
-	close(d.stopCh)
+	d.running.Store(false)
+	d.stopOnce.Do(func() { close(d.stopCh) })
 	d.wg.Wait()
 	d.logger.Info("job dispatcher stopped")
+}
+
+// Healthy verifies that the dispatcher is running and both dependencies used by
+// its worker loops are currently available. It is intentionally a live check,
+// not a startup flag.
+func (d *Dispatcher) Healthy(ctx context.Context) error {
+	if !d.running.Load() {
+		return fmt.Errorf("dispatcher is not running")
+	}
+	if d.nc == nil || !d.nc.IsConnected() {
+		return fmt.Errorf("dispatcher NATS connection is not established")
+	}
+	if d.db == nil || d.db.DB() == nil {
+		return fmt.Errorf("dispatcher database is not configured")
+	}
+	pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if err := d.db.DB().PingContext(pingCtx); err != nil {
+		return fmt.Errorf("dispatcher database check failed: %w", err)
+	}
+	return nil
 }
 
 func (d *Dispatcher) outboxPublisher(ctx context.Context) {
@@ -261,7 +287,7 @@ func (d *Dispatcher) handleOfflineReconnect() {
 	_, err := d.db.DB().Exec(`
 		UPDATE job_targets jt SET status = 'queued', reconnect_at = NOW()
 		FROM devices d
-		WHERE jt.device_id = d.id::text
+		WHERE jt.device_id::uuid = d.id
 		  AND jt.status = 'waiting'
 		  AND d.status = 'online'
 		  AND jt.approval_status IN ('none', 'approved')
@@ -276,7 +302,7 @@ func (d *Dispatcher) expireOfflineWork() {
 	if _, err := d.db.DB().Exec(`
 		UPDATE job_targets jt SET status = 'expired', error_message = 'expired: waited beyond expiry'
 		FROM jobs j
-		WHERE jt.job_id = j.id::text
+		WHERE jt.job_id = j.id
 		  AND jt.status = 'waiting'
 		  AND j.expires_at < NOW()
 	`); err != nil {

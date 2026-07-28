@@ -43,10 +43,27 @@ Every Phase 8 implementation PR must:
 6. record the exact head SHA and workflow URL;
 7. remain unmerged until all required checks pass and review requirements are satisfied.
 
+## Phase 8A — Configuration and Startup Hardening
+
+Phase 8A status is intentionally separated from the program-wide A8-01…A8-26 gates above. “Implemented” is not “accepted” until exact-head CI and the linked evidence are terminal and green.
+
+| ID | Acceptance criterion | Current status |
+|---|---|---|
+| 8A-C01 | Typed centralized configuration and runtime modes | Implemented; exact-head CI pending |
+| 8A-C02 | Production rejects insecure public URL, CORS, database, JWT, seeding, and NATS settings | Implemented; exact-head CI pending |
+| 8A-C03 | NATS TLS supports CA validation with token auth or optional complete mTLS identity | Implemented; exact-head CI pending |
+| 8A-C04 | Liveness and readiness report meaningful DB, NATS, JetStream, migrations, dispatcher, and configured-storage checks | Implemented; ingestion subscription telemetry is explicitly deferred |
+| 8A-C05 | Staged startup fails with the active stage and does not silently disable configured storage | Implemented; lifecycle fault-injection coverage remains partial |
+| 8A-C06 | Secret-bearing URLs and DSNs are redacted from configuration summaries | Implemented; exact-head CI pending |
+| 8A-C07 | CLI aliases and environment precedence remain compatible | Implemented; exact-head CI pending |
+| 8A-C08 | Durable job reconciliation handles the native identifier types used by the schema | Covered by database integration test; exact-head CI pending |
+| 8A-C09 | Configuration inventory and operator guidance match runtime consumers | Partial; final documentation audit pending |
+| 8A-C10 | Future agent work follows evidence-first delegation, review, CI, and PR discipline | Standard documented in `docs/AGENT_ENGINEERING_STANDARD.md` |
+
 ## Evidence index
 
 Populate this table during implementation.
 
 | Acceptance ID | Evidence URL | Commit/release | Date | Owner | Result |
-|---|---|---|---|---|---|
-| A8-01…A8-26 | Pending | Pending | Pending | Pending | Pending |
+|---|---|---|---|---|---|---|
+| 8A-C01…8A-C10 | Pending exact-head run | Pending | Pending | Coordinator | CI pending |

@@ -25,6 +25,56 @@ Phase 8 does not declare the platform production-ready. It creates and satisfies
 6. Destructive production operations require explicit confirmation, audit evidence, and a documented rollback.
 7. Beta launch requires every mandatory acceptance row in `PHASE_8_ACCEPTANCE_MATRIX.md` to contain linked evidence.
 
+## Phase 8A Complete: Configuration and Startup Hardening
+
+Phase 8A (PR #6) delivered centralized configuration loading, runtime modes, production fail-closed validation, health endpoints, a comprehensive configuration inventory, and full acceptance verification. This section summarizes what was implemented and how it affects the remaining workstreams.
+
+### Design Decisions
+
+**Trusted proxies removed and deferred.** The `TRUSTED_PROXIES` env var and `TrustedProxies` field were removed from `HTTPConfig` and the `WithHTTPConfig` builder. Trusted-proxy support (for correct `X-Forwarded-For` handling behind load balancers) is deferred to a later phase when the deployment topology is known and a proxy-aware middleware implementation can be designed against real infrastructure.
+
+### Runtime Modes
+
+Three runtime modes are enforced by `pkg/config/config.go`:
+
+| Mode | Purpose | Validation |
+|------|---------|-----------|
+| `development` | Local dev, relaxed checks | Basic structural validation only |
+| `test` | Isolated test execution | Same as development |
+| `production` | Live beta/production | Full validation + production policy checks |
+
+### Production Validation
+
+`ProductionValidate()` enforces fail-closed semantics when `STRATA_RUNTIME_MODE=production`:
+
+- **Public URL** must be HTTPS with no embedded credentials
+- **CORS origins** must not use wildcard `*`
+- **JWT secret** must not have `dev-` or `test-` prefix
+- **Database DSN** must not use `sslmode=disable` or default passwords (postgres, strata, password)
+- **NATS TLS** cert and key are required when TLS is enabled
+- **Dev seeding** (`STRATA_SEED_DEV=true`) is rejected in production
+
+### Required Settings for Production
+
+In addition to the common validation requirements (JWT secret, database DSN, NATS URL, API address), production mode requires explicit configuration of:
+
+1. `STRATA_RUNTIME_MODE=production`
+2. `STRATA_PUBLIC_URL` — HTTPS public endpoint
+3. `CORS_ORIGINS` — explicit origin list (no wildcard)
+4. `NATS_URL` — production NATS cluster address
+5. `TIMESCALE_DSN` / `STRATA_DB_DSN` / `DATABASE_URL` — production database with SSL
+
+### Startup Sequence
+
+The orchestrator startup now follows a strict sequence:
+
+1. Load configuration from environment variables with typed parsing
+2. Run `Validate()` — structural checks (all modes)
+3. Run `ProductionValidate()` — fail-closed policy checks (production only)
+4. Log redacted configuration summary (secrets masked)
+5. Initialize subsystems (JWT → NATS → database → ingestion → alerting → vulns → storage → dispatcher → API)
+6. Health endpoints return `starting` until the full sequence completes
+
 ## Workstreams
 
 ### 8.0 — Baseline and configuration inventory

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -40,6 +41,21 @@ type APIServer struct {
 	recordingStore *remote.RecordingStore
 	storageBackend storage.Backend
 
+	startTime time.Time
+	mu        sync.RWMutex
+	ready     bool
+
+	dispatcherHealthy  bool
+	migrationsComplete bool
+
+	httpReadTimeout  time.Duration
+	httpWriteTimeout time.Duration
+	httpIdleTimeout  time.Duration
+	httpBodyLimit    int64
+	corsOrigins      []string
+
+	healthRegistry *HealthRegistry
+
 	// allowClaimPrincipal is restricted to isolated middleware unit tests. Production
 	// servers always resolve users, memberships, and agents from PostgreSQL.
 	allowClaimPrincipal bool
@@ -50,18 +66,28 @@ func NewAPIServer(addr string, db *timescale.Client, nc *nats.Conn, logger *zap.
 		return nil, fmt.Errorf("token generator is required")
 	}
 	s := &APIServer{
-		addr:     addr,
-		db:       db,
-		nats:     nc,
-		totp:     auth.NewTOTPManager(),
-		logger:   logger,
-		tokenGen: tokenGen,
+		addr:           addr,
+		db:             db,
+		nats:           nc,
+		totp:           auth.NewTOTPManager(),
+		logger:         logger,
+		tokenGen:       tokenGen,
+		healthRegistry: NewHealthRegistry(),
 	}
 	if db != nil {
 		s.mfaStore = auth.NewMFAStore(db.DB())
 		s.keyStore = encrypt.NewKeyStore(db.DB())
 	}
 	return s, nil
+}
+
+func (s *APIServer) WithHTTPConfig(readTimeout, writeTimeout, idleTimeout time.Duration, bodyLimit int64, corsOrigins []string) *APIServer {
+	s.httpReadTimeout = readTimeout
+	s.httpWriteTimeout = writeTimeout
+	s.httpIdleTimeout = idleTimeout
+	s.httpBodyLimit = bodyLimit
+	s.corsOrigins = corsOrigins
+	return s
 }
 
 func (s *APIServer) WithAlertEngine(e *alerting.Engine) *APIServer {
@@ -104,11 +130,37 @@ func (s *APIServer) WithStorageBackend(sb storage.Backend) *APIServer {
 	return s
 }
 
+func (s *APIServer) SetDispatcherHealthy(healthy bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.dispatcherHealthy = healthy
+}
+
+func (s *APIServer) DispatcherHealthy() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.dispatcherHealthy
+}
+
+func (s *APIServer) SetMigrationsComplete(complete bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.migrationsComplete = complete
+}
+
+func (s *APIServer) MigrationsComplete() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.migrationsComplete
+}
+
 func (s *APIServer) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /", s.handleRoot)
 	mux.HandleFunc("GET /health", s.handleHealth)
+	mux.HandleFunc("GET /health/live", s.handleHealthLive)
+	mux.HandleFunc("GET /health/ready", s.handleHealthReady)
 	mux.HandleFunc("POST /api/v1/enroll", s.handleEnroll)
 	mux.HandleFunc("POST /api/v1/agent/register", s.handleAgentRegister)
 	mux.HandleFunc("POST /api/v1/agent/config", s.handleAgentConfig)
@@ -337,12 +389,33 @@ func (s *APIServer) Start(ctx context.Context) error {
 		}
 	}
 
+	bodyLimit := int64(10 << 20)
+	if s.httpBodyLimit > 0 {
+		bodyLimit = s.httpBodyLimit
+	}
+	readTimeout := 10 * time.Second
+	if s.httpReadTimeout > 0 {
+		readTimeout = s.httpReadTimeout
+	}
+	writeTimeout := 10 * time.Second
+	if s.httpWriteTimeout > 0 {
+		writeTimeout = s.httpWriteTimeout
+	}
+	idleTimeout := 60 * time.Second
+	if s.httpIdleTimeout > 0 {
+		idleTimeout = s.httpIdleTimeout
+	}
+
+	if len(s.corsOrigins) > 0 {
+		handler = s.withCORS(handler)
+	}
+
 	s.server = &http.Server{
 		Addr:         s.addr,
-		Handler:      auth.MaxBodySize(10 << 20)(handler),
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Handler:      auth.MaxBodySize(bodyLimit)(handler),
+		ReadTimeout:  readTimeout,
+		WriteTimeout: writeTimeout,
+		IdleTimeout:  idleTimeout,
 	}
 
 	s.logger.Info("API server starting", zap.String("addr", s.addr))
@@ -353,13 +426,45 @@ func (s *APIServer) Start(ctx context.Context) error {
 		}
 	}()
 
+	s.setReadiness(true)
+	s.logger.Info("API server ready")
+
 	return nil
 }
 
 func (s *APIServer) Stop(ctx context.Context) error {
+	s.setReadiness(false)
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	return s.server.Shutdown(ctx)
+}
+
+func (s *APIServer) withCORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		allowed := false
+		for _, o := range s.corsOrigins {
+			if o == origin {
+				allowed = true
+				break
+			}
+		}
+		if allowed {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key")
+		}
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *APIServer) handleRoot(w http.ResponseWriter, r *http.Request) {
@@ -374,11 +479,130 @@ func (s *APIServer) handleRoot(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *APIServer) handleHealth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{
-		"status": "ok",
-		"time":   time.Now().UTC().Format(time.RFC3339),
+type HealthRegistry struct {
+	mu     sync.RWMutex
+	checks map[string]func(context.Context) error
+}
+
+func NewHealthRegistry() *HealthRegistry {
+	return &HealthRegistry{checks: make(map[string]func(context.Context) error)}
+}
+
+func JetStreamHealthCheck(nc *nats.Conn) func(context.Context) error {
+	return func(ctx context.Context) error {
+		if nc == nil || !nc.IsConnected() {
+			return fmt.Errorf("JetStream connection is not established")
+		}
+		js, err := nc.JetStream()
+		if err != nil {
+			return fmt.Errorf("JetStream context unavailable: %w", err)
+		}
+		if _, err := js.AccountInfo(nats.Context(ctx)); err != nil {
+			return fmt.Errorf("JetStream account query failed: %w", err)
+		}
+		return nil
+	}
+}
+
+func (r *HealthRegistry) Register(name string, check func(context.Context) error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.checks[name] = check
+}
+
+func (r *HealthRegistry) Check(ctx context.Context) (bool, map[string]string) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	allOK := true
+	statuses := make(map[string]string)
+	for name, check := range r.checks {
+		if err := check(ctx); err != nil {
+			statuses[name] = fmt.Sprintf("failed: %v", err)
+			allOK = false
+		} else {
+			statuses[name] = "ok"
+		}
+	}
+	return allOK, statuses
+}
+
+type healthLivenessResponse struct {
+	Status string `json:"status"`
+	Time   string `json:"time"`
+}
+
+type healthReadinessResponse struct {
+	Status     string            `json:"status"`
+	Time       string            `json:"time"`
+	Ready      bool              `json:"ready"`
+	Components map[string]string `json:"components,omitempty"`
+}
+
+func (s *APIServer) RegisterHealth(name string, check func(context.Context) error) {
+	s.healthRegistry.Register(name, check)
+}
+
+func (s *APIServer) setReadiness(ready bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ready = ready
+	if !ready {
+		s.startTime = time.Now()
+	}
+}
+
+func (s *APIServer) handleHealthLive(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, healthLivenessResponse{
+		Status: "alive",
+		Time:   time.Now().UTC().Format(time.RFC3339),
 	})
+}
+
+func (s *APIServer) handleHealthReady(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	ready := s.ready
+	s.mu.RUnlock()
+
+	if !ready {
+		writeJSON(w, http.StatusServiceUnavailable, healthReadinessResponse{
+			Status: "not ready",
+			Time:   time.Now().UTC().Format(time.RFC3339),
+			Ready:  false,
+		})
+		return
+	}
+
+	allOK, statuses := s.healthRegistry.Check(r.Context())
+	if allOK {
+		writeJSON(w, http.StatusOK, healthReadinessResponse{
+			Status:     "ok",
+			Time:       time.Now().UTC().Format(time.RFC3339),
+			Ready:      true,
+			Components: statuses,
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusServiceUnavailable, healthReadinessResponse{
+		Status:     "degraded",
+		Time:       time.Now().UTC().Format(time.RFC3339),
+		Ready:      false,
+		Components: statuses,
+	})
+}
+
+func (s *APIServer) handleHealth(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("live") == "1" || r.URL.Query().Get("liveness") == "1" {
+		s.handleHealthLive(w, r)
+		return
+	}
+	if r.URL.Query().Get("ready") == "1" || r.URL.Query().Get("readiness") == "1" {
+		s.handleHealthReady(w, r)
+		return
+	}
+
+	// Default: readiness endpoint
+	s.handleHealthReady(w, r)
 }
 
 func (s *APIServer) handleEnroll(w http.ResponseWriter, r *http.Request) {

@@ -20,6 +20,7 @@ Strata RMM is a multi-tenant remote monitoring and management platform for MSPs.
 - [Phase 8 production beta plan](PHASE_8_PRODUCTION_BETA.md)
 - [Phase 8 risk register](PHASE_8_RISK_REGISTER.md)
 - [Phase 8 acceptance matrix](PHASE_8_ACCEPTANCE_MATRIX.md)
+- [Agent engineering and PR standard](AGENT_ENGINEERING_STANDARD.md)
 
 Phase completion is not equivalent to unrestricted production readiness. A hosted beta requires durable evidence for every mandatory Phase 8 acceptance gate.
 
