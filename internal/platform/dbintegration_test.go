@@ -8,11 +8,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
-	_ "github.com/lib/pq"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/postgres"
 )
 
