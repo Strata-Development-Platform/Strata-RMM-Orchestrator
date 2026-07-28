@@ -188,18 +188,7 @@ jobs:
             systemd-analyze verify deploy/*.service 2>/dev/null || echo "systemd-analyze warnings (non-fatal)"
           fi
       - name: Validate YAML syntax
-        run: |
-          python3 -c "
-import os, yaml, sys
-for root, dirs, files in os.walk('.'):
-    for f in files:
-        if f.endswith(('.yml','.yaml')) and 'node_modules' not in root:
-            try:
-                yaml.safe_load(open(os.path.join(root,f)))
-            except Exception as e:
-                print(f'YAML error in {os.path.join(root,f)}: {e}')
-                sys.exit(1)
-"
+        run: python3 scripts/validate_yaml.py
       - name: Validate Docker Compose file
         run: |
           python3 -c "import yaml; yaml.safe_load(open('deploy/docker/docker-compose.yml'))"
