@@ -71,8 +71,6 @@ export default function MSPWorkspacePage() {
 
   useEffect(() => {
     void reload();
-    // reload is intentionally keyed to the selected tenant.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mspID]);
 
   const perform = async (action: () => Promise<unknown>, message: string) => {

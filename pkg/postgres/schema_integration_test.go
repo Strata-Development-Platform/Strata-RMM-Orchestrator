@@ -79,12 +79,17 @@ func TestTenantRLSMigration(t *testing.T) {
 		t.Fatalf("seed entitlements: %v", err)
 	}
 	if _, err := seed.Exec(`
-		INSERT INTO usage_snapshots (msp_id, device_count) VALUES ($1, 1), ($2, 2);
+		INSERT INTO usage_snapshots (msp_id, device_count) VALUES ($1, 1), ($2, 2)
+	`, mspA, mspB); err != nil {
+		_ = seed.Rollback()
+		t.Fatalf("seed usage snapshots: %v", err)
+	}
+	if _, err := seed.Exec(`
 		INSERT INTO control_plane_audit (msp_id, actor_user_id, action, resource_type)
 		VALUES ($1, 'ci', 'test.a', 'test'), ($2, 'ci', 'test.b', 'test')
 	`, mspA, mspB); err != nil {
 		_ = seed.Rollback()
-		t.Fatalf("seed control-plane data: %v", err)
+		t.Fatalf("seed control-plane audit: %v", err)
 	}
 	if _, err := seed.Exec(`
 		INSERT INTO support_access_grants (
