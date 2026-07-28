@@ -127,7 +127,8 @@ func (s *APIServer) handleListDevices(w http.ResponseWriter, r *http.Request) {
 		var d deviceRow
 		if err := rows.Scan(&d.ID, &d.Hostname, &d.OS, &d.Arch, &d.AgentVersion, &d.Status,
 			&d.LastHb, &d.CreatedAt, &d.SiteName, &d.ClientName, &d.ClientID, &d.SiteID); err != nil {
-			continue
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "scan error"})
+			return
 		}
 		devices = append(devices, d)
 	}
@@ -358,10 +359,14 @@ func (s *APIServer) handleDeviceAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	outboxPayload, _ := json.Marshal(map[string]interface{}{
+	outboxPayload, err := json.Marshal(map[string]interface{}{
 		"job_id": jobID, "target_id": targetID, "device_id": deviceID,
 		"type": op.JobType, "payload": payloadMap,
 	})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "encode dispatch failed"})
+		return
+	}
 	if _, err := tx.Exec(`
 		INSERT INTO job_outbox (id, msp_id, aggregate_id, event_type, payload, available_at)
 		VALUES (gen_random_uuid(), $1, $2, 'job.dispatch', $3, $4)
@@ -499,18 +504,24 @@ func (s *APIServer) handleBulkDeviceAction(w http.ResponseWriter, r *http.Reques
 		VALUES ($1, $2, $3, $4, 'queued', 10, $5, 1, $6, $7, $8)
 	`, jobID, mspID, "api:bulk:"+req.Action, op.JobType,
 		payload, len(uniqueIDs), expires, correlationID); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create job failed"})
 		return
 	}
 
 	for _, deviceID := range uniqueIDs {
 		targetID := uuid.New().String()
 		if _, err := tx.Exec(`INSERT INTO job_targets (id, job_id, device_id, msp_id, status) VALUES ($1,$2,$3,$4,'queued')`, targetID, jobID, deviceID, mspID); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create target failed"})
 			return
 		}
-		opPayload, _ := json.Marshal(map[string]interface{}{
+		opPayload, err := json.Marshal(map[string]interface{}{
 			"job_id": jobID, "target_id": targetID, "device_id": deviceID,
 			"type": op.JobType, "payload": req,
 		})
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "encode dispatch failed"})
+			return
+		}
 		if _, err := tx.Exec(`INSERT INTO job_outbox (id,msp_id,aggregate_id,event_type,payload,available_at) VALUES (gen_random_uuid(),$1,$2,'job.dispatch',$3,$4)`, mspID, jobID, opPayload, availableAt); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create dispatch failed"})
 			return
