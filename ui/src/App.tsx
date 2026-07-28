@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from '@/hooks/useAuth';
+import { WorkspaceProvider } from '@/hooks/useWorkspace';
 import Layout from '@/components/layout/Layout';
 import LoginPage from '@/pages/LoginPage';
 import DashboardPage from '@/pages/DashboardPage';
@@ -16,6 +17,7 @@ import JobsPage from '@/pages/JobsPage';
 import JobHealthPage from '@/pages/JobHealthPage';
 import MSPListPage from '@/pages/MSPListPage';
 import DeviceRemotePage from '@/pages/DeviceRemotePage';
+import MSPWorkspacePage from '@/pages/MSPWorkspacePage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
@@ -55,6 +57,7 @@ function AppRoutes() {
       <Route path="/jobs" element={<ProtectedRoute><JobsPage /></ProtectedRoute>} />
       <Route path="/jobs/health" element={<ProtectedRoute><JobHealthPage /></ProtectedRoute>} />
       <Route path="/platform/msps" element={<PlatformRoute><MSPListPage /></PlatformRoute>} />
+      <Route path="/msp" element={<ProtectedRoute><MSPWorkspacePage /></ProtectedRoute>} />
       <Route path="/remote/:tid/:did" element={<ProtectedRoute><DeviceRemotePage /></ProtectedRoute>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
@@ -65,7 +68,9 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <AppRoutes />
+        <WorkspaceProvider>
+          <AppRoutes />
+        </WorkspaceProvider>
       </AuthProvider>
     </BrowserRouter>
   );

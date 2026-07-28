@@ -29,7 +29,7 @@ func (s *APIServer) handleListMSPS(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var msps []map[string]interface{}
 	for rows.Next() {
@@ -105,6 +105,8 @@ func (s *APIServer) handleCreateMSP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "unable to create MSP"})
 		return
 	}
+	s.auditControlPlane(r, createdID, "msp.created", "msp", createdID,
+		map[string]string{"name": req.Name, "slug": req.Slug, "plan": req.Plan})
 	writeJSON(w, http.StatusCreated, map[string]string{"id": createdID, "status": "created"})
 }
 
@@ -133,6 +135,7 @@ func (s *APIServer) handleSuspendMSP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	s.auditControlPlane(r, mspID, "msp.suspended", "msp", mspID, nil)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "suspended"})
 }
 
@@ -143,6 +146,7 @@ func (s *APIServer) handleActivateMSP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	s.auditControlPlane(r, mspID, "msp.activated", "msp", mspID, nil)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "activated"})
 }
 
@@ -164,7 +168,7 @@ func (s *APIServer) handleListClients(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var clients []map[string]interface{}
 	for rows.Next() {
@@ -189,7 +193,7 @@ func (s *APIServer) handleListClients(w http.ResponseWriter, r *http.Request) {
 
 func (s *APIServer) handleCreateClient(w http.ResponseWriter, r *http.Request) {
 	mspID := r.PathValue("mspID")
-	if !s.AuthorizeMSPAccess(w, r, mspID) {
+	if !s.AuthorizeMSPManage(w, r, mspID) {
 		return
 	}
 	var req struct {
@@ -225,6 +229,8 @@ func (s *APIServer) handleCreateClient(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	s.auditControlPlane(r, mspID, "client.created", "client", id,
+		map[string]string{"name": req.Name, "slug": req.Slug})
 	writeJSON(w, http.StatusCreated, map[string]string{"id": id, "status": "created"})
 }
 
@@ -251,7 +257,7 @@ func (s *APIServer) handleGetClient(w http.ResponseWriter, r *http.Request) {
 
 func (s *APIServer) handleArchiveClient(w http.ResponseWriter, r *http.Request) {
 	clientID := r.PathValue("clientID")
-	if !s.AuthorizeClientAccess(w, r, clientID) {
+	if _, ok := s.authorizeClientManage(w, r, clientID); !ok {
 		return
 	}
 	_, err := s.requestDB(r).ExecContext(r.Context(), `UPDATE client_organizations SET is_active = false WHERE id = $1`, clientID)
@@ -259,6 +265,8 @@ func (s *APIServer) handleArchiveClient(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	mspID := r.PathValue("mspID")
+	s.auditControlPlane(r, mspID, "client.archived", "client", clientID, nil)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "archived"})
 }
 
@@ -279,7 +287,7 @@ func (s *APIServer) handleListSites(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var sites []map[string]interface{}
 	for rows.Next() {
@@ -304,7 +312,7 @@ func (s *APIServer) handleListSites(w http.ResponseWriter, r *http.Request) {
 
 func (s *APIServer) handleCreateSite(w http.ResponseWriter, r *http.Request) {
 	clientID := r.PathValue("clientID")
-	if !s.AuthorizeClientAccess(w, r, clientID) {
+	if _, ok := s.authorizeClientManage(w, r, clientID); !ok {
 		return
 	}
 	var req struct {
@@ -330,6 +338,11 @@ func (s *APIServer) handleCreateSite(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	var mspID string
+	_ = s.requestDB(r).QueryRowContext(r.Context(),
+		`SELECT msp_id FROM client_organizations WHERE id = $1`, clientID).Scan(&mspID)
+	s.auditControlPlane(r, mspID, "site.created", "site", id,
+		map[string]string{"client_id": clientID, "name": req.Name, "slug": req.Slug})
 	writeJSON(w, http.StatusCreated, map[string]string{"id": id, "status": "created"})
 }
 
@@ -356,7 +369,7 @@ func (s *APIServer) handleGetSite(w http.ResponseWriter, r *http.Request) {
 
 func (s *APIServer) handleArchiveSite(w http.ResponseWriter, r *http.Request) {
 	siteID := r.PathValue("siteID")
-	if !s.AuthorizeSiteAccess(w, r, siteID) {
+	if _, ok := s.authorizeSiteManage(w, r, siteID); !ok {
 		return
 	}
 	_, err := s.requestDB(r).ExecContext(r.Context(), `UPDATE sites SET is_active = false WHERE id = $1`, siteID)
@@ -364,6 +377,11 @@ func (s *APIServer) handleArchiveSite(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	var mspID string
+	_ = s.requestDB(r).QueryRowContext(r.Context(), `
+		SELECT c.msp_id FROM sites s JOIN client_organizations c ON c.id = s.client_id WHERE s.id = $1
+	`, siteID).Scan(&mspID)
+	s.auditControlPlane(r, mspID, "site.archived", "site", siteID, nil)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "archived"})
 }
 
@@ -383,7 +401,7 @@ func (s *APIServer) handleListMemberships(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var memberships []map[string]interface{}
 	for rows.Next() {
@@ -406,7 +424,7 @@ func (s *APIServer) handleListMemberships(w http.ResponseWriter, r *http.Request
 
 func (s *APIServer) handleCreateMembership(w http.ResponseWriter, r *http.Request) {
 	mspID := r.PathValue("mspID")
-	if !s.AuthorizeMSPAccess(w, r, mspID) {
+	if !s.AuthorizeMSPManage(w, r, mspID) {
 		return
 	}
 	var req struct {
@@ -423,14 +441,67 @@ func (s *APIServer) handleCreateMembership(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "membership scope must match route MSP"})
 		return
 	}
+	allowedRoles := map[string]bool{
+		"msp_owner": true, "msp_admin": true, "msp_technician": true, "msp_viewer": true,
+	}
+	if !allowedRoles[req.Role] {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid MSP role"})
+		return
+	}
+	var userActive, quotaAllowed bool
+	if err := s.requestDB(r).QueryRowContext(r.Context(),
+		`SELECT EXISTS (SELECT 1 FROM users WHERE id = $1 AND is_active = true)`,
+		req.UserID,
+	).Scan(&userActive); err != nil || !userActive {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "active user not found"})
+		return
+	}
+	if err := s.requestDB(r).QueryRowContext(r.Context(), `
+		SELECT pe.status = 'active' AND (
+			p.max_users = 0 OR (
+				SELECT COUNT(DISTINCT user_id) FROM memberships
+				WHERE scope_type = 'msp' AND scope_id = $1 AND status = 'active'
+			) < p.max_users
+		)
+		FROM plan_entitlements pe JOIN plans p ON p.id = pe.plan_id
+		WHERE pe.msp_id::text = $1
+	`, mspID).Scan(&quotaAllowed); err != nil || !quotaAllowed {
+		writeJSON(w, http.StatusPaymentRequired, map[string]string{"error": "subscription inactive or user quota reached"})
+		return
+	}
 	id := uuid.New().String()
 	_, err := s.requestDB(r).ExecContext(r.Context(), `
 		INSERT INTO memberships (id, user_id, role, scope_type, scope_id, created_by)
 		VALUES ($1, $2, $3, $4, $5, $6)
 	`, id, req.UserID, req.Role, req.ScopeType, req.ScopeID, "api")
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "active membership already exists"})
 		return
 	}
+	s.auditControlPlane(r, mspID, "membership.created", "membership", id,
+		map[string]string{"user_id": req.UserID, "role": req.Role})
 	writeJSON(w, http.StatusCreated, map[string]string{"id": id, "status": "created"})
+}
+
+func (s *APIServer) handleRevokeMembership(w http.ResponseWriter, r *http.Request) {
+	mspID := r.PathValue("mspID")
+	if !s.AuthorizeMSPManage(w, r, mspID) {
+		return
+	}
+	membershipID := r.PathValue("membershipID")
+	result, err := s.requestDB(r).ExecContext(r.Context(), `
+		UPDATE memberships SET status = 'revoked'
+		WHERE id = $1 AND scope_type = 'msp' AND scope_id = $2 AND status = 'active'
+	`, membershipID, mspID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "membership revocation failed"})
+		return
+	}
+	affected, err := result.RowsAffected()
+	if err != nil || affected != 1 {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "active membership not found"})
+		return
+	}
+	s.auditControlPlane(r, mspID, "membership.revoked", "membership", membershipID, nil)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "revoked"})
 }

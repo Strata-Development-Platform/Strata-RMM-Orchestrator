@@ -214,9 +214,14 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /api/v1/branding", s.handleGetBranding)
 	mux.HandleFunc("PUT /api/v1/branding", s.handleUpdateBranding)
 	mux.HandleFunc("GET /api/v1/domains", s.handleListDomains)
+	mux.HandleFunc("POST /api/v1/domains", s.handleCreateDomain)
+	mux.HandleFunc("POST /api/v1/domains/{domainID}/verify", s.handleVerifyDomain)
+	mux.HandleFunc("DELETE /api/v1/domains/{domainID}", s.handleDeleteDomain)
+	mux.HandleFunc("PATCH /api/v2/platform/domains/{domainID}/certificate", s.handleUpdateDomainCertificate)
 	mux.HandleFunc("POST /api/v1/enrollment/tokens", s.handleCreateEnrollmentToken)
 	mux.HandleFunc("POST /api/v1/enrollment/validate", s.handleValidateEnrollmentToken)
 	mux.HandleFunc("GET /api/v1/enrollment/tokens", s.handleListEnrollmentTokens)
+	mux.HandleFunc("DELETE /api/v1/enrollment/tokens/{tokenID}", s.handleRevokeEnrollmentToken)
 	mux.HandleFunc("POST /api/v1/jobs", s.handleCreateJob)
 	mux.HandleFunc("GET /api/v1/jobs", s.handleListJobs)
 	mux.HandleFunc("GET /api/v1/jobs/{jobID}", s.handleGetJob)
@@ -258,6 +263,15 @@ func (s *APIServer) Start(ctx context.Context) error {
 	// v2 API — Memberships
 	mux.HandleFunc("GET /api/v2/msps/{mspID}/memberships", s.handleListMemberships)
 	mux.HandleFunc("POST /api/v2/msps/{mspID}/memberships", s.handleCreateMembership)
+	mux.HandleFunc("DELETE /api/v2/msps/{mspID}/memberships/{membershipID}", s.handleRevokeMembership)
+
+	// v2 API — subscriptions, metering, and auditable control-plane operations
+	mux.HandleFunc("GET /api/v2/msps/{mspID}/entitlement", s.handleGetEntitlement)
+	mux.HandleFunc("PATCH /api/v2/platform/msps/{mspID}/entitlement", s.handleUpdateEntitlement)
+	mux.HandleFunc("GET /api/v2/msps/{mspID}/usage", s.handleUsage)
+	mux.HandleFunc("GET /api/v2/msps/{mspID}/audit", s.handleControlPlaneAudit)
+	mux.HandleFunc("GET /api/v2/msps/{mspID}/devices", s.handleMSPDevices)
+	mux.HandleFunc("POST /api/v2/context/switch", s.handleContextSwitch)
 
 	// v2 API — time-limited platform support access
 	mux.HandleFunc("POST /api/v2/platform/support-grants", s.handleCreateSupportGrant)

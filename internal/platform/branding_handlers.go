@@ -30,7 +30,6 @@ func (s *APIServer) handleGetBranding(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no msp context"})
 		return
 	}
-
 	var bp brandingProfile
 	err := s.requestDB(r).QueryRowContext(r.Context(), `
 		SELECT id, msp_id, display_name, COALESCE(logo_light, ''),
@@ -55,6 +54,9 @@ func (s *APIServer) handleUpdateBranding(w http.ResponseWriter, r *http.Request)
 	mspID := r.Header.Get("X-MSP-ID")
 	if mspID == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no msp context"})
+		return
+	}
+	if !s.AuthorizeMSPManage(w, r, mspID) {
 		return
 	}
 
@@ -90,6 +92,7 @@ func (s *APIServer) handleUpdateBranding(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	s.auditControlPlane(r, mspID, "branding.updated", "branding_profile", mspID, nil)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
@@ -101,26 +104,28 @@ func (s *APIServer) handleListDomains(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := s.requestDB(r).QueryContext(r.Context(), `
-		SELECT id, hostname, domain_type, verification_status, certificate_status, is_primary
+		SELECT id, hostname, domain_type, verification_status, certificate_status, is_primary,
+		       CASE WHEN verification_status IN ('pending', 'failed') THEN verification_token ELSE '' END
 		FROM custom_domains WHERE msp_id = $1 ORDER BY created_at ASC
 	`, mspID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var domains []map[string]interface{}
 	for rows.Next() {
-		var id, hostname, domainType, verStatus, certStatus string
+		var id, hostname, domainType, verStatus, certStatus, verificationToken string
 		var isPrimary bool
-		if err := rows.Scan(&id, &hostname, &domainType, &verStatus, &certStatus, &isPrimary); err != nil {
+		if err := rows.Scan(&id, &hostname, &domainType, &verStatus, &certStatus, &isPrimary, &verificationToken); err != nil {
 			continue
 		}
 		domains = append(domains, map[string]interface{}{
 			"id": id, "hostname": hostname, "domain_type": domainType,
 			"verification_status": verStatus, "certificate_status": certStatus,
-			"is_primary": isPrimary,
+			"is_primary": isPrimary, "verification_token": verificationToken,
+			"txt_name": "_strata-verification." + hostname,
 		})
 	}
 	if domains == nil {

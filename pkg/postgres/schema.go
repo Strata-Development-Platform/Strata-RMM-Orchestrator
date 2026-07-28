@@ -1764,6 +1764,53 @@ func Migrations() []Migration {
 			`,
 			Down: `DROP TABLE IF EXISTS plan_entitlements CASCADE; DROP TABLE IF EXISTS plans CASCADE;`,
 		},
+		{
+			ID:   54,
+			Name: "complete_saas_control_plane",
+			Up: `
+				CREATE TABLE IF NOT EXISTS usage_snapshots (
+					id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					msp_id       UUID NOT NULL REFERENCES msp_tenants(id) ON DELETE CASCADE,
+					device_count INT NOT NULL DEFAULT 0 CHECK (device_count >= 0),
+					user_count   INT NOT NULL DEFAULT 0 CHECK (user_count >= 0),
+					client_count INT NOT NULL DEFAULT 0 CHECK (client_count >= 0),
+					site_count   INT NOT NULL DEFAULT 0 CHECK (site_count >= 0),
+					recorded_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+				CREATE INDEX IF NOT EXISTS idx_usage_snapshots_msp_time
+					ON usage_snapshots(msp_id, recorded_at DESC);
+
+				CREATE TABLE IF NOT EXISTS control_plane_audit (
+					id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					msp_id        UUID REFERENCES msp_tenants(id) ON DELETE SET NULL,
+					actor_user_id TEXT NOT NULL DEFAULT '',
+					action        TEXT NOT NULL,
+					resource_type TEXT NOT NULL,
+					resource_id   TEXT NOT NULL DEFAULT '',
+					details       JSONB NOT NULL DEFAULT '{}',
+					created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+				CREATE INDEX IF NOT EXISTS idx_control_plane_audit_msp_time
+					ON control_plane_audit(msp_id, created_at DESC);
+
+				ALTER TABLE usage_snapshots ENABLE ROW LEVEL SECURITY;
+				ALTER TABLE control_plane_audit ENABLE ROW LEVEL SECURITY;
+
+				CREATE POLICY tenant_scope ON usage_snapshots
+					USING (app_is_platform_admin() OR msp_id = safe_msp_id() OR support_access_allowed(msp_id))
+					WITH CHECK (app_is_platform_admin() OR msp_id = safe_msp_id());
+				CREATE POLICY tenant_scope ON control_plane_audit
+					USING (app_is_platform_admin() OR msp_id = safe_msp_id() OR support_access_allowed(msp_id))
+					WITH CHECK (app_is_platform_admin() OR msp_id = safe_msp_id());
+
+				ALTER TABLE usage_snapshots FORCE ROW LEVEL SECURITY;
+				ALTER TABLE control_plane_audit FORCE ROW LEVEL SECURITY;
+			`,
+			Down: `
+				DROP TABLE IF EXISTS control_plane_audit CASCADE;
+				DROP TABLE IF EXISTS usage_snapshots CASCADE;
+			`,
+		},
 	}
 }
 

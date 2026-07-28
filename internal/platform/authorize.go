@@ -61,6 +61,62 @@ func (s *APIServer) AuthorizeMSPAccess(w http.ResponseWriter, r *http.Request, m
 	return true
 }
 
+// AuthorizeMSPManage requires an owner/admin membership on the exact MSP scope.
+// Roles from memberships on other tenants never grant write access here.
+func (s *APIServer) AuthorizeMSPManage(w http.ResponseWriter, r *http.Request, mspID string) bool {
+	if hasAdminRole(getRoles(r)) {
+		return true
+	}
+	if mspID == "" || s.db == nil {
+		writeAuthorizationDenied(w)
+		return false
+	}
+	userID, _ := r.Context().Value(ctxKeyUserID).(string)
+	var allowed bool
+	err := s.requestDB(r).QueryRowContext(r.Context(), `
+		SELECT EXISTS (
+			SELECT 1 FROM memberships
+			WHERE user_id = $1 AND scope_type = 'msp' AND scope_id = $2
+			  AND role IN ('msp_owner', 'msp_admin')
+			  AND status = 'active'
+			  AND (expires_at IS NULL OR expires_at > NOW())
+		)
+	`, userID, mspID).Scan(&allowed)
+	if err != nil || !allowed {
+		writeAuthorizationDenied(w)
+		return false
+	}
+	return true
+}
+
+func (s *APIServer) authorizeClientManage(w http.ResponseWriter, r *http.Request, clientID string) (string, bool) {
+	var mspID string
+	if err := s.requestDB(r).QueryRowContext(r.Context(),
+		`SELECT msp_id FROM client_organizations WHERE id = $1 AND is_active = true`,
+		clientID,
+	).Scan(&mspID); err != nil || !s.AuthorizeMSPManage(w, r, mspID) {
+		if err != nil {
+			writeAuthorizationDenied(w)
+		}
+		return "", false
+	}
+	return mspID, true
+}
+
+func (s *APIServer) authorizeSiteManage(w http.ResponseWriter, r *http.Request, siteID string) (string, bool) {
+	var mspID string
+	if err := s.requestDB(r).QueryRowContext(r.Context(), `
+		SELECT c.msp_id FROM sites s JOIN client_organizations c ON c.id = s.client_id
+		WHERE s.id = $1 AND s.is_active = true
+	`, siteID).Scan(&mspID); err != nil || !s.AuthorizeMSPManage(w, r, mspID) {
+		if err != nil {
+			writeAuthorizationDenied(w)
+		}
+		return "", false
+	}
+	return mspID, true
+}
+
 // AuthorizeClientAccess checks whether the authenticated principal can access the given client.
 func (s *APIServer) AuthorizeClientAccess(w http.ResponseWriter, r *http.Request, clientID string) bool {
 	roles := getRoles(r)

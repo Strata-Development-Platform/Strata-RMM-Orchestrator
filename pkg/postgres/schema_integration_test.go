@@ -79,6 +79,14 @@ func TestTenantRLSMigration(t *testing.T) {
 		t.Fatalf("seed entitlements: %v", err)
 	}
 	if _, err := seed.Exec(`
+		INSERT INTO usage_snapshots (msp_id, device_count) VALUES ($1, 1), ($2, 2);
+		INSERT INTO control_plane_audit (msp_id, actor_user_id, action, resource_type)
+		VALUES ($1, 'ci', 'test.a', 'test'), ($2, 'ci', 'test.b', 'test')
+	`, mspA, mspB); err != nil {
+		_ = seed.Rollback()
+		t.Fatalf("seed control-plane data: %v", err)
+	}
+	if _, err := seed.Exec(`
 		INSERT INTO support_access_grants (
 			id, platform_user_id, msp_id, reason, ticket_ref, approved_by,
 			expires_at, status, permissions
@@ -102,6 +110,10 @@ func TestTenantRLSMigration(t *testing.T) {
 	assertVisibleEntitlements(t, db, mspA, "", "", 1)
 	assertVisibleEntitlements(t, db, mspB, "", "", 1)
 	assertVisibleEntitlements(t, db, "", userID, grantID, 1)
+	assertTenantTableCount(t, db, "usage_snapshots", mspA, "", "", 1)
+	assertTenantTableCount(t, db, "usage_snapshots", mspB, "", "", 1)
+	assertTenantTableCount(t, db, "control_plane_audit", mspA, "", "", 1)
+	assertTenantTableCount(t, db, "control_plane_audit", mspB, "", "", 1)
 
 	tx, err := db.Begin()
 	if err != nil {
@@ -147,6 +159,50 @@ func TestTenantRLSMigration(t *testing.T) {
 	}
 	if !forceRLS {
 		t.Fatal("plan_entitlements must force row-level security")
+	}
+	for _, table := range []string{"usage_snapshots", "control_plane_audit"} {
+		if err := db.QueryRow(`
+			SELECT relforcerowsecurity FROM pg_class WHERE oid = $1::regclass
+		`, table).Scan(&forceRLS); err != nil {
+			t.Fatalf("inspect %s RLS: %v", table, err)
+		}
+		if !forceRLS {
+			t.Fatalf("%s must force row-level security", table)
+		}
+	}
+}
+
+func assertTenantTableCount(t *testing.T, db *sql.DB, table, mspID, userID, grantID string, want int) {
+	t.Helper()
+	if table != "usage_snapshots" && table != "control_plane_audit" {
+		t.Fatalf("unsupported test table %q", table)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatalf("begin %s visibility transaction: %v", table, err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`SET LOCAL ROLE strata_runtime`); err != nil {
+		t.Fatalf("set runtime role: %v", err)
+	}
+	if _, err := tx.Exec(`
+		SELECT set_config('app.msp_id', $1, true),
+		       set_config('app.user_id', $2, true),
+		       set_config('app.support_grant_id', $3, true),
+		       set_config('app.permission', 'read', true)
+	`, mspID, userID, grantID); err != nil {
+		t.Fatalf("set %s visibility context: %v", table, err)
+	}
+	query := `SELECT COUNT(*) FROM usage_snapshots`
+	if table == "control_plane_audit" {
+		query = `SELECT COUNT(*) FROM control_plane_audit`
+	}
+	var got int
+	if err := tx.QueryRow(query).Scan(&got); err != nil {
+		t.Fatalf("count visible %s: %v", table, err)
+	}
+	if got != want {
+		t.Fatalf("visible %s for MSP %q = %d, want %d", table, mspID, got, want)
 	}
 }
 

@@ -2,6 +2,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { ThemeToggle } from '@/components/shared/ThemeToggle';
 import { useState } from 'react';
+import { useWorkspace } from '@/hooks/useWorkspace';
 import {
   LayoutDashboard, Users, Building2, Terminal, Package,
   FileText, Settings, LogOut, ChevronLeft, ChevronRight,
@@ -11,6 +12,7 @@ import {
 const navItems = [
   { path: '/', label: 'Overview', icon: LayoutDashboard },
   { path: '/customers', label: 'Customers', icon: Building2 },
+  { path: '/msp', label: 'MSP Workspace', icon: Globe },
   { path: '/platform/msps', label: 'MSP Tenants', icon: Globe, platformOnly: true },
   { path: '/admin/users', label: 'Users', icon: Users },
   { path: '/scripts', label: 'Scripts', icon: Terminal },
@@ -28,6 +30,7 @@ const bottomNav = [
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth();
+  const { workspace, switchWorkspace } = useWorkspace();
   const location = useLocation();
   const navigate = useNavigate();
   const [collapsed, setCollapsed] = useState(false);
@@ -40,16 +43,42 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   if (!user) return <>{children}</>;
   const platformRole = ['platform_owner', 'platform_admin'].includes(user.role);
   const visibleNavItems = navItems.filter(item => !item.platformOnly || platformRole);
+  const branding = workspace?.branding;
+  const displayName = typeof branding?.display_name === 'string' ? branding.display_name : 'Strata RMM';
+  const sidebarBackground = typeof branding?.sidebar_bg === 'string' ? branding.sidebar_bg : undefined;
+  const primaryColor = typeof branding?.primary_color === 'string' ? branding.primary_color : undefined;
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex">
-      <aside className={`${collapsed ? 'w-16' : 'w-56'} bg-slate-900 text-white flex flex-col transition-all duration-200 flex-shrink-0`}>
+      <aside
+        style={{ backgroundColor: sidebarBackground }}
+        className={`${collapsed ? 'w-16' : 'w-56'} bg-slate-900 text-white flex flex-col transition-all duration-200 flex-shrink-0`}
+      >
         <div className="p-4 border-b border-slate-700 flex items-center justify-between">
-          {!collapsed && <h2 className="font-bold text-lg">Strata RMM</h2>}
+          {!collapsed && <h2 className="font-bold text-lg truncate">{displayName}</h2>}
           <button onClick={() => setCollapsed(!collapsed)} className="text-slate-400 hover:text-white p-1">
             {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
           </button>
         </div>
+
+        {!collapsed && workspace && workspace.available_scopes.length > 0 && (
+          <div className="p-2 border-b border-slate-700">
+            <label htmlFor="workspace-scope" className="block text-[11px] uppercase tracking-wide text-slate-400 mb-1">
+              Workspace
+            </label>
+            <select
+              id="workspace-scope"
+              value={workspace.msp_id}
+              onChange={event => void switchWorkspace(event.target.value)}
+              className="w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs text-white"
+            >
+              <option value="">Select an MSP</option>
+              {workspace.available_scopes.filter(scope => scope.type === 'msp').map(scope => (
+                <option key={scope.id} value={scope.id}>{scope.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
 
         <nav className="flex-1 p-2 space-y-1 overflow-y-auto">
           {visibleNavItems.map(item => {
@@ -60,9 +89,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 to={item.path}
                 className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
                   location.pathname === item.path
-                    ? 'bg-blue-600 text-white'
+                    ? 'text-white'
                     : 'text-slate-300 hover:bg-slate-800 hover:text-white'
                 }`}
+                style={location.pathname === item.path ? { backgroundColor: primaryColor } : undefined}
                 title={collapsed ? item.label : undefined}
               >
                 <Icon size={18} className="flex-shrink-0" />
