@@ -65,7 +65,7 @@ func TestPrecedence_CLIOverridesEnv(t *testing.T) {
 		_ = os.Unsetenv("STORAGE_BACKEND")
 		_ = os.Unsetenv("STORAGE_BUCKET")
 		_ = os.Unsetenv("STORAGE_REGION")
-		os.Unsetenv("STORAGE_ENDPOINT")
+		_ = os.Unsetenv("STORAGE_ENDPOINT")
 	}()
 
 	logger, _ := zap.NewDevelopment()
