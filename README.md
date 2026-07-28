@@ -6,7 +6,7 @@ A horizontally-scalable, multi-tenant Remote Monitoring & Management platform wi
 
 ```bash
 # Docker (recommended)
-curl -O https://raw.githubusercontent.com/Strata-Development-Platform/Strata-RMM-Orchestrator/main/deploy/docker/docker-compose.yml
+curl -O https://raw.githubusercontent.com/Strata-Development-Platform/Strata-RMM-Orchestrator/master/deploy/docker/docker-compose.yml
 docker compose up -d
 
 # Verify
@@ -19,7 +19,7 @@ curl -X POST http://localhost:8080/api/v1/admin/customers \
 # Returns deployment_id → use to install agents
 ```
 
-See [docs/INSTALL.md](docs/INSTALL.md) for full installation guide (bare metal, Docker, Kubernetes).
+Start with the [documentation index](docs/index.md), or see [docs/INSTALL.md](docs/INSTALL.md) for the full installation guide (bare metal, Docker, Kubernetes).
 
 ## Architecture
 
