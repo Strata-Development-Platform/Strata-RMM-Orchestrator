@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -39,6 +40,9 @@ type APIServer struct {
 	keyStore       *encrypt.KeyStore
 	recordingStore *remote.RecordingStore
 	storageBackend storage.Backend
+
+	mu    sync.RWMutex
+	ready bool
 
 	// allowClaimPrincipal is restricted to isolated middleware unit tests. Production
 	// servers always resolve users, memberships, and agents from PostgreSQL.
@@ -353,10 +357,14 @@ func (s *APIServer) Start(ctx context.Context) error {
 		}
 	}()
 
+	s.setReadiness(true)
+	s.logger.Info("API server ready")
+
 	return nil
 }
 
 func (s *APIServer) Stop(ctx context.Context) error {
+	s.setReadiness(false)
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	return s.server.Shutdown(ctx)
@@ -374,11 +382,50 @@ func (s *APIServer) handleRoot(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+type healthResponse struct {
+	Status    string `json:"status"`
+	Time      string `json:"time"`
+	Mode      string `json:"mode,omitempty"`
+	Ready     string `json:"ready,omitempty"`
+	Uptime    string `json:"uptime,omitempty"`
+}
+
+func (s *APIServer) setReadiness(ready bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ready = ready
+}
+
 func (s *APIServer) handleHealth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{
-		"status": "ok",
-		"time":   time.Now().UTC().Format(time.RFC3339),
-	})
+	s.mu.RLock()
+	ready := s.ready
+	s.mu.RUnlock()
+
+	resp := healthResponse{
+		Status: "ok",
+		Time:   time.Now().UTC().Format(time.RFC3339),
+	}
+	if ready {
+		resp.Ready = "true"
+	} else {
+		resp.Ready = "false"
+		resp.Status = "starting"
+	}
+
+	mode := r.URL.Query().Get("mode")
+	if mode == "full" {
+		resp.Mode = "running"
+	}
+
+	if r.URL.Query().Get("liveness") == "1" {
+		writeJSON(w, http.StatusOK, map[string]string{
+			"status": "alive",
+			"time":   time.Now().UTC().Format(time.RFC3339),
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *APIServer) handleEnroll(w http.ResponseWriter, r *http.Request) {

@@ -261,7 +261,7 @@ func (d *Dispatcher) handleOfflineReconnect() {
 	_, err := d.db.DB().Exec(`
 		UPDATE job_targets jt SET status = 'queued', reconnect_at = NOW()
 		FROM devices d
-		WHERE jt.device_id = d.id::text
+		WHERE jt.device_id = d.id
 		  AND jt.status = 'waiting'
 		  AND d.status = 'online'
 		  AND jt.approval_status IN ('none', 'approved')
@@ -276,7 +276,7 @@ func (d *Dispatcher) expireOfflineWork() {
 	if _, err := d.db.DB().Exec(`
 		UPDATE job_targets jt SET status = 'expired', error_message = 'expired: waited beyond expiry'
 		FROM jobs j
-		WHERE jt.job_id = j.id::text
+		WHERE jt.job_id = j.id
 		  AND jt.status = 'waiting'
 		  AND j.expires_at < NOW()
 	`); err != nil {
