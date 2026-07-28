@@ -366,7 +366,7 @@ func TestAuditEvidenceIsAppendOnly(t *testing.T) {
 	}
 	_ = tx2.Rollback()
 
-	_ = db.Exec(`DROP ROLE IF EXISTS strata_runtime`)
+	_, _ = db.Exec(`DROP ROLE IF EXISTS strata_runtime`)
 }
 
 func TestAuditEvidenceCrossMSPReadDenied(t *testing.T) {
@@ -432,7 +432,7 @@ func TestAuditEvidenceCrossMSPReadDenied(t *testing.T) {
 		t.Errorf("expected 0 other-MSP audit records visible, got %d", count)
 	}
 	_ = tx.Rollback()
-	_ = db.Exec(`DROP ROLE IF EXISTS strata_runtime`)
+	_, _ = db.Exec(`DROP ROLE IF EXISTS strata_runtime`)
 }
 
 func TestAuditEvidenceTransactionRollbackRemovesEvidence(t *testing.T) {
