@@ -1,7 +1,9 @@
 package postgres
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -2132,48 +2134,84 @@ func Migrations() []Migration {
 }
 
 type SchemaManager struct {
-	db *sql.DB
+	db      *sql.DB
+	lockConn *sql.Conn
 }
 
 func NewSchemaManager(db *sql.DB) *SchemaManager {
 	return &SchemaManager{db: db}
 }
 
-func (m *SchemaManager) lock() (bool, error) {
-	var acquired bool
-	err := m.db.QueryRow("SELECT pg_try_advisory_lock($1)", migrationLockID).Scan(&acquired)
-	return acquired, err
-}
+var (
+	ErrLockHeld    = errors.New("advisory lock held by another process")
+	ErrLockTimeout = errors.New("advisory lock acquisition timed out")
+)
 
-func (m *SchemaManager) unlock() {
-	_, _ = m.db.Exec("SELECT pg_advisory_unlock($1)", migrationLockID)
-}
+func (m *SchemaManager) acquireLock(ctx context.Context) error {
+	const maxAttempts = 5
+	const interval = 1 * time.Second
 
-func (m *SchemaManager) retryLock(maxAttempts int, interval time.Duration) error {
-	var lastErr error
+	conn, err := m.db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("get database connection: %w", err)
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
 	for i := 0; i < maxAttempts; i++ {
-		acquired, err := m.lock()
+		select {
+		case <-ctx.Done():
+			conn.Close()
+			return fmt.Errorf("advisory lock cancelled: %w", ctx.Err())
+		default:
+		}
+
+		var acquired bool
+		err := conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock($1)", migrationLockID).Scan(&acquired)
 		if err != nil {
-			lastErr = fmt.Errorf("lock attempt %d/%d: %w", i+1, maxAttempts, err)
-			time.Sleep(interval)
-			continue
+			if i < maxAttempts-1 {
+				<-ticker.C
+				continue
+			}
+			conn.Close()
+			return fmt.Errorf("lock attempt %d/%d: %w", i+1, maxAttempts, err)
 		}
 		if acquired {
+			m.lockConn = conn
 			return nil
 		}
-		lastErr = fmt.Errorf("lock attempt %d/%d: lock held by another process", i+1, maxAttempts)
-		time.Sleep(interval)
+		if i < maxAttempts-1 {
+			<-ticker.C
+		}
 	}
-	return fmt.Errorf("migration lock acquisition failed after %d attempts: %w", maxAttempts, lastErr)
+
+	conn.Close()
+	return fmt.Errorf("lock attempt %d/%d: %w", maxAttempts, maxAttempts, ErrLockTimeout)
 }
 
-func (m *SchemaManager) Apply() error {
-	if err := m.retryLock(5, time.Second); err != nil {
+func (m *SchemaManager) releaseLock() {
+	if m.lockConn == nil {
+		return
+	}
+	_, err := m.lockConn.ExecContext(context.Background(), "SELECT pg_advisory_unlock($1)", migrationLockID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error releasing advisory lock: %v\n", err)
+	}
+	closeErr := m.lockConn.Close()
+	if closeErr != nil {
+		fmt.Fprintf(os.Stderr, "error closing lock connection: %v\n", closeErr)
+	}
+	m.lockConn = nil
+}
+
+func (m *SchemaManager) Apply(ctx context.Context) error {
+	if err := m.acquireLock(ctx); err != nil {
 		return fmt.Errorf("acquiring migration lock: %w", err)
 	}
-	defer m.unlock()
+	defer m.releaseLock()
 
-	_, err := m.db.Exec(`
+	_, err := m.lockConn.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
 			id         INT PRIMARY KEY,
 			name       TEXT NOT NULL,
@@ -2186,7 +2224,7 @@ func (m *SchemaManager) Apply() error {
 
 	for _, mig := range Migrations() {
 		var exists bool
-		err := m.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE id = $1)`, mig.ID).Scan(&exists)
+		err := m.lockConn.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE id = $1)`, mig.ID).Scan(&exists)
 		if err != nil {
 			return fmt.Errorf("check migration %d: %w", mig.ID, err)
 		}
@@ -2194,7 +2232,7 @@ func (m *SchemaManager) Apply() error {
 			continue
 		}
 
-		tx, err := m.db.Begin()
+		tx, err := m.lockConn.BeginTx(ctx, nil)
 		if err != nil {
 			return fmt.Errorf("begin migration %d (%s): %w", mig.ID, mig.Name, err)
 		}

@@ -3,6 +3,7 @@
 package postgres
 
 import (
+	"context"
 	"database/sql"
 	"os"
 	"testing"
@@ -24,7 +25,7 @@ func TestTenantRLSMigration(t *testing.T) {
 	if _, err := db.Exec(`DROP SCHEMA public CASCADE; CREATE SCHEMA public`); err != nil {
 		t.Fatalf("reset test schema: %v", err)
 	}
-	if err := NewSchemaManager(db).Apply(); err != nil {
+	if err := NewSchemaManager(db).Apply(context.Background()); err != nil {
 		t.Fatalf("apply migrations: %v", err)
 	}
 	if _, err := db.Exec(`

@@ -35,13 +35,14 @@ docker compose -f deploy/docker/docker-compose.yml stop orchestrator
 sudo mv /usr/local/bin/strata-rmm.pre-upgrade /usr/local/bin/strata-rmm
 
 # If no backup binary exists, redeploy from known-good artifact
-# wget https://github.com/.../releases/download/v0.1.x/strata-rmm-linux-amd64
+# wget https://github.com/.../releases/download/v0.2.0-beta/strata-rmm-linux-amd64
 
-# Docker
-docker tag strata-rmm-orchestrator:previous strata-rmm-orchestrator:latest
+# Docker — pin the previous image tag in docker-compose.override.yml
 ```
 
 ### Step 3: Restore Previous Configuration
+
+Production configuration must be preserved — restore the known-good config from backup:
 
 ```bash
 # Restore config files
@@ -51,14 +52,31 @@ sudo cp /backups/strata-rmm-config-pre-upgrade/* /etc/strata-rmm/
 sudo cp /backups/strata-rmm-config-pre-upgrade/orchestrator.env /etc/strata-rmm/orchestrator.env
 ```
 
-### Step 4: Verify Health
+### Step 4: Verify Schema Compatibility
+
+```bash
+# Run preflight to verify config, database, and NATS connectivity
+sudo /usr/local/bin/strata-rmm orchestrator preflight
+
+# Verify migration state is consistent with the restored binary
+psql -U strata_rmm_app -d strata_rmm -c "SELECT MAX(id) FROM schema_migrations;"
+```
+
+### Step 5: Start and Wait for Readiness
 
 ```bash
 # Start service
 sudo systemctl start strata-rmm
 
-# Check health
-curl http://localhost:8080/health
+# Wait for readiness (retry up to 30 seconds)
+for i in $(seq 1 30); do
+  if curl -sf http://localhost:8080/health | jq -e '.ready == true' > /dev/null 2>&1; then
+    echo "READY"
+    break
+  fi
+  echo "waiting... ($i)"
+  sleep 1
+done
 
 # Run smoke test
 ./scripts/smoke_test.sh
@@ -136,25 +154,21 @@ sudo cp /backups/strata-rmm.pre-upgrade /usr/local/bin/strata-rmm
 # 4. Clear any stale PID/lock files
 sudo rm -f /var/lib/strata-rmm/*.lock /tmp/strata-rmm-*.pid 2>/dev/null || true
 
-# 5. Start with known-good config
-sudo STRATA_RUNTIME_MODE=development /usr/local/bin/strata-rmm orchestrator \
-  --validate-config && sudo systemctl start strata-rmm
+# 5. Verify configuration and start
+sudo /usr/local/bin/strata-rmm orchestrator preflight && sudo systemctl start strata-rmm
 ```
 
 ### Emergency: Database migration half-applied
 
 ```bash
-# 1. Identify failed migration
-psql -U strata -d strata_rmm -c "SELECT * FROM schema_migrations_lock;"
+# 1. Check migration state
+psql -U strata -d strata_rmm -c "SELECT * FROM schema_migrations ORDER BY id;"
 
-# 2. Remove lock if stuck
-psql -U strata -d strata_rmm -c "DELETE FROM schema_migrations_lock;"
-
-# 3. Rollback partially-applied migration
+# 2. Rollback partially-applied migration
 psql -U strata -d strata_rmm -c "DROP TABLE IF EXISTS partially_applied_table CASCADE;"
 psql -U strata -d strata_rmm -c "DELETE FROM schema_migrations WHERE id = 25;"
 
-# 4. Restore from backup if data corrupted
+# 3. Restore from backup if data corrupted
 pg_restore -h localhost -U strata -d strata_rmm --clean --if-exists \
   /backups/pre-upgrade-*.dump
 ```
@@ -191,7 +205,7 @@ pg_restore -h localhost -U strata -d strata_rmm --clean --if-exists \
 cp /backups/strata-rmm-config-pre-upgrade/* /etc/strata-rmm/
 
 # 4. Restore previous Docker image
-docker load -i /backups/strata-rmm-image-v0.1.x.tar
+docker load -i /backups/strata-rmm-image-v0.2.0-beta.tar
 
 # 5. Restart stack
 docker compose -f deploy/docker/docker-compose.yml up -d

@@ -124,10 +124,6 @@ The agent reads `agent.yaml` (default path: `~/.strata-rmm/agent.yaml` or `STRAT
 | `probe.poll_interval` | — | — | duration | `5m` | no | no | no | must be positive | probe snmp | config-file > default | no | — |
 | `probe.discovery_interval` | — | — | duration | `1h` | no | no | no | must be positive | probe discovery | config-file > default | no | — |
 
-## Setting Count
-
-**Total inventory: 53 settings** (33 orchestrator env/flag + 3 hardcoded JWT + 28 agent YAML/env + 10 probe CLI/config)
-
 ## Startup Sequence
 
 1. Load raw configuration from environment
@@ -158,23 +154,6 @@ Existing installations should set `STRATA_RUNTIME_MODE` to the appropriate value
 The default is `development`, preserving backward compatibility. Production
 deployments must explicitly set it to `production`.
 
-## Phase 8B Settings
-
-### Deployment & Upgrade
-
-| Canonical Name | Aliases | CLI Flag | Type | Default | Dev Req | Prod Req | Sensitive | Validation | Consumer | Precedence | Reload | Deprecation |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| `STRATA_PREFLIGHT_ONLY` | — | `--validate-config` | bool | `false` | no | no | no | — | preflight | flag | no | — |
-| `STRATA_DRY_RUN_MIGRATIONS` | — | `--dry-run-migrations` | bool | `false` | no | no | no | — | migration | flag | no | — |
-| `STRATA_CHECK_MIGRATIONS` | — | `--check-migrations` | bool | `false` | no | no | no | — | migration | flag | no | — |
-| `STRATA_MIGRATION_LOCK_TIMEOUT` | — | — | duration | `5m` | no | no | no | must be positive | migration lock | env > default | no | — |
-
-### CI & Deployment Validation
-
-| Canonical Name | Aliases | CLI Flag | Type | Default | Dev Req | Prod Req | Sensitive | Validation | Consumer | Precedence | Reload | Deprecation |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| `STRATA_DEPLOYMENT_ID` | — | `--deployment-id` | string | auto | conditional | conditional | no | — | rollout | flag > env > config | no | — |
-| `STRATA_ROLLOUT_PERCENT` | — | — | int | `100` | no | no | no | 0-100 | rollout | env > default | no | — |
-| `STRATA_ROLLOUT_CHANNEL` | — | — | string | `stable` | no | no | no | stable/beta/canary | rollout | env > default | no | — |
-
 For full deployment and rollback procedures, see `docs/DEPLOYMENT.md`, `docs/UPGRADE.md`, and `docs/ROLLBACK.md`.
+
+Use `strata-rmm orchestrator preflight` to validate configuration, database connectivity, and NATS connectivity before deployment.

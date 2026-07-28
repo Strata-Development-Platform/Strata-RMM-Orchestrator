@@ -207,12 +207,15 @@ jobs:
             fi
             echo "OK: $f ($(wc -l < "$f") lines)"
           done
-      - name: Verify CONFIGURATION.md has Phase 8B settings
+      - name: Verify deployment docs contain no placeholder references
         run: |
-          grep -q "Phase 8B" docs/CONFIGURATION.md || { echo "ERROR: CONFIGURATION.md missing Phase 8B settings"; exit 1; }
-      - name: Verify PHASE_8_ACCEPTANCE_MATRIX.md has Phase 8B evidence
-        run: |
-          grep -q "Phase 8B" docs/PHASE_8_ACCEPTANCE_MATRIX.md || { echo "ERROR: Acceptance matrix missing Phase 8B"; exit 1; }
+          for f in docs/DEPLOYMENT.md docs/UPGRADE.md docs/ROLLBACK.md; do
+            if grep -qi "validate-config\|check-migrations\|dry-run-migrations\|schema_migrations_lock" "$f"; then
+              echo "ERROR: $f contains placeholder references"
+              exit 1
+            fi
+          done
+          echo "All docs clean"
 
   frontend:
     name: Frontend

@@ -119,11 +119,11 @@ update:
 
 ## Preflight Validation
 
-Before deploying, run preflight checks:
+Before deploying, run the `preflight` subcommand to validate configuration, database, and NATS connectivity:
 
 ```bash
-# Validate configuration
-strata-rmm orchestrator --validate-config
+# Validate configuration, database, and NATS
+strata-rmm orchestrator preflight
 
 # Check NATS connectivity
 nats ping -s nats://localhost:4222
@@ -135,14 +135,13 @@ psql "$TIMESCALE_DSN" -c "SELECT extversion FROM pg_extension WHERE extname='tim
 sha256sum /usr/local/bin/strata-rmm
 ```
 
-The orchestrator's `--validate-config` flag performs:
+The orchestrator's `preflight` subcommand performs:
 
-1. Mode-independent requirement validation
-2. Production policy enforcement (when `STRATA_RUNTIME_MODE=production`)
-3. URL scheme and host validation
-4. Secret length checks
-5. CORS origin validation
-6. Database DSN parsing
+1. Load and validate configuration via `LoadOrchestratorConfig()`
+2. Run `Validate()` — mode-independent requirement validation
+3. Run `ProductionValidate()` — production policy enforcement (when `STRATA_RUNTIME_MODE=production`)
+4. Ping the database to verify connectivity
+5. Connect to NATS to verify messaging connectivity
 
 ---
 

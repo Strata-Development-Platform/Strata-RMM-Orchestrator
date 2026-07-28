@@ -13,17 +13,12 @@ Unsupported (full reinstall required):
 
 ## Migration Locking
 
-When an upgrade involves database schema changes, the orchestrator acquires a **migration lock**:
+When an upgrade involves database schema changes, the orchestrator acquires a **PostgreSQL advisory lock** (`pg_try_advisory_lock`):
 
-1. A row is inserted into `schema_migrations_lock` with the migration ID.
-2. If another process attempts to apply the same migration, it blocks or fails.
+1. The lock is acquired at the connection level using `pg_try_advisory_lock`.
+2. If another process holds the lock, the new process retries up to 5 times with 1-second intervals.
 3. The lock is released after the migration completes (success or rollback).
 4. A failed migration prevents the orchestrator from starting.
-
-```sql
--- Migration lock table (auto-managed)
-SELECT * FROM schema_migrations_lock;
-```
 
 ---
 
@@ -64,14 +59,8 @@ docker compose -f deploy/docker/docker-compose.yml pull orchestrator
 ### 3. Run Preflight
 
 ```bash
-# Validate new binary
-/usr/local/bin/strata-rmm orchestrator --validate-config
-
-# Check schema compatibility
-/usr/local/bin/strata-rmm orchestrator --check-migrations
-
-# Dry-run migrations
-/usr/local/bin/strata-rmm orchestrator --dry-run-migrations
+# Validate configuration, database, and NATS connectivity
+/usr/local/bin/strata-rmm orchestrator preflight
 ```
 
 ### 4. Apply Migration
@@ -168,10 +157,8 @@ curl http://localhost:8080/health
 ### Docker rollback
 
 ```bash
-# Tag current image
-docker tag strata-rmm-orchestrator:latest strata-rmm-orchestrator:failed-upgrade
-
-# Set image to previous version in docker-compose.override.yml
+# Pin the previous image tag in docker-compose.override.yml
+# Then restart
 docker compose -f deploy/docker/docker-compose.yml up -d --no-deps orchestrator
 ```
 

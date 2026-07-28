@@ -155,7 +155,7 @@ func NewCommand(ctx context.Context, version, commit string, logger *zap.Logger)
 			logger.Info("TimescaleDB migrations applied")
 
 			sm := postgres.NewSchemaManager(tsdb.DB())
-			if err := sm.Apply(); err != nil {
+			if err := sm.Apply(ctx); err != nil {
 				return fmt.Errorf("stage %d: applying relational schema: %w", atomic.LoadInt32(&startupStage), err)
 			}
 			logger.Info("relational schema migrations applied")
@@ -396,9 +396,10 @@ func newPreflightCommand(logger *zap.Logger) *cobra.Command {
 	return &cobra.Command{
 		Use:   "preflight",
 		Short: "Validate deployment prerequisites",
-		Long:  "Validates configuration, database, and NATS connectivity. Exits with structured JSON on stdout.",
+		Long:  "Validates configuration, database, NATS, JetStream, and migration state. Exits with structured JSON on stdout.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var results []preflightResult
+			cfgValid := false
 
 			cfg, err := config.LoadOrchestratorConfig()
 			if err != nil {
@@ -408,10 +409,11 @@ func newPreflightCommand(logger *zap.Logger) *cobra.Command {
 					results = append(results, preflightResult{Check: "config", Pass: false, Error: err.Error()})
 				} else {
 					results = append(results, preflightResult{Check: "config", Pass: true})
+					cfgValid = true
 				}
 			}
 
-			if cfg != nil {
+			if cfgValid {
 				db, err := timescale.NewClient(cmd.Context(), cfg.DB.DSN)
 				if err != nil {
 					results = append(results, preflightResult{Check: "database", Pass: false, Error: err.Error()})
@@ -423,6 +425,17 @@ func newPreflightCommand(logger *zap.Logger) *cobra.Command {
 						results = append(results, preflightResult{Check: "database", Pass: true})
 					}
 					cancel()
+
+					var migrationCount int
+					if err := db.DB().QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&migrationCount); err == nil {
+						results = append(results, preflightResult{
+							Check: "migrations",
+							Pass:  true,
+							Error: fmt.Sprintf("%d migrations applied", migrationCount),
+						})
+					} else {
+						results = append(results, preflightResult{Check: "migrations", Pass: true, Error: "no migrations table yet"})
+					}
 					db.Close()
 				}
 
@@ -431,11 +444,23 @@ func newPreflightCommand(logger *zap.Logger) *cobra.Command {
 					results = append(results, preflightResult{Check: "nats", Pass: false, Error: err.Error()})
 				} else {
 					results = append(results, preflightResult{Check: "nats", Pass: true})
+					js, jsErr := nc.JetStream()
+					if jsErr != nil {
+						results = append(results, preflightResult{Check: "jetstream", Pass: false, Error: jsErr.Error()})
+					} else {
+						if _, accErr := js.AccountInfo(); accErr != nil {
+							results = append(results, preflightResult{Check: "jetstream", Pass: false, Error: accErr.Error()})
+						} else {
+							results = append(results, preflightResult{Check: "jetstream", Pass: true})
+						}
+					}
 					nc.Close()
 				}
 			} else {
 				results = append(results, preflightResult{Check: "database", Pass: false, Error: "skipped: config load failed"})
 				results = append(results, preflightResult{Check: "nats", Pass: false, Error: "skipped: config load failed"})
+				results = append(results, preflightResult{Check: "jetstream", Pass: false, Error: "skipped: config load failed"})
+				results = append(results, preflightResult{Check: "migrations", Pass: false, Error: "skipped: config load failed"})
 			}
 
 			allPass := true
