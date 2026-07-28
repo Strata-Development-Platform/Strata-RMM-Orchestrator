@@ -278,6 +278,12 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("DELETE /api/v2/platform/support-grants/{grantID}", s.handleRevokeSupportGrant)
 	mux.HandleFunc("GET /api/v2/context", s.handleContext)
 
+	// Device operations
+	mux.HandleFunc("GET /api/v2/devices", s.handleListDevices)
+	mux.HandleFunc("GET /api/v2/devices/{deviceID}", s.handleGetDevice)
+	mux.HandleFunc("POST /api/v2/devices/{deviceID}/action", s.handleDeviceAction)
+	mux.HandleFunc("POST /api/v2/devices/bulk-action", s.handleBulkDeviceAction)
+
 	rateLimiter := auth.NewRateLimiter(30, 60)
 
 	handler := rateLimiter.Middleware(
