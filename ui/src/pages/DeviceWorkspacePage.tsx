@@ -488,8 +488,9 @@ export default function DeviceWorkspacePage() {
 
             {(actionDefs.find(a => a.action === showConfirm)?.requiresReason) && (
               <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Reason *</label>
+                <label htmlFor="endpoint-action-reason" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Reason *</label>
                 <input
+                  id="endpoint-action-reason"
                   type="text"
                   value={actionReason}
                   onChange={e => setActionReason(e.target.value)}
@@ -501,8 +502,9 @@ export default function DeviceWorkspacePage() {
             )}
 
             <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Schedule (optional)</label>
+              <label htmlFor="endpoint-action-schedule" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Schedule (optional)</label>
               <input
+                id="endpoint-action-schedule"
                 type="datetime-local"
                 value={scheduleAt}
                 onChange={e => setScheduleAt(e.target.value ? new Date(e.target.value).toISOString() : '')}
