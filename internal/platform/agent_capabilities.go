@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"go.uber.org/zap"
 )
 
 const maxCapabilityPayloadSize = 1 << 18
@@ -96,26 +95,45 @@ func (s *APIServer) handleReportCapabilities(w http.ResponseWriter, r *http.Requ
 		Features          map[string]interface{} `json:"features"`
 		InventorySchema   int                    `json:"inventory_schema"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
 
-	if len(req.AgentVersion) > 64 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "agent_version too long"})
+	if strings.TrimSpace(req.AgentVersion) == "" || len(req.AgentVersion) > 64 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "valid agent_version required"})
 		return
 	}
-	if req.ProtocolVersion < 1 {
-		req.ProtocolVersion = 1
+	if req.ProtocolVersion != 1 || req.InventorySchema != 1 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported protocol or inventory schema version"})
+		return
+	}
+	validOS := map[string]bool{"linux": true, "windows": true, "darwin": true}
+	validArch := map[string]bool{"amd64": true, "arm64": true}
+	if !validOS[req.OS] || !validArch[req.Arch] {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported os or architecture"})
+		return
 	}
 	if len(req.SupportedJobTypes) > 100 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "too many job types"})
 		return
 	}
 
+	registeredTypes := make(map[string]bool)
+	for _, operation := range operationRegistry {
+		registeredTypes[operation.JobType] = true
+	}
 	validTypes := make([]string, 0, len(req.SupportedJobTypes))
+	seenTypes := make(map[string]bool)
 	for _, jt := range req.SupportedJobTypes {
-		if strings.HasPrefix(jt, "device.") {
+		if !registeredTypes[jt] {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported job type"})
+			return
+		}
+		if !seenTypes[jt] {
+			seenTypes[jt] = true
 			validTypes = append(validTypes, jt)
 		}
 	}
@@ -157,16 +175,32 @@ func (s *APIServer) handleReportCapabilities(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	_, _ = s.requestDB(r).ExecContext(r.Context(), `
+	result, err := s.requestDB(r).ExecContext(r.Context(), `
 		UPDATE devices SET last_capability_update = NOW() WHERE id = $1
 	`, deviceID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "update capability timestamp failed"})
+		return
+	}
+	if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "device capability update failed"})
+		return
+	}
 
-	if err := writeEndpointAudit(r, s.requestDB(r), devMSPID, "endpoint.capability.reported",
-		fmt.Sprintf("device:%s", deviceID), map[string]interface{}{
-			"device_id": deviceID, "agent_version": req.AgentVersion,
-			"job_types": validTypes, "protocol_version": req.ProtocolVersion,
-		}); err != nil {
-		s.logger.Warn("write capability audit", zap.Error(err))
+	targets, err := json.Marshal([]string{deviceID})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "encode audit targets failed"})
+		return
+	}
+	if err := writeEndpointAuditEvidence(r, s.requestDB(r), &EndpointAuditEntry{
+		MSPID: devMSPID, ClientID: devClientID, SiteID: devSiteID, DeviceID: deviceID,
+		ActorUserID: authUserID, ActorRole: "agent", RequestSource: "agent",
+		Action: "endpoint.capability.reported", Targets: targets,
+		ApprovalState: "none", StateTransition: "capabilities_updated",
+		ResultSummary: fmt.Sprintf("agent %s reported %d capabilities", req.AgentVersion, len(validTypes)),
+	}); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "write audit evidence failed"})
+		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "capabilities recorded"})
