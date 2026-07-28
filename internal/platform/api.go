@@ -41,8 +41,9 @@ type APIServer struct {
 	recordingStore *remote.RecordingStore
 	storageBackend storage.Backend
 
-	mu    sync.RWMutex
-	ready bool
+	startTime time.Time
+	mu        sync.RWMutex
+	ready     bool
 
 	// allowClaimPrincipal is restricted to isolated middleware unit tests. Production
 	// servers always resolve users, memberships, and agents from PostgreSQL.
@@ -113,6 +114,8 @@ func (s *APIServer) Start(ctx context.Context) error {
 
 	mux.HandleFunc("GET /", s.handleRoot)
 	mux.HandleFunc("GET /health", s.handleHealth)
+	mux.HandleFunc("GET /health/live", s.handleHealthLive)
+	mux.HandleFunc("GET /health/ready", s.handleHealthReady)
 	mux.HandleFunc("POST /api/v1/enroll", s.handleEnroll)
 	mux.HandleFunc("POST /api/v1/agent/register", s.handleAgentRegister)
 	mux.HandleFunc("POST /api/v1/agent/config", s.handleAgentConfig)
@@ -385,47 +388,84 @@ func (s *APIServer) handleRoot(w http.ResponseWriter, r *http.Request) {
 type healthResponse struct {
 	Status    string `json:"status"`
 	Time      string `json:"time"`
-	Mode      string `json:"mode,omitempty"`
 	Ready     string `json:"ready,omitempty"`
-	Uptime    string `json:"uptime,omitempty"`
+}
+
+type healthLivenessResponse struct {
+	Status string `json:"status"`
+	Time   string `json:"time"`
+}
+
+type healthReadinessResponse struct {
+	Status  string `json:"status"`
+	Time    string `json:"time"`
+	Ready   bool   `json:"ready"`
+	Healthy bool   `json:"healthy"`
 }
 
 func (s *APIServer) setReadiness(ready bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.ready = ready
+	if !ready {
+		s.startTime = time.Now()
+	}
 }
 
-func (s *APIServer) handleHealth(w http.ResponseWriter, r *http.Request) {
+func (s *APIServer) handleHealthLive(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, healthLivenessResponse{
+		Status: "alive",
+		Time:   time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
+func (s *APIServer) handleHealthReady(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	ready := s.ready
 	s.mu.RUnlock()
 
-	resp := healthResponse{
+	resp := healthReadinessResponse{
 		Status: "ok",
 		Time:   time.Now().UTC().Format(time.RFC3339),
-	}
-	if ready {
-		resp.Ready = "true"
-	} else {
-		resp.Ready = "false"
-		resp.Status = "starting"
+		Ready:  ready,
 	}
 
-	mode := r.URL.Query().Get("mode")
-	if mode == "full" {
-		resp.Mode = "running"
-	}
-
-	if r.URL.Query().Get("liveness") == "1" {
-		writeJSON(w, http.StatusOK, map[string]string{
-			"status": "alive",
-			"time":   time.Now().UTC().Format(time.RFC3339),
-		})
+	if !ready {
+		resp.Status = "not ready"
+		resp.Healthy = false
+		writeJSON(w, http.StatusServiceUnavailable, resp)
 		return
 	}
 
+	// Check required dependencies (skip if not configured, e.g. in tests)
+	if s.db != nil || s.nats != nil {
+		dbOK := s.db == nil || s.db.DB() == nil || s.db.DB().Ping() == nil
+		natsOK := s.nats == nil || s.nats.IsConnected()
+		resp.Healthy = dbOK && natsOK
+		if !resp.Healthy {
+			resp.Status = "degraded"
+			writeJSON(w, http.StatusServiceUnavailable, resp)
+			return
+		}
+	} else {
+		resp.Healthy = true
+	}
+
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *APIServer) handleHealth(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("live") == "1" || r.URL.Query().Get("liveness") == "1" {
+		s.handleHealthLive(w, r)
+		return
+	}
+	if r.URL.Query().Get("ready") == "1" || r.URL.Query().Get("readiness") == "1" {
+		s.handleHealthReady(w, r)
+		return
+	}
+
+	// Default: readiness endpoint
+	s.handleHealthReady(w, r)
 }
 
 func (s *APIServer) handleEnroll(w http.ResponseWriter, r *http.Request) {

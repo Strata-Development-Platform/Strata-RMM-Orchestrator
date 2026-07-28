@@ -8,30 +8,69 @@ import (
 	"testing"
 )
 
-func TestHealthResponse(t *testing.T) {
+func TestHealthReadyWhenReady(t *testing.T) {
 	s := &APIServer{}
 	s.setReadiness(true)
-	req := httptest.NewRequest("GET", "/health", nil)
+	req := httptest.NewRequest("GET", "/health/ready", nil)
 	w := httptest.NewRecorder()
-	s.handleHealth(w, req)
+	s.handleHealthReady(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 when ready, got %d", w.Code)
+	}
+
+	var body healthReadinessResponse
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !body.Ready {
+		t.Error("expected ready=true")
+	}
+}
+
+func TestHealthNotReadyReturns503(t *testing.T) {
+	s := &APIServer{}
+	s.setReadiness(false)
+	req := httptest.NewRequest("GET", "/health/ready", nil)
+	w := httptest.NewRecorder()
+	s.handleHealthReady(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 when not ready, got %d", w.Code)
+	}
+
+	var body healthReadinessResponse
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Ready {
+		t.Error("expected ready=false when not ready")
+	}
+	if body.Status != "not ready" {
+		t.Errorf("expected status 'not ready', got %q", body.Status)
+	}
+}
+
+func TestHealthLiveReturnsAlwaysAlive(t *testing.T) {
+	s := &APIServer{}
+	req := httptest.NewRequest("GET", "/health/live", nil)
+	w := httptest.NewRecorder()
+	s.handleHealthLive(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
 
-	var body map[string]string
+	var body healthLivenessResponse
 	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if body["status"] != "ok" {
-		t.Errorf("expected status ok, got %s", body["status"])
-	}
-	if body["ready"] != "true" {
-		t.Errorf("expected ready true, got %s", body["ready"])
+	if body.Status != "alive" {
+		t.Errorf("expected status alive, got %s", body.Status)
 	}
 }
 
-func TestHealthLiveness(t *testing.T) {
+func TestHealthLivenessQueryParam(t *testing.T) {
 	s := &APIServer{}
 	req := httptest.NewRequest("GET", "/health?liveness=1", nil)
 	w := httptest.NewRecorder()
@@ -41,27 +80,23 @@ func TestHealthLiveness(t *testing.T) {
 		t.Fatalf("expected 200, got %d", w.Code)
 	}
 
-	var body map[string]string
+	var body healthLivenessResponse
 	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if body["status"] != "alive" {
-		t.Errorf("expected status alive, got %s", body["status"])
+	if body.Status != "alive" {
+		t.Errorf("expected status alive, got %s", body.Status)
 	}
 }
 
-func TestHealthNotReady(t *testing.T) {
+func TestHealthNotReadyByDefault(t *testing.T) {
 	s := &APIServer{}
 	req := httptest.NewRequest("GET", "/health", nil)
 	w := httptest.NewRecorder()
 	s.handleHealth(w, req)
 
-	var body map[string]string
-	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if body["status"] != "starting" {
-		t.Errorf("expected status starting, got %s", body["status"])
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 by default, got %d", w.Code)
 	}
 }
 
