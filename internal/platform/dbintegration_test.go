@@ -82,7 +82,7 @@ func TestApprovalUniquenessAndConcurrency(t *testing.T) {
 	applyMigrations(t, db)
 	mspID, _, _, _, userID := seedTestData(t, db)
 
-	_, err := db.Exec(`INSERT INTO endpoint_approval_policies (id, msp_id, action_name, approval_required, min_approvers, allowed_roles, require_separation, approval_expires_sec)
+	_, err := db.Exec(`INSERT INTO endpoint_approval_policies (id, msp_id, action_name, approval_required, min_approvers, allowed_roles, require_separation, approval_expires_secs)
 		VALUES (gen_random_uuid(), $1, 'reboot', true, 2, ARRAY['msp_owner','msp_admin'], true, 3600)`, mspID)
 	if err != nil {
 		t.Fatalf("seed policy: %v", err)
@@ -125,8 +125,8 @@ func TestApprovalUniquenessAndConcurrency(t *testing.T) {
 	}
 
 	// Verify duplicate approval by same user is rejected
-	_, err = db.Exec(`INSERT INTO endpoint_approval_decisions (id, request_id, approver_user_id, decision)
-		VALUES (gen_random_uuid(), $1, $2, 'approved')`, reqID, otherUserID)
+	_, err = db.Exec(`INSERT INTO endpoint_approval_decisions (id, request_id, msp_id, approver_user_id, decision)
+		VALUES (gen_random_uuid(), $1, $2, $3, 'approved')`, reqID, mspID, otherUserID)
 	if err == nil {
 		t.Error("duplicate approval by same user should be rejected (unique constraint expected)")
 	}
@@ -148,8 +148,8 @@ func TestRequesterCannotSelfApprove(t *testing.T) {
 		t.Fatalf("seed request: %v", err)
 	}
 
-	_, err = db.Exec(`INSERT INTO endpoint_approval_decisions (id, request_id, approver_user_id, decision)
-		VALUES (gen_random_uuid(), $1, $2, 'approved')`, reqID, userID)
+	_, err = db.Exec(`INSERT INTO endpoint_approval_decisions (id, request_id, msp_id, approver_user_id, decision)
+		VALUES (gen_random_uuid(), $1, $2, $3, 'approved')`, reqID, mspID, userID)
 	if err == nil {
 		t.Error("self-approval should be rejected by unique constraint or application logic")
 	}
@@ -225,9 +225,9 @@ func TestMaintenanceWindowEnforcement(t *testing.T) {
 	startTime := now.Add(-1 * time.Hour)
 	endTime := now.Add(1 * time.Hour)
 
-	_, err := db.Exec(`INSERT INTO maintenance_windows (id, msp_id, client_id, site_id, device_id, name, start_time, end_time, timezone, description)
-		VALUES (gen_random_uuid(), $1, $2, $3, $4, 'Test Window', $5, $6, 'UTC', 'test')`,
-		mspID, clientID, siteID, deviceID, startTime, endTime)
+	_, err := db.Exec(`INSERT INTO maintenance_windows (id, tenant_id, msp_id, client_id, site_id, device_id, name, start_time, end_time, timezone, description)
+		VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, 'Test Window', $6, $7, 'UTC', 'test')`,
+		"00000000-0000-0000-0000-000000000001", mspID, clientID, siteID, deviceID, startTime, endTime)
 	if err != nil {
 		t.Fatalf("seed maintenance window: %v", err)
 	}
