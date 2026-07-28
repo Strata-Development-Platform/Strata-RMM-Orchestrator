@@ -2078,6 +2078,36 @@ func Migrations() []Migration {
 				ALTER TABLE job_targets DROP COLUMN IF EXISTS reconnect_at;
 			`,
 		},
+		{
+			ID:   61,
+			Name: "harden_phase7_approval_inventory_audit",
+			Up: `
+				ALTER TABLE endpoint_approval_requests
+					ADD COLUMN IF NOT EXISTS operation_payload JSONB NOT NULL DEFAULT '{}';
+
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_approval_request_unique
+					ON jobs(approval_request_id) WHERE approval_request_id IS NOT NULL;
+
+				DROP POLICY IF EXISTS tenant_scope ON endpoint_audit_evidence;
+				DROP POLICY IF EXISTS endpoint_audit_select ON endpoint_audit_evidence;
+				CREATE POLICY endpoint_audit_select ON endpoint_audit_evidence
+					FOR SELECT
+					USING (app_is_platform_admin() OR msp_id = safe_msp_id() OR support_access_allowed(msp_id));
+
+				DROP POLICY IF EXISTS insert_endpoint_audit_evidence ON endpoint_audit_evidence;
+				CREATE POLICY insert_endpoint_audit_evidence ON endpoint_audit_evidence
+					FOR INSERT
+					WITH CHECK (app_is_platform_admin() OR msp_id = safe_msp_id() OR support_access_allowed(msp_id));
+			`,
+			Down: `
+				DROP POLICY IF EXISTS endpoint_audit_select ON endpoint_audit_evidence;
+				CREATE POLICY tenant_scope ON endpoint_audit_evidence
+					USING (app_is_platform_admin() OR msp_id = safe_msp_id() OR support_access_allowed(msp_id))
+					WITH CHECK (false);
+				DROP INDEX IF EXISTS idx_jobs_approval_request_unique;
+				ALTER TABLE endpoint_approval_requests DROP COLUMN IF EXISTS operation_payload;
+			`,
+		},
 	}
 }
 
