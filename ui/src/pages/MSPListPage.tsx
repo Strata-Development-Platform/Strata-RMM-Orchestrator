@@ -1,22 +1,27 @@
 import { useState, useEffect } from 'react';
 import { api } from '@/api/client';
-import { useAuth } from '@/hooks/useAuth';
+import type { MSPTenant } from '@/api/types';
 
 export default function MSPListPage() {
-  const { user } = useAuth();
-  const [msps, setMsps] = useState<Record<string, unknown>[]>([]);
+  const [msps, setMsps] = useState<MSPTenant[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    fetch('/api/v2/platform/msps', {
-      headers: { 'Authorization': `Bearer ${api.getToken()}` },
-    }).then(r => r.json()).then(d => {
-      setMsps(d.msps || []);
-      setLoading(false);
-    }).catch(() => setLoading(false));
+    api.getMSPs()
+      .then(({ msps: tenants }) => setMsps(tenants || []))
+      .catch((requestError: Error) => setError(requestError.message))
+      .finally(() => setLoading(false));
   }, []);
 
   if (loading) return <div className="text-center py-12 text-slate-500">Loading...</div>;
+  if (error) {
+    return (
+      <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">
+        Unable to load MSP tenants: {error}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -36,20 +41,27 @@ export default function MSPListPage() {
           </thead>
           <tbody className="divide-y">
             {msps.map(m => (
-              <tr key={m.id as string} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
-                <td className="px-4 py-3 font-medium">{m.name as string}</td>
-                <td className="px-4 py-3 text-slate-500">{m.slug as string}</td>
-                <td className="px-4 py-3 text-center capitalize">{(m.plan as string) || 'free'}</td>
-                <td className="px-4 py-3 text-center">{m.client_count as number || 0}</td>
-                <td className="px-4 py-3 text-center">{m.device_count as number || 0}</td>
+              <tr key={m.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                <td className="px-4 py-3 font-medium">{m.name}</td>
+                <td className="px-4 py-3 text-slate-500">{m.slug}</td>
+                <td className="px-4 py-3 text-center capitalize">{m.plan || 'free'}</td>
+                <td className="px-4 py-3 text-center">{m.client_count || 0}</td>
+                <td className="px-4 py-3 text-center">{m.device_count || 0}</td>
                 <td className="px-4 py-3 text-center">
                   <span className={`px-2 py-0.5 rounded text-xs font-medium ${m.is_active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
                     {m.is_active ? 'Active' : 'Suspended'}
                   </span>
                 </td>
-                <td className="px-4 py-3 text-right text-slate-500">{m.created_at ? new Date(m.created_at as string).toLocaleDateString() : '-'}</td>
+                <td className="px-4 py-3 text-right text-slate-500">{m.created_at ? new Date(m.created_at).toLocaleDateString() : '-'}</td>
               </tr>
             ))}
+            {msps.length === 0 && (
+              <tr>
+                <td colSpan={7} className="px-4 py-12 text-center text-slate-500">
+                  No MSP tenants have been created.
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>

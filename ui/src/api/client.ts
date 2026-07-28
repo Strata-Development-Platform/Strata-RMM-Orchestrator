@@ -1,4 +1,11 @@
-import type { LoginResponse, PlatformOverview, CustomerSummary, User } from './types';
+import type {
+  CustomerSummary,
+  LoginResponse,
+  MSPTenant,
+  PlatformOverview,
+  User,
+  WorkspaceContext,
+} from './types';
 
 const BASE = '';
 
@@ -47,6 +54,8 @@ class ApiClient {
   // Platform
   getOverview = () => this.request<PlatformOverview>('GET', '/api/v1/platform/overview');
   getCustomers = () => this.request<{ customers: CustomerSummary[] }>('GET', '/api/v1/platform/customers');
+  getWorkspaceContext = () => this.request<WorkspaceContext>('GET', '/api/v2/context');
+  getMSPs = () => this.request<{ msps: MSPTenant[] }>('GET', '/api/v2/platform/msps');
 
   // Admin
   getUsers = () => this.request<{ users: User[] }>('GET', '/api/v1/admin/users');

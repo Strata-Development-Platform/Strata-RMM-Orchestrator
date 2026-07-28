@@ -1716,16 +1716,20 @@ func Migrations() []Migration {
 				CREATE TABLE IF NOT EXISTS plan_entitlements (
 					id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 					msp_id          UUID NOT NULL REFERENCES msp_tenants(id) ON DELETE CASCADE,
-					plan_id         UUID NOT NULL REFERENCES plans(id) ON DELETE SET NULL,
+					plan_id         UUID NOT NULL REFERENCES plans(id) ON DELETE RESTRICT,
 					status          TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','past_due','suspended','cancelled')),
 					device_count    INT NOT NULL DEFAULT 0,
 					user_count      INT NOT NULL DEFAULT 0,
 					started_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 					expires_at      TIMESTAMPTZ,
 					created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					CHECK (device_count >= 0),
+					CHECK (user_count >= 0),
 					UNIQUE(msp_id)
 				);
 				CREATE INDEX IF NOT EXISTS idx_entitlements_msp ON plan_entitlements(msp_id);
+				CREATE INDEX IF NOT EXISTS idx_entitlements_plan ON plan_entitlements(plan_id);
 
 				-- Seed default plans
 				INSERT INTO plans (id, name, slug, description, max_devices, max_users, features)
@@ -1740,6 +1744,23 @@ func Migrations() []Migration {
 				SELECT id, '00000000-0000-0000-0000-000000000001', 0, 0
 				FROM msp_tenants
 				ON CONFLICT (msp_id) DO NOTHING;
+
+				ALTER TABLE plan_entitlements ENABLE ROW LEVEL SECURITY;
+
+				DROP POLICY IF EXISTS tenant_scope ON plan_entitlements;
+				CREATE POLICY tenant_scope ON plan_entitlements
+					USING (
+						app_is_platform_admin()
+						OR msp_id = safe_msp_id()
+						OR support_access_allowed(msp_id)
+					)
+					WITH CHECK (
+						app_is_platform_admin()
+						OR msp_id = safe_msp_id()
+						OR support_access_allowed(msp_id)
+					);
+
+				ALTER TABLE plan_entitlements FORCE ROW LEVEL SECURITY;
 			`,
 			Down: `DROP TABLE IF EXISTS plan_entitlements CASCADE; DROP TABLE IF EXISTS plans CASCADE;`,
 		},

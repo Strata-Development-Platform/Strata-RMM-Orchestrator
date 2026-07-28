@@ -81,6 +81,36 @@ jobs:
           cache: true
       - run: go test -tags=dbintegration ./pkg/postgres -count=1 -v
 
+  saas-control-plane:
+    name: SaaS Control Plane
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: strata_test
+          POSTGRES_PASSWORD: strata_test
+          POSTGRES_DB: strata_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U strata_test -d strata_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_POSTGRES_DSN: postgres://strata_test:strata_test@localhost:5432/strata_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Verify SaaS authorization and entitlement isolation
+        run: |
+          go test ./internal/platform -count=1 -race
+          go test -tags=dbintegration ./pkg/postgres -count=1 -race -run TestTenantRLSMigration -v
+
   durable-jobs-integration:
     name: Durable Jobs Integration
     runs-on: ubuntu-latest

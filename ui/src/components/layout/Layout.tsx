@@ -11,7 +11,7 @@ import {
 const navItems = [
   { path: '/', label: 'Overview', icon: LayoutDashboard },
   { path: '/customers', label: 'Customers', icon: Building2 },
-  { path: '/platform/msps', label: 'MSP Tenants', icon: Globe },
+  { path: '/platform/msps', label: 'MSP Tenants', icon: Globe, platformOnly: true },
   { path: '/admin/users', label: 'Users', icon: Users },
   { path: '/scripts', label: 'Scripts', icon: Terminal },
   { path: '/software', label: 'Software', icon: Package },
@@ -38,6 +38,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   };
 
   if (!user) return <>{children}</>;
+  const platformRole = ['platform_owner', 'platform_admin'].includes(user.role);
+  const visibleNavItems = navItems.filter(item => !item.platformOnly || platformRole);
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex">
@@ -50,7 +52,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         </div>
 
         <nav className="flex-1 p-2 space-y-1 overflow-y-auto">
-          {navItems.map(item => {
+          {visibleNavItems.map(item => {
             const Icon = item.icon;
             return (
               <Link

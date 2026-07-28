@@ -71,6 +71,14 @@ func TestTenantRLSMigration(t *testing.T) {
 		t.Fatalf("seed clients: %v", err)
 	}
 	if _, err := seed.Exec(`
+		INSERT INTO plan_entitlements (msp_id, plan_id) VALUES
+			($1, '00000000-0000-0000-0000-000000000001'),
+			($2, '00000000-0000-0000-0000-000000000001')
+	`, mspA, mspB); err != nil {
+		_ = seed.Rollback()
+		t.Fatalf("seed entitlements: %v", err)
+	}
+	if _, err := seed.Exec(`
 		INSERT INTO support_access_grants (
 			id, platform_user_id, msp_id, reason, ticket_ref, approved_by,
 			expires_at, status, permissions
@@ -90,6 +98,10 @@ func TestTenantRLSMigration(t *testing.T) {
 	assertVisibleClients(t, db, mspA, "", "", 1)
 	assertVisibleClients(t, db, mspB, "", "", 1)
 	assertVisibleClients(t, db, "", userID, grantID, 1)
+	assertVisibleEntitlements(t, db, "", "", "", 0)
+	assertVisibleEntitlements(t, db, mspA, "", "", 1)
+	assertVisibleEntitlements(t, db, mspB, "", "", 1)
+	assertVisibleEntitlements(t, db, "", userID, grantID, 1)
 
 	tx, err := db.Begin()
 	if err != nil {
@@ -112,7 +124,30 @@ func TestTenantRLSMigration(t *testing.T) {
 	if affected != 0 {
 		t.Fatalf("cross-tenant update affected %d rows, want 0", affected)
 	}
+	result, err = tx.Exec(`UPDATE plan_entitlements SET device_count = 99 WHERE msp_id = $1`, mspB)
+	if err != nil {
+		t.Fatalf("cross-tenant entitlement update returned unexpected database error: %v", err)
+	}
+	affected, err = result.RowsAffected()
+	if err != nil {
+		t.Fatalf("cross-tenant entitlement rows affected: %v", err)
+	}
+	if affected != 0 {
+		t.Fatalf("cross-tenant entitlement update affected %d rows, want 0", affected)
+	}
 	_ = tx.Rollback()
+
+	var forceRLS bool
+	if err := db.QueryRow(`
+		SELECT relforcerowsecurity
+		FROM pg_class
+		WHERE oid = 'plan_entitlements'::regclass
+	`).Scan(&forceRLS); err != nil {
+		t.Fatalf("inspect entitlement RLS: %v", err)
+	}
+	if !forceRLS {
+		t.Fatal("plan_entitlements must force row-level security")
+	}
 }
 
 func assertVisibleClients(t *testing.T, db *sql.DB, mspID, userID, grantID string, want int) {
@@ -140,5 +175,33 @@ func assertVisibleClients(t *testing.T, db *sql.DB, mspID, userID, grantID strin
 	}
 	if got != want {
 		t.Fatalf("visible clients for MSP %q and grant %q = %d, want %d", mspID, grantID, got, want)
+	}
+}
+
+func assertVisibleEntitlements(t *testing.T, db *sql.DB, mspID, userID, grantID string, want int) {
+	t.Helper()
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatalf("begin entitlement visibility transaction: %v", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`SET LOCAL ROLE strata_runtime`); err != nil {
+		t.Fatalf("set runtime role: %v", err)
+	}
+	if _, err := tx.Exec(`
+		SELECT
+			set_config('app.msp_id', $1, true),
+			set_config('app.user_id', $2, true),
+			set_config('app.support_grant_id', $3, true),
+			set_config('app.permission', 'read', true)
+	`, mspID, userID, grantID); err != nil {
+		t.Fatalf("set entitlement visibility context: %v", err)
+	}
+	var got int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM plan_entitlements`).Scan(&got); err != nil {
+		t.Fatalf("count visible entitlements: %v", err)
+	}
+	if got != want {
+		t.Fatalf("visible entitlements for MSP %q and grant %q = %d, want %d", mspID, grantID, got, want)
 	}
 }

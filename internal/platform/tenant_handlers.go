@@ -1,8 +1,10 @@
 package platform
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -52,7 +54,14 @@ func (s *APIServer) handleListMSPS(w http.ResponseWriter, r *http.Request) {
 
 func (s *APIServer) handleCreateMSP(w http.ResponseWriter, r *http.Request) {
 	var req createMSPRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" || req.Slug == "" {
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+		return
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	req.Slug = strings.ToLower(strings.TrimSpace(req.Slug))
+	req.Plan = strings.ToLower(strings.TrimSpace(req.Plan))
+	if req.Name == "" || req.Slug == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name and slug required"})
 		return
 	}
@@ -66,16 +75,37 @@ func (s *APIServer) handleCreateMSP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "msp slug already exists", "existing_id": existingID})
 		return
 	}
-
-	id := uuid.New().String()
-	_, err = s.requestDB(r).ExecContext(r.Context(), `
-		INSERT INTO msp_tenants (id, name, slug, plan) VALUES ($1, $2, $3, $4)
-	`, id, req.Name, req.Slug, req.Plan)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	if err != sql.ErrNoRows {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "unable to validate MSP slug"})
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]string{"id": id, "status": "created"})
+
+	id := uuid.New().String()
+	var createdID string
+	err = s.requestDB(r).QueryRowContext(r.Context(), `
+		WITH selected_plan AS (
+			SELECT id, slug FROM plans WHERE slug = $4 AND is_active = true
+		), new_msp AS (
+			INSERT INTO msp_tenants (id, name, slug, plan)
+			SELECT $1, $2, $3, selected_plan.slug
+			FROM selected_plan
+			RETURNING id
+		), new_entitlement AS (
+			INSERT INTO plan_entitlements (msp_id, plan_id)
+			SELECT new_msp.id, selected_plan.id
+			FROM new_msp CROSS JOIN selected_plan
+		)
+		SELECT id::text FROM new_msp
+	`, id, req.Name, req.Slug, req.Plan).Scan(&createdID)
+	if err == sql.ErrNoRows {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown or inactive plan"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "unable to create MSP"})
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"id": createdID, "status": "created"})
 }
 
 func (s *APIServer) handleGetMSP(w http.ResponseWriter, r *http.Request) {
