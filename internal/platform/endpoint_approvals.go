@@ -1,7 +1,6 @@
 package platform
 
 import (
-	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -671,7 +670,7 @@ func (s *APIServer) handleApproveRequest(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		if op.Destructive {
-			covered, err := maintenanceWindowAllows(db, targetClientID, deviceID, availableAt)
+			covered, err := maintenanceWindowAllows(db, mspID, targetClientID, targetSiteID, deviceID, availableAt)
 			if err != nil || !covered {
 				writeJSON(w, http.StatusConflict, map[string]string{"error": "approved target is outside an applicable maintenance window"})
 				return
