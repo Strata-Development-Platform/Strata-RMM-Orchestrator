@@ -189,11 +189,20 @@ jobs:
           fi
       - name: Validate YAML syntax
         run: |
-          find . -name "*.yml" -o -name "*.yaml" | xargs -r python3 -c "import sys,yaml; [yaml.safe_load(open(f)) for f in sys.argv[1:]]"
+          python3 -c "
+import os, yaml, sys
+for root, dirs, files in os.walk('.'):
+    for f in files:
+        if f.endswith(('.yml','.yaml')) and 'node_modules' not in root:
+            try:
+                yaml.safe_load(open(os.path.join(root,f)))
+            except Exception as e:
+                print(f'YAML error in {os.path.join(root,f)}: {e}')
+                sys.exit(1)
+"
       - name: Validate Docker Compose file
         run: |
-          docker compose -f deploy/docker/docker-compose.yml config 2>/dev/null || \
-            python3 -c "import yaml; yaml.safe_load(open('deploy/docker/docker-compose.yml'))"
+          python3 -c "import yaml; yaml.safe_load(open('deploy/docker/docker-compose.yml'))"
 
   phase8b-docs-check:
     name: Phase 8B — Docs Check
