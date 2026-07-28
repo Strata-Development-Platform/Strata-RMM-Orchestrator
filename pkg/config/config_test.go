@@ -369,59 +369,51 @@ func TestValidateRejectsSeedDevInProduction(t *testing.T) {
 	}
 }
 
-func TestProductionNATSRejectsLocalhost(t *testing.T) {
-	cfg := &OrchestratorConfig{
+func productionConfig(natsCfg NATSConfig) *OrchestratorConfig {
+	return &OrchestratorConfig{
 		RuntimeMode: ModeProduction,
 		JWT:         JWTConfig{Secret: "abcdefghijklmnopqrstuvwxyz123456"},
-		DB:          DatabaseConfig{DSN: "postgres://h:1/d", MaxOpenConns: 5, MaxIdleConns: 2, ConnMaxLifetime: 10},
-		NATS:        NATSConfig{URL: "nats://localhost:4222", Token: "validtok", TLSEnabled: true, TLSCertFile: "cert", TLSKeyFile: "key", ReconnectWait: 5, MaxReconnects: -1},
-		HTTP:        HTTPConfig{APIAddr: ":8080", ReadTimeout: 5, WriteTimeout: 5, MaxBodySizeBytes: 1000},
-	}
-	err := cfg.ProductionValidate()
-	if err == nil || !contains(err.Error(), "unsecured localhost") {
-		t.Fatalf("expected unsecured localhost rejection, got: %v", err)
+		DB:          DatabaseConfig{DSN: "postgres://user:strong-secret@db:5432/strata?sslmode=require", MaxOpenConns: 5, MaxIdleConns: 2, ConnMaxLifetime: 10},
+		NATS:        natsCfg,
+		HTTP:        HTTPConfig{APIAddr: ":8080", PublicURL: "https://rmm.example.com", ReadTimeout: 5, WriteTimeout: 5, MaxBodySizeBytes: 1000},
 	}
 }
 
-func TestProductionNATSRejectsNoTLSToken(t *testing.T) {
-	cfg := &OrchestratorConfig{
-		RuntimeMode: ModeProduction,
-		JWT:         JWTConfig{Secret: "abcdefghijklmnopqrstuvwxyz123456"},
-		DB:          DatabaseConfig{DSN: "postgres://h:1/d", MaxOpenConns: 5, MaxIdleConns: 2, ConnMaxLifetime: 10},
-		NATS:        NATSConfig{URL: "nats://example.com:4222", ReconnectWait: 5, MaxReconnects: -1},
-		HTTP:        HTTPConfig{APIAddr: ":8080", ReadTimeout: 5, WriteTimeout: 5, MaxBodySizeBytes: 1000},
-	}
+func TestProductionNATSRejectsPlaintextEvenWithToken(t *testing.T) {
+	cfg := productionConfig(NATSConfig{URL: "nats://example.com:4222", Token: "validtok", ReconnectWait: 5, MaxReconnects: -1})
 	err := cfg.ProductionValidate()
-	if err == nil || !contains(err.Error(), "TLS or token") {
-		t.Fatalf("expected TLS/token error, got: %v", err)
+	if err == nil || !contains(err.Error(), "TLS is required") || !contains(err.Error(), "plaintext nats scheme") {
+		t.Fatalf("expected plaintext transport rejection, got: %v", err)
 	}
 }
 
-func TestProductionNATSWithTokenAccepted(t *testing.T) {
-	cfg := &OrchestratorConfig{
-		RuntimeMode: ModeProduction,
-		JWT:         JWTConfig{Secret: "abcdefghijklmnopqrstuvwxyz123456"},
-		DB:          DatabaseConfig{DSN: "postgres://h:1/d", MaxOpenConns: 5, MaxIdleConns: 2, ConnMaxLifetime: 10},
-		NATS:        NATSConfig{URL: "nats://example.com:4222", Token: "validtok", ReconnectWait: 5, MaxReconnects: -1},
-		HTTP:        HTTPConfig{APIAddr: ":8080", ReadTimeout: 5, WriteTimeout: 5, MaxBodySizeBytes: 1000},
-	}
+func TestProductionNATSRejectsMissingCA(t *testing.T) {
+	cfg := productionConfig(NATSConfig{URL: "tls://nats.example.com:4222", Token: "validtok", TLSEnabled: true, ReconnectWait: 5, MaxReconnects: -1})
 	err := cfg.ProductionValidate()
-	if err != nil && contains(err.Error(), "TLS or token") {
-		t.Fatalf("unexpected TLS/token error when token is set: %v", err)
+	if err == nil || !contains(err.Error(), "TLS CA file") {
+		t.Fatalf("expected missing CA rejection, got: %v", err)
 	}
 }
 
-func TestProductionNATSWithTLSAccepted(t *testing.T) {
-	cfg := &OrchestratorConfig{
-		RuntimeMode: ModeProduction,
-		JWT:         JWTConfig{Secret: "abcdefghijklmnopqrstuvwxyz123456"},
-		DB:          DatabaseConfig{DSN: "postgres://h:1/d", MaxOpenConns: 5, MaxIdleConns: 2, ConnMaxLifetime: 10},
-		NATS:        NATSConfig{URL: "nats://example.com:4222", TLSEnabled: true, TLSCertFile: "cert", TLSKeyFile: "key", ReconnectWait: 5, MaxReconnects: -1},
-		HTTP:        HTTPConfig{APIAddr: ":8080", ReadTimeout: 5, WriteTimeout: 5, MaxBodySizeBytes: 1000},
-	}
+func TestProductionNATSRejectsPartialMTLSIdentity(t *testing.T) {
+	cfg := productionConfig(NATSConfig{URL: "tls://nats.example.com:4222", TLSEnabled: true, TLSCAFile: "ca.pem", TLSCertFile: "client.pem", ReconnectWait: 5, MaxReconnects: -1})
 	err := cfg.ProductionValidate()
-	if err != nil && contains(err.Error(), "TLS or token") {
-		t.Fatalf("unexpected TLS/token error when TLS is enabled: %v", err)
+	if err == nil || !contains(err.Error(), "certificate and key") {
+		t.Fatalf("expected partial mTLS identity rejection, got: %v", err)
+	}
+}
+
+func TestProductionNATSWithTLSAndTokenAccepted(t *testing.T) {
+	cfg := productionConfig(NATSConfig{URL: "tls://nats.example.com:4222", Token: "validtok", TLSEnabled: true, TLSCAFile: "ca.pem", ReconnectWait: 5, MaxReconnects: -1})
+	if err := cfg.ProductionValidate(); err != nil {
+		t.Fatalf("expected CA-validated TLS with token authentication to pass: %v", err)
+	}
+}
+
+func TestProductionNATSWithMTLSAccepted(t *testing.T) {
+	cfg := productionConfig(NATSConfig{URL: "tls://nats.example.com:4222", TLSEnabled: true, TLSCAFile: "ca.pem", TLSCertFile: "client.pem", TLSKeyFile: "client-key.pem", ReconnectWait: 5, MaxReconnects: -1})
+	if err := cfg.ProductionValidate(); err != nil {
+		t.Fatalf("expected CA-validated mTLS to pass: %v", err)
 	}
 }
 
