@@ -313,12 +313,15 @@ func LoadOrchestratorConfig() (*OrchestratorConfig, error) {
 		},
 	}
 
+	var errs []string
+
 	if modeRaw := os.Getenv("STRATA_RUNTIME_MODE"); modeRaw != "" {
 		mode, err := ParseRuntimeMode(modeRaw)
 		if err != nil {
-			return nil, fmt.Errorf("STRATA_RUNTIME_MODE: %w", err)
+			errs = append(errs, fmt.Sprintf("STRATA_RUNTIME_MODE: %v", err))
+		} else {
+			cfg.RuntimeMode = mode
 		}
-		cfg.RuntimeMode = mode
 	} else {
 		cfg.RuntimeMode = ModeDevelopment
 	}
@@ -326,18 +329,45 @@ func LoadOrchestratorConfig() (*OrchestratorConfig, error) {
 	cfg.DB.DSN = resolveDSN()
 	cfg.NATS.URL = envStr("NATS_URL", cfg.NATS.URL)
 	cfg.NATS.Token = os.Getenv("NATS_TOKEN")
-	cfg.NATS.TLSEnabled = envBool("NATS_TLS_ENABLED")
+
+	if v, err := envBoolStrict("NATS_TLS_ENABLED"); err != nil {
+		errs = append(errs, fmt.Sprintf("NATS_TLS_ENABLED: %v", err))
+	} else {
+		cfg.NATS.TLSEnabled = v
+	}
 	cfg.NATS.TLSCertFile = envStr("NATS_TLS_CERT", "")
 	cfg.NATS.TLSKeyFile = envStr("NATS_TLS_KEY", "")
 	cfg.NATS.TLSCAFile = envStr("NATS_TLS_CA", "")
-	cfg.NATS.ReconnectWait = envDuration("NATS_RECONNECT_WAIT", cfg.NATS.ReconnectWait)
-	if v := envInt("NATS_MAX_RECONNECTS"); v != nil {
-		cfg.NATS.MaxReconnects = *v
+
+	if v, err := envDurationStrict("NATS_RECONNECT_WAIT", cfg.NATS.ReconnectWait); err != nil {
+		errs = append(errs, fmt.Sprintf("NATS_RECONNECT_WAIT: %v", err))
+	} else {
+		cfg.NATS.ReconnectWait = v
+	}
+	if v, err := envIntStrict("NATS_MAX_RECONNECTS", cfg.NATS.MaxReconnects); err != nil {
+		errs = append(errs, fmt.Sprintf("NATS_MAX_RECONNECTS: %v", err))
+	} else {
+		cfg.NATS.MaxReconnects = v
 	}
 
-	cfg.DB.MaxOpenConns = envIntDef("DB_MAX_OPEN_CONNS", cfg.DB.MaxOpenConns)
-	cfg.DB.MaxIdleConns = envIntDef("DB_MAX_IDLE_CONNS", cfg.DB.MaxIdleConns)
-	cfg.DB.ConnMaxLifetime = envDuration("DB_CONN_MAX_LIFETIME", cfg.DB.ConnMaxLifetime)
+	if v, err := envIntStrict("DB_MAX_OPEN_CONNS", cfg.DB.MaxOpenConns); err != nil {
+		errs = append(errs, fmt.Sprintf("DB_MAX_OPEN_CONNS: %v", err))
+	} else {
+		cfg.DB.MaxOpenConns = v
+	}
+	if v, err := envIntStrict("DB_MAX_IDLE_CONNS", cfg.DB.MaxIdleConns); err != nil {
+		errs = append(errs, fmt.Sprintf("DB_MAX_IDLE_CONNS: %v", err))
+	} else {
+		cfg.DB.MaxIdleConns = v
+		if v < 0 {
+			errs = append(errs, "DB_MAX_IDLE_CONNS: must be non-negative")
+		}
+	}
+	if v, err := envDurationStrict("DB_CONN_MAX_LIFETIME", cfg.DB.ConnMaxLifetime); err != nil {
+		errs = append(errs, fmt.Sprintf("DB_CONN_MAX_LIFETIME: %v", err))
+	} else {
+		cfg.DB.ConnMaxLifetime = v
+	}
 
 	cfg.Storage.Backend = envStr("STORAGE_BACKEND", "local")
 	cfg.Storage.Bucket = envStr("STORAGE_BUCKET", "strata-recordings")
@@ -345,7 +375,11 @@ func LoadOrchestratorConfig() (*OrchestratorConfig, error) {
 	cfg.Storage.Endpoint = os.Getenv("STORAGE_ENDPOINT")
 	cfg.Storage.AccessKey = os.Getenv("STORAGE_ACCESS_KEY")
 	cfg.Storage.SecretKey = os.Getenv("STORAGE_SECRET_KEY")
-	cfg.Storage.UseSSL = envBool("STORAGE_USE_SSL")
+	if v, err := envBoolStrict("STORAGE_USE_SSL"); err != nil {
+		errs = append(errs, fmt.Sprintf("STORAGE_USE_SSL: %v", err))
+	} else {
+		cfg.Storage.UseSSL = v
+	}
 	cfg.Storage.KMSKeyID = os.Getenv("STORAGE_KMS_KEY_ID")
 
 	cfg.JWT.Secret = os.Getenv("JWT_SECRET")
@@ -355,7 +389,11 @@ func LoadOrchestratorConfig() (*OrchestratorConfig, error) {
 	if v := os.Getenv("JWT_AUDIENCE"); v != "" {
 		cfg.JWT.Audience = v
 	}
-	cfg.JWT.TokenDuration = envDuration("JWT_TOKEN_DURATION", cfg.JWT.TokenDuration)
+	if v, err := envDurationStrict("JWT_TOKEN_DURATION", cfg.JWT.TokenDuration); err != nil {
+		errs = append(errs, fmt.Sprintf("JWT_TOKEN_DURATION: %v", err))
+	} else {
+		cfg.JWT.TokenDuration = v
+	}
 
 	if v := envStr("STRATA_API_ADDR", ""); v != "" {
 		cfg.HTTP.APIAddr = v
@@ -374,17 +412,38 @@ func LoadOrchestratorConfig() (*OrchestratorConfig, error) {
 	if proxyStr := os.Getenv("TRUSTED_PROXIES"); proxyStr != "" {
 		cfg.HTTP.TrustedProxies = splitTrim(proxyStr, ",")
 	}
-	cfg.HTTP.ReadTimeout = envDuration("HTTP_READ_TIMEOUT", cfg.HTTP.ReadTimeout)
-	cfg.HTTP.WriteTimeout = envDuration("HTTP_WRITE_TIMEOUT", cfg.HTTP.WriteTimeout)
-	cfg.HTTP.IdleTimeout = envDuration("HTTP_IDLE_TIMEOUT", cfg.HTTP.IdleTimeout)
-	if v := envInt64("HTTP_MAX_BODY_SIZE", cfg.HTTP.MaxBodySizeBytes); v != nil {
-		cfg.HTTP.MaxBodySizeBytes = *v
+	if v, err := envDurationStrict("HTTP_READ_TIMEOUT", cfg.HTTP.ReadTimeout); err != nil {
+		errs = append(errs, fmt.Sprintf("HTTP_READ_TIMEOUT: %v", err))
+	} else {
+		cfg.HTTP.ReadTimeout = v
+	}
+	if v, err := envDurationStrict("HTTP_WRITE_TIMEOUT", cfg.HTTP.WriteTimeout); err != nil {
+		errs = append(errs, fmt.Sprintf("HTTP_WRITE_TIMEOUT: %v", err))
+	} else {
+		cfg.HTTP.WriteTimeout = v
+	}
+	if v, err := envDurationStrict("HTTP_IDLE_TIMEOUT", cfg.HTTP.IdleTimeout); err != nil {
+		errs = append(errs, fmt.Sprintf("HTTP_IDLE_TIMEOUT: %v", err))
+	} else {
+		cfg.HTTP.IdleTimeout = v
+	}
+	if v, err := envInt64Strict("HTTP_MAX_BODY_SIZE", cfg.HTTP.MaxBodySizeBytes); err != nil {
+		errs = append(errs, fmt.Sprintf("HTTP_MAX_BODY_SIZE: %v", err))
+	} else {
+		cfg.HTTP.MaxBodySizeBytes = v
 	}
 
-	cfg.Seeding.SeedDev = envBool("STRATA_SEED_DEV")
+	if v, err := envBoolStrict("STRATA_SEED_DEV"); err != nil {
+		errs = append(errs, fmt.Sprintf("STRATA_SEED_DEV: %v", err))
+	} else {
+		cfg.Seeding.SeedDev = v
+	}
 	cfg.Seeding.DevAdminEmail = os.Getenv("STRATA_DEV_ADMIN_EMAIL")
 	cfg.Seeding.DevAdminPwd = os.Getenv("STRATA_DEV_ADMIN_PASSWORD_HASH")
 
+	if len(errs) > 0 {
+		return nil, fmt.Errorf("configuration load errors:\n  - %s", strings.Join(errs, "\n  - "))
+	}
 	return cfg, nil
 }
 
@@ -408,60 +467,58 @@ func envStr(key, def string) string {
 	return def
 }
 
-func envBool(key string) bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+func envBoolStrict(key string) (bool, error) {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return false, nil
+	}
+	switch strings.ToLower(v) {
 	case "true", "t", "yes", "1":
-		return true
+		return true, nil
+	case "false", "f", "no", "0":
+		return false, nil
 	default:
-		return false
+		return false, fmt.Errorf("invalid boolean %q", v)
 	}
 }
 
-func envInt(key string) *int {
+func envIntStrict(key string, def int) (int, error) {
 	v := strings.TrimSpace(os.Getenv(key))
 	if v == "" {
-		return nil
+		return def, nil
 	}
 	n, err := strconv.Atoi(v)
 	if err != nil {
-		return nil
+		return 0, fmt.Errorf("invalid integer %q: %w", v, err)
 	}
-	return &n
+	return n, nil
 }
 
-func envIntDef(key string, def int) int {
-	p := envInt(key)
-	if p == nil {
-		return def
-	}
-	return *p
-}
-
-func envInt64(key string, def int64) *int64 {
+func envInt64Strict(key string, def int64) (int64, error) {
 	v := strings.TrimSpace(os.Getenv(key))
 	if v == "" {
-		return nil
+		return def, nil
 	}
 	n, err := strconv.ParseInt(v, 10, 64)
 	if err != nil {
-		return nil
+		return 0, fmt.Errorf("invalid integer %q: %w", v, err)
 	}
-	return &n
+	return n, nil
 }
 
-func envDuration(key string, def time.Duration) time.Duration {
+func envDurationStrict(key string, def time.Duration) (time.Duration, error) {
 	v := strings.TrimSpace(os.Getenv(key))
 	if v == "" {
-		return def
+		return def, nil
 	}
 	d, err := time.ParseDuration(v)
 	if err != nil {
-		return def
+		return 0, fmt.Errorf("invalid duration %q: %w", v, err)
 	}
 	if d <= 0 {
-		return def
+		return 0, fmt.Errorf("invalid duration %q: must be positive", v)
 	}
-	return d
+	return d, nil
 }
 
 func splitTrim(s, sep string) []string {

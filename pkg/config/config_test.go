@@ -277,7 +277,7 @@ func TestEnvBoolLoader(t *testing.T) {
 			t.Errorf("NATS_TLS_ENABLED=%q should be true", v)
 		}
 	}
-	for _, v := range []string{"false", "", "0", "maybe", "truthy"} {
+	for _, v := range []string{"false", "", "0"} {
 		setenv(t, "NATS_TLS_ENABLED", v)
 		cfg, err := LoadOrchestratorConfig()
 		if err != nil {
@@ -300,17 +300,6 @@ func TestEnvDurationLoader(t *testing.T) {
 	}
 }
 
-func TestEnvDurationLoaderInvalidDefaults(t *testing.T) {
-	setenv(t, "HTTP_READ_TIMEOUT", "tomorrow")
-	cfg, err := LoadOrchestratorConfig()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if cfg.HTTP.ReadTimeout <= 0 {
-		t.Error("ReadTimeout should use default when env is invalid")
-	}
-}
-
 func TestEnvIntLoader(t *testing.T) {
 	setenv(t, "DB_MAX_OPEN_CONNS", "42")
 	cfg, err := LoadOrchestratorConfig()
@@ -322,14 +311,33 @@ func TestEnvIntLoader(t *testing.T) {
 	}
 }
 
-func TestEnvIntLoaderInvalidKeepsDefault(t *testing.T) {
-	setenv(t, "DB_MAX_OPEN_CONNS", "abc")
-	cfg, err := LoadOrchestratorConfig()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestLoadOrchestratorConfigMalformedEnv(t *testing.T) {
+	tests := []struct {
+		key   string
+		value string
+	}{
+		{"STRATA_SEED_DEV", "truthy"},
+		{"NATS_TLS_ENABLED", "enabled"},
+		{"STORAGE_USE_SSL", "maybe"},
+		{"DB_MAX_OPEN_CONNS", "abc"},
+		{"DB_MAX_IDLE_CONNS", "-1"},
+		{"DB_CONN_MAX_LIFETIME", "tomorrow"},
+		{"NATS_RECONNECT_WAIT", "-5s"},
+		{"NATS_MAX_RECONNECTS", "abc"},
+		{"JWT_TOKEN_DURATION", "-5m"},
+		{"HTTP_READ_TIMEOUT", "tomorrow"},
+		{"HTTP_WRITE_TIMEOUT", "0s"},
+		{"HTTP_IDLE_TIMEOUT", "-1s"},
+		{"HTTP_MAX_BODY_SIZE", "large"},
 	}
-	if cfg.DB.MaxOpenConns != 25 {
-		t.Errorf("MaxOpenConns should use default when env is invalid, got %d", cfg.DB.MaxOpenConns)
+	for _, tt := range tests {
+		t.Run(tt.key+"="+tt.value, func(t *testing.T) {
+			setenv(t, tt.key, tt.value)
+			_, err := LoadOrchestratorConfig()
+			if err == nil {
+				t.Errorf("expected error for %s=%s", tt.key, tt.value)
+			}
+		})
 	}
 }
 
