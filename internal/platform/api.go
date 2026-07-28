@@ -381,6 +381,10 @@ func (s *APIServer) Start(ctx context.Context) error {
 		idleTimeout = s.httpIdleTimeout
 	}
 
+	if len(s.corsOrigins) > 0 {
+		handler = s.withCORS(handler)
+	}
+
 	s.server = &http.Server{
 		Addr:         s.addr,
 		Handler:      auth.MaxBodySize(bodyLimit)(handler),
@@ -408,6 +412,34 @@ func (s *APIServer) Stop(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	return s.server.Shutdown(ctx)
+}
+
+func (s *APIServer) withCORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		allowed := false
+		for _, o := range s.corsOrigins {
+			if o == origin {
+				allowed = true
+				break
+			}
+		}
+		if allowed {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key")
+		}
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *APIServer) handleRoot(w http.ResponseWriter, r *http.Request) {

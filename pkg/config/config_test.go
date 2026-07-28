@@ -324,7 +324,6 @@ func TestLoadOrchestratorConfigMalformedEnv(t *testing.T) {
 		{"DB_CONN_MAX_LIFETIME", "tomorrow"},
 		{"NATS_RECONNECT_WAIT", "-5s"},
 		{"NATS_MAX_RECONNECTS", "abc"},
-		{"JWT_TOKEN_DURATION", "-5m"},
 		{"HTTP_READ_TIMEOUT", "tomorrow"},
 		{"HTTP_WRITE_TIMEOUT", "0s"},
 		{"HTTP_IDLE_TIMEOUT", "-1s"},

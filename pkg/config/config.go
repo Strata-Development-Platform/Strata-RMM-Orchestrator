@@ -67,10 +67,9 @@ type StorageConfig struct {
 }
 
 type JWTConfig struct {
-	Secret        string
-	Issuer        string
-	Audience      string
-	TokenDuration time.Duration
+	Secret string
+	// Issuer, Audience, TokenDuration — deferred to Phase 8G.
+	// Hardcoded in pkg/auth/jwt.go for Phase 8A.
 }
 
 type HTTPConfig struct {
@@ -306,11 +305,7 @@ func LoadOrchestratorConfig() (*OrchestratorConfig, error) {
 			ReconnectWait: 5 * time.Second,
 			MaxReconnects: -1,
 		},
-		JWT: JWTConfig{
-			Issuer:        "strata-rmm",
-			Audience:      "strata-rmm-api",
-			TokenDuration: 24 * time.Hour,
-		},
+		JWT: JWTConfig{},
 	}
 
 	var errs []string
@@ -383,17 +378,6 @@ func LoadOrchestratorConfig() (*OrchestratorConfig, error) {
 	cfg.Storage.KMSKeyID = os.Getenv("STORAGE_KMS_KEY_ID")
 
 	cfg.JWT.Secret = os.Getenv("JWT_SECRET")
-	if v := os.Getenv("JWT_ISSUER"); v != "" {
-		cfg.JWT.Issuer = v
-	}
-	if v := os.Getenv("JWT_AUDIENCE"); v != "" {
-		cfg.JWT.Audience = v
-	}
-	if v, err := envDurationStrict("JWT_TOKEN_DURATION", cfg.JWT.TokenDuration); err != nil {
-		errs = append(errs, fmt.Sprintf("JWT_TOKEN_DURATION: %v", err))
-	} else {
-		cfg.JWT.TokenDuration = v
-	}
 
 	if v := envStr("STRATA_API_ADDR", ""); v != "" {
 		cfg.HTTP.APIAddr = v
