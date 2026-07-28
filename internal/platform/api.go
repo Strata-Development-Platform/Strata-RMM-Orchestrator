@@ -490,8 +490,15 @@ func NewHealthRegistry() *HealthRegistry {
 
 func JetStreamHealthCheck(nc *nats.Conn) func(context.Context) error {
 	return func(ctx context.Context) error {
-		if _, err := nc.JetStream(); err != nil {
-			return fmt.Errorf("JetStream not available: %w", err)
+		if nc == nil || !nc.IsConnected() {
+			return fmt.Errorf("JetStream connection is not established")
+		}
+		js, err := nc.JetStream()
+		if err != nil {
+			return fmt.Errorf("JetStream context unavailable: %w", err)
+		}
+		if _, err := js.AccountInfo(nats.Context(ctx)); err != nil {
+			return fmt.Errorf("JetStream account query failed: %w", err)
 		}
 		return nil
 	}
