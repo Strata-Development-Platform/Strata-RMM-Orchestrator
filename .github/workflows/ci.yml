@@ -286,7 +286,7 @@ jobs:
           cache: true
       - name: Prove duplicate destructive execution prevention
         run: |
-          go test -tags=jobintegration ./internal/agent/jobs -count=1 -race -v -run "TestDuplicateDestructiveExecution" 2>&1 | tee /tmp/idempotency_test.log
+          go test -tags=jobintegration ./internal/agent/jobs -count=1 -race -v -run "TestReceiptLedgerRejectsDuplicateWithoutOverwrite|TestRunningCommandCancellationProducesTerminalResult|TestResultReplaysAfterAgentRestartUntilReceipt" 2>&1 | tee /tmp/idempotency_test.log
           grep -E '^--- (PASS|FAIL)' /tmp/idempotency_test.log
           if grep -q "no test files\|no tests to run" /tmp/idempotency_test.log; then echo "ERROR: zero tests executed" && exit 1; fi
 
