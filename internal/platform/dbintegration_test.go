@@ -286,46 +286,60 @@ func TestAuditEvidenceIsAppendOnly(t *testing.T) {
 	applyMigrations(t, db)
 	mspID, _, _, _, _ := seedTestData(t, db)
 
-	// Insert as owner
+	const role = "strata_audit_runtime"
+	_, _ = db.Exec(`DO $$ BEGIN
+		IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'strata_audit_runtime') THEN
+			CREATE ROLE strata_audit_runtime NOLOGIN NOSUPERUSER NOBYPASSRLS;
+		END IF;
+	END $$`)
+	if _, err := db.Exec(`GRANT USAGE ON SCHEMA public TO strata_audit_runtime`); err != nil {
+		t.Fatalf("grant schema: %v", err)
+	}
+	if _, err := db.Exec(`GRANT SELECT, INSERT, UPDATE, DELETE ON endpoint_audit_evidence TO strata_audit_runtime`); err != nil {
+		t.Fatalf("grant audit DML: %v", err)
+	}
+
 	var auditID string
-	err := db.QueryRow(`
+	if err := db.QueryRow(`
 		INSERT INTO endpoint_audit_evidence
-			(id, msp_id, actor_user_id, action, targets, policy_snapshot, approval_state)
-		VALUES (gen_random_uuid(), $1, 'test-user', 'device.reboot', '[]'::jsonb, '{}'::jsonb, 'none')
+			(id,msp_id,actor_user_id,action,targets,policy_snapshot,approval_state)
+		VALUES(gen_random_uuid(),$1,'test-user','device.reboot','[]','{}','none')
 		RETURNING id::text
-	`, mspID).Scan(&auditID)
-	if err != nil {
+	`, mspID).Scan(&auditID); err != nil {
 		t.Fatalf("insert audit evidence: %v", err)
 	}
-	if auditID == "" {
-		t.Fatal("expected audit ID")
-	}
 
-	// Verify UPDATE/DELETE denial by running as the application-limited role
-	// With FORCE RLS and WITH CHECK (false), UPDATE should error and DELETE
-	// should be blocked by the USING policy. These tests verify the RLS
-	// setup works at the database level.
 	tx, err := db.Begin()
 	if err != nil {
-		t.Fatalf("begin tx: %v", err)
+		t.Fatalf("begin restricted transaction: %v", err)
 	}
-	defer tx.Rollback()
-
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec("SET LOCAL ROLE " + role); err != nil {
+		t.Fatalf("set restricted role: %v", err)
+	}
 	setRLSContext(t, tx, mspID, "test-user", "msp_admin", "write")
 
-	// Verify the row is visible through the RLS policy
-	var visible int
-	err = tx.QueryRow(`SELECT COUNT(*) FROM endpoint_audit_evidence WHERE id = $1`, auditID).Scan(&visible)
-	if err != nil {
-		t.Fatalf("count audit: %v", err)
+	updateResult, updateErr := tx.Exec(`UPDATE endpoint_audit_evidence SET action='tampered' WHERE id=$1`, auditID)
+	if updateErr == nil {
+		affected, err := updateResult.RowsAffected()
+		if err != nil {
+			t.Fatalf("update rows affected: %v", err)
+		}
+		if affected != 0 {
+			t.Fatalf("restricted role updated %d immutable audit rows", affected)
+		}
 	}
-	if visible != 1 {
-		t.Error("audit record should be visible through RLS USING policy")
+	deleteResult, deleteErr := tx.Exec(`DELETE FROM endpoint_audit_evidence WHERE id=$1`, auditID)
+	if deleteErr == nil {
+		affected, err := deleteResult.RowsAffected()
+		if err != nil {
+			t.Fatalf("delete rows affected: %v", err)
+		}
+		if affected != 0 {
+			t.Fatalf("restricted role deleted %d immutable audit rows", affected)
+		}
 	}
-
-	_ = tx.Rollback()
 }
-
 func TestAuditEvidenceCrossMSPReadDenied(t *testing.T) {
 	db := testDB(t)
 	applyMigrations(t, db)
@@ -440,57 +454,36 @@ func TestInventoryResultIdempotency(t *testing.T) {
 	applyMigrations(t, db)
 	mspID, _, _, deviceID, _ := seedTestData(t, db)
 
-	now := time.Now().UTC().Add(-1 * time.Minute)
+	resultID := "00000000-0000-0000-0000-0000000000a1"
+	now := time.Now().UTC().Add(-time.Minute)
 	payloadBytes, _ := json.Marshal(map[string]interface{}{"hostname": "test-device"})
 	payloadHash := fmt.Sprintf("%x", sha256.Sum256(payloadBytes))
-
-	// First insert is accepted
 	_, err := db.Exec(`
 		INSERT INTO inventory_results
-			(id, device_id, msp_id, schema_version, payload, payload_hash, collection_time, accepted, is_stale, is_failure)
-		VALUES (gen_random_uuid(), $1, $2, 1, $3, $4, $5, true, false, false)
-	`, deviceID, mspID, string(payloadBytes), payloadHash, now)
+			(id,device_id,msp_id,schema_version,payload,payload_hash,collection_time,accepted)
+		VALUES($1,$2,$3,1,$4,$5,$6,true)
+	`, resultID, deviceID, mspID, string(payloadBytes), payloadHash, now)
 	if err != nil {
-		t.Fatalf("first insert: %v", err)
+		t.Fatalf("first result insert: %v", err)
 	}
-
-	// Simulate device update as the handler would do on accept
-	_, err = db.Exec(`UPDATE devices SET inventory_last_success = $1, inventory_fresh = true WHERE id = $2`, now, deviceID)
-	if err != nil {
-		t.Fatalf("update device: %v", err)
-	}
-
-	// Verify device has inventory_last_success set
-	var lastSuccess sql.NullTime
-	err = db.QueryRow(`SELECT inventory_last_success FROM devices WHERE id = $1`, deviceID).Scan(&lastSuccess)
-	if err != nil {
-		t.Fatalf("get last success: %v", err)
-	}
-	if !lastSuccess.Valid {
-		t.Error("inventory_last_success should be set after accepted inventory")
-	}
-
-	// Second insert with same payload hash is accepted (different UUID)
-	// This simulates duplicate content but different result ID
 	_, err = db.Exec(`
 		INSERT INTO inventory_results
-			(id, device_id, msp_id, schema_version, payload, payload_hash, collection_time, accepted, is_stale, is_failure)
-		VALUES (gen_random_uuid(), $1, $2, 1, $3, $4, $5, true, false, false)
-	`, deviceID, mspID, string(payloadBytes), payloadHash, now)
-	if err != nil {
-		t.Fatalf("second insert: %v", err)
+			(id,device_id,msp_id,schema_version,payload,payload_hash,collection_time,accepted)
+		VALUES($1,$2,$3,1,$4,$5,$6,true)
+	`, resultID, deviceID, mspID, string(payloadBytes), payloadHash, now)
+	if err == nil {
+		t.Fatal("duplicate result identity must be rejected by the database")
 	}
-
 	var acceptedCount int
-	err = db.QueryRow(`SELECT COUNT(*) FROM inventory_results WHERE device_id = $1 AND accepted = true`, deviceID).Scan(&acceptedCount)
-	if err != nil {
-		t.Fatalf("count accepted: %v", err)
+	if err := db.QueryRow(`
+		SELECT COUNT(*) FROM inventory_results WHERE id=$1 AND device_id=$2 AND accepted=true
+	`, resultID, deviceID).Scan(&acceptedCount); err != nil {
+		t.Fatalf("count accepted results: %v", err)
 	}
-	if acceptedCount < 1 {
-		t.Errorf("expected at least 1 accepted record, got %d", acceptedCount)
+	if acceptedCount != 1 {
+		t.Fatalf("duplicate result produced %d accepted records; want 1", acceptedCount)
 	}
 }
-
 func TestInventoryStaleResultRejected(t *testing.T) {
 	db := testDB(t)
 	applyMigrations(t, db)
