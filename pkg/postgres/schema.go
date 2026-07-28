@@ -1858,6 +1858,7 @@ func Migrations() []Migration {
 				CREATE TABLE IF NOT EXISTS endpoint_approval_decisions (
 					id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 					request_id      UUID NOT NULL REFERENCES endpoint_approval_requests(id) ON DELETE CASCADE,
+					msp_id          UUID NOT NULL REFERENCES msp_tenants(id) ON DELETE CASCADE,
 					approver_user_id TEXT NOT NULL,
 					decision        TEXT NOT NULL CHECK (decision IN ('approved','rejected')),
 					reason          TEXT NOT NULL DEFAULT '',

@@ -415,7 +415,7 @@ func (s *APIServer) handleApproveRequest(w http.ResponseWriter, r *http.Request)
 	var req struct {
 		Reason string `json:"reason"`
 	}
-	json.NewDecoder(r.Body).Decode(&req)
+	_ = json.NewDecoder(r.Body).Decode(&req)
 
 	var requesterID, status, actionName, policySnapStr, correlationID, targetHash string
 	var deviceCount int
@@ -448,7 +448,7 @@ func (s *APIServer) handleApproveRequest(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if time.Now().After(expiresAt) {
-		s.requestDB(r).ExecContext(r.Context(),
+		_, _ = s.requestDB(r).ExecContext(r.Context(),
 			`UPDATE endpoint_approval_requests SET status='expired', updated_at=NOW() WHERE id=$1`, approvalID)
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "approval request has expired"})
 		return
@@ -781,6 +781,7 @@ func (s *APIServer) dispatchApprovedAction(mspID, approvalID, actionName string,
 	`, approvalID)
 }
 
+//nolint:unused
 func expirePendingApprovals(db dbExecutor) {
 	_, err := db.Exec(`
 		UPDATE endpoint_approval_requests SET status='expired', updated_at=NOW()

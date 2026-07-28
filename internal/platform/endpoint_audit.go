@@ -43,6 +43,7 @@ type EndpointAuditEntry struct {
 	CreatedAt          time.Time       `json:"created_at"`
 }
 
+//nolint:unused
 func writeEndpointAuditEvidence(r *http.Request, db dbExecutor, entry *EndpointAuditEntry) error {
 	if entry.MSPID == "" {
 		return fmt.Errorf("msp_id is required for audit evidence")
@@ -184,6 +185,7 @@ func (s *APIServer) handleListEndpointAuditEvidence(w http.ResponseWriter, r *ht
 	writeJSON(w, http.StatusOK, map[string]interface{}{"evidence": results})
 }
 
+//nolint:unused
 func isAuditEvidenceUpdateDenied(err error) bool {
 	return errors.Is(err, sql.ErrNoRows) || err == nil
 }

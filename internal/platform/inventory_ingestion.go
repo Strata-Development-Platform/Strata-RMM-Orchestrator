@@ -99,10 +99,7 @@ func (s *APIServer) handleSubmitInventoryResult(w http.ResponseWriter, r *http.R
 		collectionTime = time.Now().UTC()
 	}
 
-	stale := false
-	if !isFailure && lastSuccessTime != nil && collectionTime.Before(*lastSuccessTime) {
-		stale = true
-	}
+	stale := !isFailure && lastSuccessTime != nil && collectionTime.Before(*lastSuccessTime)
 
 	accepted := !isFailure && !stale
 
@@ -218,9 +215,4 @@ func validateUUID(s string) error {
 	return nil
 }
 
-func safeString(v interface{}) string {
-	if s, ok := v.(string); ok {
-		return s
-	}
-	return ""
-}
+

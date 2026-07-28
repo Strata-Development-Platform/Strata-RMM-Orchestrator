@@ -129,7 +129,7 @@ func (s *APIServer) handleGetCapabilities(w http.ResponseWriter, r *http.Request
 		cap.SupportedJobTypes = []string{}
 	}
 	if featuresStr != "" && featuresStr != "{}" {
-		json.Unmarshal([]byte(featuresStr), &cap.Features)
+		_ = json.Unmarshal([]byte(featuresStr), &cap.Features)
 	}
 	if cap.Features == nil {
 		cap.Features = make(map[string]interface{})
