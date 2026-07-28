@@ -80,7 +80,6 @@ func (s *APIServer) handleListDevices(w http.ResponseWriter, r *http.Request) {
 	if search := q.Get("search"); search != "" {
 		query += fmt.Sprintf(" AND d.hostname ILIKE $%d", argIdx)
 		args = append(args, "%"+search+"%")
-		argIdx++
 	}
 
 	countQuery := "SELECT COUNT(*) FROM (" + query + ") AS filtered"
@@ -244,7 +243,11 @@ func (s *APIServer) handleDeviceAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if op.RequiresReason && rawReq.Reason == "" {
+	if rawReq.Schedule != "" && !op.SupportsSchedule {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "action does not support scheduling"})
+		return
+	}
+	if op.RequiresReason && strings.TrimSpace(rawReq.Reason) == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "reason required"})
 		return
 	}
@@ -296,8 +299,10 @@ func (s *APIServer) handleDeviceAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var availableAt time.Time
 	var expiresAt time.Time
-	now := time.Now()
+	now := time.Now().UTC()
+	availableAt = now
 	if rawReq.Schedule != "" {
 		t, err := time.Parse(time.RFC3339, rawReq.Schedule)
 		if err != nil {
@@ -308,7 +313,8 @@ func (s *APIServer) handleDeviceAction(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "schedule_at must be in the future"})
 			return
 		}
-		expiresAt = t.Add(24 * time.Hour)
+		availableAt = t.UTC()
+		expiresAt = availableAt.Add(24 * time.Hour)
 	} else {
 		expiresAt = now.Add(24 * time.Hour)
 	}
@@ -321,14 +327,18 @@ func (s *APIServer) handleDeviceAction(w http.ResponseWriter, r *http.Request) {
 		"action": rawReq.Action, "reason": rawReq.Reason,
 		"service": rawReq.Service, "process_id": rawReq.ProcessID,
 	}
-	payload, _ := json.Marshal(payloadMap)
+	payload, err := json.Marshal(payloadMap)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "encode job failed"})
+		return
+	}
 
 	tx, err := s.db.DB().BeginTx(r.Context(), nil)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "transaction failed"})
 		return
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	if _, err := tx.Exec(`
 		INSERT INTO jobs (id, msp_id, client_id, site_id, created_by, type, status, priority,
@@ -344,6 +354,7 @@ func (s *APIServer) handleDeviceAction(w http.ResponseWriter, r *http.Request) {
 		INSERT INTO job_targets (id, job_id, device_id, msp_id, status)
 		VALUES ($1, $2, $3, $4, 'queued')
 	`, targetID, jobID, deviceID, mspID); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create target failed"})
 		return
 	}
 
@@ -354,7 +365,8 @@ func (s *APIServer) handleDeviceAction(w http.ResponseWriter, r *http.Request) {
 	if _, err := tx.Exec(`
 		INSERT INTO job_outbox (id, msp_id, aggregate_id, event_type, payload, available_at)
 		VALUES (gen_random_uuid(), $1, $2, 'job.dispatch', $3, $4)
-	`, mspID, jobID, outboxPayload, expiresAt); err != nil {
+	`, mspID, jobID, outboxPayload, availableAt); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create dispatch failed"})
 		return
 	}
 
