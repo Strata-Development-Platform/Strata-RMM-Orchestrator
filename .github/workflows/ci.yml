@@ -108,6 +108,7 @@ jobs:
           cache: true
       - name: Verify SaaS authorization and entitlement isolation
         run: |
+          set -o pipefail
           go test ./internal/platform -count=1 -race
           go test -tags=dbintegration ./pkg/postgres -count=1 -race -run TestTenantRLSMigration -v
 
@@ -250,6 +251,7 @@ jobs:
           cache: true
       - name: Test approval workflow
         run: |
+          set -o pipefail
           go test -tags=dbintegration ./internal/platform -count=1 -race -v -run "TestApproval" 2>&1 | tee /tmp/approval_test.log
           grep -E '^--- (PASS|FAIL)' /tmp/approval_test.log
           if grep -q "no test files\|no tests to run" /tmp/approval_test.log; then echo "ERROR: zero tests executed" && exit 1; fi
@@ -286,6 +288,7 @@ jobs:
           cache: true
       - name: Prove duplicate destructive execution prevention
         run: |
+          set -o pipefail
           go test -tags=jobintegration ./internal/agent/jobs -count=1 -race -v -run "TestReceiptLedgerRejectsDuplicateWithoutOverwrite|TestRunningCommandCancellationProducesTerminalResult|TestResultReplaysAfterAgentRestartUntilReceipt" 2>&1 | tee /tmp/idempotency_test.log
           grep -E '^--- (PASS|FAIL)' /tmp/idempotency_test.log
           if grep -q "no test files\|no tests to run" /tmp/idempotency_test.log; then echo "ERROR: zero tests executed" && exit 1; fi
@@ -317,6 +320,7 @@ jobs:
           cache: true
       - name: Test maintenance window and offline lifecycle
         run: |
+          set -o pipefail
           go test -tags=dbintegration ./internal/platform -count=1 -race -v -run "TestMaintenanceWindowEnforcement" 2>&1 | tee /tmp/maint_test.log
           grep -E '^--- (PASS|FAIL)' /tmp/maint_test.log
           if grep -q "no test files\|no tests to run" /tmp/maint_test.log; then echo "ERROR: zero tests executed" && exit 1; fi
@@ -348,7 +352,8 @@ jobs:
           cache: true
       - name: Test immutable audit protections
         run: |
-          go test -tags=dbintegration ./internal/platform -count=1 -race -v -run "TestAuditEvidenceIsAppendOnly|TestAuditEvidenceCrossMSPReadDenied|TestAuditTransactionRollbackRemovesEvidence" 2>&1 | tee /tmp/audit_test.log
+          set -o pipefail
+          go test -tags=dbintegration ./internal/platform -count=1 -race -v -run "TestAuditEvidenceIsAppendOnly|TestAuditEvidenceCrossMSPReadDenied|TestAuditEvidenceTransactionRollbackRemovesEvidence" 2>&1 | tee /tmp/audit_test.log
           grep -E '^--- (PASS|FAIL)' /tmp/audit_test.log
           if grep -q "no test files\|no tests to run" /tmp/audit_test.log; then echo "ERROR: zero tests executed" && exit 1; fi
 
@@ -363,6 +368,7 @@ jobs:
           cache: true
       - name: Test capability negotiation
         run: |
+          set -o pipefail
           go test ./internal/platform -count=1 -race -v -run "TestIsActionSupportedByCapabilities|TestCapability" 2>&1 | tee /tmp/cap_test.log
           grep -E '^--- (PASS|FAIL)' /tmp/cap_test.log
           if grep -q "no test files\|no tests to run" /tmp/cap_test.log; then echo "ERROR: zero tests executed" && exit 1; fi
@@ -394,6 +400,7 @@ jobs:
           cache: true
       - name: Test inventory result ingestion
         run: |
+          set -o pipefail
           go test -tags=dbintegration ./internal/platform -count=1 -race -v -run "TestInventoryResultIdempotency|TestInventory" 2>&1 | tee /tmp/inv_test.log
           grep -E '^--- (PASS|FAIL)' /tmp/inv_test.log
           if grep -q "no test files\|no tests to run" /tmp/inv_test.log; then echo "ERROR: zero tests executed" && exit 1; fi
