@@ -14,6 +14,7 @@ import (
 const maxInventoryPayloadSize = 1 << 20
 
 type InventoryResultPayload struct {
+	ResultID       string                 `json:"result_id"`
 	SchemaVersion  int                    `json:"schema_version"`
 	DeviceID       string                 `json:"device_id"`
 	AgentID        string                 `json:"agent_id"`
@@ -55,7 +56,15 @@ func (s *APIServer) handleSubmitInventoryResult(w http.ResponseWriter, r *http.R
 	}
 
 	// Validate payload structural fields
-	if payload.SchemaVersion < 1 {
+	if _, err := uuid.Parse(payload.ResultID); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "valid result_id required"})
+		return
+	}
+	if err := validateDeviceInventoryResult(&payload); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if payload.SchemaVersion != 1 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid schema_version"})
 		return
 	}
@@ -119,6 +128,10 @@ func (s *APIServer) handleSubmitInventoryResult(w http.ResponseWriter, r *http.R
 	}
 
 	// Verify job/target ownership if provided
+	if payload.JobID == "" || payload.TargetID == "" || payload.CorrelationID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "job_id, target_id and correlation_id required"})
+		return
+	}
 	if payload.JobID != "" {
 		if _, err := uuid.Parse(payload.JobID); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid job_id"})
@@ -129,14 +142,22 @@ func (s *APIServer) handleSubmitInventoryResult(w http.ResponseWriter, r *http.R
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid target_id"})
 				return
 			}
-			var jobDeviceID, jobMSPID string
+			var jobDeviceID, jobMSPID, targetAgentID, jobCorrelationID, jobType, targetStatus string
 			err = s.requestDB(r).QueryRowContext(r.Context(), `
-				SELECT jt.device_id::text, j.msp_id::text
+				SELECT jt.device_id::text, j.msp_id::text, COALESCE(jt.agent_id,''),
+				       COALESCE(j.correlation_id,''), j.type, jt.status
 				FROM job_targets jt JOIN jobs j ON j.id = jt.job_id
 				WHERE jt.id = $1 AND jt.job_id = $2
-			`, payload.TargetID, payload.JobID).Scan(&jobDeviceID, &jobMSPID)
-			if err != nil || jobDeviceID != pathDeviceID || jobMSPID != devMSPID {
-				writeJSON(w, http.StatusForbidden, map[string]string{"error": "job/target does not match device"})
+			`, payload.TargetID, payload.JobID).Scan(&jobDeviceID, &jobMSPID, &targetAgentID,
+				&jobCorrelationID, &jobType, &targetStatus)
+			if err != nil || jobDeviceID != pathDeviceID || jobMSPID != devMSPID ||
+				targetAgentID != authUserID || jobCorrelationID != payload.CorrelationID ||
+				jobType != "device.refresh" {
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": "job/target identity mismatch"})
+				return
+			}
+			if targetStatus != "dispatched" && targetStatus != "running" {
+				writeJSON(w, http.StatusConflict, map[string]string{"error": "target cannot accept inventory in current state"})
 				return
 			}
 		}
@@ -159,19 +180,32 @@ func (s *APIServer) handleSubmitInventoryResult(w http.ResponseWriter, r *http.R
 		}
 	}
 
-	// Begin atomic transaction for inventory + device + job update + audit
-	tx, err := s.db.DB().BeginTx(r.Context(), nil)
-	if err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "transaction unavailable"})
+	// The middleware-provided tenant transaction makes inventory, device,
+	// target, and audit mutations atomic.
+	tx := s.requestDB(r)
+
+	var existingHash string
+	err = tx.QueryRowContext(r.Context(), `
+		SELECT payload_hash FROM inventory_results WHERE id = $1 AND device_id = $2 AND msp_id = $3
+	`, payload.ResultID, pathDeviceID, devMSPID).Scan(&existingHash)
+	if err == nil {
+		if existingHash != payloadHash {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "result_id already used for different content"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"accepted": true, "duplicate": true, "inventory_id": payload.ResultID})
 		return
 	}
-	defer func() { _ = tx.Rollback() }()
+	if err != nil && err != sql.ErrNoRows {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "inventory idempotency lookup failed"})
+		return
+	}
 
 	stale := !isFailure && lastSuccessTime != nil && collectionTime.Before(*lastSuccessTime)
 	accepted := !isFailure && !stale
 
-	resultID := uuid.New().String()
-	_, err = tx.Exec(`
+	resultID := payload.ResultID
+	_, err = tx.ExecContext(r.Context(), `
 		INSERT INTO inventory_results
 			(id, device_id, msp_id, job_id, target_id, correlation_id, schema_version,
 			 payload, payload_hash, collection_time, is_stale, is_failure, failure_message, accepted)
@@ -203,7 +237,7 @@ func (s *APIServer) handleSubmitInventoryResult(w http.ResponseWriter, r *http.R
 			diskMB = int64(v)
 		}
 
-		result, err := tx.Exec(`
+		result, err := tx.ExecContext(r.Context(), `
 			UPDATE devices SET
 				hostname = CASE WHEN $2 != '' THEN $2 ELSE hostname END,
 				os = CASE WHEN $3 != '' THEN $3 ELSE os END,
@@ -229,12 +263,16 @@ func (s *APIServer) handleSubmitInventoryResult(w http.ResponseWriter, r *http.R
 
 		// Update job/target state if this was a refresh job
 		if payload.JobID != "" && payload.TargetID != "" {
-			_, err = tx.Exec(`
+			targetResult, err := tx.ExecContext(r.Context(), `
 				UPDATE job_targets SET status='succeeded', completed_at=NOW()
-				WHERE id=$1 AND job_id=$2 AND status IN ('queued','dispatched','running')
-			`, payload.TargetID, payload.JobID)
+				WHERE id=$1 AND job_id=$2 AND agent_id=$3 AND status IN ('dispatched','running')
+			`, payload.TargetID, payload.JobID, authUserID)
 			if err != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "update target failed"})
+				return
+			}
+			if affected, err := targetResult.RowsAffected(); err != nil || affected != 1 {
+				writeJSON(w, http.StatusConflict, map[string]string{"error": "target state changed before inventory acceptance"})
 				return
 			}
 		}
@@ -273,11 +311,6 @@ func (s *APIServer) handleSubmitInventoryResult(w http.ResponseWriter, r *http.R
 	}
 	if err := writeEndpointAuditEvidence(r, tx, &entry); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "write audit evidence failed"})
-		return
-	}
-
-	if err := tx.Commit(); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "commit failed"})
 		return
 	}
 
