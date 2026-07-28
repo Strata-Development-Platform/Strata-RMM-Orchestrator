@@ -780,12 +780,16 @@ func (s *APIServer) handleRejectRequest(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	_, err = s.requestDB(r).ExecContext(r.Context(), `
+	result, err := s.requestDB(r).ExecContext(r.Context(), `
 		UPDATE endpoint_approval_requests SET status='rejected', decided_at=NOW(),
 		       decided_by=$1, updated_at=NOW() WHERE id=$2 AND status='pending'
 	`, userID, approvalID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "reject failed"})
+		return
+	}
+	if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "approval state changed"})
 		return
 	}
 
@@ -795,7 +799,8 @@ func (s *APIServer) handleRejectRequest(w http.ResponseWriter, r *http.Request) 
 		PolicySnapshot: json.RawMessage(policySnapStr),
 	}
 	if err := writeEndpointAuditEvidence(r, s.requestDB(r), &auditEntry); err != nil {
-		s.logger.Warn("write audit evidence", zap.Error(err))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "write audit evidence failed"})
+		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "rejected"})
