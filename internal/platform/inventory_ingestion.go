@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"go.uber.org/zap"
 )
 
 const maxInventoryPayloadSize = 1 << 20
@@ -27,57 +26,123 @@ type InventoryResultPayload struct {
 }
 
 func (s *APIServer) handleSubmitInventoryResult(w http.ResponseWriter, r *http.Request) {
-	deviceID := r.PathValue("deviceID")
-	mspID, _ := r.Context().Value(ctxKeyMSPID).(string)
-	if mspID == "" || deviceID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no msp context or device id"})
+	pathDeviceID := r.PathValue("deviceID")
+	tokenUse, _ := r.Context().Value(ctxKeyTokenUse).(string)
+	authUserID, _ := r.Context().Value(ctxKeyUserID).(string)
+
+	if tokenUse != "agent" {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "agent token required"})
 		return
 	}
-	if !s.AuthorizeMSPAccess(w, r, mspID) {
+
+	if pathDeviceID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "device id required"})
+		return
+	}
+	if _, err := uuid.Parse(pathDeviceID); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid device id"})
 		return
 	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, maxInventoryPayloadSize)
 
 	var payload InventoryResultPayload
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&payload); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid payload"})
 		return
 	}
+
+	// Validate payload structural fields
 	if payload.SchemaVersion < 1 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid schema_version"})
 		return
 	}
+	if payload.DeviceID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "payload device_id required"})
+		return
+	}
+	if payload.DeviceID != pathDeviceID {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "payload device_id does not match path"})
+		return
+	}
+	if payload.AgentID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "payload agent_id required"})
+		return
+	}
+	if payload.AgentID != authUserID {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "authenticated agent does not match payload agent_id"})
+		return
+	}
+
+	// Validate collection timestamp
+	collectionTime, err := time.Parse(time.RFC3339, payload.CollectionTime)
+	if payload.CollectionTime != "" && err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid collection_time"})
+		return
+	}
+	if payload.CollectionTime == "" {
+		collectionTime = time.Now().UTC()
+	}
+	if !collectionTime.IsZero() && collectionTime.After(time.Now().UTC().Add(5*time.Minute)) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "collection_time cannot be in the future"})
+		return
+	}
+
 	if payload.Data == nil {
 		payload.Data = make(map[string]interface{})
 	}
 
-	var devMSPID, devStatus string
-	err := s.requestDB(r).QueryRowContext(r.Context(), `
-		SELECT msp_id::text, status FROM devices WHERE id = $1
-	`, deviceID).Scan(&devMSPID, &devStatus)
+	// Verify device exists and get scope
+	var devMSPID, devClientID, devSiteID, devStatus string
+	err = s.requestDB(r).QueryRowContext(r.Context(), `
+		SELECT msp_id::text, COALESCE(client_id::text,''), COALESCE(site_id::text,''), status
+		FROM devices WHERE id = $1
+	`, pathDeviceID).Scan(&devMSPID, &devClientID, &devSiteID, &devStatus)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "device not found"})
 		return
 	}
-	if devMSPID != mspID {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "device not in your MSP scope"})
+
+	// Verify agent registration belongs to this device
+	var regMSPID, regDeviceID string
+	err = s.requestDB(r).QueryRowContext(r.Context(), `
+		SELECT COALESCE(d.msp_id::text, ''), COALESCE(d.id::text, '')
+		FROM agent_registrations ar
+		JOIN devices d ON d.id = ar.device_id
+		WHERE ar.agent_id = $1 AND ar.approved = true AND ar.device_id = $2
+	`, authUserID, pathDeviceID).Scan(&regMSPID, &regDeviceID)
+	if err != nil || regDeviceID != pathDeviceID || regMSPID != devMSPID {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "agent not registered or approved for this device"})
 		return
 	}
 
-	if payload.AgentID != "" {
-		var regMSPID string
-		err := s.requestDB(r).QueryRowContext(r.Context(), `
-			SELECT COALESCE(d.msp_id::text, '') FROM agent_registrations ar
-			JOIN devices d ON d.id = ar.device_id
-			WHERE ar.agent_id = $1 AND ar.device_id = $2
-		`, payload.AgentID, deviceID).Scan(&regMSPID)
-		if err != nil || regMSPID != mspID {
-			writeJSON(w, http.StatusForbidden, map[string]string{"error": "agent does not belong to this device"})
+	// Verify job/target ownership if provided
+	if payload.JobID != "" {
+		if _, err := uuid.Parse(payload.JobID); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid job_id"})
 			return
+		}
+		if payload.TargetID != "" {
+			if _, err := uuid.Parse(payload.TargetID); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid target_id"})
+				return
+			}
+			var jobDeviceID, jobMSPID string
+			err = s.requestDB(r).QueryRowContext(r.Context(), `
+				SELECT jt.device_id::text, j.msp_id::text
+				FROM job_targets jt JOIN jobs j ON j.id = jt.job_id
+				WHERE jt.id = $1 AND jt.job_id = $2
+			`, payload.TargetID, payload.JobID).Scan(&jobDeviceID, &jobMSPID)
+			if err != nil || jobDeviceID != pathDeviceID || jobMSPID != devMSPID {
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": "job/target does not match device"})
+				return
+			}
 		}
 	}
 
+	// Determine staleness
 	payloadBytes, _ := json.Marshal(payload)
 	payloadHash := fmt.Sprintf("%x", sha256.Sum256(payloadBytes))
 
@@ -88,29 +153,31 @@ func (s *APIServer) handleSubmitInventoryResult(w http.ResponseWriter, r *http.R
 		err := s.requestDB(r).QueryRowContext(r.Context(), `
 			SELECT MAX(collection_time) FROM inventory_results
 			WHERE device_id = $1 AND accepted = true AND is_failure = false
-		`, deviceID).Scan(&t)
+		`, pathDeviceID).Scan(&t)
 		if err == nil && t.Valid {
 			lastSuccessTime = &t.Time
 		}
 	}
 
-	collectionTime, _ := time.Parse(time.RFC3339, payload.CollectionTime)
-	if collectionTime.IsZero() {
-		collectionTime = time.Now().UTC()
+	// Begin atomic transaction for inventory + device + job update + audit
+	tx, err := s.db.DB().BeginTx(r.Context(), nil)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "transaction unavailable"})
+		return
 	}
+	defer func() { _ = tx.Rollback() }()
 
 	stale := !isFailure && lastSuccessTime != nil && collectionTime.Before(*lastSuccessTime)
-
 	accepted := !isFailure && !stale
 
 	resultID := uuid.New().String()
-	_, err = s.requestDB(r).ExecContext(r.Context(), `
+	_, err = tx.Exec(`
 		INSERT INTO inventory_results
 			(id, device_id, msp_id, job_id, target_id, correlation_id, schema_version,
 			 payload, payload_hash, collection_time, is_stale, is_failure, failure_message, accepted)
 		VALUES ($1, $2, $3, NULLIF($4,'')::uuid, NULLIF($5,'')::uuid, NULLIF($6,''),
 		        $7, $8, $9, $10, $11, $12, $13, $14)
-	`, resultID, deviceID, mspID, payload.JobID, payload.TargetID,
+	`, resultID, pathDeviceID, devMSPID, payload.JobID, payload.TargetID,
 		payload.CorrelationID, payload.SchemaVersion, string(payloadBytes),
 		payloadHash, collectionTime, stale, isFailure, payload.Failure, accepted)
 	if err != nil {
@@ -124,19 +191,19 @@ func (s *APIServer) handleSubmitInventoryResult(w http.ResponseWriter, r *http.R
 		osVersion, _ := payload.Data["os_version"].(string)
 		arch, _ := payload.Data["arch"].(string)
 
-		var cpuCores float64
+		var cpuCores int64
 		if v, ok := payload.Data["cpu_cores"].(float64); ok {
-			cpuCores = v
+			cpuCores = int64(v)
 		}
-		var ramMB, diskMB float64
+		var ramMB, diskMB int64
 		if v, ok := payload.Data["memory_mb"].(float64); ok {
-			ramMB = v
+			ramMB = int64(v)
 		}
 		if v, ok := payload.Data["disk_mb"].(float64); ok {
-			diskMB = v
+			diskMB = int64(v)
 		}
 
-		_, err = s.requestDB(r).ExecContext(r.Context(), `
+		result, err := tx.Exec(`
 			UPDATE devices SET
 				hostname = CASE WHEN $2 != '' THEN $2 ELSE hostname END,
 				os = CASE WHEN $3 != '' THEN $3 ELSE os END,
@@ -149,34 +216,76 @@ func (s *APIServer) handleSubmitInventoryResult(w http.ResponseWriter, r *http.R
 				inventory_fresh = true,
 				updated_at = NOW()
 			WHERE id = $1
-		`, deviceID, hostname, osStr, osVersion, arch, cpuCores, ramMB, diskMB, collectionTime)
+		`, pathDeviceID, hostname, osStr, osVersion, arch, cpuCores, ramMB, diskMB, collectionTime)
 		if err != nil {
-			s.logger.Warn("update device from inventory", zap.Error(err))
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "update device from inventory failed"})
+			return
+		}
+		affected, _ := result.RowsAffected()
+		if affected == 0 {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "device not updated"})
+			return
 		}
 
 		// Update job/target state if this was a refresh job
 		if payload.JobID != "" && payload.TargetID != "" {
-			_, _ = s.requestDB(r).ExecContext(r.Context(), `
+			_, err = tx.Exec(`
 				UPDATE job_targets SET status='succeeded', completed_at=NOW()
 				WHERE id=$1 AND job_id=$2 AND status IN ('queued','dispatched','running')
 			`, payload.TargetID, payload.JobID)
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "update target failed"})
+				return
+			}
 		}
 	}
+	
 
-	if err := writeEndpointAudit(r, s.requestDB(r), mspID, "endpoint.inventory.submitted", "device:"+deviceID,
-		map[string]interface{}{
-			"device_id": deviceID, "accepted": accepted, "stale": stale,
-			"is_failure": isFailure, "schema_version": payload.SchemaVersion,
-			"inventory_result_id": resultID,
-		}); err != nil {
-		s.logger.Warn("write inventory audit", zap.Error(err))
+	// Audit evidence
+	entry := EndpointAuditEntry{
+		MSPID: devMSPID, ClientID: devClientID, SiteID: devSiteID,
+		DeviceID: pathDeviceID, ActorUserID: authUserID,
+		ActorRole: "agent", RequestSource: "agent",
+		Action: "endpoint.inventory.submitted",
+		JobID:  payload.JobID, CorrelationID: payload.CorrelationID,
+		ApprovalState: "none",
+		StateTransition: func() string {
+			if accepted {
+				return "accepted"
+			}
+			if stale {
+				return "rejected_stale"
+			}
+			return "rejected"
+		}(),
+		ResultSummary: func() string {
+			if accepted {
+				return "inventory accepted"
+			}
+			if stale {
+				return "inventory rejected: stale"
+			}
+			if isFailure {
+				return "collection failure: " + payload.Failure
+			}
+			return "inventory rejected"
+		}(),
+	}
+	if err := writeEndpointAuditEvidence(r, tx, &entry); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "write audit evidence failed"})
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "commit failed"})
+		return
 	}
 
 	resp := map[string]interface{}{
-		"accepted":        accepted,
-		"stale":           stale,
-		"is_failure":      isFailure,
-		"inventory_id":    resultID,
+		"accepted":     accepted,
+		"stale":        stale,
+		"is_failure":   isFailure,
+		"inventory_id": resultID,
 	}
 	if stale {
 		resp["message"] = "inventory rejected: newer collection exists"
@@ -198,6 +307,9 @@ func validateDeviceInventoryResult(payload *InventoryResultPayload) error {
 	if err := validateUUID(payload.DeviceID); err != nil {
 		return fmt.Errorf("invalid device_id: %w", err)
 	}
+	if payload.AgentID == "" {
+		return fmt.Errorf("agent_id is required")
+	}
 	collectionTime, err := time.Parse(time.RFC3339, payload.CollectionTime)
 	if err != nil && payload.CollectionTime != "" {
 		return fmt.Errorf("invalid collection_time: %w", err)
@@ -214,5 +326,3 @@ func validateUUID(s string) error {
 	}
 	return nil
 }
-
-

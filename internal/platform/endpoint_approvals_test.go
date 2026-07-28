@@ -59,7 +59,7 @@ func TestApprovalStateTransitions(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.from+"_"+tt.to, func(t *testing.T) {
-			err := transitionApprovalStatus(nil, tt.from, tt.to)
+			err := transitionApprovalStatus(tt.from, tt.to)
 			if tt.ok && err != nil {
 				t.Errorf("transitionApprovalStatus(%q, %q) = %v, want nil", tt.from, tt.to, err)
 			}
@@ -131,6 +131,7 @@ func TestValidateDeviceInventoryResult(t *testing.T) {
 			payload: InventoryResultPayload{
 				SchemaVersion:  1,
 				DeviceID:       "00000000-0000-0000-0000-000000000001",
+				AgentID:        "00000000-0000-0000-0000-000000000002",
 				CollectionTime: "2026-01-01T00:00:00Z",
 			},
 			wantErr: false,
@@ -140,6 +141,7 @@ func TestValidateDeviceInventoryResult(t *testing.T) {
 			payload: InventoryResultPayload{
 				SchemaVersion: 0,
 				DeviceID:      "00000000-0000-0000-0000-000000000001",
+				AgentID:       "00000000-0000-0000-0000-000000000002",
 			},
 			wantErr: true,
 		},
@@ -148,6 +150,15 @@ func TestValidateDeviceInventoryResult(t *testing.T) {
 			payload: InventoryResultPayload{
 				SchemaVersion: 1,
 				DeviceID:      "",
+				AgentID:       "00000000-0000-0000-0000-000000000002",
+			},
+			wantErr: true,
+		},
+		{
+			name: "missing agent id",
+			payload: InventoryResultPayload{
+				SchemaVersion: 1,
+				DeviceID:      "00000000-0000-0000-0000-000000000001",
 			},
 			wantErr: true,
 		},
@@ -156,6 +167,7 @@ func TestValidateDeviceInventoryResult(t *testing.T) {
 			payload: InventoryResultPayload{
 				SchemaVersion: 1,
 				DeviceID:      "not-a-uuid",
+				AgentID:       "00000000-0000-0000-0000-000000000002",
 			},
 			wantErr: true,
 		},
@@ -164,6 +176,7 @@ func TestValidateDeviceInventoryResult(t *testing.T) {
 			payload: InventoryResultPayload{
 				SchemaVersion:  1,
 				DeviceID:       "00000000-0000-0000-0000-000000000001",
+				AgentID:        "00000000-0000-0000-0000-000000000002",
 				CollectionTime: "2099-07-28T00:00:00Z",
 			},
 			wantErr: true,

@@ -4,34 +4,88 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
+
+	"github.com/google/uuid"
+	"go.uber.org/zap"
 )
 
+const maxCapabilityPayloadSize = 1 << 18
+
 type AgentCapability struct {
-	ID                string   `json:"id"`
-	DeviceID          string   `json:"device_id"`
-	MSPID             string   `json:"msp_id"`
-	AgentVersion      string   `json:"agent_version"`
-	ProtocolVersion   int      `json:"protocol_version"`
-	OS                string   `json:"os"`
-	Arch              string   `json:"arch"`
-	SupportedJobTypes []string `json:"supported_job_types"`
+	ID                string                 `json:"id"`
+	DeviceID          string                 `json:"device_id"`
+	MSPID             string                 `json:"msp_id"`
+	AgentVersion      string                 `json:"agent_version"`
+	ProtocolVersion   int                    `json:"protocol_version"`
+	OS                string                 `json:"os"`
+	Arch              string                 `json:"arch"`
+	SupportedJobTypes []string               `json:"supported_job_types"`
 	Features          map[string]interface{} `json:"features"`
-	InventorySchema   int      `json:"inventory_schema"`
-	LastUpdated       string   `json:"last_updated"`
+	InventorySchema   int                    `json:"inventory_schema"`
+	LastUpdated       string                 `json:"last_updated"`
 }
 
 func (s *APIServer) handleReportCapabilities(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.PathValue("deviceID")
-	mspID, _ := r.Context().Value(ctxKeyMSPID).(string)
-	if mspID == "" || deviceID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
+	tokenUse, _ := r.Context().Value(ctxKeyTokenUse).(string)
+	authUserID, _ := r.Context().Value(ctxKeyUserID).(string)
+
+	if tokenUse != "agent" {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "agent token required"})
 		return
 	}
-	if !s.AuthorizeMSPManage(w, r, mspID) {
+
+	if deviceID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "device id required"})
 		return
 	}
+	if _, err := uuid.Parse(deviceID); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid device id"})
+		return
+	}
+
+	var devMSPID, devClientID, devSiteID, devTenantID string
+	var devStatus string
+	err := s.requestDB(r).QueryRowContext(r.Context(), `
+		SELECT msp_id::text, COALESCE(client_id::text,''), COALESCE(site_id::text,''),
+		       COALESCE(tenant_id::text,''), status
+		FROM devices WHERE id = $1
+	`, deviceID).Scan(&devMSPID, &devClientID, &devSiteID, &devTenantID, &devStatus)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "device not found"})
+		return
+	}
+	if devStatus == "disabled" {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "device is disabled"})
+		return
+	}
+
+	var agentMSPID, agentDeviceID string
+	err = s.requestDB(r).QueryRowContext(r.Context(), `
+		SELECT d.msp_id::text, d.id::text
+		FROM agent_registrations ar
+		JOIN devices d ON d.id = ar.device_id
+		WHERE ar.agent_id = $1 AND ar.approved = true AND ar.device_id = $2
+	`, authUserID, deviceID).Scan(&agentMSPID, &agentDeviceID)
+	if err != nil {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "agent not registered or approved for this device"})
+		return
+	}
+
+	var mspActive bool
+	if err := s.requestDB(r).QueryRowContext(r.Context(), `SELECT is_active FROM msp_tenants WHERE id = $1`, devMSPID).Scan(&mspActive); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "msp check failed"})
+		return
+	}
+	if !mspActive {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "msp is suspended"})
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxCapabilityPayloadSize)
 
 	var req struct {
 		AgentVersion      string                 `json:"agent_version"`
@@ -47,17 +101,30 @@ func (s *APIServer) handleReportCapabilities(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if req.SupportedJobTypes == nil {
-		req.SupportedJobTypes = []string{}
+	if len(req.AgentVersion) > 64 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "agent_version too long"})
+		return
+	}
+	if req.ProtocolVersion < 1 {
+		req.ProtocolVersion = 1
+	}
+	if len(req.SupportedJobTypes) > 100 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "too many job types"})
+		return
 	}
 
-	var exists bool
-	err := s.requestDB(r).QueryRowContext(r.Context(), `
-		SELECT EXISTS(SELECT 1 FROM devices WHERE id = $1 AND msp_id = $2)
-	`, deviceID, mspID).Scan(&exists)
-	if err != nil || !exists {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "device not found"})
-		return
+	validTypes := make([]string, 0, len(req.SupportedJobTypes))
+	for _, jt := range req.SupportedJobTypes {
+		if strings.HasPrefix(jt, "device.") {
+			validTypes = append(validTypes, jt)
+		}
+	}
+	if validTypes == nil {
+		validTypes = []string{}
+	}
+
+	if req.SupportedJobTypes == nil {
+		req.SupportedJobTypes = []string{}
 	}
 
 	featuresJSON, _ := json.Marshal(req.Features)
@@ -65,8 +132,8 @@ func (s *APIServer) handleReportCapabilities(w http.ResponseWriter, r *http.Requ
 		featuresJSON = []byte("{}")
 	}
 
-	jobTypesStr := "{" + strings.Join(req.SupportedJobTypes, ",") + "}"
-	if len(req.SupportedJobTypes) == 0 {
+	jobTypesStr := "{" + strings.Join(validTypes, ",") + "}"
+	if len(validTypes) == 0 {
 		jobTypesStr = "{}"
 	}
 
@@ -83,7 +150,7 @@ func (s *APIServer) handleReportCapabilities(w http.ResponseWriter, r *http.Requ
 		              features=EXCLUDED.features,
 		              inventory_schema=EXCLUDED.inventory_schema,
 		              last_updated=NOW()
-	`, deviceID, mspID, req.AgentVersion, req.ProtocolVersion,
+	`, deviceID, devMSPID, req.AgentVersion, req.ProtocolVersion,
 		req.OS, req.Arch, jobTypesStr, string(featuresJSON), req.InventorySchema)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store capabilities failed"})
@@ -93,6 +160,14 @@ func (s *APIServer) handleReportCapabilities(w http.ResponseWriter, r *http.Requ
 	_, _ = s.requestDB(r).ExecContext(r.Context(), `
 		UPDATE devices SET last_capability_update = NOW() WHERE id = $1
 	`, deviceID)
+
+	if err := writeEndpointAudit(r, s.requestDB(r), devMSPID, "endpoint.capability.reported",
+		fmt.Sprintf("device:%s", deviceID), map[string]interface{}{
+			"device_id": deviceID, "agent_version": req.AgentVersion,
+			"job_types": validTypes, "protocol_version": req.ProtocolVersion,
+		}); err != nil {
+		s.logger.Warn("write capability audit", zap.Error(err))
+	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "capabilities recorded"})
 }
