@@ -610,17 +610,51 @@ func (s *APIServer) handleBulkDeviceAction(w http.ResponseWriter, r *http.Reques
 	sort.Strings(uniqueIDs)
 	req.DeviceIDs = append([]string(nil), uniqueIDs...)
 
-	// All targets must resolve inside the authorized MSP scope; mixed or missing sets fail atomically.
+	// All targets must resolve inside the authorized scope; mixed or missing sets fail atomically.
+	requestClientID, _ := r.Context().Value(ctxKeyClientID).(string)
+	requestSiteID, _ := r.Context().Value(ctxKeySiteID).(string)
+	tenantIDs := make(map[string]struct{})
 	for _, deviceID := range uniqueIDs {
-		var exists bool
-		if err := s.requestDB(r).QueryRow(`SELECT EXISTS(SELECT 1 FROM devices WHERE id = $1 AND msp_id = $2)`, deviceID, mspID).Scan(&exists); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "device validation failed"})
-			return
-		}
-		if !exists {
+		var clientID, siteID, tenantID, status string
+		err := s.requestDB(r).QueryRow(`
+			SELECT COALESCE(client_id::text, ''), COALESCE(site_id::text, ''),
+			       COALESCE(tenant_id::text, ''), status
+			FROM devices WHERE id = $1 AND msp_id = $2
+		`, deviceID, mspID).Scan(&clientID, &siteID, &tenantID, &status)
+		if errors.Is(err, sql.ErrNoRows) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "one or more devices were not found"})
 			return
 		}
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "device validation failed"})
+			return
+		}
+		if status == "disabled" ||
+			(requestClientID != "" && requestClientID != clientID) ||
+			(requestSiteID != "" && requestSiteID != siteID) {
+			writeAuthorizationDenied(w)
+			return
+		}
+		if !op.AllowOffline && status != "online" {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "one or more devices are offline and the action does not support offline execution"})
+			return
+		}
+		if op.Destructive {
+			allowed, err := maintenanceWindowAllows(s.requestDB(r), clientID, deviceID, availableAt)
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "maintenance-window check failed"})
+				return
+			}
+			if !allowed {
+				writeJSON(w, http.StatusConflict, map[string]string{"error": "all targets must be covered by an applicable maintenance window"})
+				return
+			}
+		}
+		if tenantID == "" {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "device tenant identity missing"})
+			return
+		}
+		tenantIDs[tenantID] = struct{}{}
 	}
 
 	payload, err := json.Marshal(req)
@@ -672,6 +706,15 @@ func (s *APIServer) handleBulkDeviceAction(w http.ResponseWriter, r *http.Reques
 		}
 		if _, err := db.ExecContext(r.Context(), `INSERT INTO job_outbox (id,msp_id,aggregate_id,event_type,payload,available_at) VALUES (gen_random_uuid(),$1,$2,'job.dispatch',$3,$4)`, mspID, jobID, opPayload, availableAt); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create dispatch failed"})
+			return
+		}
+	}
+	for tenantID := range tenantIDs {
+		if err := writeEndpointAudit(r, db, tenantID, "endpoint.bulk_action.queued", "job:"+jobID, map[string]interface{}{
+			"job_id": jobID, "device_ids": uniqueIDs, "action": req.Action,
+			"reason": req.Reason, "scheduled_for": availableAt, "correlation_id": correlationID,
+		}); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "write audit evidence failed"})
 			return
 		}
 	}
