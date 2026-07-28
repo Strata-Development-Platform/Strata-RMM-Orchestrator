@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -40,5 +41,18 @@ func TestValidateIdempotencyKey(t *testing.T) {
 	request.Header.Set("Idempotency-Key", strings.Repeat("x", 129))
 	if _, err := validateIdempotencyKey(request); err == nil {
 		t.Fatal("oversized idempotency key must fail")
+	}
+}
+
+
+func TestRequestIPAddress(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/api/v2/devices/device/action", nil)
+	request.RemoteAddr = net.JoinHostPort("192.0.2.10", "4242")
+	if got := requestIPAddress(request); got != "192.0.2.10" {
+		t.Fatalf("requestIPAddress() = %q", got)
+	}
+	request.RemoteAddr = "2001:db8::1"
+	if got := requestIPAddress(request); got != "2001:db8::1" {
+		t.Fatalf("requestIPAddress() without port = %q", got)
 	}
 }
