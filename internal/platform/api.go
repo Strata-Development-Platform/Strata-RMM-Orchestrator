@@ -283,6 +283,7 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /api/v2/devices/{deviceID}", s.handleGetDevice)
 	mux.HandleFunc("POST /api/v2/devices/{deviceID}/action", s.handleDeviceAction)
 	mux.HandleFunc("POST /api/v2/devices/bulk-action", s.handleBulkDeviceAction)
+	mux.HandleFunc("GET /api/v2/devices/{deviceID}/inventory", s.handleDeviceDetailInventory)
 
 	rateLimiter := auth.NewRateLimiter(30, 60)
 

@@ -175,6 +175,32 @@ func (s *APIServer) handleGetDevice(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, d)
 }
 
+func (s *APIServer) handleDeviceDetailInventory(w http.ResponseWriter, r *http.Request) {
+	deviceID := r.PathValue("deviceID")
+
+	var hostname, osType, arch, agentVer, status string
+	var lastHB *time.Time
+	var memTotal, diskTotal int64
+	var cpuCores int
+	s.requestDB(r).QueryRow(`
+		SELECT hostname, os, arch, agent_version, status, last_heartbeat,
+		       COALESCE(cpu_cores, 0), COALESCE(ram_total_mb, 0), COALESCE(disk_total_mb, 0)
+		FROM devices WHERE id = $1
+	`, deviceID).Scan(&hostname, &osType, &arch, &agentVer, &status, &lastHB, &cpuCores, &memTotal, &diskTotal)
+
+	hw := map[string]interface{}{
+		"hostname": hostname, "os": osType, "arch": arch,
+		"agent_version": agentVer, "status": status,
+		"cpu_cores": cpuCores, "memory_mb": memTotal, "disk_mb": diskTotal,
+	}
+	if lastHB != nil {
+		hw["last_heartbeat"] = lastHB.UTC().Format(time.RFC3339)
+		hw["data_age_seconds"] = time.Since(*lastHB).Seconds()
+	}
+
+	writeJSON(w, http.StatusOK, hw)
+}
+
 func parseInt(s string, def int) int {
 	if s == "" {
 		return def
