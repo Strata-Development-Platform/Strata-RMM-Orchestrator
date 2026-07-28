@@ -249,7 +249,10 @@ jobs:
           go-version: "1.25"
           cache: true
       - name: Test approval workflow
-        run: go test -tags=dbintegration ./internal/platform -count=1 -race -v -run "TestApproval" 2>&1 | tee /tmp/approval_test.log; grep -E "^--- (PASS|FAIL)" /tmp/approval_test.log; if grep -q "no test files\|no tests to run" /tmp/approval_test.log; then echo "ERROR: zero tests executed" && exit 1; fi
+        run: |
+          go test -tags=dbintegration ./internal/platform -count=1 -race -v -run "TestApproval" 2>&1 | tee /tmp/approval_test.log
+          grep -E '^--- (PASS|FAIL)' /tmp/approval_test.log
+          if grep -q "no test files\|no tests to run" /tmp/approval_test.log; then echo "ERROR: zero tests executed" && exit 1; fi
 
   phase7-destructive-idempotency:
     name: Phase 7 — Destructive Idempotency
@@ -282,7 +285,10 @@ jobs:
           go-version: "1.25"
           cache: true
       - name: Prove duplicate destructive execution prevention
-        run: go test -tags=jobintegration ./internal/agent/jobs -count=1 -race -v -run "TestDuplicateDestructiveExecution" 2>&1 | tee /tmp/idempotency_test.log; grep -E "^--- (PASS|FAIL)" /tmp/idempotency_test.log; if grep -q "no test files\|no tests to run" /tmp/idempotency_test.log; then echo "ERROR: zero tests executed" && exit 1; fi
+        run: |
+          go test -tags=jobintegration ./internal/agent/jobs -count=1 -race -v -run "TestDuplicateDestructiveExecution" 2>&1 | tee /tmp/idempotency_test.log
+          grep -E '^--- (PASS|FAIL)' /tmp/idempotency_test.log
+          if grep -q "no test files\|no tests to run" /tmp/idempotency_test.log; then echo "ERROR: zero tests executed" && exit 1; fi
 
   phase7-maintenance-offline:
     name: Phase 7 — Maintenance & Offline Lifecycle
@@ -310,7 +316,10 @@ jobs:
           go-version: "1.25"
           cache: true
       - name: Test maintenance window and offline lifecycle
-        run: go test -tags=dbintegration ./internal/platform -count=1 -race -v -run "TestMaintenanceWindowEnforcement" 2>&1 | tee /tmp/maint_test.log; grep -E "^--- (PASS|FAIL)" /tmp/maint_test.log; if grep -q "no test files\|no tests to run" /tmp/maint_test.log; then echo "ERROR: zero tests executed" && exit 1; fi
+        run: |
+          go test -tags=dbintegration ./internal/platform -count=1 -race -v -run "TestMaintenanceWindowEnforcement" 2>&1 | tee /tmp/maint_test.log
+          grep -E '^--- (PASS|FAIL)' /tmp/maint_test.log
+          if grep -q "no test files\|no tests to run" /tmp/maint_test.log; then echo "ERROR: zero tests executed" && exit 1; fi
 
   phase7-audit:
     name: Phase 7 — Immutable Audit
@@ -338,7 +347,10 @@ jobs:
           go-version: "1.25"
           cache: true
       - name: Test immutable audit protections
-        run: go test -tags=dbintegration ./internal/platform -count=1 -race -v -run "TestAuditEvidenceIsAppendOnly|TestAuditEvidenceRequiresRole|TestAuditTransactionRollbackRemovesEvidence" 2>&1 | tee /tmp/audit_test.log; grep -E "^--- (PASS|FAIL)" /tmp/audit_test.log; if grep -q "no test files\|no tests to run" /tmp/audit_test.log; then echo "ERROR: zero tests executed" && exit 1; fi
+        run: |
+          go test -tags=dbintegration ./internal/platform -count=1 -race -v -run "TestAuditEvidenceIsAppendOnly|TestAuditEvidenceCrossMSPReadDenied|TestAuditTransactionRollbackRemovesEvidence" 2>&1 | tee /tmp/audit_test.log
+          grep -E '^--- (PASS|FAIL)' /tmp/audit_test.log
+          if grep -q "no test files\|no tests to run" /tmp/audit_test.log; then echo "ERROR: zero tests executed" && exit 1; fi
 
   phase7-capabilities:
     name: Phase 7 — Capability Negotiation
@@ -350,7 +362,10 @@ jobs:
           go-version: "1.25"
           cache: true
       - name: Test capability negotiation
-        run: go test ./internal/platform -count=1 -race -v -run "TestIsActionSupportedByCapabilities|TestCapability" 2>&1 | tee /tmp/cap_test.log; grep -E "^--- (PASS|FAIL)" /tmp/cap_test.log; if grep -q "no test files\|no tests to run" /tmp/cap_test.log; then echo "ERROR: zero tests executed" && exit 1; fi
+        run: |
+          go test ./internal/platform -count=1 -race -v -run "TestIsActionSupportedByCapabilities|TestCapability" 2>&1 | tee /tmp/cap_test.log
+          grep -E '^--- (PASS|FAIL)' /tmp/cap_test.log
+          if grep -q "no test files\|no tests to run" /tmp/cap_test.log; then echo "ERROR: zero tests executed" && exit 1; fi
 
   phase7-inventory:
     name: Phase 7 — Inventory Ingestion
@@ -378,7 +393,10 @@ jobs:
           go-version: "1.25"
           cache: true
       - name: Test inventory result ingestion
-        run: go test -tags=dbintegration ./internal/platform -count=1 -race -v -run "TestInventoryResultIdempotency|TestInventory" 2>&1 | tee /tmp/inv_test.log; grep -E "^--- (PASS|FAIL)" /tmp/inv_test.log; if grep -q "no test files\|no tests to run" /tmp/inv_test.log; then echo "ERROR: zero tests executed" && exit 1; fi
+        run: |
+          go test -tags=dbintegration ./internal/platform -count=1 -race -v -run "TestInventoryResultIdempotency|TestInventory" 2>&1 | tee /tmp/inv_test.log
+          grep -E '^--- (PASS|FAIL)' /tmp/inv_test.log
+          if grep -q "no test files\|no tests to run" /tmp/inv_test.log; then echo "ERROR: zero tests executed" && exit 1; fi
 
   security:
     name: Security Scan
