@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added
+
+- Completed Phase 7 endpoint operations and technician-console workflows, including approvals, idempotency, offline lifecycle handling, immutable audit evidence, capability negotiation, inventory ingestion, and browser acceptance coverage.
+- Added the complete StrataLabs project contract: documentation index, contribution guide, security policy, and website-integration guidance.
+
+### Changed
+
+- Corrected StrataLabs project metadata and replaced the obsolete roadmap with current SaaS, orchestration, endpoint-operations, beta-hardening, and hosted-service milestones.
+
 - Wired the durable jobs dispatcher into the managed-agent lifecycle.
 - Enforced persistence-before-acknowledgement and exact result replay.
 - Added server result receipts and agent-side acknowledgement tracking.
