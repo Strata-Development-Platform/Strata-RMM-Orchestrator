@@ -1,4 +1,4 @@
-# Configuration Reference (Phase 8A)
+# Configuration Reference (Phase 8B)
 
 ## Runtime Mode
 
@@ -158,7 +158,23 @@ Existing installations should set `STRATA_RUNTIME_MODE` to the appropriate value
 The default is `development`, preserving backward compatibility. Production
 deployments must explicitly set it to `production`.
 
-## Rollback
+## Phase 8B Settings
 
-To revert to the previous startup behavior, remove or unset `STRATA_RUNTIME_MODE`.
-The orchestrator will default to `development` mode with relaxed validation.
+### Deployment & Upgrade
+
+| Canonical Name | Aliases | CLI Flag | Type | Default | Dev Req | Prod Req | Sensitive | Validation | Consumer | Precedence | Reload | Deprecation |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `STRATA_PREFLIGHT_ONLY` | — | `--validate-config` | bool | `false` | no | no | no | — | preflight | flag | no | — |
+| `STRATA_DRY_RUN_MIGRATIONS` | — | `--dry-run-migrations` | bool | `false` | no | no | no | — | migration | flag | no | — |
+| `STRATA_CHECK_MIGRATIONS` | — | `--check-migrations` | bool | `false` | no | no | no | — | migration | flag | no | — |
+| `STRATA_MIGRATION_LOCK_TIMEOUT` | — | — | duration | `5m` | no | no | no | must be positive | migration lock | env > default | no | — |
+
+### CI & Deployment Validation
+
+| Canonical Name | Aliases | CLI Flag | Type | Default | Dev Req | Prod Req | Sensitive | Validation | Consumer | Precedence | Reload | Deprecation |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `STRATA_DEPLOYMENT_ID` | — | `--deployment-id` | string | auto | conditional | conditional | no | — | rollout | flag > env > config | no | — |
+| `STRATA_ROLLOUT_PERCENT` | — | — | int | `100` | no | no | no | 0-100 | rollout | env > default | no | — |
+| `STRATA_ROLLOUT_CHANNEL` | — | — | string | `stable` | no | no | no | stable/beta/canary | rollout | env > default | no | — |
+
+For full deployment and rollback procedures, see `docs/DEPLOYMENT.md`, `docs/UPGRADE.md`, and `docs/ROLLBACK.md`.

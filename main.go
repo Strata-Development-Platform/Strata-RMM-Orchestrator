@@ -65,7 +65,7 @@ Components:
 	rootCmd.AddCommand(
 		versionCmd,
 		agent.NewCommand(ctx, logger),
-		orchestrator.NewCommand(ctx, version, logger),
+		orchestrator.NewCommand(ctx, version, commit, logger),
 		probe.NewCommand(ctx, logger),
 	)
 

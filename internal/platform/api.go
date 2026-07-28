@@ -56,6 +56,9 @@ type APIServer struct {
 
 	healthRegistry *HealthRegistry
 
+	version string
+	commit  string
+
 	// allowClaimPrincipal is restricted to isolated middleware unit tests. Production
 	// servers always resolve users, memberships, and agents from PostgreSQL.
 	allowClaimPrincipal bool
@@ -127,6 +130,12 @@ func (s *APIServer) WithRecordingStore(rs *remote.RecordingStore) *APIServer {
 
 func (s *APIServer) WithStorageBackend(sb storage.Backend) *APIServer {
 	s.storageBackend = sb
+	return s
+}
+
+func (s *APIServer) WithVersion(version, commit string) *APIServer {
+	s.version = version
+	s.commit = commit
 	return s
 }
 
@@ -536,6 +545,8 @@ type healthReadinessResponse struct {
 	Time       string            `json:"time"`
 	Ready      bool              `json:"ready"`
 	Components map[string]string `json:"components,omitempty"`
+	Version    string            `json:"version,omitempty"`
+	Commit     string            `json:"commit,omitempty"`
 }
 
 func (s *APIServer) RegisterHealth(name string, check func(context.Context) error) {
@@ -561,34 +572,43 @@ func (s *APIServer) handleHealthLive(w http.ResponseWriter, r *http.Request) {
 func (s *APIServer) handleHealthReady(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	ready := s.ready
+	full := r.URL.Query().Get("full") == "1"
 	s.mu.RUnlock()
 
 	if !ready {
-		writeJSON(w, http.StatusServiceUnavailable, healthReadinessResponse{
+		resp := healthReadinessResponse{
 			Status: "not ready",
 			Time:   time.Now().UTC().Format(time.RFC3339),
 			Ready:  false,
-		})
+		}
+		if full {
+			resp.Version = s.version
+			resp.Commit = s.commit
+		}
+		writeJSON(w, http.StatusServiceUnavailable, resp)
 		return
 	}
 
 	allOK, statuses := s.healthRegistry.Check(r.Context())
+	resp := healthReadinessResponse{
+		Status:     "ok",
+		Time:       time.Now().UTC().Format(time.RFC3339),
+		Ready:      true,
+		Components: statuses,
+	}
+	if full {
+		resp.Version = s.version
+		resp.Commit = s.commit
+	}
+
 	if allOK {
-		writeJSON(w, http.StatusOK, healthReadinessResponse{
-			Status:     "ok",
-			Time:       time.Now().UTC().Format(time.RFC3339),
-			Ready:      true,
-			Components: statuses,
-		})
+		writeJSON(w, http.StatusOK, resp)
 		return
 	}
 
-	writeJSON(w, http.StatusServiceUnavailable, healthReadinessResponse{
-		Status:     "degraded",
-		Time:       time.Now().UTC().Format(time.RFC3339),
-		Ready:      false,
-		Components: statuses,
-	})
+	resp.Status = "degraded"
+	resp.Ready = false
+	writeJSON(w, http.StatusServiceUnavailable, resp)
 }
 
 func (s *APIServer) handleHealth(w http.ResponseWriter, r *http.Request) {

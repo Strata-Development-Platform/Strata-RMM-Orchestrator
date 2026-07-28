@@ -172,6 +172,50 @@ jobs:
           name: strata-rmm-${{ matrix.os }}-${{ matrix.arch }}
           path: strata-rmm-${{ matrix.os }}-${{ matrix.arch }}
 
+  phase8b-static-validation:
+    name: Phase 8B — Static Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate shell scripts with shellcheck
+        uses: ludeeus/action-shellcheck@master
+        with:
+          scandir: ./scripts
+          severity: warning
+      - name: Validate systemd unit files
+        run: |
+          if command -v systemd-analyze &>/dev/null; then
+            systemd-analyze verify deploy/*.service
+          fi
+      - name: Validate YAML syntax
+        run: |
+          find . -name "*.yml" -o -name "*.yaml" | xargs -r python3 -c "import sys,yaml; [yaml.safe_load(open(f)) for f in sys.argv[1:]]"
+      - name: Validate Docker Compose file
+        run: |
+          docker compose -f deploy/docker/docker-compose.yml config 2>/dev/null || \
+            python3 -c "import yaml; yaml.safe_load(open('deploy/docker/docker-compose.yml'))"
+
+  phase8b-docs-check:
+    name: Phase 8B — Docs Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify deployment documentation exists
+        run: |
+          for f in docs/DEPLOYMENT.md docs/UPGRADE.md docs/ROLLBACK.md; do
+            if [ ! -f "$f" ]; then
+              echo "ERROR: Missing required doc: $f"
+              exit 1
+            fi
+            echo "OK: $f ($(wc -l < "$f") lines)"
+          done
+      - name: Verify CONFIGURATION.md has Phase 8B settings
+        run: |
+          grep -q "Phase 8B" docs/CONFIGURATION.md || { echo "ERROR: CONFIGURATION.md missing Phase 8B settings"; exit 1; }
+      - name: Verify PHASE_8_ACCEPTANCE_MATRIX.md has Phase 8B evidence
+        run: |
+          grep -q "Phase 8B" docs/PHASE_8_ACCEPTANCE_MATRIX.md || { echo "ERROR: Acceptance matrix missing Phase 8B"; exit 1; }
+
   frontend:
     name: Frontend
     runs-on: ubuntu-latest

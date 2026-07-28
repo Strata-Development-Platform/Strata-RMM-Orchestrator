@@ -10,7 +10,7 @@ import (
 
 func TestCommand_AllFlagsDefined(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
-	cmd := NewCommand(context.Background(), "test", logger)
+	cmd := NewCommand(context.Background(), "test", "none", logger)
 
 	expectedFlags := []string{
 		"nats-url",
@@ -33,7 +33,7 @@ func TestCommand_AllFlagsDefined(t *testing.T) {
 
 func TestCommand_FlagChangedDetection(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
-	cmd := NewCommand(context.Background(), "test", logger)
+	cmd := NewCommand(context.Background(), "test", "none", logger)
 
 	// Before parsing, no flags should be changed
 	if cmd.Flags().Changed("nats-url") {
@@ -69,7 +69,7 @@ func TestPrecedence_CLIOverridesEnv(t *testing.T) {
 	}()
 
 	logger, _ := zap.NewDevelopment()
-	cmd := NewCommand(context.Background(), "test", logger)
+	cmd := NewCommand(context.Background(), "test", "none", logger)
 
 	// Set CLI flags that should override env vars
 	cmd.SetArgs([]string{
@@ -90,7 +90,7 @@ func TestPrecedence_CLIOverridesEnv(t *testing.T) {
 
 func TestCommand_AllFlagDefs(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
-	cmd := NewCommand(context.Background(), "test", logger)
+	cmd := NewCommand(context.Background(), "test", "none", logger)
 
 	_ = cmd.Flags().Lookup("nats-url")
 	_ = cmd.Flags().Lookup("api-addr")
@@ -126,7 +126,7 @@ func TestCommand_AllFlagDefs(t *testing.T) {
 
 func TestUpdateSubcommandRegistered(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
-	cmd := NewCommand(context.Background(), "test", logger)
+	cmd := NewCommand(context.Background(), "test", "none", logger)
 
 	found := false
 	for _, sub := range cmd.Commands() {

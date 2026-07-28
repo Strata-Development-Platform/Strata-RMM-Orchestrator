@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
@@ -35,7 +36,7 @@ const (
 	StorageRequired StorageMode = "required"
 )
 
-func NewCommand(ctx context.Context, version string, logger *zap.Logger) *cobra.Command {
+func NewCommand(ctx context.Context, version, commit string, logger *zap.Logger) *cobra.Command {
 	var (
 		natsURL         string
 		timescaleDSN    string
@@ -220,7 +221,8 @@ func NewCommand(ctx context.Context, version string, logger *zap.Logger) *cobra.
 			if err != nil {
 				return fmt.Errorf("stage %d: creating API server: %w", atomic.LoadInt32(&startupStage), err)
 			}
-			api.WithHTTPConfig(
+			api.WithVersion(version, commit).
+				WithHTTPConfig(
 				cfg.HTTP.ReadTimeout, cfg.HTTP.WriteTimeout, cfg.HTTP.IdleTimeout,
 				cfg.HTTP.MaxBodySizeBytes, cfg.HTTP.CORSOrigins,
 			)
@@ -328,6 +330,7 @@ func NewCommand(ctx context.Context, version string, logger *zap.Logger) *cobra.
 	cmd.Flags().StringVar(&storageEndpoint, "storage-endpoint", "", "Storage endpoint (overrides STORAGE_ENDPOINT env)")
 
 	cmd.AddCommand(NewUpdateCommand(ctx, version, logger))
+	cmd.AddCommand(newPreflightCommand(logger))
 	return cmd
 }
 
@@ -381,6 +384,80 @@ func NewUpdateCommand(ctx context.Context, version string, logger *zap.Logger) *
 	}
 	cmd.Flags().Bool("check", false, "Only check for updates, don't apply")
 	return cmd
+}
+
+type preflightResult struct {
+	Check  string `json:"check"`
+	Pass   bool   `json:"pass"`
+	Error  string `json:"error,omitempty"`
+}
+
+func newPreflightCommand(logger *zap.Logger) *cobra.Command {
+	return &cobra.Command{
+		Use:   "preflight",
+		Short: "Validate deployment prerequisites",
+		Long:  "Validates configuration, database, and NATS connectivity. Exits with structured JSON on stdout.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			var results []preflightResult
+
+			cfg, err := config.LoadOrchestratorConfig()
+			if err != nil {
+				results = append(results, preflightResult{Check: "config", Pass: false, Error: err.Error()})
+			} else {
+				if err := cfg.Validate(); err != nil {
+					results = append(results, preflightResult{Check: "config", Pass: false, Error: err.Error()})
+				} else {
+					results = append(results, preflightResult{Check: "config", Pass: true})
+				}
+			}
+
+			if cfg != nil {
+				db, err := timescale.NewClient(cmd.Context(), cfg.DB.DSN)
+				if err != nil {
+					results = append(results, preflightResult{Check: "database", Pass: false, Error: err.Error()})
+				} else {
+					pingCtx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
+					if err := db.DB().PingContext(pingCtx); err != nil {
+						results = append(results, preflightResult{Check: "database", Pass: false, Error: err.Error()})
+					} else {
+						results = append(results, preflightResult{Check: "database", Pass: true})
+					}
+					cancel()
+					db.Close()
+				}
+
+				nc, err := connectNATS(cfg)
+				if err != nil {
+					results = append(results, preflightResult{Check: "nats", Pass: false, Error: err.Error()})
+				} else {
+					results = append(results, preflightResult{Check: "nats", Pass: true})
+					nc.Close()
+				}
+			} else {
+				results = append(results, preflightResult{Check: "database", Pass: false, Error: "skipped: config load failed"})
+				results = append(results, preflightResult{Check: "nats", Pass: false, Error: "skipped: config load failed"})
+			}
+
+			allPass := true
+			for _, r := range results {
+				if !r.Pass {
+					allPass = false
+					break
+				}
+			}
+			output := map[string]interface{}{
+				"results": results,
+				"pass":    allPass,
+			}
+			data, _ := json.MarshalIndent(output, "", "  ")
+			fmt.Println(string(data))
+
+			if !allPass {
+				return fmt.Errorf("preflight checks failed")
+			}
+			return nil
+		},
+	}
 }
 
 func connectNATS(cfg *config.OrchestratorConfig) (*nats.Conn, error) {

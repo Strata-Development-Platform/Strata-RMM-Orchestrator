@@ -27,7 +27,7 @@ Phase 8 does not declare the platform production-ready. It creates and satisfies
 
 ## Phase 8A Complete: Configuration and Startup Hardening
 
-Phase 8A (PR #6) delivered centralized configuration loading, runtime modes, production fail-closed validation, health endpoints, a comprehensive configuration inventory, and full acceptance verification. This section summarizes what was implemented and how it affects the remaining workstreams.
+Phase 8A (PR #7, merge commit `9543bbc`) delivered centralized configuration loading, runtime modes, production fail-closed validation, health endpoints, a comprehensive configuration inventory, and full acceptance verification. The tested head is `342bf9e114ec5547333449e33a5e7df3a834d466` with CI run https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30381729001 (21/21 jobs passed). This section summarizes what was implemented and how it affects the remaining workstreams.
 
 ### Design Decisions
 
@@ -51,7 +51,7 @@ Three runtime modes are enforced by `pkg/config/config.go`:
 - **CORS origins** must not use wildcard `*`
 - **JWT secret** must not have `dev-` or `test-` prefix
 - **Database DSN** must not use `sslmode=disable` or default passwords (postgres, strata, password)
-- **NATS TLS** cert and key are required when TLS is enabled
+- **NATS** encrypted transport is mandatory in production; URL must use `tls://` or `nats+tls://`; a trusted CA file is required; authentication requires either a token or a complete mTLS certificate/key pair — a token does not make plaintext transport acceptable
 - **Dev seeding** (`STRATA_SEED_DEV=true`) is rejected in production
 
 ### Required Settings for Production

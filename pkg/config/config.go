@@ -98,6 +98,8 @@ type OrchestratorConfig struct {
 	JWT         JWTConfig
 	HTTP        HTTPConfig
 	Seeding     SeedingConfig
+	Version     string
+	Commit      string
 }
 
 func (c *OrchestratorConfig) Validate() error {

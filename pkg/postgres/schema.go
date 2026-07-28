@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+const migrationLockID = 0x535452415441524D // "STRATARM" as int64
+
 type Migration struct {
 	ID   int
 	Name string
@@ -2137,7 +2139,40 @@ func NewSchemaManager(db *sql.DB) *SchemaManager {
 	return &SchemaManager{db: db}
 }
 
+func (m *SchemaManager) lock() (bool, error) {
+	var acquired bool
+	err := m.db.QueryRow("SELECT pg_try_advisory_lock($1)", migrationLockID).Scan(&acquired)
+	return acquired, err
+}
+
+func (m *SchemaManager) unlock() {
+	m.db.Exec("SELECT pg_advisory_unlock($1)", migrationLockID)
+}
+
+func (m *SchemaManager) retryLock(maxAttempts int, interval time.Duration) error {
+	var lastErr error
+	for i := 0; i < maxAttempts; i++ {
+		acquired, err := m.lock()
+		if err != nil {
+			lastErr = fmt.Errorf("lock attempt %d/%d: %w", i+1, maxAttempts, err)
+			time.Sleep(interval)
+			continue
+		}
+		if acquired {
+			return nil
+		}
+		lastErr = fmt.Errorf("lock attempt %d/%d: lock held by another process", i+1, maxAttempts)
+		time.Sleep(interval)
+	}
+	return fmt.Errorf("migration lock acquisition failed after %d attempts: %w", maxAttempts, lastErr)
+}
+
 func (m *SchemaManager) Apply() error {
+	if err := m.retryLock(5, time.Second); err != nil {
+		return fmt.Errorf("acquiring migration lock: %w", err)
+	}
+	defer m.unlock()
+
 	_, err := m.db.Exec(`
 		CREATE TABLE IF NOT EXISTS schema_migrations (
 			id         INT PRIMARY KEY,
