@@ -73,6 +73,9 @@ func (d *Dispatcher) outboxPublisher(ctx context.Context) {
 			d.ensureQueuedOutbox()
 			d.processOutbox()
 			d.expireJobs()
+			d.expirePendingApprovals()
+			d.handleOfflineReconnect()
+			d.expireOfflineWork()
 		}
 	}
 }
@@ -242,6 +245,42 @@ func (d *Dispatcher) reconciliationWorker(ctx context.Context) {
 		case <-ticker.C:
 			d.reconcile()
 		}
+	}
+}
+
+func (d *Dispatcher) expirePendingApprovals() {
+	if _, err := d.db.DB().Exec(`
+		UPDATE endpoint_approval_requests SET status = 'expired', updated_at = NOW()
+		WHERE status = 'pending' AND expires_at < NOW()
+	`); err != nil {
+		d.logger.Error("expire pending approvals", zap.Error(err))
+	}
+}
+
+func (d *Dispatcher) handleOfflineReconnect() {
+	_, err := d.db.DB().Exec(`
+		UPDATE job_targets jt SET status = 'queued', reconnect_at = NOW()
+		FROM devices d
+		WHERE jt.device_id = d.id
+		  AND jt.status = 'waiting'
+		  AND d.status = 'online'
+		  AND jt.approval_status IN ('none', 'approved')
+		  AND (jt.offline_at IS NULL OR jt.offline_at < NOW() - INTERVAL '30 seconds')
+	`)
+	if err != nil {
+		d.logger.Error("handle offline reconnect", zap.Error(err))
+	}
+}
+
+func (d *Dispatcher) expireOfflineWork() {
+	if _, err := d.db.DB().Exec(`
+		UPDATE job_targets jt SET status = 'expired', error_message = 'expired: waited beyond expiry'
+		FROM jobs j
+		WHERE jt.job_id = j.id
+		  AND jt.status = 'waiting'
+		  AND j.expires_at < NOW()
+	`); err != nil {
+		d.logger.Error("expire offline work", zap.Error(err))
 	}
 }
 

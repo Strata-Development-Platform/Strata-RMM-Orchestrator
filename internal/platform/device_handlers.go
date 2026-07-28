@@ -66,25 +66,40 @@ func requestIPAddress(r *http.Request) string {
 	return strings.TrimSpace(r.RemoteAddr)
 }
 
-func maintenanceWindowAllows(db dbExecutor, clientID, deviceID string, executeAt time.Time) (bool, error) {
+func maintenanceWindowAllows(db dbExecutor, mspID, clientID, siteID, deviceID string, executeAt time.Time) (bool, error) {
 	var configured, covered bool
 	err := db.QueryRow(`
 		SELECT
 			EXISTS (
 				SELECT 1 FROM maintenance_windows
-				WHERE tenant_id = $1 AND end_time >= NOW()
+				WHERE (msp_id = $1 OR client_id = $2 OR site_id = $3 OR device_id = $4)
+				  AND end_time >= NOW() AND expires_at IS NULL OR expires_at >= NOW()
 			),
 			EXISTS (
 				SELECT 1 FROM maintenance_windows
-				WHERE tenant_id = $1
-				  AND start_time <= $3 AND end_time >= $3
-				  AND (COALESCE(cardinality(device_ids), 0) = 0 OR $2 = ANY(device_ids))
+				WHERE (msp_id = $1 OR client_id = $2 OR site_id = $3 OR device_id = $4)
+				  AND start_time <= $5 AND end_time >= $5
+				  AND (expires_at IS NULL OR expires_at >= $5)
 			)
-	`, clientID, deviceID, executeAt).Scan(&configured, &covered)
+	`, mspID, clientID, siteID, deviceID, executeAt).Scan(&configured, &covered)
 	if err != nil {
 		return false, err
 	}
 	return !configured || covered, nil
+}
+
+func checkApprovalRequired(db dbExecutor, mspID, actionName string, isBulk bool) (*ApprovalPolicy, bool, error) {
+	policy, err := loadApprovalPolicy(db, mspID, actionName)
+	if err != nil {
+		return nil, false, err
+	}
+	if policy == nil {
+		policy = defaultApprovalPolicy(actionName)
+	}
+	if isBulk && policy.ApprovalRequired {
+		policy.ApprovalRequired = true
+	}
+	return policy, policy.ApprovalRequired, nil
 }
 
 func writeEndpointAudit(r *http.Request, db dbExecutor, tenantID, action, resource string, details interface{}) error {
@@ -423,7 +438,7 @@ func (s *APIServer) handleDeviceAction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if op.Destructive {
-		allowed, err := maintenanceWindowAllows(s.requestDB(r), clientID, deviceID, availableAt)
+		allowed, err := maintenanceWindowAllows(s.requestDB(r), mspID, clientID, siteID, deviceID, availableAt)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "maintenance-window check failed"})
 			return
@@ -432,6 +447,26 @@ func (s *APIServer) handleDeviceAction(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "action must execute within an applicable maintenance window"})
 			return
 		}
+	}
+
+	cap, err := loadAgentCapabilities(s.requestDB(r), deviceID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "capability check failed"})
+		return
+	}
+	if cap != nil && !isActionSupportedByCapabilities(rawReq.Action, cap) {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "action unsupported by agent capabilities"})
+		return
+	}
+
+	_, approvalRequired, err := checkApprovalRequired(s.requestDB(r), mspID, rawReq.Action, false)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "approval policy check failed"})
+		return
+	}
+	if approvalRequired {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "action requires approval; use /api/v2/approvals"})
+		return
 	}
 
 	jobID := uuid.New().String()
@@ -640,7 +675,7 @@ func (s *APIServer) handleBulkDeviceAction(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		if op.Destructive {
-			allowed, err := maintenanceWindowAllows(s.requestDB(r), clientID, deviceID, availableAt)
+			allowed, err := maintenanceWindowAllows(s.requestDB(r), mspID, clientID, siteID, deviceID, availableAt)
 			if err != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "maintenance-window check failed"})
 				return
@@ -650,11 +685,31 @@ func (s *APIServer) handleBulkDeviceAction(w http.ResponseWriter, r *http.Reques
 				return
 			}
 		}
+
+		cap, err := loadAgentCapabilities(s.requestDB(r), deviceID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "capability check failed"})
+			return
+		}
+		if cap != nil && !isActionSupportedByCapabilities(req.Action, cap) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "one or more devices do not support this action"})
+			return
+		}
 		if tenantID == "" {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "device tenant identity missing"})
 			return
 		}
 		tenantIDs[tenantID] = struct{}{}
+	}
+
+	_, approvalRequired, err := checkApprovalRequired(s.requestDB(r), mspID, req.Action, true)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "approval policy check failed"})
+		return
+	}
+	if approvalRequired {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "bulk action requires approval; use /api/v2/approvals"})
+		return
 	}
 
 	payload, err := json.Marshal(req)
