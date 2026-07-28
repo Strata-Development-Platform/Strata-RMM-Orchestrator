@@ -2,8 +2,13 @@ package orchestrator
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"net"
 	"net/url"
+	"os"
+	"time"
 
 	"github.com/nats-io/nats.go"
 	"github.com/spf13/cobra"
@@ -49,28 +54,29 @@ func NewCommand(ctx context.Context, version string, logger *zap.Logger) *cobra.
 			logger.Info("runtime mode", zap.String("mode", string(cfg.RuntimeMode)))
 
 			// Stage 2: Apply CLI flag overrides (flags take highest precedence)
-			if natsURL != "" {
+			// Precedence: CLI flag > canonical env var > legacy alias > default
+			if cmd.Flags().Changed("nats-url") {
 				cfg.NATS.URL = natsURL
 			}
-			if timescaleDSN != "" {
+			if cmd.Flags().Changed("timescale-dsn") {
 				cfg.DB.DSN = timescaleDSN
 			}
-			if apiAddr != "" {
+			if cmd.Flags().Changed("api-addr") {
 				cfg.HTTP.APIAddr = apiAddr
 			}
-			if tunnelAddr != "" {
+			if cmd.Flags().Changed("tunnel-addr") {
 				cfg.HTTP.TunnelAddr = tunnelAddr
 			}
-			if storageBackend != "" {
+			if cmd.Flags().Changed("storage-backend") {
 				cfg.Storage.Backend = storageBackend
 			}
-			if storageBucket != "" {
+			if cmd.Flags().Changed("storage-bucket") {
 				cfg.Storage.Bucket = storageBucket
 			}
-			if storageRegion != "" {
+			if cmd.Flags().Changed("storage-region") {
 				cfg.Storage.Region = storageRegion
 			}
-			if storageEndpoint != "" {
+			if cmd.Flags().Changed("storage-endpoint") {
 				cfg.Storage.Endpoint = storageEndpoint
 			}
 
@@ -201,6 +207,18 @@ func NewCommand(ctx context.Context, version string, logger *zap.Logger) *cobra.
 				WithThirdPartyEngine(thirdParty).
 				WithUpdateManager(updateMgr)
 
+			api.RegisterHealth("db", func(ctx context.Context) error {
+				pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+				defer cancel()
+				return tsdb.DB().PingContext(pingCtx)
+			})
+			api.RegisterHealth("nats", func(ctx context.Context) error {
+				if !nc.IsConnected() {
+					return fmt.Errorf("NATS not connected")
+				}
+				return nil
+			})
+
 			if cfg.Storage.Backend != "" && cfg.Storage.Backend != "none" {
 				storeCfg := storage.Config{
 					Type:      cfg.Storage.Backend,
@@ -214,7 +232,7 @@ func NewCommand(ctx context.Context, version string, logger *zap.Logger) *cobra.
 				}
 				sb, err := storage.NewBackend(ctx, storeCfg)
 				if err != nil {
-					logger.Warn("storage backend init (continuing without recordings)", zap.Error(err))
+					logger.Error("storage backend init failed — recording/report features unavailable", zap.Error(err))
 				} else {
 					logger.Info("storage backend initialized", zap.String("type", cfg.Storage.Backend), zap.String("bucket", cfg.Storage.Bucket))
 					recStore := remote.NewRecordingStore(tsdb.DB())
@@ -232,6 +250,13 @@ func NewCommand(ctx context.Context, version string, logger *zap.Logger) *cobra.
 					go reportEngine.Start(ctx)
 					logger.Info("report engine started")
 					api = api.WithRecordingStore(recStore).WithStorageBackend(sb)
+					api.RegisterHealth("storage", func(ctx context.Context) error {
+						_, err := sb.Stat(ctx, "health-check")
+						if err != nil && err != storage.ErrNotFound {
+							return fmt.Errorf("storage backend unreachable: %w", err)
+						}
+						return nil
+					})
 				}
 			}
 
@@ -240,6 +265,9 @@ func NewCommand(ctx context.Context, version string, logger *zap.Logger) *cobra.
 			dispatcher.Start(ctx)
 			defer dispatcher.Stop()
 			logger.Info("job dispatcher started")
+			api.RegisterHealth("dispatcher", func(ctx context.Context) error {
+				return nil
+			})
 
 			// Stage 14: API server
 			if err := api.Start(ctx); err != nil {
@@ -332,7 +360,36 @@ func connectNATS(cfg *config.OrchestratorConfig) (*nats.Conn, error) {
 		natsOpts = append(natsOpts, nats.Token(cfg.NATS.Token))
 	}
 	if cfg.NATS.TLSEnabled {
-		natsOpts = append(natsOpts, nats.Secure(nil))
+		serverName, _, err := net.SplitHostPort(cfg.NATS.URL)
+		if err != nil {
+			u, parseErr := url.Parse(cfg.NATS.URL)
+			if parseErr != nil || u.Host == "" {
+				serverName = "localhost"
+			} else {
+				serverName = u.Hostname()
+			}
+		}
+		tlsConfig := &tls.Config{
+			ServerName: serverName,
+			MinVersion: tls.VersionTLS12,
+		}
+		if cfg.NATS.TLSCAFile != "" {
+			caCert, err := os.ReadFile(cfg.NATS.TLSCAFile)
+			if err != nil {
+				return nil, fmt.Errorf("NATS CA cert: %w", err)
+			}
+			caPool := x509.NewCertPool()
+			caPool.AppendCertsFromPEM(caCert)
+			tlsConfig.RootCAs = caPool
+		}
+		if cfg.NATS.TLSCertFile != "" && cfg.NATS.TLSKeyFile != "" {
+			cert, err := tls.LoadX509KeyPair(cfg.NATS.TLSCertFile, cfg.NATS.TLSKeyFile)
+			if err != nil {
+				return nil, fmt.Errorf("NATS cert/key: %w", err)
+			}
+			tlsConfig.Certificates = []tls.Certificate{cert}
+		}
+		natsOpts = append(natsOpts, nats.Secure(tlsConfig))
 	}
 	return nats.Connect(cfg.NATS.URL, natsOpts...)
 }

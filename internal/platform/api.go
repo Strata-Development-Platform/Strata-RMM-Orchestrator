@@ -52,6 +52,8 @@ type APIServer struct {
 	corsOrigins      []string
 	trustedProxies   []string
 
+	healthRegistry *HealthRegistry
+
 	// allowClaimPrincipal is restricted to isolated middleware unit tests. Production
 	// servers always resolve users, memberships, and agents from PostgreSQL.
 	allowClaimPrincipal bool
@@ -62,12 +64,13 @@ func NewAPIServer(addr string, db *timescale.Client, nc *nats.Conn, logger *zap.
 		return nil, fmt.Errorf("token generator is required")
 	}
 	s := &APIServer{
-		addr:     addr,
-		db:       db,
-		nats:     nc,
-		totp:     auth.NewTOTPManager(),
-		logger:   logger,
-		tokenGen: tokenGen,
+		addr:           addr,
+		db:             db,
+		nats:           nc,
+		totp:           auth.NewTOTPManager(),
+		logger:         logger,
+		tokenGen:       tokenGen,
+		healthRegistry: NewHealthRegistry(),
 	}
 	if db != nil {
 		s.mfaStore = auth.NewMFAStore(db.DB())
@@ -419,16 +422,51 @@ func (s *APIServer) handleRoot(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+type HealthRegistry struct {
+	mu     sync.RWMutex
+	checks map[string]func(context.Context) error
+}
+
+func NewHealthRegistry() *HealthRegistry {
+	return &HealthRegistry{checks: make(map[string]func(context.Context) error)}
+}
+
+func (r *HealthRegistry) Register(name string, check func(context.Context) error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.checks[name] = check
+}
+
+func (r *HealthRegistry) Check(ctx context.Context) (bool, map[string]string) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	allOK := true
+	statuses := make(map[string]string)
+	for name, check := range r.checks {
+		if err := check(ctx); err != nil {
+			statuses[name] = fmt.Sprintf("failed: %v", err)
+			allOK = false
+		} else {
+			statuses[name] = "ok"
+		}
+	}
+	return allOK, statuses
+}
+
 type healthLivenessResponse struct {
 	Status string `json:"status"`
 	Time   string `json:"time"`
 }
 
 type healthReadinessResponse struct {
-	Status  string `json:"status"`
-	Time    string `json:"time"`
-	Ready   bool   `json:"ready"`
-	Healthy bool   `json:"healthy"`
+	Status     string            `json:"status"`
+	Time       string            `json:"time"`
+	Ready      bool              `json:"ready"`
+	Components map[string]string `json:"components,omitempty"`
+}
+
+func (s *APIServer) RegisterHealth(name string, check func(context.Context) error) {
+	s.healthRegistry.Register(name, check)
 }
 
 func (s *APIServer) setReadiness(ready bool) {
@@ -452,34 +490,31 @@ func (s *APIServer) handleHealthReady(w http.ResponseWriter, r *http.Request) {
 	ready := s.ready
 	s.mu.RUnlock()
 
-	resp := healthReadinessResponse{
-		Status: "ok",
-		Time:   time.Now().UTC().Format(time.RFC3339),
-		Ready:  ready,
-	}
-
 	if !ready {
-		resp.Status = "not ready"
-		resp.Healthy = false
-		writeJSON(w, http.StatusServiceUnavailable, resp)
+		writeJSON(w, http.StatusServiceUnavailable, healthReadinessResponse{
+			Status: "not ready",
+			Time:   time.Now().UTC().Format(time.RFC3339),
+			Ready:  false,
+		})
 		return
 	}
 
-	// Check required dependencies (skip if not configured, e.g. in tests)
-	if s.db != nil || s.nats != nil {
-		dbOK := s.db == nil || s.db.DB() == nil || s.db.DB().Ping() == nil
-		natsOK := s.nats == nil || s.nats.IsConnected()
-		resp.Healthy = dbOK && natsOK
-		if !resp.Healthy {
-			resp.Status = "degraded"
-			writeJSON(w, http.StatusServiceUnavailable, resp)
-			return
-		}
-	} else {
-		resp.Healthy = true
+	allOK, statuses := s.healthRegistry.Check(r.Context())
+	if allOK {
+		writeJSON(w, http.StatusOK, healthReadinessResponse{
+			Status: "ok",
+			Time:   time.Now().UTC().Format(time.RFC3339),
+			Ready:  true,
+		})
+		return
 	}
 
-	writeJSON(w, http.StatusOK, resp)
+	writeJSON(w, http.StatusServiceUnavailable, healthReadinessResponse{
+		Status:     "degraded",
+		Time:       time.Now().UTC().Format(time.RFC3339),
+		Ready:      false,
+		Components: statuses,
+	})
 }
 
 func (s *APIServer) handleHealth(w http.ResponseWriter, r *http.Request) {

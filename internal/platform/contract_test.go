@@ -1,7 +1,9 @@
 package platform
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,7 +11,7 @@ import (
 )
 
 func TestHealthReadyWhenReady(t *testing.T) {
-	s := &APIServer{}
+	s := &APIServer{healthRegistry: NewHealthRegistry()}
 	s.setReadiness(true)
 	req := httptest.NewRequest("GET", "/health/ready", nil)
 	w := httptest.NewRecorder()
@@ -26,10 +28,13 @@ func TestHealthReadyWhenReady(t *testing.T) {
 	if !body.Ready {
 		t.Error("expected ready=true")
 	}
+	if body.Status != "ok" {
+		t.Errorf("expected status ok, got %q", body.Status)
+	}
 }
 
 func TestHealthNotReadyReturns503(t *testing.T) {
-	s := &APIServer{}
+	s := &APIServer{healthRegistry: NewHealthRegistry()}
 	s.setReadiness(false)
 	req := httptest.NewRequest("GET", "/health/ready", nil)
 	w := httptest.NewRecorder()
@@ -52,7 +57,7 @@ func TestHealthNotReadyReturns503(t *testing.T) {
 }
 
 func TestHealthLiveReturnsAlwaysAlive(t *testing.T) {
-	s := &APIServer{}
+	s := &APIServer{healthRegistry: NewHealthRegistry()}
 	req := httptest.NewRequest("GET", "/health/live", nil)
 	w := httptest.NewRecorder()
 	s.handleHealthLive(w, req)
@@ -71,7 +76,7 @@ func TestHealthLiveReturnsAlwaysAlive(t *testing.T) {
 }
 
 func TestHealthLivenessQueryParam(t *testing.T) {
-	s := &APIServer{}
+	s := &APIServer{healthRegistry: NewHealthRegistry()}
 	req := httptest.NewRequest("GET", "/health?liveness=1", nil)
 	w := httptest.NewRecorder()
 	s.handleHealth(w, req)
@@ -90,13 +95,192 @@ func TestHealthLivenessQueryParam(t *testing.T) {
 }
 
 func TestHealthNotReadyByDefault(t *testing.T) {
-	s := &APIServer{}
+	s := &APIServer{healthRegistry: NewHealthRegistry()}
 	req := httptest.NewRequest("GET", "/health", nil)
 	w := httptest.NewRecorder()
 	s.handleHealth(w, req)
 
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503 by default, got %d", w.Code)
+	}
+}
+
+func TestHealthReadyAllChecksPass(t *testing.T) {
+	s := &APIServer{healthRegistry: NewHealthRegistry()}
+	s.RegisterHealth("db", func(ctx context.Context) error { return nil })
+	s.RegisterHealth("nats", func(ctx context.Context) error { return nil })
+	s.setReadiness(true)
+
+	req := httptest.NewRequest("GET", "/health/ready", nil)
+	w := httptest.NewRecorder()
+	s.handleHealthReady(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 when all checks pass, got %d", w.Code)
+	}
+
+	var body healthReadinessResponse
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !body.Ready {
+		t.Error("expected ready=true")
+	}
+	if body.Status != "ok" {
+		t.Errorf("expected status ok, got %q", body.Status)
+	}
+}
+
+func TestHealthReadyDBFailure(t *testing.T) {
+	s := &APIServer{healthRegistry: NewHealthRegistry()}
+	s.RegisterHealth("db", func(ctx context.Context) error {
+		return fmt.Errorf("unreachable")
+	})
+	s.RegisterHealth("nats", func(ctx context.Context) error { return nil })
+	s.setReadiness(true)
+
+	req := httptest.NewRequest("GET", "/health/ready", nil)
+	w := httptest.NewRecorder()
+	s.handleHealthReady(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 on DB failure, got %d", w.Code)
+	}
+
+	var body healthReadinessResponse
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Ready {
+		t.Error("expected ready=false")
+	}
+	if body.Status != "degraded" {
+		t.Errorf("expected status degraded, got %q", body.Status)
+	}
+	if body.Components == nil {
+		t.Fatal("expected components map")
+	}
+	if body.Components["db"] != "failed: unreachable" {
+		t.Errorf("expected db component failure, got %q", body.Components["db"])
+	}
+	if body.Components["nats"] != "ok" {
+		t.Errorf("expected nats ok, got %q", body.Components["nats"])
+	}
+}
+
+func TestHealthReadyNATSFailure(t *testing.T) {
+	s := &APIServer{healthRegistry: NewHealthRegistry()}
+	s.RegisterHealth("db", func(ctx context.Context) error { return nil })
+	s.RegisterHealth("nats", func(ctx context.Context) error {
+		return fmt.Errorf("disconnected")
+	})
+	s.setReadiness(true)
+
+	req := httptest.NewRequest("GET", "/health/ready", nil)
+	w := httptest.NewRecorder()
+	s.handleHealthReady(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 on NATS failure, got %d", w.Code)
+	}
+
+	var body healthReadinessResponse
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Ready {
+		t.Error("expected ready=false")
+	}
+	if body.Status != "degraded" {
+		t.Errorf("expected status degraded, got %q", body.Status)
+	}
+	if body.Components["nats"] != "failed: disconnected" {
+		t.Errorf("expected nats failure, got %q", body.Components["nats"])
+	}
+}
+
+func TestHealthReadyDegradedAllComponentsReported(t *testing.T) {
+	s := &APIServer{healthRegistry: NewHealthRegistry()}
+	s.RegisterHealth("db", func(ctx context.Context) error {
+		return fmt.Errorf("connection refused")
+	})
+	s.RegisterHealth("nats", func(ctx context.Context) error {
+		return fmt.Errorf("timeout")
+	})
+	s.RegisterHealth("storage", func(ctx context.Context) error { return nil })
+	s.setReadiness(true)
+
+	req := httptest.NewRequest("GET", "/health/ready", nil)
+	w := httptest.NewRecorder()
+	s.handleHealthReady(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 on multi-component failure, got %d", w.Code)
+	}
+
+	var body healthReadinessResponse
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Status != "degraded" {
+		t.Errorf("expected status degraded, got %q", body.Status)
+	}
+	if body.Components["db"] != "failed: connection refused" {
+		t.Errorf("unexpected db status: %q", body.Components["db"])
+	}
+	if body.Components["nats"] != "failed: timeout" {
+		t.Errorf("unexpected nats status: %q", body.Components["nats"])
+	}
+	if body.Components["storage"] != "ok" {
+		t.Errorf("expected storage ok, got %q", body.Components["storage"])
+	}
+}
+
+func TestHealthLiveAlwaysOKRegardlessOfHealth(t *testing.T) {
+	s := &APIServer{healthRegistry: NewHealthRegistry()}
+	s.RegisterHealth("db", func(ctx context.Context) error {
+		return fmt.Errorf("unreachable")
+	})
+	s.setReadiness(true)
+
+	req := httptest.NewRequest("GET", "/health/live", nil)
+	w := httptest.NewRecorder()
+	s.handleHealthLive(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 on liveness even with failing checks, got %d", w.Code)
+	}
+
+	var body healthLivenessResponse
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Status != "alive" {
+		t.Errorf("expected status alive, got %s", body.Status)
+	}
+}
+
+func TestHealthReadyNoRegisteredCheckStillHealthy(t *testing.T) {
+	s := &APIServer{healthRegistry: NewHealthRegistry()}
+	s.setReadiness(true)
+
+	req := httptest.NewRequest("GET", "/health/ready", nil)
+	w := httptest.NewRecorder()
+	s.handleHealthReady(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 with no checks, got %d", w.Code)
+	}
+
+	var body healthReadinessResponse
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !body.Ready {
+		t.Error("expected ready=true")
+	}
+	if body.Status != "ok" {
+		t.Errorf("expected status ok, got %q", body.Status)
 	}
 }
 
