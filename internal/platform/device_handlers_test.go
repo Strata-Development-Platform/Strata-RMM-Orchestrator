@@ -56,3 +56,16 @@ func TestRequestIPAddress(t *testing.T) {
 		t.Fatalf("requestIPAddress() without port = %q", got)
 	}
 }
+
+
+func TestPhase7AgentRoutesRequireAgentPrincipal(t *testing.T) {
+	server := &APIServer{}
+	for _, path := range []string{
+		"/api/v2/devices/00000000-0000-0000-0000-000000000001/capabilities",
+		"/api/v2/devices/00000000-0000-0000-0000-000000000001/inventory",
+	} {
+		if access := server.classifyRoute(http.MethodPost, path); access != AccessAgent {
+			t.Fatalf("%s access = %v, want AccessAgent", path, access)
+		}
+	}
+}
