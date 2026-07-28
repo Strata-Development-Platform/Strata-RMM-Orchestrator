@@ -181,7 +181,7 @@ jobs:
         uses: ludeeus/action-shellcheck@master
         with:
           scandir: ./scripts
-          severity: warning
+          severity: error
       - name: Validate systemd unit files
         run: |
           if command -v systemd-analyze &>/dev/null; then

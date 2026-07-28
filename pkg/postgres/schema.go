@@ -2146,7 +2146,7 @@ func (m *SchemaManager) lock() (bool, error) {
 }
 
 func (m *SchemaManager) unlock() {
-	m.db.Exec("SELECT pg_advisory_unlock($1)", migrationLockID)
+	_, _ = m.db.Exec("SELECT pg_advisory_unlock($1)", migrationLockID)
 }
 
 func (m *SchemaManager) retryLock(maxAttempts int, interval time.Duration) error {
