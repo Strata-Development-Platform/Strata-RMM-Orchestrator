@@ -216,8 +216,8 @@ jobs:
         with:
           go-version: "1.25"
           cache: true
-      - run: go test -tags=integration ./test -count=1 -v 2>&1 | head -50
-      - run: go test ./internal/platform -run "TestJob|TestDevice|TestAuth" -count=1 -v 2>&1 | head -50
+      - run: go test -tags=integration ./test -count=1 -v 2>&1
+      - run: go test ./internal/platform -run "TestJob|TestDevice|TestAuth" -count=1 -v 2>&1
 
   security:
     name: Security Scan

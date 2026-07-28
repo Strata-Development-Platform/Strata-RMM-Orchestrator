@@ -11,41 +11,23 @@ import (
 )
 
 type operationDef struct {
-	JobType       string
-	Destructive   bool
-	RequiresAdmin bool
-	RequiresReason bool
+	JobType          string
+	Destructive      bool
+	RequiresAdmin    bool
+	RequiresReason   bool
 	SupportsSchedule bool
-	AllowOffline  bool
-	Timeout       time.Duration
+	AllowOffline     bool
+	Timeout          time.Duration
 }
 
 var operationRegistry = map[string]operationDef{
-	"refresh":      {JobType: "device.refresh", Destructive: false, SupportsSchedule: true, Timeout: 5 * time.Minute},
-	"reboot":       {JobType: "device.reboot", Destructive: true, RequiresAdmin: true, RequiresReason: true, AllowOffline: true, Timeout: 2 * time.Minute},
-	"shutdown":     {JobType: "device.shutdown", Destructive: true, RequiresAdmin: true, RequiresReason: true, AllowOffline: true, Timeout: 2 * time.Minute},
-	"service_start":  {JobType: "device.service_start", RequiresAdmin: true, SupportsSchedule: true, Timeout: 30 * time.Second},
-	"service_stop":   {JobType: "device.service_stop", RequiresAdmin: true, SupportsSchedule: true, Timeout: 30 * time.Second},
+	"refresh":         {JobType: "device.refresh", Destructive: false, SupportsSchedule: true, Timeout: 5 * time.Minute},
+	"reboot":          {JobType: "device.reboot", Destructive: true, RequiresAdmin: true, RequiresReason: true, AllowOffline: true, Timeout: 2 * time.Minute},
+	"shutdown":        {JobType: "device.shutdown", Destructive: true, RequiresAdmin: true, RequiresReason: true, AllowOffline: true, Timeout: 2 * time.Minute},
+	"service_start":   {JobType: "device.service_start", RequiresAdmin: true, SupportsSchedule: true, Timeout: 30 * time.Second},
+	"service_stop":    {JobType: "device.service_stop", RequiresAdmin: true, SupportsSchedule: true, Timeout: 30 * time.Second},
 	"service_restart": {JobType: "device.service_restart", RequiresAdmin: true, SupportsSchedule: true, Timeout: 30 * time.Second},
-	"process_kill": {JobType: "device.process_kill", RequiresAdmin: true, RequiresReason: true, Timeout: 10 * time.Second},
-}
-
-type serviceActionReq struct {
-	Action  string `json:"action"`
-	Reason  string `json:"reason,omitempty"`
-	Service string `json:"service"`
-}
-
-type processActionReq struct {
-	Action    string `json:"action"`
-	Reason    string `json:"reason,omitempty"`
-	ProcessID int    `json:"process_id"`
-}
-
-type simpleActionReq struct {
-	Action   string `json:"action"`
-	Reason   string `json:"reason,omitempty"`
-	Schedule string `json:"schedule_at,omitempty"`
+	"process_kill":    {JobType: "device.process_kill", RequiresAdmin: true, RequiresReason: true, Timeout: 10 * time.Second},
 }
 
 type bulkActionReq struct {
@@ -124,21 +106,21 @@ func (s *APIServer) handleListDevices(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "query failed"})
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	type deviceRow struct {
-		ID           string    `json:"id"`
-		Hostname     string    `json:"hostname"`
-		OS           string    `json:"os"`
-		Arch         string    `json:"arch"`
-		AgentVersion string    `json:"agent_version"`
-		Status       string    `json:"status"`
+		ID           string     `json:"id"`
+		Hostname     string     `json:"hostname"`
+		OS           string     `json:"os"`
+		Arch         string     `json:"arch"`
+		AgentVersion string     `json:"agent_version"`
+		Status       string     `json:"status"`
 		LastHb       *time.Time `json:"last_heartbeat"`
-		CreatedAt    time.Time `json:"created_at"`
-		SiteName     string    `json:"site_name"`
-		ClientName   string    `json:"client_name"`
-		ClientID     string    `json:"client_id"`
-		SiteID       string    `json:"site_id"`
+		CreatedAt    time.Time  `json:"created_at"`
+		SiteName     string     `json:"site_name"`
+		ClientName   string     `json:"client_name"`
+		ClientID     string     `json:"client_id"`
+		SiteID       string     `json:"site_id"`
 	}
 
 	var devices []deviceRow
@@ -305,7 +287,10 @@ func (s *APIServer) handleDeviceAction(w http.ResponseWriter, r *http.Request) {
 
 	// Check MSP isn't suspended
 	var mspActive bool
-	s.requestDB(r).QueryRow(`SELECT is_active FROM msp_tenants WHERE id = $1`, mspID).Scan(&mspActive)
+	if err := s.requestDB(r).QueryRow(`SELECT is_active FROM msp_tenants WHERE id = $1`, mspID).Scan(&mspActive); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "msp check failed"})
+		return
+	}
 	if !mspActive {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "msp is suspended"})
 		return
@@ -416,7 +401,10 @@ func (s *APIServer) handleBulkDeviceAction(w http.ResponseWriter, r *http.Reques
 	}
 
 	var mspActive bool
-	s.requestDB(r).QueryRow(`SELECT is_active FROM msp_tenants WHERE id = $1`, mspID).Scan(&mspActive)
+	if err := s.requestDB(r).QueryRow(`SELECT is_active FROM msp_tenants WHERE id = $1`, mspID).Scan(&mspActive); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "msp check failed"})
+		return
+	}
 	if !mspActive {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "msp is suspended"})
 		return
@@ -442,8 +430,7 @@ func (s *APIServer) handleBulkDeviceAction(w http.ResponseWriter, r *http.Reques
 	validCount := 0
 	for _, deviceID := range uniqueIDs {
 		var exists bool
-		s.requestDB(r).QueryRow(`SELECT EXISTS(SELECT 1 FROM devices WHERE id = $1 AND msp_id = $2)`, deviceID, mspID).Scan(&exists)
-		if exists {
+		if err := s.requestDB(r).QueryRow(`SELECT EXISTS(SELECT 1 FROM devices WHERE id = $1 AND msp_id = $2)`, deviceID, mspID).Scan(&exists); err == nil && exists {
 			validCount++
 		}
 	}
@@ -453,8 +440,12 @@ func (s *APIServer) handleBulkDeviceAction(w http.ResponseWriter, r *http.Reques
 	}
 
 	payload, _ := json.Marshal(req)
-	tx, _ := s.db.DB().BeginTx(r.Context(), nil)
-	defer tx.Rollback()
+	tx, err := s.db.DB().BeginTx(r.Context(), nil)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "transaction failed"})
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
 
 	if _, err := tx.Exec(`
 		INSERT INTO jobs (id, msp_id, created_by, type, status, priority,
@@ -467,12 +458,16 @@ func (s *APIServer) handleBulkDeviceAction(w http.ResponseWriter, r *http.Reques
 
 	for _, deviceID := range uniqueIDs {
 		targetID := uuid.New().String()
-		tx.Exec(`INSERT INTO job_targets (id, job_id, device_id, msp_id, status) VALUES ($1,$2,$3,$4,'queued')`, targetID, jobID, deviceID, mspID)
+		if _, err := tx.Exec(`INSERT INTO job_targets (id, job_id, device_id, msp_id, status) VALUES ($1,$2,$3,$4,'queued')`, targetID, jobID, deviceID, mspID); err != nil {
+			return
+		}
 		opPayload, _ := json.Marshal(map[string]interface{}{
 			"job_id": jobID, "target_id": targetID, "device_id": deviceID,
 			"type": "bulk." + req.Action, "payload": req,
 		})
-		tx.Exec(`INSERT INTO job_outbox (id,msp_id,aggregate_id,event_type,payload,available_at) VALUES (gen_random_uuid(),$1,$2,'job.dispatch',$3,NOW())`, mspID, jobID, opPayload)
+		if _, err := tx.Exec(`INSERT INTO job_outbox (id,msp_id,aggregate_id,event_type,payload,available_at) VALUES (gen_random_uuid(),$1,$2,'job.dispatch',$3,NOW())`, mspID, jobID, opPayload); err != nil {
+			return
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
