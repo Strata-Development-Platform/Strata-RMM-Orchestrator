@@ -63,9 +63,10 @@ export default function DeviceWorkspacePage() {
       body.process_id = pid;
     }
     try {
+      const idempotencyKey = crypto.randomUUID();
       const res = await fetch(`/api/v2/devices/${deviceID}/action`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...headers },
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey, ...headers },
         body: JSON.stringify(body),
       });
       const data = await res.json();
