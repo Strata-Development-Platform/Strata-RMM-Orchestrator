@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"net"
 	"net/url"
 	"os"
 	"sync/atomic"
@@ -249,17 +248,7 @@ func NewCommand(ctx context.Context, version string, logger *zap.Logger) *cobra.
 				}
 				return nil
 			})
-			api.RegisterHealth("ingestion", func(ctx context.Context) error {
-				// Deferred: ingestion health check — requires NATS subscription monitoring
-				return nil
-			})
 			api.RegisterHealth("jetstream", platform.JetStreamHealthCheck(nc))
-			api.RegisterHealth("dispatcher", func(ctx context.Context) error {
-				if !api.DispatcherHealthy() {
-					return fmt.Errorf("dispatcher not started")
-				}
-				return nil
-			})
 			api.SetMigrationsComplete(true)
 
 			if cfg.Storage.Backend == "" || cfg.Storage.Backend == "none" {
@@ -310,7 +299,7 @@ func NewCommand(ctx context.Context, version string, logger *zap.Logger) *cobra.
 			dispatcher := platform.NewDispatcher(tsdb, nc, logger)
 			dispatcher.Start(ctx)
 			defer dispatcher.Stop()
-			api.SetDispatcherHealthy(true)
+			api.RegisterHealth("dispatcher", dispatcher.Healthy)
 			logger.Info("job dispatcher started")
 
 			// Stage 14: API server
@@ -405,15 +394,11 @@ func connectNATS(cfg *config.OrchestratorConfig) (*nats.Conn, error) {
 		natsOpts = append(natsOpts, nats.Token(cfg.NATS.Token))
 	}
 	if cfg.NATS.TLSEnabled {
-		serverName, _, err := net.SplitHostPort(cfg.NATS.URL)
-		if err != nil {
-			u, parseErr := url.Parse(cfg.NATS.URL)
-			if parseErr != nil || u.Host == "" {
-				serverName = "localhost"
-			} else {
-				serverName = u.Hostname()
-			}
+		u, err := url.Parse(cfg.NATS.URL)
+		if err != nil || u.Hostname() == "" {
+			return nil, fmt.Errorf("NATS TLS URL: invalid server hostname")
 		}
+		serverName := u.Hostname()
 		tlsConfig := &tls.Config{
 			ServerName: serverName,
 			MinVersion: tls.VersionTLS12,
@@ -424,7 +409,9 @@ func connectNATS(cfg *config.OrchestratorConfig) (*nats.Conn, error) {
 				return nil, fmt.Errorf("NATS CA cert: %w", err)
 			}
 			caPool := x509.NewCertPool()
-			caPool.AppendCertsFromPEM(caCert)
+			if ok := caPool.AppendCertsFromPEM(caCert); !ok {
+				return nil, fmt.Errorf("NATS CA cert: no valid certificates found")
+			}
 			tlsConfig.RootCAs = caPool
 		}
 		if cfg.NATS.TLSCertFile != "" && cfg.NATS.TLSKeyFile != "" {
