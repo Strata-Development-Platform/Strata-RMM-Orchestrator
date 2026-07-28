@@ -8,12 +8,12 @@ import (
 func setenv(t *testing.T, key, value string) {
 	t.Helper()
 	prev := os.Getenv(key)
-	os.Setenv(key, value)
+	_ = os.Setenv(key, value)
 	t.Cleanup(func() {
 		if prev == "" {
-			os.Unsetenv(key)
+			_ = os.Unsetenv(key)
 		} else {
-			os.Setenv(key, prev)
+			_ = os.Setenv(key, prev)
 		}
 	})
 }
