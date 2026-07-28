@@ -369,6 +369,62 @@ func TestValidateRejectsSeedDevInProduction(t *testing.T) {
 	}
 }
 
+func TestProductionNATSRejectsLocalhost(t *testing.T) {
+	cfg := &OrchestratorConfig{
+		RuntimeMode: ModeProduction,
+		JWT:         JWTConfig{Secret: "abcdefghijklmnopqrstuvwxyz123456"},
+		DB:          DatabaseConfig{DSN: "postgres://h:1/d", MaxOpenConns: 5, MaxIdleConns: 2, ConnMaxLifetime: 10},
+		NATS:        NATSConfig{URL: "nats://localhost:4222", Token: "validtok", TLSEnabled: true, TLSCertFile: "cert", TLSKeyFile: "key", ReconnectWait: 5, MaxReconnects: -1},
+		HTTP:        HTTPConfig{APIAddr: ":8080", ReadTimeout: 5, WriteTimeout: 5, MaxBodySizeBytes: 1000},
+	}
+	err := cfg.ProductionValidate()
+	if err == nil || !contains(err.Error(), "unsecured localhost") {
+		t.Fatalf("expected unsecured localhost rejection, got: %v", err)
+	}
+}
+
+func TestProductionNATSRejectsNoTLSToken(t *testing.T) {
+	cfg := &OrchestratorConfig{
+		RuntimeMode: ModeProduction,
+		JWT:         JWTConfig{Secret: "abcdefghijklmnopqrstuvwxyz123456"},
+		DB:          DatabaseConfig{DSN: "postgres://h:1/d", MaxOpenConns: 5, MaxIdleConns: 2, ConnMaxLifetime: 10},
+		NATS:        NATSConfig{URL: "nats://example.com:4222", ReconnectWait: 5, MaxReconnects: -1},
+		HTTP:        HTTPConfig{APIAddr: ":8080", ReadTimeout: 5, WriteTimeout: 5, MaxBodySizeBytes: 1000},
+	}
+	err := cfg.ProductionValidate()
+	if err == nil || !contains(err.Error(), "TLS or token") {
+		t.Fatalf("expected TLS/token error, got: %v", err)
+	}
+}
+
+func TestProductionNATSWithTokenAccepted(t *testing.T) {
+	cfg := &OrchestratorConfig{
+		RuntimeMode: ModeProduction,
+		JWT:         JWTConfig{Secret: "abcdefghijklmnopqrstuvwxyz123456"},
+		DB:          DatabaseConfig{DSN: "postgres://h:1/d", MaxOpenConns: 5, MaxIdleConns: 2, ConnMaxLifetime: 10},
+		NATS:        NATSConfig{URL: "nats://example.com:4222", Token: "validtok", ReconnectWait: 5, MaxReconnects: -1},
+		HTTP:        HTTPConfig{APIAddr: ":8080", ReadTimeout: 5, WriteTimeout: 5, MaxBodySizeBytes: 1000},
+	}
+	err := cfg.ProductionValidate()
+	if err != nil && contains(err.Error(), "TLS or token") {
+		t.Fatalf("unexpected TLS/token error when token is set: %v", err)
+	}
+}
+
+func TestProductionNATSWithTLSAccepted(t *testing.T) {
+	cfg := &OrchestratorConfig{
+		RuntimeMode: ModeProduction,
+		JWT:         JWTConfig{Secret: "abcdefghijklmnopqrstuvwxyz123456"},
+		DB:          DatabaseConfig{DSN: "postgres://h:1/d", MaxOpenConns: 5, MaxIdleConns: 2, ConnMaxLifetime: 10},
+		NATS:        NATSConfig{URL: "nats://example.com:4222", TLSEnabled: true, TLSCertFile: "cert", TLSKeyFile: "key", ReconnectWait: 5, MaxReconnects: -1},
+		HTTP:        HTTPConfig{APIAddr: ":8080", ReadTimeout: 5, WriteTimeout: 5, MaxBodySizeBytes: 1000},
+	}
+	err := cfg.ProductionValidate()
+	if err != nil && contains(err.Error(), "TLS or token") {
+		t.Fatalf("unexpected TLS/token error when TLS is enabled: %v", err)
+	}
+}
+
 func TestRedactDSN(t *testing.T) {
 	r := redactDSN("postgres://user:secretpass@localhost:5432/db")
 	if contains(r, "secretpass") {

@@ -27,7 +27,11 @@ Phase 8 does not declare the platform production-ready. It creates and satisfies
 
 ## Phase 8A Complete: Configuration and Startup Hardening
 
-Phase 8A (PR #6) delivered centralized configuration loading, runtime modes, production fail-closed validation, health endpoints, and a comprehensive configuration inventory. This section summarizes what was implemented and how it affects the remaining workstreams.
+Phase 8A (PR #6) delivered centralized configuration loading, runtime modes, production fail-closed validation, health endpoints, a comprehensive configuration inventory, and full acceptance verification. This section summarizes what was implemented and how it affects the remaining workstreams.
+
+### Design Decisions
+
+**Trusted proxies removed and deferred.** The `TRUSTED_PROXIES` env var and `TrustedProxies` field were removed from `HTTPConfig` and the `WithHTTPConfig` builder. Trusted-proxy support (for correct `X-Forwarded-For` handling behind load balancers) is deferred to a later phase when the deployment topology is known and a proxy-aware middleware implementation can be designed against real infrastructure.
 
 ### Runtime Modes
 

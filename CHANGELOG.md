@@ -8,6 +8,11 @@
 - Centralized configuration loading with strict typed parsing
 - Liveness and readiness health endpoints with dependency checks
 - Configuration inventory and documentation
+- Phase 8A acceptance verification — all 9 criteria verified
+- Configuration inventory covers all 53 settings across orchestrator, agent, and probe
+
+### Changed
+- TrustedProxies removed from HTTPConfig and WithHTTPConfig (deferred to later phase)
 
 ## Unreleased
 

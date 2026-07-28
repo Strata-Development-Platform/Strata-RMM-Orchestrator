@@ -303,6 +303,185 @@ func TestRootResponse(t *testing.T) {
 	}
 }
 
+func TestHealthReadyDispatcherHealthy(t *testing.T) {
+	s := &APIServer{healthRegistry: NewHealthRegistry()}
+	s.setReadiness(true)
+	s.SetDispatcherHealthy(true)
+	s.RegisterHealth("dispatcher", func(ctx context.Context) error {
+		if !s.DispatcherHealthy() {
+			return fmt.Errorf("dispatcher not started")
+		}
+		return nil
+	})
+
+	req := httptest.NewRequest("GET", "/health/ready", nil)
+	w := httptest.NewRecorder()
+	s.handleHealthReady(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 when dispatcher healthy, got %d", w.Code)
+	}
+
+	var body healthReadinessResponse
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !body.Ready {
+		t.Error("expected ready=true")
+	}
+	if body.Components["dispatcher"] != "ok" {
+		t.Errorf("expected dispatcher ok, got %q", body.Components["dispatcher"])
+	}
+}
+
+func TestHealthReadyDispatcherNotStarted(t *testing.T) {
+	s := &APIServer{healthRegistry: NewHealthRegistry()}
+	s.setReadiness(true)
+	s.SetDispatcherHealthy(false)
+	s.RegisterHealth("dispatcher", func(ctx context.Context) error {
+		if !s.DispatcherHealthy() {
+			return fmt.Errorf("dispatcher not started")
+		}
+		return nil
+	})
+
+	req := httptest.NewRequest("GET", "/health/ready", nil)
+	w := httptest.NewRecorder()
+	s.handleHealthReady(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 when dispatcher not started, got %d", w.Code)
+	}
+
+	var body healthReadinessResponse
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Ready {
+		t.Error("expected ready=false")
+	}
+	if body.Components["dispatcher"] != "failed: dispatcher not started" {
+		t.Errorf("expected dispatcher failure, got %q", body.Components["dispatcher"])
+	}
+}
+
+func TestHealthReadyMigrationsComplete(t *testing.T) {
+	s := &APIServer{healthRegistry: NewHealthRegistry()}
+	s.setReadiness(true)
+	s.SetMigrationsComplete(true)
+	s.RegisterHealth("migrations", func(ctx context.Context) error {
+		if !s.MigrationsComplete() {
+			return fmt.Errorf("migrations not complete")
+		}
+		return nil
+	})
+
+	req := httptest.NewRequest("GET", "/health/ready", nil)
+	w := httptest.NewRecorder()
+	s.handleHealthReady(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 when migrations complete, got %d", w.Code)
+	}
+
+	var body healthReadinessResponse
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !body.Ready {
+		t.Error("expected ready=true")
+	}
+	if body.Components["migrations"] != "ok" {
+		t.Errorf("expected migrations ok, got %q", body.Components["migrations"])
+	}
+}
+
+func TestHealthReadyMigrationsNotComplete(t *testing.T) {
+	s := &APIServer{healthRegistry: NewHealthRegistry()}
+	s.setReadiness(true)
+	s.SetMigrationsComplete(false)
+	s.RegisterHealth("migrations", func(ctx context.Context) error {
+		if !s.MigrationsComplete() {
+			return fmt.Errorf("migrations not complete")
+		}
+		return nil
+	})
+
+	req := httptest.NewRequest("GET", "/health/ready", nil)
+	w := httptest.NewRecorder()
+	s.handleHealthReady(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 when migrations not complete, got %d", w.Code)
+	}
+
+	var body healthReadinessResponse
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Ready {
+		t.Error("expected ready=false")
+	}
+	if body.Components["migrations"] != "failed: migrations not complete" {
+		t.Errorf("expected migrations failure, got %q", body.Components["migrations"])
+	}
+}
+
+func TestHealthReadyStorageRequiredAndHealthy(t *testing.T) {
+	s := &APIServer{healthRegistry: NewHealthRegistry()}
+	s.setReadiness(true)
+	s.RegisterHealth("storage", func(ctx context.Context) error { return nil })
+
+	req := httptest.NewRequest("GET", "/health/ready", nil)
+	w := httptest.NewRecorder()
+	s.handleHealthReady(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 when storage healthy, got %d", w.Code)
+	}
+
+	var body healthReadinessResponse
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !body.Ready {
+		t.Error("expected ready=true")
+	}
+	if body.Components["storage"] != "ok" {
+		t.Errorf("expected storage ok, got %q", body.Components["storage"])
+	}
+}
+
+func TestHealthReadyStorageRequiredAndFailed(t *testing.T) {
+	s := &APIServer{healthRegistry: NewHealthRegistry()}
+	s.setReadiness(true)
+	s.RegisterHealth("storage", func(ctx context.Context) error {
+		return fmt.Errorf("storage backend unreachable: connection refused")
+	})
+
+	req := httptest.NewRequest("GET", "/health/ready", nil)
+	w := httptest.NewRecorder()
+	s.handleHealthReady(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 when storage fails, got %d", w.Code)
+	}
+
+	var body healthReadinessResponse
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Ready {
+		t.Error("expected ready=false")
+	}
+	if body.Status != "degraded" {
+		t.Errorf("expected status degraded, got %q", body.Status)
+	}
+	if body.Components["storage"] != "failed: storage backend unreachable: connection refused" {
+		t.Errorf("expected storage failure, got %q", body.Components["storage"])
+	}
+}
+
 func TestLoginValidation(t *testing.T) {
 	body := `{}`
 	req := httptest.NewRequest("POST", "/api/v1/auth/login", strings.NewReader(body))

@@ -45,12 +45,14 @@ type APIServer struct {
 	mu        sync.RWMutex
 	ready     bool
 
+	dispatcherHealthy  bool
+	migrationsComplete bool
+
 	httpReadTimeout  time.Duration
 	httpWriteTimeout time.Duration
 	httpIdleTimeout  time.Duration
 	httpBodyLimit    int64
 	corsOrigins      []string
-	trustedProxies   []string
 
 	healthRegistry *HealthRegistry
 
@@ -79,13 +81,12 @@ func NewAPIServer(addr string, db *timescale.Client, nc *nats.Conn, logger *zap.
 	return s, nil
 }
 
-func (s *APIServer) WithHTTPConfig(readTimeout, writeTimeout, idleTimeout time.Duration, bodyLimit int64, corsOrigins, trustedProxies []string) *APIServer {
+func (s *APIServer) WithHTTPConfig(readTimeout, writeTimeout, idleTimeout time.Duration, bodyLimit int64, corsOrigins []string) *APIServer {
 	s.httpReadTimeout = readTimeout
 	s.httpWriteTimeout = writeTimeout
 	s.httpIdleTimeout = idleTimeout
 	s.httpBodyLimit = bodyLimit
 	s.corsOrigins = corsOrigins
-	s.trustedProxies = trustedProxies
 	return s
 }
 
@@ -127,6 +128,30 @@ func (s *APIServer) WithRecordingStore(rs *remote.RecordingStore) *APIServer {
 func (s *APIServer) WithStorageBackend(sb storage.Backend) *APIServer {
 	s.storageBackend = sb
 	return s
+}
+
+func (s *APIServer) SetDispatcherHealthy(healthy bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.dispatcherHealthy = healthy
+}
+
+func (s *APIServer) DispatcherHealthy() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.dispatcherHealthy
+}
+
+func (s *APIServer) SetMigrationsComplete(complete bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.migrationsComplete = complete
+}
+
+func (s *APIServer) MigrationsComplete() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.migrationsComplete
 }
 
 func (s *APIServer) Start(ctx context.Context) error {
@@ -463,6 +488,15 @@ func NewHealthRegistry() *HealthRegistry {
 	return &HealthRegistry{checks: make(map[string]func(context.Context) error)}
 }
 
+func JetStreamHealthCheck(nc *nats.Conn) func(context.Context) error {
+	return func(ctx context.Context) error {
+		if _, err := nc.JetStream(); err != nil {
+			return fmt.Errorf("JetStream not available: %w", err)
+		}
+		return nil
+	}
+}
+
 func (r *HealthRegistry) Register(name string, check func(context.Context) error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -534,9 +568,10 @@ func (s *APIServer) handleHealthReady(w http.ResponseWriter, r *http.Request) {
 	allOK, statuses := s.healthRegistry.Check(r.Context())
 	if allOK {
 		writeJSON(w, http.StatusOK, healthReadinessResponse{
-			Status: "ok",
-			Time:   time.Now().UTC().Format(time.RFC3339),
-			Ready:  true,
+			Status:     "ok",
+			Time:       time.Now().UTC().Format(time.RFC3339),
+			Ready:      true,
+			Components: statuses,
 		})
 		return
 	}

@@ -77,7 +77,7 @@ type HTTPConfig struct {
 	TunnelAddr       string
 	PublicURL        string
 	CORSOrigins      []string
-	TrustedProxies   []string
+	// TrustedProxies — deferred to a later phase.
 	ReadTimeout      time.Duration
 	WriteTimeout     time.Duration
 	IdleTimeout      time.Duration
@@ -263,6 +263,12 @@ func (c *OrchestratorConfig) ProductionValidate() error {
 			errs = append(errs, "NATS: TLS enabled but cert or key file missing")
 		}
 	}
+	if c.NATS.URL == "nats://localhost:4222" {
+		errs = append(errs, "NATS.URL: unsecured localhost not allowed in production")
+	}
+	if !c.NATS.TLSEnabled && c.NATS.Token == "" {
+		errs = append(errs, "NATS: TLS or token authentication required in production")
+	}
 	if strings.Contains(c.DB.DSN, "sslmode=disable") {
 		errs = append(errs, "DB.DSN: sslmode=disable not allowed in production")
 	}
@@ -392,9 +398,6 @@ func LoadOrchestratorConfig() (*OrchestratorConfig, error) {
 	cfg.HTTP.PublicURL = os.Getenv("STRATA_PUBLIC_URL")
 	if corsStr := os.Getenv("CORS_ORIGINS"); corsStr != "" {
 		cfg.HTTP.CORSOrigins = splitTrim(corsStr, ",")
-	}
-	if proxyStr := os.Getenv("TRUSTED_PROXIES"); proxyStr != "" {
-		cfg.HTTP.TrustedProxies = splitTrim(proxyStr, ",")
 	}
 	if v, err := envDurationStrict("HTTP_READ_TIMEOUT", cfg.HTTP.ReadTimeout); err != nil {
 		errs = append(errs, fmt.Sprintf("HTTP_READ_TIMEOUT: %v", err))

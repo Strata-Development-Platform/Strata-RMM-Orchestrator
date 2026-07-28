@@ -52,7 +52,7 @@ Phase 8A acceptance criteria and verification status:
 | A8-01 | Centralized configuration with runtime modes — `LoadOrchestratorConfig()` parses all settings from env vars with typed validation | Verified |
 | A8-02 | Production fail-closed validation — `ProductionValidate()` rejects insecure settings in production mode | Verified |
 | A8-03 | Liveness/readiness with dependency checks — health endpoints return correct status during startup and runtime | Verified |
-| A8-04 | Staged startup — orchestrator initializes subsystems in order, health returns `starting` until complete | In progress |
+| A8-04 | Staged startup — orchestrator initializes subsystems in order, health returns `starting` until complete | Verified |
 | A8-05 | Secret redaction — `RedactedSummary()` masks sensitive values before logging | Verified |
 | A8-06 | CLI compatibility — existing CLI flags and env vars continue to work with the new configuration layer | Verified |
 | A8-07 | UUID/text defect correction — configuration parsing uses strict typed parsing | Verified |
