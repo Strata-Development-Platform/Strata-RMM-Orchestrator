@@ -1,43 +1,50 @@
 {
   "$schemaVersion": 1,
   "status": "active",
-  "summary": "Build a horizontally-scalable, multi-tenant RMM platform with cross-platform agents supporting SaaS and self-hosted deployments.",
+  "summary": "Deliver a secure, SaaS-ready RMM platform that lets MSPs manage branded client environments through tenant-isolated monitoring, automation, and endpoint operations.",
   "timeline": "Q3 2026 — Q2 2027",
   "milestones": [
     {
-      "id": "phase1-foundation",
-      "title": "Phase 1: Foundation (Months 1-3)",
+      "id": "saas-control-plane",
+      "title": "SaaS tenancy and MSP control plane",
       "target": "Q3 2026",
-      "status": "in_progress",
-      "description": "Tenant/Auth service, API Gateway, PostgreSQL + TimescaleDB schema, NATS JetStream cluster, Core Agent (identity, comms, config, self-update), Basic system collector"
+      "status": "complete",
+      "description": "Establish MSP, client, and site tenancy; scoped authorization; branding; custom-domain foundations; enrollment; and tenant-isolated data access."
     },
     {
-      "id": "phase2-monitoring-core",
-      "title": "Phase 2: Monitoring Core (Months 3-5)",
+      "id": "durable-job-orchestration",
+      "title": "Durable job orchestration",
+      "target": "Q3 2026",
+      "status": "complete",
+      "description": "Provide transactional dispatch, agent acknowledgements, result replay, cancellation, expiry, retry, and per-target execution state."
+    },
+    {
+      "id": "endpoint-operations",
+      "title": "Endpoint operations and technician console",
+      "target": "Q3 2026",
+      "status": "complete",
+      "description": "Deliver capability-aware endpoint actions, approval workflows, maintenance and offline handling, immutable audit evidence, inventory ingestion, and browser-tested technician workflows."
+    },
+    {
+      "id": "production-beta",
+      "title": "Production beta hardening",
       "target": "Q4 2026",
-      "status": "planned",
-      "description": "Metrics ingestion pipeline (NATS → TimescaleDB), Alerting engine (threshold, heartbeat), SNMP/ICMP collector (agentless), Network Probe (SNMP, discovery), Dashboard/visualization"
+      "status": "in-progress",
+      "description": "Complete deployment automation, observability, backup and recovery exercises, upgrade validation, load testing, and operator runbooks for an MSP beta."
     },
     {
-      "id": "phase3-remote-access-automation",
-      "title": "Phase 3: Remote Access & Automation (Months 5-7)",
+      "id": "msp-service-launch",
+      "title": "Hosted MSP service launch",
       "target": "Q1 2027",
       "status": "planned",
-      "description": "Tunnel infrastructure (WebSocket/NATS), RDP/SSH/VNC proxy, Script execution framework, Patch management (Windows + Linux), Software inventory + vulnerability correlation"
+      "description": "Launch managed tenancy, subscription and entitlement operations, branded MSP portals, custom-domain onboarding, agent distribution, and service-level reporting."
     },
     {
-      "id": "phase4-advanced-features",
-      "title": "Phase 4: Advanced Features (Months 7-10)",
+      "id": "advanced-rmm-capabilities",
+      "title": "Advanced monitoring and remediation",
       "target": "Q2 2027",
       "status": "planned",
-      "description": "ML-based anomaly detection, NetFlow/sFlow ingestion, IP Phone monitoring (SIP, vendor APIs), Synthetic monitoring, Reporting engine"
-    },
-    {
-      "id": "phase5-hardening",
-      "title": "Phase 5: Platform Hardening (Months 10-12)",
-      "target": "Q2 2027",
-      "status": "planned",
-      "description": "Self-hosted distribution (Helm/KOTS), Air-gapped install, Multi-region SaaS, Performance/load testing, Security audit + pentest, Documentation + runbooks"
+      "description": "Expand network monitoring, automated remediation, vulnerability and patch intelligence, reporting, multi-region resilience, and enterprise deployment options."
     }
   ]
 }
