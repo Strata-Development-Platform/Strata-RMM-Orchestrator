@@ -252,8 +252,15 @@ func (s *APIServer) handleDeviceAction(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "reason required"})
 		return
 	}
+	if op.RequiresAdmin {
+		if !s.AuthorizeMSPManage(w, r, mspID) {
+			return
+		}
+	} else if !s.AuthorizeMSPAccess(w, r, mspID) {
+		return
+	}
 
-	// Verify device exists and belongs to MSP
+	// Verify device exists and belongs to the authorized request scope.
 	var clientID, siteID, devStatus string
 	var isActive bool
 	err := s.requestDB(r).QueryRow(`
@@ -267,6 +274,12 @@ func (s *APIServer) handleDeviceAction(w http.ResponseWriter, r *http.Request) {
 	}
 	if !isActive {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "device is disabled"})
+		return
+	}
+	requestClientID, _ := r.Context().Value(ctxKeyClientID).(string)
+	requestSiteID, _ := r.Context().Value(ctxKeySiteID).(string)
+	if (requestClientID != "" && requestClientID != clientID) || (requestSiteID != "" && requestSiteID != siteID) {
+		writeAuthorizationDenied(w)
 		return
 	}
 
@@ -334,14 +347,8 @@ func (s *APIServer) handleDeviceAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := s.db.DB().BeginTx(r.Context(), nil)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "transaction failed"})
-		return
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if _, err := tx.Exec(`
+	db := s.requestDB(r)
+	if _, err := db.ExecContext(r.Context(), `
 		INSERT INTO jobs (id, msp_id, client_id, site_id, created_by, type, status, priority,
 		                  payload, max_retries, max_devices, expires_at, correlation_id)
 		VALUES ($1, $2, $3, $4, $5, $6, 'queued', 10, $7, 1, 1, $8, $9)
@@ -351,7 +358,7 @@ func (s *APIServer) handleDeviceAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := tx.Exec(`
+	if _, err := db.ExecContext(r.Context(), `
 		INSERT INTO job_targets (id, job_id, device_id, msp_id, status)
 		VALUES ($1, $2, $3, $4, 'queued')
 	`, targetID, jobID, deviceID, mspID); err != nil {
@@ -367,16 +374,11 @@ func (s *APIServer) handleDeviceAction(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "encode dispatch failed"})
 		return
 	}
-	if _, err := tx.Exec(`
+	if _, err := db.ExecContext(r.Context(), `
 		INSERT INTO job_outbox (id, msp_id, aggregate_id, event_type, payload, available_at)
 		VALUES (gen_random_uuid(), $1, $2, 'job.dispatch', $3, $4)
 	`, mspID, jobID, outboxPayload, availableAt); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create dispatch failed"})
-		return
-	}
-
-	if err := tx.Commit(); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "commit failed"})
 		return
 	}
 
@@ -422,6 +424,13 @@ func (s *APIServer) handleBulkDeviceAction(w http.ResponseWriter, r *http.Reques
 	}
 	if op.RequiresReason && strings.TrimSpace(req.Reason) == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "reason required"})
+		return
+	}
+	if op.RequiresAdmin {
+		if !s.AuthorizeMSPManage(w, r, mspID) {
+			return
+		}
+	} else if !s.AuthorizeMSPAccess(w, r, mspID) {
 		return
 	}
 
@@ -491,14 +500,8 @@ func (s *APIServer) handleBulkDeviceAction(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "encode job failed"})
 		return
 	}
-	tx, err := s.db.DB().BeginTx(r.Context(), nil)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "transaction failed"})
-		return
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if _, err := tx.Exec(`
+	db := s.requestDB(r)
+	if _, err := db.ExecContext(r.Context(), `
 		INSERT INTO jobs (id, msp_id, created_by, type, status, priority,
 		                  payload, max_retries, max_devices, expires_at, correlation_id)
 		VALUES ($1, $2, $3, $4, 'queued', 10, $5, 1, $6, $7, $8)
@@ -510,7 +513,7 @@ func (s *APIServer) handleBulkDeviceAction(w http.ResponseWriter, r *http.Reques
 
 	for _, deviceID := range uniqueIDs {
 		targetID := uuid.New().String()
-		if _, err := tx.Exec(`INSERT INTO job_targets (id, job_id, device_id, msp_id, status) VALUES ($1,$2,$3,$4,'queued')`, targetID, jobID, deviceID, mspID); err != nil {
+		if _, err := db.ExecContext(r.Context(), `INSERT INTO job_targets (id, job_id, device_id, msp_id, status) VALUES ($1,$2,$3,$4,'queued')`, targetID, jobID, deviceID, mspID); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create target failed"})
 			return
 		}
@@ -522,15 +525,10 @@ func (s *APIServer) handleBulkDeviceAction(w http.ResponseWriter, r *http.Reques
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "encode dispatch failed"})
 			return
 		}
-		if _, err := tx.Exec(`INSERT INTO job_outbox (id,msp_id,aggregate_id,event_type,payload,available_at) VALUES (gen_random_uuid(),$1,$2,'job.dispatch',$3,$4)`, mspID, jobID, opPayload, availableAt); err != nil {
+		if _, err := db.ExecContext(r.Context(), `INSERT INTO job_outbox (id,msp_id,aggregate_id,event_type,payload,available_at) VALUES (gen_random_uuid(),$1,$2,'job.dispatch',$3,$4)`, mspID, jobID, opPayload, availableAt); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create dispatch failed"})
 			return
 		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "commit failed"})
-		return
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
