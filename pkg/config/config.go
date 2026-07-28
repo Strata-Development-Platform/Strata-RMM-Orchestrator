@@ -258,16 +258,20 @@ func (c *OrchestratorConfig) ProductionValidate() error {
 		}
 	}
 
-	if c.NATS.TLSEnabled {
-		if c.NATS.TLSCertFile == "" || c.NATS.TLSKeyFile == "" {
-			errs = append(errs, "NATS: TLS enabled but cert or key file missing")
-		}
+	if !c.NATS.TLSEnabled {
+		errs = append(errs, "NATS: TLS is required in production; a token does not encrypt transport")
 	}
-	if c.NATS.URL == "nats://localhost:4222" {
-		errs = append(errs, "NATS.URL: unsecured localhost not allowed in production")
+	if c.NATS.TLSEnabled && c.NATS.TLSCAFile == "" {
+		errs = append(errs, "NATS: TLS CA file is required in production")
 	}
-	if !c.NATS.TLSEnabled && c.NATS.Token == "" {
-		errs = append(errs, "NATS: TLS or token authentication required in production")
+	if (c.NATS.TLSCertFile == "") != (c.NATS.TLSKeyFile == "") {
+		errs = append(errs, "NATS: client certificate and key must be configured together")
+	}
+	if u, err := url.Parse(c.NATS.URL); err == nil && u.Scheme == "nats" {
+		errs = append(errs, "NATS.URL: plaintext nats scheme not allowed in production; use tls or nats+tls")
+	}
+	if c.NATS.Token == "" && c.NATS.TLSCertFile == "" {
+		errs = append(errs, "NATS: token authentication or an mTLS client certificate is required in production")
 	}
 	if strings.Contains(c.DB.DSN, "sslmode=disable") {
 		errs = append(errs, "DB.DSN: sslmode=disable not allowed in production")
