@@ -197,7 +197,7 @@ func loadAvailableScopes(r *http.Request, db dbExecutor, userID string, roles []
 		if err != nil {
 			return nil, err
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 		return scanContextScopes(rows)
 	}
 
@@ -227,7 +227,7 @@ func loadAvailableScopes(r *http.Request, db dbExecutor, userID string, roles []
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanContextScopes(rows)
 }
 
