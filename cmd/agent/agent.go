@@ -97,6 +97,7 @@ func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 			registry.Register("script_exec", func(handlerCtx context.Context, command *jobs.CommandEnvelope) (string, int, []byte, error) {
 				return scriptExec.RunJob(handlerCtx, command.Payload)
 			})
+			jobs.RegisterDeviceOperations(registry)
 			jobDispatcher := jobs.NewJobDispatcher(
 				natsClient.Conn(), ledger, registry, logger,
 				agent.Identity().TenantID, agent.Identity().AgentID,

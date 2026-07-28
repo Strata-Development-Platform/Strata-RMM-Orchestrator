@@ -108,6 +108,7 @@ jobs:
           cache: true
       - name: Verify SaaS authorization and entitlement isolation
         run: |
+          set -o pipefail
           go test ./internal/platform -count=1 -race
           go test -tags=dbintegration ./pkg/postgres -count=1 -race -run TestTenantRLSMigration -v
 
@@ -190,6 +191,220 @@ jobs:
       - run: npm run build
         working-directory: ui
 
+  endpoint-operations:
+    name: Endpoint Operations Integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: strata_test
+          POSTGRES_USER: strata_test
+          POSTGRES_PASSWORD: strata_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U strata_test -d strata_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      nats:
+        image: nats:2.11-alpine
+        ports:
+          - 4222:4222
+    env:
+      TEST_POSTGRES_DSN: postgres://strata_test:strata_test@localhost:5432/strata_test?sslmode=disable
+      TEST_NATS_URL: nats://localhost:4222
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Verify endpoint operation handlers
+        run: go test ./internal/agent/jobs ./internal/platform -count=1 -race -v
+
+  phase7-approval:
+    name: Phase 7 — Approval Workflow
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: strata_test
+          POSTGRES_USER: strata_test
+          POSTGRES_PASSWORD: strata_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U strata_test -d strata_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_POSTGRES_DSN: postgres://strata_test:strata_test@localhost:5432/strata_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Test approval workflow
+        run: |
+          set -o pipefail
+          go test -tags=dbintegration ./internal/platform -count=1 -race -v -run "TestApproval" 2>&1 | tee /tmp/approval_test.log
+          grep -E '^--- (PASS|FAIL)' /tmp/approval_test.log
+          if grep -q "no test files\|no tests to run" /tmp/approval_test.log; then echo "ERROR: zero tests executed" && exit 1; fi
+
+  phase7-destructive-idempotency:
+    name: Phase 7 — Destructive Idempotency
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: strata_test
+          POSTGRES_USER: strata_test
+          POSTGRES_PASSWORD: strata_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U strata_test -d strata_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      nats:
+        image: nats:2.11-alpine
+        ports:
+          - 4222:4222
+    env:
+      TEST_POSTGRES_DSN: postgres://strata_test:strata_test@localhost:5432/strata_test?sslmode=disable
+      TEST_NATS_URL: nats://localhost:4222
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Prove duplicate destructive execution prevention
+        run: |
+          set -o pipefail
+          go test -tags=jobintegration ./internal/agent/jobs -count=1 -race -v -run "TestReceiptLedgerRejectsDuplicateWithoutOverwrite|TestRunningCommandCancellationProducesTerminalResult|TestResultReplaysAfterAgentRestartUntilReceipt" 2>&1 | tee /tmp/idempotency_test.log
+          grep -E '^--- (PASS|FAIL)' /tmp/idempotency_test.log
+          if grep -q "no test files\|no tests to run" /tmp/idempotency_test.log; then echo "ERROR: zero tests executed" && exit 1; fi
+
+  phase7-maintenance-offline:
+    name: Phase 7 — Maintenance & Offline Lifecycle
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: strata_test
+          POSTGRES_USER: strata_test
+          POSTGRES_PASSWORD: strata_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U strata_test -d strata_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_POSTGRES_DSN: postgres://strata_test:strata_test@localhost:5432/strata_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Test maintenance window and offline lifecycle
+        run: |
+          set -o pipefail
+          go test -tags=dbintegration ./internal/platform -count=1 -race -v -run "TestMaintenanceWindowEnforcement" 2>&1 | tee /tmp/maint_test.log
+          grep -E '^--- (PASS|FAIL)' /tmp/maint_test.log
+          if grep -q "no test files\|no tests to run" /tmp/maint_test.log; then echo "ERROR: zero tests executed" && exit 1; fi
+
+  phase7-audit:
+    name: Phase 7 — Immutable Audit
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: strata_test
+          POSTGRES_USER: strata_test
+          POSTGRES_PASSWORD: strata_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U strata_test -d strata_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_POSTGRES_DSN: postgres://strata_test:strata_test@localhost:5432/strata_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Test immutable audit protections
+        run: |
+          set -o pipefail
+          go test -tags=dbintegration ./internal/platform -count=1 -race -v -run "TestAuditEvidenceIsAppendOnly|TestAuditEvidenceCrossMSPReadDenied|TestAuditEvidenceTransactionRollbackRemovesEvidence" 2>&1 | tee /tmp/audit_test.log
+          grep -E '^--- (PASS|FAIL)' /tmp/audit_test.log
+          if grep -q "no test files\|no tests to run" /tmp/audit_test.log; then echo "ERROR: zero tests executed" && exit 1; fi
+
+  phase7-capabilities:
+    name: Phase 7 — Capability Negotiation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Test capability negotiation
+        run: |
+          set -o pipefail
+          go test ./internal/platform -count=1 -race -v -run "TestIsActionSupportedByCapabilities|TestCapability" 2>&1 | tee /tmp/cap_test.log
+          grep -E '^--- (PASS|FAIL)' /tmp/cap_test.log
+          if grep -q "no test files\|no tests to run" /tmp/cap_test.log; then echo "ERROR: zero tests executed" && exit 1; fi
+
+  phase7-inventory:
+    name: Phase 7 — Inventory Ingestion
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: strata_test
+          POSTGRES_USER: strata_test
+          POSTGRES_PASSWORD: strata_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U strata_test -d strata_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_POSTGRES_DSN: postgres://strata_test:strata_test@localhost:5432/strata_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Test inventory result ingestion
+        run: |
+          set -o pipefail
+          go test -tags=dbintegration ./internal/platform -count=1 -race -v -run "TestInventoryResultIdempotency|TestInventory" 2>&1 | tee /tmp/inv_test.log
+          grep -E '^--- (PASS|FAIL)' /tmp/inv_test.log
+          if grep -q "no test files\|no tests to run" /tmp/inv_test.log; then echo "ERROR: zero tests executed" && exit 1; fi
+
   security:
     name: Security Scan
     runs-on: ubuntu-latest
@@ -211,3 +426,37 @@ jobs:
         uses: trufflesecurity/trufflehog@main
         with:
           extra_args: --results=verified,unknown
+
+
+  phase7-browser-acceptance:
+    name: Phase 7 — Browser Acceptance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Install frontend dependencies
+        working-directory: ui
+        run: npm ci
+      - name: Install pinned browser test runner
+        working-directory: ui
+        run: npm install --no-save --no-package-lock @playwright/test@1.55.0
+      - name: Install Chromium
+        working-directory: ui
+        run: npx playwright install --with-deps chromium
+      - name: Run Phase 7 browser acceptance
+        working-directory: ui
+        run: npx playwright test
+      - name: Upload browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase7-browser-evidence
+          path: |
+            ui/playwright-report/
+            ui/test-results/
+          if-no-files-found: ignore
+          retention-days: 14

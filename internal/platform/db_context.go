@@ -61,8 +61,7 @@ func (s *APIServer) requestDB(r *http.Request) dbExecutor {
 func (s *APIServer) withTenantTransaction(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		userID, _ := r.Context().Value(ctxKeyUserID).(string)
-		tokenUse, _ := r.Context().Value(ctxKeyTokenUse).(string)
-		if s.db == nil || userID == "" || tokenUse != "user" {
+		if s.db == nil || userID == "" {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -87,6 +86,8 @@ func (s *APIServer) withTenantTransaction(next http.Handler) http.Handler {
 		role := ""
 		if isPlatformGlobal(getRoles(r)) {
 			role = "platform_admin"
+		} else if tokenUse, _ := r.Context().Value(ctxKeyTokenUse).(string); tokenUse == "agent" {
+			role = "agent"
 		}
 		permission := "read"
 		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {

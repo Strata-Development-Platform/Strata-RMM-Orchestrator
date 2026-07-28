@@ -1811,6 +1811,307 @@ func Migrations() []Migration {
 				DROP TABLE IF EXISTS usage_snapshots CASCADE;
 			`,
 		},
+		{
+			ID:   55,
+			Name: "create_endpoint_approval_policies",
+			Up: `
+				CREATE TABLE IF NOT EXISTS endpoint_approval_policies (
+					id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					msp_id                UUID NOT NULL REFERENCES msp_tenants(id) ON DELETE CASCADE,
+					action_name           TEXT NOT NULL,
+					approval_required     BOOLEAN NOT NULL DEFAULT true,
+					min_approvers         INT NOT NULL DEFAULT 1 CHECK (min_approvers >= 1),
+					allowed_roles         TEXT[] NOT NULL DEFAULT ARRAY['msp_owner','msp_admin'],
+					require_separation    BOOLEAN NOT NULL DEFAULT true,
+					approval_expires_secs INT NOT NULL DEFAULT 3600,
+					allow_emergency       BOOLEAN NOT NULL DEFAULT false,
+					created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					UNIQUE(msp_id, action_name)
+				);
+
+				CREATE TABLE IF NOT EXISTS endpoint_approval_requests (
+					id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					msp_id             UUID NOT NULL REFERENCES msp_tenants(id) ON DELETE CASCADE,
+					client_id          UUID REFERENCES client_organizations(id) ON DELETE SET NULL,
+					site_id            UUID REFERENCES sites(id) ON DELETE SET NULL,
+					requester_user_id  TEXT NOT NULL,
+					action_name        TEXT NOT NULL,
+					reason             TEXT NOT NULL DEFAULT '',
+					device_ids         UUID[] NOT NULL DEFAULT '{}',
+					device_count       INT NOT NULL DEFAULT 0,
+					schedule_at        TIMESTAMPTZ,
+					target_hash        TEXT NOT NULL DEFAULT '',
+					status             TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected','cancelled','expired','dispatched')),
+					policy_snapshot    JSONB NOT NULL DEFAULT '{}',
+					correlation_id     TEXT,
+					request_hash       TEXT,
+					idempotency_key    TEXT,
+					expires_at         TIMESTAMPTZ NOT NULL DEFAULT NOW() + INTERVAL '1 hour',
+					emergency_override BOOLEAN NOT NULL DEFAULT false,
+					decided_at         TIMESTAMPTZ,
+					decided_by         TEXT,
+					created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+
+				CREATE TABLE IF NOT EXISTS endpoint_approval_decisions (
+					id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					request_id      UUID NOT NULL REFERENCES endpoint_approval_requests(id) ON DELETE CASCADE,
+					msp_id          UUID NOT NULL REFERENCES msp_tenants(id) ON DELETE CASCADE,
+					approver_user_id TEXT NOT NULL,
+					decision        TEXT NOT NULL CHECK (decision IN ('approved','rejected')),
+					reason          TEXT NOT NULL DEFAULT '',
+					created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					UNIQUE(request_id, approver_user_id)
+				);
+
+				ALTER TABLE endpoint_approval_policies ENABLE ROW LEVEL SECURITY;
+				ALTER TABLE endpoint_approval_requests ENABLE ROW LEVEL SECURITY;
+				ALTER TABLE endpoint_approval_decisions ENABLE ROW LEVEL SECURITY;
+
+				CREATE POLICY tenant_scope ON endpoint_approval_policies
+					USING (app_is_platform_admin() OR msp_id = safe_msp_id() OR support_access_allowed(msp_id))
+					WITH CHECK (app_is_platform_admin() OR msp_id = safe_msp_id());
+				CREATE POLICY tenant_scope ON endpoint_approval_requests
+					USING (app_is_platform_admin() OR msp_id = safe_msp_id() OR support_access_allowed(msp_id))
+					WITH CHECK (app_is_platform_admin() OR msp_id = safe_msp_id());
+				CREATE POLICY tenant_scope ON endpoint_approval_decisions
+					USING (app_is_platform_admin() OR msp_id = safe_msp_id() OR support_access_allowed(msp_id))
+					WITH CHECK (app_is_platform_admin() OR msp_id = safe_msp_id());
+
+				ALTER TABLE endpoint_approval_policies FORCE ROW LEVEL SECURITY;
+				ALTER TABLE endpoint_approval_requests FORCE ROW LEVEL SECURITY;
+				ALTER TABLE endpoint_approval_decisions FORCE ROW LEVEL SECURITY;
+
+				CREATE INDEX IF NOT EXISTS idx_approval_requests_msp_status ON endpoint_approval_requests(msp_id, status);
+				CREATE INDEX IF NOT EXISTS idx_approval_requests_requester ON endpoint_approval_requests(requester_user_id);
+				CREATE INDEX IF NOT EXISTS idx_approval_decisions_request ON endpoint_approval_decisions(request_id);
+			`,
+			Down: `
+				DROP TABLE IF EXISTS endpoint_approval_decisions CASCADE;
+				DROP TABLE IF EXISTS endpoint_approval_requests CASCADE;
+				DROP TABLE IF EXISTS endpoint_approval_policies CASCADE;
+			`,
+		},
+		{
+			ID:   56,
+			Name: "create_agent_capabilities",
+			Up: `
+				CREATE TABLE IF NOT EXISTS agent_capabilities (
+					id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					device_id          UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+					msp_id             UUID NOT NULL REFERENCES msp_tenants(id) ON DELETE CASCADE,
+					agent_version      TEXT NOT NULL DEFAULT '',
+					protocol_version   INT NOT NULL DEFAULT 1,
+					os                 TEXT NOT NULL DEFAULT '',
+					arch               TEXT NOT NULL DEFAULT '',
+					supported_job_types TEXT[] NOT NULL DEFAULT '{}',
+					features           JSONB NOT NULL DEFAULT '{}',
+					inventory_schema   INT NOT NULL DEFAULT 1,
+					last_updated       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					UNIQUE(device_id)
+				);
+				CREATE INDEX IF NOT EXISTS idx_agent_capabilities_msp ON agent_capabilities(msp_id);
+
+				ALTER TABLE agent_capabilities ENABLE ROW LEVEL SECURITY;
+				CREATE POLICY tenant_scope ON agent_capabilities
+					USING (app_is_platform_admin() OR msp_id = safe_msp_id() OR support_access_allowed(msp_id))
+					WITH CHECK (app_is_platform_admin() OR msp_id = safe_msp_id());
+				ALTER TABLE agent_capabilities FORCE ROW LEVEL SECURITY;
+			`,
+			Down: `DROP TABLE IF EXISTS agent_capabilities CASCADE;`,
+		},
+		{
+			ID:   57,
+			Name: "create_endpoint_audit_evidence",
+			Up: `
+				CREATE TABLE IF NOT EXISTS endpoint_audit_evidence (
+					id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					msp_id              UUID NOT NULL REFERENCES msp_tenants(id) ON DELETE CASCADE,
+					client_id           UUID REFERENCES client_organizations(id) ON DELETE SET NULL,
+					site_id             UUID REFERENCES sites(id) ON DELETE SET NULL,
+					device_id           UUID REFERENCES devices(id) ON DELETE SET NULL,
+					actor_user_id       TEXT NOT NULL DEFAULT '',
+					actor_role          TEXT NOT NULL DEFAULT '',
+					support_grant_id    TEXT,
+					request_source      TEXT NOT NULL DEFAULT 'api',
+					normalized_ip       TEXT,
+					action              TEXT NOT NULL,
+					targets             JSONB NOT NULL DEFAULT '[]',
+					reason              TEXT NOT NULL DEFAULT '',
+					request_hash        TEXT NOT NULL DEFAULT '',
+					idempotency_key     TEXT,
+					policy_snapshot     JSONB NOT NULL DEFAULT '{}',
+					approval_state      TEXT NOT NULL DEFAULT 'none',
+					approval_decisions  JSONB NOT NULL DEFAULT '[]',
+					job_id              TEXT,
+					target_id           TEXT,
+					correlation_id      TEXT,
+					schedule_at         TIMESTAMPTZ,
+					maintenance_window  JSONB,
+					state_transition    TEXT NOT NULL DEFAULT '',
+					agent_receipt_at    TIMESTAMPTZ,
+					execution_started_at TIMESTAMPTZ,
+					execution_result    JSONB,
+					exit_code           INT,
+					result_summary      TEXT NOT NULL DEFAULT '',
+					failure_reason      TEXT NOT NULL DEFAULT '',
+					created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+
+				CREATE INDEX IF NOT EXISTS idx_endpoint_audit_msp_time ON endpoint_audit_evidence(msp_id, created_at DESC);
+				CREATE INDEX IF NOT EXISTS idx_endpoint_audit_device ON endpoint_audit_evidence(device_id);
+				CREATE INDEX IF NOT EXISTS idx_endpoint_audit_job ON endpoint_audit_evidence(job_id);
+				CREATE INDEX IF NOT EXISTS idx_endpoint_audit_correlation ON endpoint_audit_evidence(correlation_id);
+
+				ALTER TABLE endpoint_audit_evidence ENABLE ROW LEVEL SECURITY;
+
+				CREATE POLICY tenant_scope ON endpoint_audit_evidence
+					USING (app_is_platform_admin() OR msp_id = safe_msp_id() OR support_access_allowed(msp_id))
+					WITH CHECK (false);
+
+				CREATE POLICY insert_endpoint_audit_evidence ON endpoint_audit_evidence
+					FOR INSERT
+					WITH CHECK (app_is_platform_admin() OR msp_id = safe_msp_id() OR support_access_allowed(msp_id));
+
+				ALTER TABLE endpoint_audit_evidence FORCE ROW LEVEL SECURITY;
+			`,
+			Down: `DROP TABLE IF EXISTS endpoint_audit_evidence CASCADE;`,
+		},
+		{
+			ID:   58,
+			Name: "enhance_maintenance_windows",
+			Up: `
+				ALTER TABLE maintenance_windows ADD COLUMN IF NOT EXISTS msp_id UUID REFERENCES msp_tenants(id) ON DELETE CASCADE;
+				ALTER TABLE maintenance_windows ADD COLUMN IF NOT EXISTS client_id UUID REFERENCES client_organizations(id) ON DELETE CASCADE;
+				ALTER TABLE maintenance_windows ADD COLUMN IF NOT EXISTS site_id UUID REFERENCES sites(id) ON DELETE CASCADE;
+				ALTER TABLE maintenance_windows ADD COLUMN IF NOT EXISTS device_group_id UUID REFERENCES device_groups(id) ON DELETE CASCADE;
+				ALTER TABLE maintenance_windows ADD COLUMN IF NOT EXISTS device_id UUID REFERENCES devices(id) ON DELETE CASCADE;
+				ALTER TABLE maintenance_windows ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT 'UTC';
+				ALTER TABLE maintenance_windows ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+				ALTER TABLE maintenance_windows ADD COLUMN IF NOT EXISTS is_recurring BOOLEAN NOT NULL DEFAULT false;
+				ALTER TABLE maintenance_windows ADD COLUMN IF NOT EXISTS recurrence_rule TEXT;
+				ALTER TABLE maintenance_windows ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
+
+				CREATE INDEX IF NOT EXISTS idx_mw_msp ON maintenance_windows(msp_id) WHERE msp_id IS NOT NULL;
+				CREATE INDEX IF NOT EXISTS idx_mw_client ON maintenance_windows(client_id) WHERE client_id IS NOT NULL;
+				CREATE INDEX IF NOT EXISTS idx_mw_site ON maintenance_windows(site_id) WHERE site_id IS NOT NULL;
+				CREATE INDEX IF NOT EXISTS idx_mw_device ON maintenance_windows(device_id) WHERE device_id IS NOT NULL;
+			`,
+			Down: `
+				DROP INDEX IF EXISTS idx_mw_msp;
+				DROP INDEX IF EXISTS idx_mw_client;
+				DROP INDEX IF EXISTS idx_mw_site;
+				DROP INDEX IF EXISTS idx_mw_device;
+				ALTER TABLE maintenance_windows DROP COLUMN IF EXISTS msp_id;
+				ALTER TABLE maintenance_windows DROP COLUMN IF EXISTS client_id;
+				ALTER TABLE maintenance_windows DROP COLUMN IF EXISTS site_id;
+				ALTER TABLE maintenance_windows DROP COLUMN IF EXISTS device_group_id;
+				ALTER TABLE maintenance_windows DROP COLUMN IF EXISTS device_id;
+				ALTER TABLE maintenance_windows DROP COLUMN IF EXISTS timezone;
+				ALTER TABLE maintenance_windows DROP COLUMN IF EXISTS expires_at;
+				ALTER TABLE maintenance_windows DROP COLUMN IF EXISTS is_recurring;
+				ALTER TABLE maintenance_windows DROP COLUMN IF EXISTS recurrence_rule;
+				ALTER TABLE maintenance_windows DROP COLUMN IF EXISTS description;
+			`,
+		},
+		{
+			ID:   59,
+			Name: "create_inventory_results",
+			Up: `
+				CREATE TABLE IF NOT EXISTS inventory_results (
+					id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					device_id         UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+					msp_id            UUID NOT NULL REFERENCES msp_tenants(id) ON DELETE CASCADE,
+					job_id            UUID REFERENCES jobs(id) ON DELETE SET NULL,
+					target_id         UUID REFERENCES job_targets(id) ON DELETE SET NULL,
+					correlation_id    TEXT,
+					schema_version    INT NOT NULL DEFAULT 1,
+					payload           JSONB NOT NULL DEFAULT '{}',
+					payload_hash      TEXT NOT NULL DEFAULT '',
+					collection_time   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					received_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					is_stale          BOOLEAN NOT NULL DEFAULT false,
+					is_failure        BOOLEAN NOT NULL DEFAULT false,
+					failure_message   TEXT NOT NULL DEFAULT '',
+					accepted          BOOLEAN NOT NULL DEFAULT false,
+					created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+
+				CREATE INDEX IF NOT EXISTS idx_inventory_results_device ON inventory_results(device_id, received_at DESC);
+				CREATE INDEX IF NOT EXISTS idx_inventory_results_msp ON inventory_results(msp_id);
+				CREATE INDEX IF NOT EXISTS idx_inventory_results_job ON inventory_results(job_id);
+				CREATE INDEX IF NOT EXISTS idx_inventory_results_correlation ON inventory_results(correlation_id);
+
+				ALTER TABLE inventory_results ENABLE ROW LEVEL SECURITY;
+				CREATE POLICY tenant_scope ON inventory_results
+					USING (app_is_platform_admin() OR msp_id = safe_msp_id() OR support_access_allowed(msp_id))
+					WITH CHECK (app_is_platform_admin() OR msp_id = safe_msp_id());
+				ALTER TABLE inventory_results FORCE ROW LEVEL SECURITY;
+			`,
+			Down: `DROP TABLE IF EXISTS inventory_results CASCADE;`,
+		},
+		{
+			ID:   60,
+			Name: "add_offline_queue_device_fields",
+			Up: `
+				ALTER TABLE devices ADD COLUMN IF NOT EXISTS offline_queue_enabled BOOLEAN NOT NULL DEFAULT false;
+				ALTER TABLE devices ADD COLUMN IF NOT EXISTS last_capability_update TIMESTAMPTZ;
+				ALTER TABLE devices ADD COLUMN IF NOT EXISTS inventory_last_success TIMESTAMPTZ;
+				ALTER TABLE devices ADD COLUMN IF NOT EXISTS inventory_fresh BOOLEAN NOT NULL DEFAULT false;
+
+				ALTER TABLE jobs ADD COLUMN IF NOT EXISTS approval_request_id UUID REFERENCES endpoint_approval_requests(id) ON DELETE SET NULL;
+				ALTER TABLE job_targets ADD COLUMN IF NOT EXISTS approval_status TEXT NOT NULL DEFAULT 'none' CHECK (approval_status IN ('none','pending','approved','rejected','cancelled','expired'));
+				ALTER TABLE job_targets ADD COLUMN IF NOT EXISTS offline_at TIMESTAMPTZ;
+				ALTER TABLE job_targets ADD COLUMN IF NOT EXISTS reconnect_at TIMESTAMPTZ;
+			`,
+			Down: `
+				ALTER TABLE devices DROP COLUMN IF EXISTS offline_queue_enabled;
+				ALTER TABLE devices DROP COLUMN IF EXISTS last_capability_update;
+				ALTER TABLE devices DROP COLUMN IF EXISTS inventory_last_success;
+				ALTER TABLE devices DROP COLUMN IF EXISTS inventory_fresh;
+				ALTER TABLE jobs DROP COLUMN IF EXISTS approval_request_id;
+				ALTER TABLE job_targets DROP COLUMN IF EXISTS approval_status;
+				ALTER TABLE job_targets DROP COLUMN IF EXISTS offline_at;
+				ALTER TABLE job_targets DROP COLUMN IF EXISTS reconnect_at;
+			`,
+		},
+		{
+			ID:   61,
+			Name: "harden_phase7_approval_inventory_audit",
+			Up: `
+				ALTER TABLE endpoint_approval_requests
+					ADD COLUMN IF NOT EXISTS operation_payload JSONB NOT NULL DEFAULT '{}';
+
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_approval_request_unique
+					ON jobs(approval_request_id) WHERE approval_request_id IS NOT NULL;
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_approval_requests_idempotency
+					ON endpoint_approval_requests(msp_id, idempotency_key)
+					WHERE idempotency_key IS NOT NULL;
+
+				DROP POLICY IF EXISTS tenant_scope ON endpoint_audit_evidence;
+				DROP POLICY IF EXISTS endpoint_audit_select ON endpoint_audit_evidence;
+				CREATE POLICY endpoint_audit_select ON endpoint_audit_evidence
+					FOR SELECT
+					USING (app_is_platform_admin() OR msp_id = safe_msp_id() OR support_access_allowed(msp_id));
+
+				DROP POLICY IF EXISTS insert_endpoint_audit_evidence ON endpoint_audit_evidence;
+				CREATE POLICY insert_endpoint_audit_evidence ON endpoint_audit_evidence
+					FOR INSERT
+					WITH CHECK (app_is_platform_admin() OR msp_id = safe_msp_id() OR support_access_allowed(msp_id));
+			`,
+			Down: `
+				DROP POLICY IF EXISTS endpoint_audit_select ON endpoint_audit_evidence;
+				CREATE POLICY tenant_scope ON endpoint_audit_evidence
+					USING (app_is_platform_admin() OR msp_id = safe_msp_id() OR support_access_allowed(msp_id))
+					WITH CHECK (false);
+				DROP INDEX IF EXISTS idx_approval_requests_idempotency;
+				DROP INDEX IF EXISTS idx_jobs_approval_request_unique;
+				ALTER TABLE endpoint_approval_requests DROP COLUMN IF EXISTS operation_payload;
+			`,
+		},
 	}
 }
 

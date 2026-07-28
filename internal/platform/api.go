@@ -278,6 +278,32 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("DELETE /api/v2/platform/support-grants/{grantID}", s.handleRevokeSupportGrant)
 	mux.HandleFunc("GET /api/v2/context", s.handleContext)
 
+	// Device operations
+	mux.HandleFunc("GET /api/v2/devices", s.handleListDevices)
+	mux.HandleFunc("GET /api/v2/devices/{deviceID}", s.handleGetDevice)
+	mux.HandleFunc("POST /api/v2/devices/{deviceID}/action", s.handleDeviceAction)
+	mux.HandleFunc("POST /api/v2/devices/bulk-action", s.handleBulkDeviceAction)
+	mux.HandleFunc("GET /api/v2/devices/{deviceID}/inventory", s.handleDeviceDetailInventory)
+
+	// v2 Device capabilities
+	mux.HandleFunc("GET /api/v2/devices/{deviceID}/capabilities", s.handleGetCapabilities)
+	mux.HandleFunc("POST /api/v2/devices/{deviceID}/capabilities", s.handleReportCapabilities)
+
+	// v2 Device inventory submission
+	mux.HandleFunc("POST /api/v2/devices/{deviceID}/inventory", s.handleSubmitInventoryResult)
+
+	// v2 Endpoint approval APIs
+	mux.HandleFunc("POST /api/v2/approvals", s.handleCreateApprovalRequest)
+	mux.HandleFunc("GET /api/v2/approvals", s.handleListApprovalRequests)
+	mux.HandleFunc("GET /api/v2/approvals/{approvalID}", s.handleGetApprovalRequest)
+	mux.HandleFunc("POST /api/v2/approvals/{approvalID}/approve", s.handleApproveRequest)
+	mux.HandleFunc("POST /api/v2/approvals/{approvalID}/reject", s.handleRejectRequest)
+	mux.HandleFunc("POST /api/v2/approvals/{approvalID}/cancel", s.handleCancelApprovalRequest)
+	mux.HandleFunc("GET /api/v2/approvals/{approvalID}/decisions", s.handleApprovalDecisionHistory)
+
+	// v2 Endpoint audit evidence
+	mux.HandleFunc("GET /api/v2/audit/endpoint", s.handleListEndpointAuditEvidence)
+
 	rateLimiter := auth.NewRateLimiter(30, 60)
 
 	handler := rateLimiter.Middleware(

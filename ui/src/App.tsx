@@ -16,6 +16,7 @@ import ReportsPage from '@/pages/ReportsPage';
 import JobsPage from '@/pages/JobsPage';
 import JobHealthPage from '@/pages/JobHealthPage';
 import MSPListPage from '@/pages/MSPListPage';
+import DeviceWorkspacePage from '@/pages/DeviceWorkspacePage';
 import DeviceRemotePage from '@/pages/DeviceRemotePage';
 import MSPWorkspacePage from '@/pages/MSPWorkspacePage';
 
@@ -58,6 +59,7 @@ function AppRoutes() {
       <Route path="/jobs/health" element={<ProtectedRoute><JobHealthPage /></ProtectedRoute>} />
       <Route path="/platform/msps" element={<PlatformRoute><MSPListPage /></PlatformRoute>} />
       <Route path="/msp" element={<ProtectedRoute><MSPWorkspacePage /></ProtectedRoute>} />
+      <Route path="/devices/:deviceID" element={<ProtectedRoute><DeviceWorkspacePage /></ProtectedRoute>} />
       <Route path="/remote/:tid/:did" element={<ProtectedRoute><DeviceRemotePage /></ProtectedRoute>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

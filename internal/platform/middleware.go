@@ -421,6 +421,8 @@ func (s *APIServer) classifyRoute(method, path string) RouteAccess {
 func (s *APIServer) agentRoutes() []Route {
 	return []Route{
 		{Method: "POST", Path: "/api/v1/agent/config", Access: AccessAgent},
+		{Method: "POST", Path: "/api/v2/devices/{deviceID}/capabilities", Access: AccessAgent},
+		{Method: "POST", Path: "/api/v2/devices/{deviceID}/inventory", Access: AccessAgent},
 	}
 }
 
