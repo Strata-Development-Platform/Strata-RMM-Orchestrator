@@ -253,10 +253,7 @@ func NewCommand(ctx context.Context, version string, logger *zap.Logger) *cobra.
 				// Deferred: ingestion health check — requires NATS subscription monitoring
 				return nil
 			})
-			api.RegisterHealth("jetstream", func(ctx context.Context) error {
-				// Deferred: JetStream health check — requires JetStream context monitoring
-				return nil
-			})
+			api.RegisterHealth("jetstream", platform.JetStreamHealthCheck(nc))
 			api.RegisterHealth("dispatcher", func(ctx context.Context) error {
 				if !api.DispatcherHealthy() {
 					return fmt.Errorf("dispatcher not started")
@@ -305,10 +302,7 @@ func NewCommand(ctx context.Context, version string, logger *zap.Logger) *cobra.
 					}
 					return nil
 				})
-				api.RegisterHealth("jetstream", func(ctx context.Context) error {
-					// Deferred: JetStream health check — requires JetStream context monitoring
-					return nil
-				})
+				api.RegisterHealth("jetstream", platform.JetStreamHealthCheck(nc))
 			}
 
 			// Stage 13: Job dispatcher
