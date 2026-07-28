@@ -407,7 +407,15 @@ func (s *APIServer) handleBulkDeviceAction(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported action"})
 		return
 	}
-	if op.RequiresReason && req.Reason == "" {
+	if req.Action != "refresh" && req.Action != "reboot" && req.Action != "shutdown" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "action does not support bulk execution"})
+		return
+	}
+	if req.Schedule != "" && !op.SupportsSchedule {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "action does not support scheduling"})
+		return
+	}
+	if op.RequiresReason && strings.TrimSpace(req.Reason) == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "reason required"})
 		return
 	}
@@ -422,8 +430,18 @@ func (s *APIServer) handleBulkDeviceAction(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	now := time.Now()
+	now := time.Now().UTC()
+	availableAt := now
 	expires := now.Add(24 * time.Hour)
+	if req.Schedule != "" {
+		scheduledAt, err := time.Parse(time.RFC3339, req.Schedule)
+		if err != nil || !scheduledAt.After(now) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "schedule_at must be a future RFC 3339 timestamp"})
+			return
+		}
+		availableAt = scheduledAt.UTC()
+		expires = availableAt.Add(24 * time.Hour)
+	}
 	jobID := uuid.New().String()
 	correlationID := uuid.New().String()
 
@@ -432,26 +450,42 @@ func (s *APIServer) handleBulkDeviceAction(w http.ResponseWriter, r *http.Reques
 	var uniqueIDs []string
 	for _, id := range req.DeviceIDs {
 		id = strings.TrimSpace(id)
-		if !seen[id] && id != "" {
+		if id == "" {
+			continue
+		}
+		if _, err := uuid.Parse(id); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid device id"})
+			return
+		}
+		if !seen[id] {
 			seen[id] = true
 			uniqueIDs = append(uniqueIDs, id)
 		}
 	}
 
-	// Verify devices belong to the MSP
-	validCount := 0
-	for _, deviceID := range uniqueIDs {
-		var exists bool
-		if err := s.requestDB(r).QueryRow(`SELECT EXISTS(SELECT 1 FROM devices WHERE id = $1 AND msp_id = $2)`, deviceID, mspID).Scan(&exists); err == nil && exists {
-			validCount++
-		}
-	}
-	if validCount == 0 {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no valid devices found"})
+	if len(uniqueIDs) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no valid device ids supplied"})
 		return
 	}
 
-	payload, _ := json.Marshal(req)
+	// All targets must resolve inside the authorized MSP scope; mixed or missing sets fail atomically.
+	for _, deviceID := range uniqueIDs {
+		var exists bool
+		if err := s.requestDB(r).QueryRow(`SELECT EXISTS(SELECT 1 FROM devices WHERE id = $1 AND msp_id = $2)`, deviceID, mspID).Scan(&exists); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "device validation failed"})
+			return
+		}
+		if !exists {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "one or more devices were not found"})
+			return
+		}
+	}
+
+	payload, err := json.Marshal(req)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "encode job failed"})
+		return
+	}
 	tx, err := s.db.DB().BeginTx(r.Context(), nil)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "transaction failed"})
@@ -463,7 +497,7 @@ func (s *APIServer) handleBulkDeviceAction(w http.ResponseWriter, r *http.Reques
 		INSERT INTO jobs (id, msp_id, created_by, type, status, priority,
 		                  payload, max_retries, max_devices, expires_at, correlation_id)
 		VALUES ($1, $2, $3, $4, 'queued', 10, $5, 1, $6, $7, $8)
-	`, jobID, mspID, "api:bulk:"+req.Action, "bulk."+req.Action,
+	`, jobID, mspID, "api:bulk:"+req.Action, op.JobType,
 		payload, len(uniqueIDs), expires, correlationID); err != nil {
 		return
 	}
@@ -475,9 +509,10 @@ func (s *APIServer) handleBulkDeviceAction(w http.ResponseWriter, r *http.Reques
 		}
 		opPayload, _ := json.Marshal(map[string]interface{}{
 			"job_id": jobID, "target_id": targetID, "device_id": deviceID,
-			"type": "bulk." + req.Action, "payload": req,
+			"type": op.JobType, "payload": req,
 		})
-		if _, err := tx.Exec(`INSERT INTO job_outbox (id,msp_id,aggregate_id,event_type,payload,available_at) VALUES (gen_random_uuid(),$1,$2,'job.dispatch',$3,NOW())`, mspID, jobID, opPayload); err != nil {
+		if _, err := tx.Exec(`INSERT INTO job_outbox (id,msp_id,aggregate_id,event_type,payload,available_at) VALUES (gen_random_uuid(),$1,$2,'job.dispatch',$3,$4)`, mspID, jobID, opPayload, availableAt); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create dispatch failed"})
 			return
 		}
 	}
@@ -489,7 +524,7 @@ func (s *APIServer) handleBulkDeviceAction(w http.ResponseWriter, r *http.Reques
 
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"job_id": jobID, "status": "queued", "action": req.Action,
-		"target_count": validCount, "correlation_id": correlationID,
+		"target_count": len(uniqueIDs), "correlation_id": correlationID,
 	})
 }
 
