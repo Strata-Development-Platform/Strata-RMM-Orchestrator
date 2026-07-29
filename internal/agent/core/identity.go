@@ -62,7 +62,7 @@ func (im *IdentityManager) RegisterWithDeploymentID(registerURL, deploymentID, e
 	}
 
 	keyBytes, _ := x509.MarshalECPrivateKey(key)
-	pubKeyBytes := elliptic.Marshal(elliptic.P256(), key.X, key.Y)
+	pubKeyBytes := elliptic.Marshal(elliptic.P256(), key.X, key.Y) //nolint:staticcheck // SA1019: deprecated but safe for this encoding use
 
 	hostname, _ := os.Hostname()
 

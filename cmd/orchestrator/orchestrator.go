@@ -616,9 +616,13 @@ func newUpgradeCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 
 			result, err := upgradeMgr.RunUpgrade(ctx, targetVersion)
 			if err != nil {
-				sugar.Errorw("upgrade failed", "error", err, "from_version", result.FromVersion, "to_version", targetVersion)
-				if result != nil && result.Success == false {
-					sugar.Warnw("upgrade failed — consider running rollback to revert", "target_version", targetVersion)
+				if result != nil {
+					sugar.Errorw("upgrade failed", "error", err, "from_version", result.FromVersion, "to_version", targetVersion)
+					if !result.Success {
+						sugar.Warnw("upgrade failed — consider running rollback to revert", "target_version", targetVersion)
+					}
+				} else {
+					sugar.Errorw("upgrade failed", "error", err)
 				}
 				return fmt.Errorf("upgrade failed: %w", err)
 			}
