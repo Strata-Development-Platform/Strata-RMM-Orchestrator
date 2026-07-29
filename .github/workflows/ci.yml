@@ -505,3 +505,41 @@ jobs:
             ui/test-results/
           if-no-files-found: ignore
           retention-days: 14
+
+  phase-8b-runtime:
+    name: Phase 8B — Runtime Validation
+    runs-on: ubuntu-latest
+    needs: [test]
+    timeout-minutes: 10
+    env:
+      TEST_POSTGRES_DSN: postgres://strata_test:strata_test@localhost:5432/strata_test?sslmode=disable
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: strata_test
+          POSTGRES_PASSWORD: strata_test
+          POSTGRES_DB: strata_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U strata_test -d strata_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Validate migration lock
+        run: go test ./pkg/postgres -short -count=1 -race -run "TestMigrationLockAcquisitionSucceeds|TestSchemaLock_AcquireTimeout|TestMigrationLockSecondConcurrentFails" -v
+      - name: Validate upgrade manager
+        run: go test ./pkg/postgres -short -count=1 -race -run "TestRunUpgrade|TestValidateTarget|TestHookExecutionOrder|TestGetSchemaVersion" -v
+      - name: Validate rollback engine
+        run: go test ./pkg/postgres -short -count=1 -race -run "TestRunRollback|TestRunPhase|TestRollbackResult|TestNewRollbackEngine|TestSetDryRun" -v
+      - name: Validate state preservation
+        run: go test ./pkg/postgres -short -count=1 -race -run "TestNewStatePreserver|TestSaveSnapshot|TestLoadSnapshot|TestListSnapshots|TestDeleteSnapshot|TestCompareSnapshots|TestPreDeploySnapshot|TestPreRollbackSnapshot|TestRestoreSnapshot|TestSplitCSV|TestGenerateSnapshotID|TestSnapshotJSONRoundTrip|TestValidateSnapshotTableCountMismatch" -v
+      - name: Validate deployment controller
+        run: go test ./internal/platform -short -count=1 -race -run "TestDeploymentController|TestDeploymentState" -v
