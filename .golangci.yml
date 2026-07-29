@@ -16,7 +16,7 @@ linters:
       check-blank: false
 
 issues:
-  exclude:
+  exclude-rules:
     # Pre-existing: agent package unchecked errors (not Phase 8B)
     - path: ".*agent/.*"
       linters:

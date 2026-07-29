@@ -9,7 +9,7 @@ func diskSpaceOnDir(dir string) (int64, int64, error) {
 	if err := unix.Statfs(dir, &stat); err != nil {
 		return 0, 0, err
 	}
-	availableMB := int64(stat.Bavail) * int64(stat.Bsize) / 1024 / 1024
-	totalMB := int64(stat.Blocks) * int64(stat.Bsize) / 1024 / 1024
-	return availableMB, totalMB, nil
+	availMB := int64(stat.Bavail) * stat.Bsize / 1024 / 1024 // #nosec G115 -- stat values always fit in int64 for real filesystems
+	totalMB := int64(stat.Blocks) * stat.Bsize / 1024 / 1024 // #nosec G115 -- stat values always fit in int64 for real filesystems
+	return availMB, totalMB, nil
 }

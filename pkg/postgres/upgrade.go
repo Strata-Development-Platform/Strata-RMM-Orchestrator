@@ -70,7 +70,17 @@ func (vs *versionStore) GetVersion() (int32, error) {
 	if !version.Valid {
 		return 0, nil
 	}
+	if version.Int64 > 2147483647 || version.Int64 < -2147483648 {
+		return 0, fmt.Errorf("version %d out of int32 range", version.Int64)
+	}
 	return int32(version.Int64), nil
+}
+
+func int32FromInt(v int) int32 {
+	if v > 2147483647 || v < -2147483648 {
+		panic("value out of int32 range")
+	}
+	return int32(v)
 }
 
 func (vs *versionStore) SetVersion(v int32) error {
@@ -219,7 +229,7 @@ func (um *UpgradeManager) defaultPreCheck(ctx context.Context, version int32) er
 	}
 
 	maxID := migrations[len(migrations)-1].ID
-	if version > int32(maxID) {
+	if int(version) > maxID {
 		return fmt.Errorf("target version %d exceeds maximum migration ID %d", version, maxID)
 	}
 
@@ -282,7 +292,7 @@ func (um *UpgradeManager) defaultDataMigration(ctx context.Context, version int3
 			return fmt.Errorf("record migration %d: %w", m.ID, err)
 		}
 
-		if err := um.versionStore.SetVersion(int32(m.ID)); err != nil {
+		if err := um.versionStore.SetVersion(int32FromInt(m.ID)); err != nil {
 			return fmt.Errorf("update version store for migration %d: %w", m.ID, err)
 		}
 	}
@@ -417,7 +427,7 @@ func (um *UpgradeManager) ValidateTarget(ctx context.Context, targetVersion int3
 	migrations := Migrations()
 	if len(migrations) > 0 {
 		maxID := migrations[len(migrations)-1].ID
-		if targetVersion > int32(maxID) {
+		if targetVersion > int32FromInt(maxID) {
 			return fmt.Errorf("target version %d exceeds maximum migration ID %d", targetVersion, maxID)
 		}
 		return nil

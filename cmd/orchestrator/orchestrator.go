@@ -579,7 +579,7 @@ func newUpgradeCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 				if maxID == 0 {
 					return fmt.Errorf("no migrations available")
 				}
-				targetVersion = int32(maxID)
+				targetVersion = int32(maxID) // #nosec G115 -- maxID is always < 1000 (migration count)
 			}
 
 			db, err := timescale.NewClient(ctx, cfg.DB.DSN)

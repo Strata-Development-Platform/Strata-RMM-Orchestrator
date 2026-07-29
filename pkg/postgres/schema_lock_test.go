@@ -143,13 +143,21 @@ func TestMigrationLockSameConnectionUsed(t *testing.T) {
 
 func TestSchemaLock_AcquireTimeout(t *testing.T) {
 	db := openTestDB(t)
-	mgr := NewSchemaManager(db)
+	mgr1 := NewSchemaManager(db)
+	mgr2 := NewSchemaManager(db)
+	ctx := context.Background()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	if err := mgr1.acquireLock(ctx, 62); err != nil {
+		t.Fatalf("mgr1 acquireLock failed: %v", err)
+	}
+	defer mgr1.releaseLock(ctx)
+
+	ctx2, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
-	err := mgr.acquireLock(ctx, 62)
+	err := mgr2.acquireLock(ctx2, 62)
 	if err == nil {
+		mgr2.releaseLock(ctx2)
 		t.Fatal("expected lock acquisition to timeout")
 	}
 	if !errors.Is(err, context.DeadlineExceeded) {
@@ -165,6 +173,7 @@ func TestSchemaLock_ReleaseError(t *testing.T) {
 	if err := mgr.acquireLock(ctx, 1); err != nil {
 		t.Fatalf("acquireLock failed: %v", err)
 	}
+	defer mgr.releaseLock(ctx)
 
 	err := mgr.releaseLock(ctx)
 	if err != nil {
@@ -220,6 +229,7 @@ func TestSchemaLock_AcquireContextCancellation(t *testing.T) {
 	defer mgr1.releaseLock(ctx)
 
 	ctx2, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	go func() {
 		time.Sleep(50 * time.Millisecond)
 		cancel()
@@ -313,6 +323,7 @@ func TestSchemaLock_ReleaseErrorPropagation(t *testing.T) {
 	if err := mgr.acquireLock(ctx, 1); err != nil {
 		t.Fatalf("acquireLock failed: %v", err)
 	}
+	defer mgr.releaseLock(ctx)
 
 	err := mgr.releaseLock(ctx)
 	if err != nil {
