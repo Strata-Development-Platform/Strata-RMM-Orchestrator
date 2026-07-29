@@ -84,6 +84,7 @@ type UpgradeManager struct {
 	upgradeMutex     sync.Mutex
 	currentVersion   int32
 	versionCheckDone atomic.Bool
+	lockConn         *sql.Conn
 }
 
 func NewUpgradeManager(db dbConn, logger *zap.SugaredLogger, versionStore VersionStore) *UpgradeManager {

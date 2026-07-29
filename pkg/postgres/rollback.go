@@ -53,6 +53,7 @@ type RollbackEngine struct {
 	dryRunMode       bool
 	currentVersion   int32
 	versionCheckDone atomic.Bool
+	lockConn         *sql.Conn
 }
 
 func NewRollbackEngine(db dbConn, logger *zap.SugaredLogger, versionStore VersionStore) *RollbackEngine {
