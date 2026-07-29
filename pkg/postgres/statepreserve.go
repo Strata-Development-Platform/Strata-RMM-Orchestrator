@@ -314,9 +314,21 @@ func (sp *StatePreserver) RestoreSnapshot(ctx context.Context, id string) error 
 
 	sp.logger.Infow("restoring state from snapshot", "id", id, "tables", snapshot.TableCount, "schema_version", snapshot.SchemaVersion)
 
-	// Restore table stats baseline (read-only informational restore — actual schema restore
-	// is performed by the RollbackEngine's data_rollback phase which applies Down migrations).
-	// Here we validate the snapshot integrity and log the restored state for audit purposes.
+	// NOTE: Snapshot contains metadata only (table stats, indexes, foreign keys,
+	// sequence states).  It does NOT contain row-level data, so this restore
+	// performs validation — it verifies the current DB state is compatible with
+	// the snapshot and warns on divergence.  Full data restore requires an
+	// external backup mechanism (e.g. pg_dump / pg_restore).
+	currentVersion, err := sp.getSchemaVersion(ctx)
+	if err != nil {
+		sp.logger.Warnw("failed to validate schema version during restore", "error", err)
+	} else if currentVersion != snapshot.SchemaVersion {
+		sp.logger.Warnw("schema version mismatch during restore",
+			"snapshot_version", snapshot.SchemaVersion,
+			"current_version", currentVersion)
+	}
+
+	// Log snapshot integrity for audit purposes.
 	for name, stats := range snapshot.TableStats {
 		sp.logger.Infow("snapshot table stat", "table", name, "row_count", stats.RowCount, "size_bytes", stats.SizeBytes)
 	}
@@ -338,7 +350,23 @@ func (sp *StatePreserver) RestoreSnapshot(ctx context.Context, id string) error 
 		"schema_version", snapshot.SchemaVersion,
 	)
 
-	sp.logger.Infow("state restore completed", "id", id)
+	if len(snapshot.TableStats) > 0 {
+		currentTables, err := sp.getTableStats(ctx)
+		if err != nil {
+			sp.logger.Warnw("failed to validate table stats during restore", "error", err)
+		} else {
+			snapshotTableCount := len(snapshot.TableStats)
+			if len(currentTables) != snapshotTableCount {
+				sp.logger.Warnw("table count mismatch during restore",
+					"snapshot_tables", snapshotTableCount,
+					"current_tables", len(currentTables))
+			} else {
+				sp.logger.Infow("table count matches snapshot during restore")
+			}
+		}
+	}
+
+	sp.logger.Infow("state restore completed (validation-only — no data restored)", "id", id)
 	return nil
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -118,14 +119,19 @@ func (m *mockDB) Conn(ctx context.Context) (any, error) {
 
 // mockVersionStore implements VersionStore for testing.
 type mockVersionStore struct {
-	mu      sync.Mutex
-	version int32
-	setErr  error
-	getErr  error
+	mu         sync.Mutex
+	version    int32
+	setErr     error
+	getErr     error
+	checksums  map[string]string
+	versionSet bool
 }
 
 func newMockVersionStore(initialVersion int32) *mockVersionStore {
-	return &mockVersionStore{version: initialVersion}
+	return &mockVersionStore{
+		version:   initialVersion,
+		checksums: make(map[string]string),
+	}
 }
 
 func (m *mockVersionStore) GetVersion() (int32, error) {
@@ -144,6 +150,7 @@ func (m *mockVersionStore) SetVersion(v int32) error {
 		return m.setErr
 	}
 	m.version = v
+	m.versionSet = true
 	return nil
 }
 
@@ -154,12 +161,36 @@ func (m *mockVersionStore) SetVersionAndChecksum(v int32, cs string) error {
 		return m.setErr
 	}
 	m.version = v
+	m.checksums[fmt.Sprintf("v%d", v)] = cs
+	m.versionSet = true
 	return nil
 }
 
-func (m *mockVersionStore) GetChecksum(key string) (string, error) { return "", nil }
-func (m *mockVersionStore) AddChecksum(key, value string) error    { return nil }
-func (m *mockVersionStore) ExistsChecksum(key string) (bool, error) { return false, nil }
+func (m *mockVersionStore) GetChecksum(key string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.checksums[key], nil
+}
+
+func (m *mockVersionStore) AddChecksum(key, value string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.checksums[key] = value
+	return nil
+}
+
+func (m *mockVersionStore) ExistsChecksum(key string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.checksums[key]
+	return ok, nil
+}
+
+func (m *mockVersionStore) GetSetVersionFlag() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.versionSet
+}
 
 func newTestLogger() *zap.SugaredLogger {
 	logger, _ := zap.NewDevelopment()
@@ -447,5 +478,138 @@ func TestRunUpgrade_LockError(t *testing.T) {
 	_, err := um.RunUpgrade(ctx, 2)
 	if err == nil {
 		t.Fatal("expected error when lock acquisition fails")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Test: mockVersionStore SetVersionAndChecksum stores version and checksum
+// ---------------------------------------------------------------------------
+func TestMockVersionStore_SetVersionAndChecksum(t *testing.T) {
+	store := newMockVersionStore(1)
+
+	err := store.SetVersionAndChecksum(5, "sha256:v5")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	v, err := store.GetVersion()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if v != 5 {
+		t.Errorf("expected version 5, got %d", v)
+	}
+
+	exists, err := store.ExistsChecksum("v5")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !exists {
+		t.Error("expected checksum v5 to exist")
+	}
+
+	cs, err := store.GetChecksum("v5")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cs != "sha256:v5" {
+		t.Errorf("expected checksum sha256:v5, got %s", cs)
+	}
+
+	_, err = store.GetChecksum("v99")
+	if err != nil {
+		t.Fatalf("unexpected error for non-existent key: %v", err)
+	}
+
+	if !store.GetSetVersionFlag() {
+		t.Error("expected versionSet flag to be true after SetVersionAndChecksum")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Test: mockVersionStore AddChecksum and ExistsChecksum
+// ---------------------------------------------------------------------------
+func TestMockVersionStore_Checksums(t *testing.T) {
+	store := newMockVersionStore(1)
+
+	err := store.AddChecksum("key1", "value1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	exists, err := store.ExistsChecksum("key1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !exists {
+		t.Error("expected checksum key1 to exist")
+	}
+
+	exists, err = store.ExistsChecksum("missing")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if exists {
+		t.Error("expected checksum missing to not exist")
+	}
+
+	cs, err := store.GetChecksum("key1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cs != "value1" {
+		t.Errorf("expected checksum value1, got %s", cs)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Test: mockVersionStore GetVersion error propagation
+// ---------------------------------------------------------------------------
+func TestMockVersionStore_GetVersionError(t *testing.T) {
+	store := newMockVersionStore(1)
+	store.getErr = fmt.Errorf("store error")
+
+	_, err := store.GetVersion()
+	if err == nil {
+		t.Fatal("expected error from GetVersion")
+	}
+
+	store.setErr = fmt.Errorf("set error")
+	err = store.SetVersion(5)
+	if err == nil {
+		t.Fatal("expected error from SetVersion")
+	}
+
+	err = store.SetVersionAndChecksum(5, "cs")
+	if err == nil {
+		t.Fatal("expected error from SetVersionAndChecksum")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Test: PostgresVersionStore implements VersionStore interface
+// ---------------------------------------------------------------------------
+func TestPostgresVersionStore_InterfaceCompliance(t *testing.T) {
+	var _ VersionStore = (*PostgresVersionStore)(nil)
+}
+
+// ---------------------------------------------------------------------------
+// Test: NewPostgresVersionStore creates store with nil db
+// ---------------------------------------------------------------------------
+func TestNewPostgresVersionStore_NilDB(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	store := NewPostgresVersionStore(nil, logger.Sugar())
+
+	v, err := store.GetVersion()
+	if err == nil {
+		t.Fatal("expected error with nil db")
+	}
+	if v != 0 {
+		t.Errorf("expected version 0, got %d", v)
+	}
+
+	err = store.SetVersion(1)
+	if err == nil {
+		t.Fatal("expected error setting version with nil db")
 	}
 }

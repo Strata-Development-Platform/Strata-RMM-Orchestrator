@@ -21,8 +21,8 @@ func TestDeploymentController_RecordEvent(t *testing.T) {
 		State:   DeploymentStateInProgress,
 	})
 
-	if ctrl.GetState() != DeploymentStatePending {
-		t.Fatalf("expected state still pending (RecordEvent doesn't change current state), got %v", ctrl.GetState())
+	if ctrl.GetState() != DeploymentStateInProgress {
+		t.Fatalf("expected state in_progress after RecordEvent, got %v", ctrl.GetState())
 	}
 
 	lastEvent := ctrl.GetLastEvent()

@@ -61,6 +61,7 @@ func (c *DeploymentController) RecordEvent(event DeploymentEvent) {
 	defer c.mu.Unlock()
 
 	event.Timestamp = time.Now()
+	c.current = event.State
 	c.events = append(c.events, event)
 	c.lastEvent = &event
 }
