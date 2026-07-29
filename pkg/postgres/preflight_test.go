@@ -91,7 +91,7 @@ func TestRedactCredentials_MultipleCredentials(t *testing.T) {
 }
 
 func TestRedactCredentials_PreflightErrorWithDSN(t *testing.T) {
-	errMsg := fmt.Sprintf("failed to connect: postgresql://admin:myPassword@db:5432/strata: connection refused")
+	errMsg := "failed to connect: postgresql://admin:myPassword@db:5432/strata: connection refused"
 	got := RedactCredentials(errMsg)
 
 	assert.NotContains(t, got, "myPassword")
