@@ -46,10 +46,21 @@ func (v PostgresVersion) LessThan(other PostgresVersion) bool {
 	return v.Patch < other.Patch
 }
 
-var postgresVersionRe = regexp.MustCompile(`^(\d+)\.(\d+)(?:\.(\d+))?`)
+var postgresVersionRe = regexp.MustCompile(`^(\d+)\.(\d+)(?:\.(\d+))?(?:-|$)`)
 
 func parsePostgresVersion(s string) (PostgresVersion, error) {
 	s = strings.TrimSpace(s)
+
+	if idx := strings.Index(s, " (PostgreSQL)"); idx != -1 {
+		s = s[:idx]
+	}
+	if strings.Contains(s, "docker") || strings.Contains(s, "alpine") {
+		return PostgresVersion{}, fmt.Errorf("cannot parse prerelease or docker image version string %q", s)
+	}
+	if idx := strings.IndexByte(s, '-'); idx != -1 {
+		return PostgresVersion{}, fmt.Errorf("cannot parse prerelease version string %q", s)
+	}
+
 	matches := postgresVersionRe.FindStringSubmatch(s)
 	if matches == nil {
 		return PostgresVersion{}, fmt.Errorf("cannot parse version string %q", s)
