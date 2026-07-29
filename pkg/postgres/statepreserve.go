@@ -266,7 +266,7 @@ func (sp *StatePreserver) RestoreSnapshot(ctx context.Context, id string) error 
 	if err != nil {
 		return fmt.Errorf("get database connection for restore lock: %w", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
@@ -579,7 +579,7 @@ func (sp *StatePreserver) getTableStats(ctx context.Context) (map[string]TableSt
 	if err != nil {
 		return nil, fmt.Errorf("query table stats: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	stats := make(map[string]TableStat)
 	for rows.Next() {
@@ -628,7 +628,7 @@ func (sp *StatePreserver) getIndexes(ctx context.Context) ([]IndexStat, error) {
 	if err != nil {
 		return nil, fmt.Errorf("query indexes: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var indexes []IndexStat
 	for rows.Next() {
@@ -681,7 +681,7 @@ func (sp *StatePreserver) getForeignKeys(ctx context.Context) ([]ForeignKeyStat,
 	if err != nil {
 		return nil, fmt.Errorf("query foreign keys: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var foreignKeys []ForeignKeyStat
 	for rows.Next() {
@@ -728,7 +728,7 @@ func (sp *StatePreserver) getSequences(ctx context.Context) ([]SequenceStat, err
 	if err != nil {
 		return nil, fmt.Errorf("query sequences: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var sequences []SequenceStat
 	for rows.Next() {

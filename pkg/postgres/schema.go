@@ -2,34 +2,24 @@ package postgres
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"os"
 	"time"
 )
 
-const DefaultLockID = 0x535452415441524D // "STRATARM" as int64
+const DefaultLockID = int64(0x535452415441524D) // "STRATARM" as safe positive int64
 
-func GetLockID() uint64 {
+func GetLockID() int64 {
 	if env := os.Getenv("STRATA_MIGRATION_LOCK_ID"); env != "" {
-		var id uint64
-		_, err := fmt.Sscanf(env, "%x", &id)
-		if err == nil {
+		var id int64
+		n, err := fmt.Sscanf(env, "%x", &id)
+		if err == nil && n == 1 && id >= 0 {
 			return id
 		}
 	}
-	buf := make([]byte, 8)
-	if _, err := rand.Read(buf); err != nil {
-		return DefaultLockID
-	}
-	id := binary.BigEndian.Uint64(buf)
-	if id == 0 {
-		return DefaultLockID
-	}
-	return id
+	return DefaultLockID
 }
 
 type Migration struct {
@@ -2171,7 +2161,8 @@ var (
 	ErrSchemaVersionConflict = errors.New("schema version mismatch")
 )
 
-var migrationLockID = GetLockID()
+var migrationLockID = GetLockID() // int64, safe for pg_try_advisory_lock
+
 
 func logLockAttempt(schemaVersion int) {
 	fmt.Fprintf(os.Stderr, "[INFO] attempting to acquire migration lock for schema version %d\n", schemaVersion)

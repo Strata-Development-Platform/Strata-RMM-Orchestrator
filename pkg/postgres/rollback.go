@@ -53,7 +53,8 @@ type RollbackEngine struct {
 	dryRunMode       bool
 	currentVersion   int32
 	versionCheckDone atomic.Bool
-	lockConn         *sql.Conn
+	lockConn         dbConnConn
+	lockAcquired     bool
 }
 
 func NewRollbackEngine(db dbConn, logger *zap.SugaredLogger, versionStore VersionStore) *RollbackEngine {
@@ -142,8 +143,8 @@ func (re *RollbackEngine) preCheck(ctx context.Context, fromVersion, toVersion i
 		return nil
 	}
 
-	maxID := int(migrations[len(migrations)-1].ID)
-	if int(fromVersion) > maxID {
+	maxID := migrations[len(migrations)-1].ID
+	if fromVersion > int32(maxID) {
 		return fmt.Errorf("current version %d exceeds maximum migration ID %d; cannot rollback", fromVersion, maxID)
 	}
 
@@ -152,7 +153,7 @@ func (re *RollbackEngine) preCheck(ctx context.Context, fromVersion, toVersion i
 
 func (re *RollbackEngine) defaultVersionDowngrade(ctx context.Context, fromVersion, toVersion int32) error {
 	re.logger.Infow("downgrading schema version", "from", fromVersion, "to", toVersion)
-	if err := re.versionStore.SetVersion(toVersion); err != nil {
+	if err := re.versionStore.SetVersionAndChecksum(toVersion, "pending"); err != nil {
 		return fmt.Errorf("set version: %w", err)
 	}
 	return nil
@@ -318,8 +319,8 @@ func (re *RollbackEngine) validateVersionDowngrade(ctx context.Context, fromVers
 		return nil
 	}
 
-	maxID := int(migrations[len(migrations)-1].ID)
-	if int(toVersion) > maxID {
+	maxID := migrations[len(migrations)-1].ID
+	if toVersion > int32(maxID) {
 		return fmt.Errorf("target version %d exceeds maximum migration ID %d", toVersion, maxID)
 	}
 	return nil
@@ -341,8 +342,8 @@ func (re *RollbackEngine) ValidateRollbackTarget(ctx context.Context, targetVers
 
 	migrations := Migrations()
 	if len(migrations) > 0 {
-		maxID := int(migrations[len(migrations)-1].ID)
-		if int(targetVersion) > maxID {
+		maxID := migrations[len(migrations)-1].ID
+		if targetVersion > int32(maxID) {
 			return fmt.Errorf("target version %d exceeds maximum migration ID %d", targetVersion, maxID)
 		}
 	}
@@ -372,6 +373,7 @@ func (re *RollbackEngine) GetSchemaVersion(ctx context.Context) (int32, error) {
 
 func (re *RollbackEngine) acquireRollbackLock(ctx context.Context) error {
 	if re.db == nil {
+		re.logger.Debugw("skipping rollback lock acquisition (db is nil)")
 		return nil
 	}
 
@@ -382,7 +384,6 @@ func (re *RollbackEngine) acquireRollbackLock(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("get database connection: %w", err)
 	}
-	defer conn.Close()
 
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
@@ -390,6 +391,7 @@ func (re *RollbackEngine) acquireRollbackLock(ctx context.Context) error {
 	for i := 0; i < 5; i++ {
 		select {
 		case <-timeoutCtx.Done():
+			_ = conn.Close()
 			return fmt.Errorf("rollback lock timed out: %w", context.DeadlineExceeded)
 		default:
 		}
@@ -401,9 +403,12 @@ func (re *RollbackEngine) acquireRollbackLock(ctx context.Context) error {
 				<-ticker.C
 				continue
 			}
+			_ = conn.Close()
 			return fmt.Errorf("lock attempt %d/%d: %w", i+1, 5, err)
 		}
 		if acquired {
+			re.lockConn = conn
+			re.lockAcquired = true
 			re.logger.Info("rollback advisory lock acquired")
 			return nil
 		}
@@ -412,27 +417,41 @@ func (re *RollbackEngine) acquireRollbackLock(ctx context.Context) error {
 		}
 	}
 
+	_ = conn.Close()
 	return fmt.Errorf("rollback lock timed out after 5 attempts: %w", ErrLockTimeout)
 }
 
 func (re *RollbackEngine) releaseRollbackLock(ctx context.Context) error {
-	if re.db == nil {
+	if !re.lockAcquired {
 		return nil
 	}
 
-	conn, err := re.db.Conn(ctx)
-	if err != nil {
-		return fmt.Errorf("get connection for lock release: %w", err)
+	if re.lockConn == nil {
+		re.logger.Errorw("rollback lock acquired but connection is nil")
+		re.lockAcquired = false
+		return fmt.Errorf("rollback lock connection unexpectedly nil")
 	}
-	defer conn.Close()
 
 	var unlocked bool
-	err = conn.QueryRowContext(ctx, "SELECT pg_advisory_unlock($1)", rollbackLockID).Scan(&unlocked)
+	err := re.lockConn.QueryRowContext(ctx, "SELECT pg_advisory_unlock($1)", rollbackLockID).Scan(&unlocked)
 	if err != nil {
+		_ = re.lockConn.Close()
+		re.lockConn = nil
+		re.lockAcquired = false
 		return fmt.Errorf("release rollback lock: %w", ErrLockReleaseFailed)
 	}
 	if !unlocked {
+		_ = re.lockConn.Close()
+		re.lockConn = nil
+		re.lockAcquired = false
 		return fmt.Errorf("rollback lock was not held: %w", ErrLockHeld)
+	}
+
+	err = re.lockConn.Close()
+	re.lockConn = nil
+	re.lockAcquired = false
+	if err != nil {
+		re.logger.Errorw("error closing rollback lock connection", "error", err)
 	}
 
 	re.logger.Info("rollback advisory lock released")

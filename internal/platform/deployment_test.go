@@ -152,7 +152,7 @@ func TestDeploymentController_Reset(t *testing.T) {
 	}
 
 	history = ctrl.GetHistory()
-	if history != nil && len(history) != 0 {
+	if len(history) != 0 {
 		t.Errorf("expected empty history after reset, got %d events", len(history))
 	}
 

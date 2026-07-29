@@ -21,7 +21,7 @@ func setupPreserver(t *testing.T) (*StatePreserver, string) {
 
 	backupDir, err := os.MkdirTemp("", "statepreserve-test-*")
 	require.NoError(t, err)
-	t.Cleanup(func() { os.RemoveAll(backupDir) })
+	t.Cleanup(func() { _ = os.RemoveAll(backupDir) })
 
 	ps := NewStatePreserver(nil, sugar, backupDir)
 	return ps, backupDir
@@ -34,7 +34,7 @@ func TestNewStatePreserver(t *testing.T) {
 
 	backupDir, err := os.MkdirTemp("", "statepreserve-test-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(backupDir)
+	defer func() { _ = os.RemoveAll(backupDir) }()
 
 	ps := NewStatePreserver(nil, sugar, backupDir)
 	assert.NotNil(t, ps)
@@ -49,7 +49,7 @@ func TestNewStatePreserverNilDB(t *testing.T) {
 
 	backupDir, err := os.MkdirTemp("", "statepreserve-test-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(backupDir)
+	defer func() { _ = os.RemoveAll(backupDir) }()
 
 	ps := NewStatePreserver(nil, sugar, backupDir)
 	assert.NotNil(t, ps)
@@ -344,7 +344,7 @@ func TestRestoreSnapshotContextCancelled(t *testing.T) {
 
 	backupDir, err := os.MkdirTemp("", "statepreserve-test-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(backupDir)
+	defer func() { _ = os.RemoveAll(backupDir) }()
 
 	ps := NewStatePreserver(nil, sugar, backupDir)
 
@@ -379,7 +379,7 @@ func TestRestoreSnapshotRequiresDB(t *testing.T) {
 
 	backupDir, err := os.MkdirTemp("", "statepreserve-test-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(backupDir)
+	defer func() { _ = os.RemoveAll(backupDir) }()
 
 	ps := NewStatePreserver(nil, sugar, backupDir)
 

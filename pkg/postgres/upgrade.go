@@ -84,7 +84,8 @@ type UpgradeManager struct {
 	upgradeMutex     sync.Mutex
 	currentVersion   int32
 	versionCheckDone atomic.Bool
-	lockConn         *sql.Conn
+	lockConn         dbConnConn
+	lockAcquired     bool
 }
 
 func NewUpgradeManager(db dbConn, logger *zap.SugaredLogger, versionStore VersionStore) *UpgradeManager {
@@ -148,7 +149,7 @@ func (um *UpgradeManager) defaultPreCheck(ctx context.Context, version int32) er
 
 func (um *UpgradeManager) defaultVersionUpgrade(ctx context.Context, version int32) error {
 	um.logger.Infow("updating schema version", "version", version)
-	if err := um.versionStore.SetVersion(version); err != nil {
+	if err := um.versionStore.SetVersionAndChecksum(version, "pending"); err != nil {
 		return fmt.Errorf("set version: %w", err)
 	}
 	return nil
@@ -271,8 +272,8 @@ func (um *UpgradeManager) ValidateTarget(ctx context.Context, targetVersion int3
 
 	migrations := Migrations()
 	if len(migrations) > 0 {
-		maxID := int(migrations[len(migrations)-1].ID)
-		if int(targetVersion) > maxID {
+		maxID := migrations[len(migrations)-1].ID
+		if targetVersion > int32(maxID) {
 			return fmt.Errorf("target version %d exceeds maximum migration ID %d", targetVersion, maxID)
 		}
 		return nil
@@ -306,7 +307,6 @@ func (um *UpgradeManager) acquireUpgradeLock(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("get database connection: %w", err)
 	}
-	defer c.Close()
 
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
@@ -314,6 +314,7 @@ func (um *UpgradeManager) acquireUpgradeLock(ctx context.Context) error {
 	for i := 0; i < 5; i++ {
 		select {
 		case <-timeoutCtx.Done():
+			_ = c.Close()
 			return fmt.Errorf("upgrade lock timed out: %w", context.DeadlineExceeded)
 		default:
 		}
@@ -325,9 +326,12 @@ func (um *UpgradeManager) acquireUpgradeLock(ctx context.Context) error {
 				<-ticker.C
 				continue
 			}
+			_ = c.Close()
 			return fmt.Errorf("lock attempt %d/%d: %w", i+1, 5, err)
 		}
 		if acquired {
+			um.lockConn = c
+			um.lockAcquired = true
 			um.logger.Info("upgrade advisory lock acquired")
 			return nil
 		}
@@ -336,19 +340,34 @@ func (um *UpgradeManager) acquireUpgradeLock(ctx context.Context) error {
 		}
 	}
 
+	_ = c.Close()
 	return fmt.Errorf("upgrade lock timed out after 5 attempts: %w", ErrLockTimeout)
 }
 
 func (um *UpgradeManager) releaseUpgradeLock(ctx context.Context) error {
-	c, err := um.db.Conn(ctx)
-	if err != nil {
-		return fmt.Errorf("get connection for lock release: %w", err)
+	if !um.lockAcquired {
+		return nil
 	}
-	defer c.Close()
 
-	_, err = c.ExecContext(ctx, "SELECT pg_advisory_unlock($1)", upgradeLockID)
+	if um.lockConn == nil {
+		um.logger.Errorw("upgrade lock acquired but connection is nil")
+		um.lockAcquired = false
+		return fmt.Errorf("upgrade lock connection unexpectedly nil")
+	}
+
+	_, err := um.lockConn.ExecContext(ctx, "SELECT pg_advisory_unlock($1)", upgradeLockID)
 	if err != nil {
+		_ = um.lockConn.Close()
+		um.lockConn = nil
+		um.lockAcquired = false
 		return fmt.Errorf("release upgrade lock: %w", ErrLockReleaseFailed)
+	}
+
+	err = um.lockConn.Close()
+	um.lockConn = nil
+	um.lockAcquired = false
+	if err != nil {
+		um.logger.Errorw("error closing upgrade lock connection", "error", err)
 	}
 
 	um.logger.Info("upgrade advisory lock released")
