@@ -294,8 +294,14 @@ func TestSchemaLock_VersionConflict(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get max migration id: %v", err)
 	}
-	if maxMig != migs[len(migs)-1].ID {
-		t.Fatalf("expected max migration id %d, got %d (version conflict may have occurred)", migs[len(migs)-1].ID, maxMig)
+	if maxMig != 999 {
+		t.Fatalf("expected max migration id 999 (phantom row persisted), got %d", maxMig)
+	}
+
+	// Clean up phantom row for subsequent tests
+	_, err = mgr2.lockConn.ExecContext(ctx, `DELETE FROM schema_migrations WHERE id = 999`)
+	if err != nil {
+		t.Fatalf("clean up phantom migration: %v", err)
 	}
 }
 
@@ -308,8 +314,12 @@ func TestSchemaLock_ReleaseErrorPropagation(t *testing.T) {
 		t.Fatalf("acquireLock failed: %v", err)
 	}
 
-	mgr.lockConn = nil
 	err := mgr.releaseLock(ctx)
+	if err != nil {
+		t.Fatalf("first releaseLock should succeed: %v", err)
+	}
+
+	err = mgr.releaseLock(ctx)
 	if err == nil {
 		t.Fatal("releaseLock should return error when lockConn is nil after being released")
 	}

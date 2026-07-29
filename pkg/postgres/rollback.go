@@ -144,7 +144,7 @@ func (re *RollbackEngine) preCheck(ctx context.Context, fromVersion, toVersion i
 	}
 
 	maxID := migrations[len(migrations)-1].ID
-	if fromVersion > int32(maxID) {
+	if int(fromVersion) > maxID {
 		return fmt.Errorf("current version %d exceeds maximum migration ID %d; cannot rollback", fromVersion, maxID)
 	}
 
@@ -356,7 +356,7 @@ func (re *RollbackEngine) validateVersionDowngrade(ctx context.Context, fromVers
 	}
 
 	maxID := migrations[len(migrations)-1].ID
-	if toVersion > int32(maxID) {
+	if int(toVersion) > maxID {
 		return fmt.Errorf("target version %d exceeds maximum migration ID %d", toVersion, maxID)
 	}
 	return nil
@@ -379,7 +379,7 @@ func (re *RollbackEngine) ValidateRollbackTarget(ctx context.Context, targetVers
 	migrations := Migrations()
 	if len(migrations) > 0 {
 		maxID := migrations[len(migrations)-1].ID
-		if targetVersion > int32(maxID) {
+		if int(targetVersion) > maxID {
 			return fmt.Errorf("target version %d exceeds maximum migration ID %d", targetVersion, maxID)
 		}
 	}

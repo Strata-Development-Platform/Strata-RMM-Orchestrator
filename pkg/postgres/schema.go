@@ -2219,7 +2219,7 @@ func (m *SchemaManager) acquireLock(ctx context.Context, schemaVersion int) erro
 
 func (m *SchemaManager) releaseLock(ctx context.Context) error {
 	if m.lockConn == nil {
-		return nil
+		return fmt.Errorf("lock already released")
 	}
 	_, err := m.lockConn.ExecContext(ctx, "SELECT pg_advisory_unlock($1)", migrationLockID)
 	if err != nil {
