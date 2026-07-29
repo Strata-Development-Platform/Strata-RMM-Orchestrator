@@ -42,6 +42,44 @@ jobs:
           cache: true
       - run: go vet ./...
 
+  phase8c-static-validation:
+    name: Phase 8C — Static Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate shell scripts with shellcheck
+        uses: ludeeus/action-shellcheck@master
+        with:
+          scandir: ./scripts
+          severity: error
+      - name: Validate systemd unit files
+        run: |
+          if command -v systemd-analyze &>/dev/null; then
+            systemd-analyze verify deploy/*.service 2>/dev/null || echo "systemd-analyze warnings (non-fatal)"
+          fi
+      - name: Validate YAML syntax
+        run: python3 scripts/validate_yaml.py
+      - name: Validate Docker Compose file
+        run: |
+          python3 -c "import yaml; yaml.safe_load(open('deploy/docker/docker-compose.yml'))"
+      - name: Validate Go code
+        run: |
+          go build ./pkg/backup/...
+          go test ./pkg/backup/... -run "TestJetStream|TestObjectStorage" -count=1
+
+  phase8c-docs-check:
+    name: Phase 8C — Docs Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify backup documentation exists
+        run: |
+          for f in docs/BACKUP.md docs/RESTORE.md docs/DISASTER_RECOVERY.md; do
+            if [ ! -f "$f" ]; then
+              echo "ERROR: Missing required doc: $f"
+              exit 1
+            fi
+
   test:
     name: Test
     runs-on: ubuntu-latest
@@ -947,9 +985,54 @@ jobs:
           python3 -c "import yaml; yaml.safe_load(open('deploy/kots/config.yaml')); print('OK: Kots config.yaml valid')"
       - name: Verify deployment docs reference correct templates
         run: |
-          for f in docs/DEPLOYMENT.md docs/UPGRADE.md docs/ROLLBACK.md; do
-            if [ -f "$f" ]; then
-              echo "OK: $f ($(wc -l < "$f") lines)"
-              grep -l "helm\|docker-compose\|systemd\|kots" "$f" > /dev/null 2>&1 && echo "  -> contains deployment template references"
+           for f in docs/DEPLOYMENT.md docs/UPGRADE.md docs/ROLLBACK.md; do
+             if [ -f "$f" ]; then
+               echo "OK: $f ($(wc -l < "$f") lines)"
+               grep -l "helm\|docker-compose\|systemd\|kots" "$f" > /dev/null 2>&1 && echo "  -> contains deployment template references"
+             fi
+           done
+
+  phase8c-static-validation:
+    name: Phase 8C — Static Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate shell scripts with shellcheck
+        uses: ludeeus/action-shellcheck@master
+        with:
+          scandir: ./scripts
+          severity: error
+      - name: Validate systemd unit files
+        run: |
+          if command -v systemd-analyze &>/dev/null; then
+            systemd-analyze verify deploy/*.service 2>/dev/null || echo "systemd-analyze warnings (non-fatal)"
+          fi
+      - name: Validate YAML syntax
+        run: python3 scripts/validate_yaml.py
+      - name: Validate Docker Compose file
+        run: |
+          python3 -c "import yaml; yaml.safe_load(open('deploy/docker/docker-compose.yml'))"
+
+  phase8c-docs-check:
+    name: Phase 8C — Docs Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify backup documentation exists
+        run: |
+          for f in docs/BACKUP.md docs/RESTORE.md docs/DISASTER_RECOVERY.md; do
+            if [ ! -f "$f" ]; then
+              echo "ERROR: Missing required doc: $f"
+              exit 1
+            fi
+            echo "OK: $f ($(wc -l < "$f") lines)"
+          done
+      - name: Verify docs contain encryption references
+        run: |
+          for f in docs/BACKUP.md docs/RESTORE.md docs/DISASTER_RECOVERY.md; do
+            if ! grep -q "AES-256-GCM\|authenticated encryption" "$f"; then
+              echo "ERROR: $f missing encryption documentation"
+              exit 1
             fi
           done
+          echo "All docs reference authenticated encryption"

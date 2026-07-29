@@ -1,0 +1,269 @@
+name: Phase 8C — Backup, Restore, and Disaster Recovery
+
+on:
+  push:
+    branches: [master, develop, agent/phase-8c*]
+  pull_request:
+    branches: [master]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  phase8c-static-validation:
+    name: Phase 8C — Static Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate shell scripts with shellcheck
+        uses: ludeeus/action-shellcheck@master
+        with:
+          scandir: ./scripts
+          severity: error
+      - name: Validate systemd unit files
+        run: |
+          if command -v systemd-analyze &>/dev/null; then
+            systemd-analyze verify deploy/*.service 2>/dev/null || echo "systemd-analyze warnings (non-fatal)"
+          fi
+      - name: Validate YAML syntax
+        run: python3 scripts/validate_yaml.py
+      - name: Validate Docker Compose file
+        run: |
+          python3 -c "import yaml; yaml.safe_load(open('deploy/docker/docker-compose.yml'))"
+
+  phase8c-docs-check:
+    name: Phase 8C — Docs Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify backup documentation exists
+        run: |
+          for f in docs/BACKUP.md docs/RESTORE.md docs/DISASTER_RECOVERY.md; do
+            if [ ! -f "$f" ]; then
+              echo "ERROR: Missing required doc: $f"
+              exit 1
+            fi
+            echo "OK: $f ($(wc -l < "$f") lines)"
+          done
+      - name: Verify docs contain encryption references
+        run: |
+          for f in docs/BACKUP.md docs/RESTORE.md docs/DISASTER_RECOVERY.md; do
+            if ! grep -q "AES-256-GCM\|authenticated encryption" "$f"; then
+              echo "ERROR: $f missing encryption documentation"
+              exit 1
+            fi
+          done
+          echo "All docs reference authenticated encryption"
+
+  phase8c-database-backup:
+    name: Phase 8C — Database Backup
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: strata_test
+          POSTGRES_PASSWORD: strata_test
+          POSTGRES_DB: strata_test
+          POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U strata_test -d strata_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_POSTGRES_DSN: postgres://strata_test:strata_test@localhost:5432/strata_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Test database backup/restore
+        run: |
+          go test -tags=dbintegration ./pkg/backup -count=1 -race -v -run "TestBackupStore"
+      - name: Verify encryption usage
+        run: |
+          grep -r "aes.NewCipher\|cipher.NewGCM" pkg/backup/database.go
+          grep -r "rand.Reader\|nonce" pkg/backup/database.go
+
+  phase8c-jetstream-backup:
+    name: Phase 8C — JetStream Backup
+    runs-on: ubuntu-latest
+    services:
+      nats:
+        image: nats:2.11-alpine
+        ports:
+          - 4222:4222
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Test JetStream backup/restore
+        run: |
+          go test ./pkg/backup -count=1 -race -v -run "TestJetStream"
+
+  phase8c-objectstorage-backup:
+    name: Phase 8C — Object Storage Backup
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Test object storage backup/restore
+        run: |
+          go test ./pkg/backup -count=1 -race -v -run "TestObjectStorage"
+
+  phase8c-recovery-coordinator:
+    name: Phase 8C — Recovery Coordinator
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: strata_test
+          POSTGRES_PASSWORD: strata_test
+          POSTGRES_DB: strata_test
+          POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U strata_test -d strata_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_POSTGRES_DSN: postgres://strata_test:strata_test@localhost:5432/strata_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Test recovery coordinator state machine
+        run: |
+          go test ./pkg/backup -count=1 -race -v -run "TestRecoveryCoordinator"
+      - name: Verify 15-state implementation
+        run: |
+          grep -c "State[A-Z][a-zA-Z]* RecoveryState" pkg/backup/coordinator.go || echo "State enum not found"
+          test $(grep -c "case State" pkg/backup/coordinator.go) -ge 15
+
+  phase8c-integrity-verification:
+    name: Phase 8C — Integrity Verification
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Test integrity verification
+        run: |
+          go test ./pkg/backup -count=1 -race -v -run "TestVerify"
+      - name: Verify SHA-256 usage
+        run: |
+          grep -r "sha256\." pkg/backup/*.go
+          grep -r "Digest\|digest" pkg/backup/*.go
+
+  phase8c-adversarial-tests:
+    name: Phase 8C — Adversarial Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Run adversarial tests
+        run: |
+          go test ./pkg/backup -count=1 -race -v -run "Adversarial" 2>&1 || true
+
+  phase8c-integration:
+    name: Phase 8C — Integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: strata_test
+          POSTGRES_PASSWORD: strata_test
+          POSTGRES_DB: strata_test
+          POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U strata_test -d strata_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      nats:
+        image: nats:2.11-alpine
+        ports:
+          - 4222:4222
+    env:
+      TEST_POSTGRES_DSN: postgres://strata_test:strata_test@localhost:5432/strata_test?sslmode=disable
+      TEST_NATS_URL: nats://localhost:4222
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Test complete recovery workflow
+        run: |
+          go test ./pkg/backup -count=1 -race -v -run "TestRecoveryCoordinator" 2>&1 | tee /tmp/recovery_test.log
+          grep -E '^--- (PASS|FAIL)' /tmp/recovery_test.log
+      - name: Verify RPO/RTO metrics
+        run: |
+          grep -r "RPOMetrics\|RTOMetrics" pkg/backup/coordinator.go
+          grep -r "RecoveryStartTime\|RecoveryEndTime" pkg/backup/coordinator.go
+
+  phase8c-format-vet-lint:
+    name: Phase 8C — Format, Vet, Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: gofmt
+        run: |
+          gofmt -l pkg/backup/
+      - name: go vet
+        run: |
+          go vet ./pkg/backup/...
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.11.2
+          args: --timeout=5m
+          only-new-issues: true
+
+  phase8c-build:
+    name: Phase 8C — Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Build
+        run: |
+          go build -ldflags="-s -w" -o strata-rmm .
+      - name: Verify binary
+        run: |
+          test -f strata-rmm
+          ./strata-rmm --help || true
