@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
-	"golang.org/x/sys/unix"
 )
 
 const minDiskSpaceMB = 500
@@ -318,16 +317,13 @@ func (pc *PreflightChecker) checkDiskSpaceOnDir(dir string) PreflightCheck {
 }
 
 func (pc *PreflightChecker) reportDiskSpace(dir string) PreflightCheck {
-	var stat unix.Statfs_t
-	if err := unix.Statfs(dir, &stat); err != nil {
+	availableMB, totalMB, err := diskSpaceOnDir(dir)
+	if err != nil {
 		return PreflightCheck{
 			Status:  StatusWarn,
-			Message: fmt.Sprintf("statfs failed for %q: %v (skipping disk space check)", dir, err),
+			Message: fmt.Sprintf("disk space check failed for %q: %v (skipping)", dir, err),
 		}
 	}
-
-	availableMB := int64(stat.Bavail) * int64(stat.Bsize) / 1024 / 1024
-	totalMB := int64(stat.Blocks) * int64(stat.Bsize) / 1024 / 1024
 
 	if availableMB < minDiskSpaceMB {
 		return PreflightCheck{
@@ -771,7 +767,7 @@ func (pc *PreflightChecker) CheckCandidateArtifact() PreflightCheck {
 		}
 	}
 
-	info, err := os.Stat(artifactPath)
+	info, err := os.Stat(artifactPath) // #nosec G703 - artifact path from deployment env var, not user input
 	if err != nil {
 		if os.IsNotExist(err) {
 			return PreflightCheck{
@@ -843,7 +839,7 @@ func computeChecksumType(checksum string) string {
 }
 
 func computeFileChecksum(path string) (string, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) // #nosec G703 - path from deployment artifact context, validated before use
 	if err != nil {
 		return "", err
 	}

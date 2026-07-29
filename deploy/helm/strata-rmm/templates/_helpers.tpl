@@ -29,7 +29,7 @@ app.kubernetes.io/name: {{ include "strata-rmm.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
-{{- define "strata-rmmm.serviceAccountName" -}}
+{{- define "strata-rmm.serviceAccountName" -}}
 {{- if .Values.orchestrator.serviceAccount.create }}
 {{- default (include "strata-rmm.fullname" .) .Values.orchestrator.serviceAccount.name }}
 {{- else }}

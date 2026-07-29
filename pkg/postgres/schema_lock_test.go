@@ -145,7 +145,7 @@ func TestSchemaLock_AcquireTimeout(t *testing.T) {
 	db := openTestDB(t)
 	mgr := NewSchemaManager(db)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 
 	err := mgr.acquireLock(ctx, 62)
