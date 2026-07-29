@@ -226,12 +226,22 @@ func NewCommand(ctx context.Context, version, commit string, logger *zap.Logger)
 				cfg.HTTP.ReadTimeout, cfg.HTTP.WriteTimeout, cfg.HTTP.IdleTimeout,
 				cfg.HTTP.MaxBodySizeBytes, cfg.HTTP.CORSOrigins,
 			)
+			deploymentCtrl := platform.NewDeploymentController()
+
 			api.WithReleaseServer(releaseServer).
 				WithAlertEngine(alertEngine).
 				WithVulnEngine(vulnEngine).
 				WithCVESyncEngine(cveSync).
 				WithThirdPartyEngine(thirdParty).
-				WithUpdateManager(updateMgr)
+				WithUpdateManager(updateMgr).
+				WithDeploymentController(deploymentCtrl)
+
+			api.RegisterHealth("deployment", func(ctx context.Context) error {
+				if deploymentCtrl.GetState() == platform.DeploymentStateFailed {
+					return fmt.Errorf("deployment in failed state")
+				}
+				return nil
+			})
 
 			api.RegisterHealth("db", func(ctx context.Context) error {
 				pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
@@ -386,98 +396,101 @@ func NewUpdateCommand(ctx context.Context, version string, logger *zap.Logger) *
 	return cmd
 }
 
-type preflightResult struct {
-	Check  string `json:"check"`
-	Pass   bool   `json:"pass"`
-	Error  string `json:"error,omitempty"`
-}
-
 func newPreflightCommand(logger *zap.Logger) *cobra.Command {
 	return &cobra.Command{
 		Use:   "preflight",
 		Short: "Validate deployment prerequisites",
-		Long:  "Validates configuration, database, NATS, JetStream, and migration state. Exits with structured JSON on stdout.",
+		Long:  "Validates configuration, database, NATS, JetStream, storage, secrets, disk, and migration state. Exits with structured JSON on stdout.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			var results []preflightResult
-			cfgValid := false
-
+			// Load configuration
 			cfg, err := config.LoadOrchestratorConfig()
 			if err != nil {
-				results = append(results, preflightResult{Check: "config", Pass: false, Error: err.Error()})
-			} else {
-				if err := cfg.Validate(); err != nil {
-					results = append(results, preflightResult{Check: "config", Pass: false, Error: err.Error()})
-				} else {
-					results = append(results, preflightResult{Check: "config", Pass: true})
-					cfgValid = true
-				}
+				logger.Error("failed to load config", zap.Error(err))
+				fmt.Printf(`{"results":[{"name":"config","status":"fail","message":"failed to load config","error":"%s"}],"warnings":0,"failures":1,"pass":false,"timestamp":"%s"}`+"\n",
+					postgres.RedactCredentials(err.Error()), time.Now().UTC().Format(time.RFC3339))
+				return fmt.Errorf("preflight checks failed")
 			}
 
-			if cfgValid {
-				db, err := timescale.NewClient(cmd.Context(), cfg.DB.DSN)
-				if err != nil {
-					results = append(results, preflightResult{Check: "database", Pass: false, Error: err.Error()})
-				} else {
-					pingCtx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
-					if err := db.DB().PingContext(pingCtx); err != nil {
-						results = append(results, preflightResult{Check: "database", Pass: false, Error: err.Error()})
-					} else {
-						results = append(results, preflightResult{Check: "database", Pass: true})
-					}
-					cancel()
+			// Validate configuration
+			if err := cfg.Validate(); err != nil {
+				logger.Error("config validation failed", zap.Error(err))
+				fmt.Printf(`{"results":[{"name":"config","status":"fail","message":"validation failed","error":"%s"}],"warnings":0,"failures":1,"pass":false,"timestamp":"%s"}`+"\n",
+					postgres.RedactCredentials(err.Error()), time.Now().UTC().Format(time.RFC3339))
+				return fmt.Errorf("preflight checks failed")
+			}
 
-					var migrationCount int
-					if err := db.DB().QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&migrationCount); err == nil {
-						results = append(results, preflightResult{
-							Check: "migrations",
-							Pass:  true,
-							Error: fmt.Sprintf("%d migrations applied", migrationCount),
-						})
-					} else {
-						results = append(results, preflightResult{Check: "migrations", Pass: true, Error: "no migrations table yet"})
-					}
+			// Build orchestrator config subset for preflight
+			orchCfg := &postgres.OrchestratorConfig{
+				NATSURL:         cfg.NATS.URL,
+				NATSToken:       cfg.NATS.Token,
+				NATSTLSEnabled:  cfg.NATS.TLSEnabled,
+				DBDSN:           cfg.DB.DSN,
+				DBMaxOpenConns:  cfg.DB.MaxOpenConns,
+				DBMaxIdleConns:  cfg.DB.MaxIdleConns,
+				DBConnMaxLifetime: cfg.DB.ConnMaxLifetime,
+				StorageBackend:  cfg.Storage.Backend,
+				StorageBucket:   cfg.Storage.Bucket,
+				StorageEndpoint: cfg.Storage.Endpoint,
+				StorageAccessKey: cfg.Storage.AccessKey,
+				StorageSecretKey: cfg.Storage.SecretKey,
+				StorageUseSSL:   cfg.Storage.UseSSL,
+				JWTSecret:       cfg.JWT.Secret,
+			}
+
+			// Connect to database
+			db, err := timescale.NewClient(cmd.Context(), cfg.DB.DSN)
+			if err != nil {
+				logger.Error("failed to connect to database", zap.Error(err))
+			}
+			defer func() {
+				if db != nil {
 					db.Close()
 				}
+			}()
 
-				nc, err := connectNATS(cfg)
+			// Connect to NATS
+			var nc *nats.Conn
+			if cfg.NATS.URL != "" {
+				nc, err = connectNATS(cfg)
 				if err != nil {
-					results = append(results, preflightResult{Check: "nats", Pass: false, Error: err.Error()})
+					logger.Error("failed to connect to NATS", zap.Error(err))
 				} else {
-					results = append(results, preflightResult{Check: "nats", Pass: true})
-					js, jsErr := nc.JetStream()
-					if jsErr != nil {
-						results = append(results, preflightResult{Check: "jetstream", Pass: false, Error: jsErr.Error()})
-					} else {
-						if _, accErr := js.AccountInfo(); accErr != nil {
-							results = append(results, preflightResult{Check: "jetstream", Pass: false, Error: accErr.Error()})
-						} else {
-							results = append(results, preflightResult{Check: "jetstream", Pass: true})
-						}
-					}
-					nc.Close()
+					defer nc.Close()
 				}
-			} else {
-				results = append(results, preflightResult{Check: "database", Pass: false, Error: "skipped: config load failed"})
-				results = append(results, preflightResult{Check: "nats", Pass: false, Error: "skipped: config load failed"})
-				results = append(results, preflightResult{Check: "jetstream", Pass: false, Error: "skipped: config load failed"})
-				results = append(results, preflightResult{Check: "migrations", Pass: false, Error: "skipped: config load failed"})
 			}
 
-			allPass := true
-			for _, r := range results {
-				if !r.Pass {
-					allPass = false
-					break
+			// Run preflight checks using the shared preflight checker
+			preflightChecker := postgres.NewPreflightChecker(db.DB(), orchCfg, nc)
+			result := preflightChecker.RunAll()
+
+			// Redact sensitive data in output
+			redactedResult := &postgres.PreflightResult{
+				Pass:      result.Pass,
+				Warnings:  result.Warnings,
+				Failures:  result.Failures,
+				Timestamp: result.Timestamp,
+				Checks:    make([]postgres.PreflightCheck, len(result.Checks)),
+			}
+			for i, c := range result.Checks {
+				redactedResult.Checks[i] = postgres.PreflightCheck{
+					Name:    c.Name,
+					Status:  c.Status,
+					Message: postgres.RedactCredentials(c.Message),
+					Error:   postgres.RedactCredentials(c.Error),
 				}
 			}
+
 			output := map[string]interface{}{
-				"results": results,
-				"pass":    allPass,
+				"results": redactedResult.Checks,
+				"warnings": redactedResult.Warnings,
+				"failures": redactedResult.Failures,
+				"pass":     redactedResult.Pass,
+				"timestamp": redactedResult.Timestamp.Format(time.RFC3339),
 			}
 			data, _ := json.MarshalIndent(output, "", "  ")
 			fmt.Println(string(data))
 
-			if !allPass {
+			if !redactedResult.Pass {
 				return fmt.Errorf("preflight checks failed")
 			}
 			return nil

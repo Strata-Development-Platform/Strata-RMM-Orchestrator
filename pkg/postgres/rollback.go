@@ -152,26 +152,74 @@ func (re *RollbackEngine) preCheck(ctx context.Context, fromVersion, toVersion i
 }
 
 func (re *RollbackEngine) defaultVersionDowngrade(ctx context.Context, fromVersion, toVersion int32) error {
-	re.logger.Infow("downgrading schema version", "from", fromVersion, "to", toVersion)
-	if err := re.versionStore.SetVersionAndChecksum(toVersion, "pending"); err != nil {
-		return fmt.Errorf("set version: %w", err)
+	re.logger.Infow("validating version downgrade path", "from", fromVersion, "to", toVersion)
+	if err := re.ValidateRollbackTarget(ctx, toVersion); err != nil {
+		return fmt.Errorf("validate downgrade: %w", err)
 	}
 	return nil
 }
 
 func (re *RollbackEngine) defaultDataRollback(ctx context.Context, fromVersion, toVersion int32) error {
-	re.logger.Infow("running data rollback", "from", fromVersion, "to", toVersion)
+	if re.lockConn == nil {
+		return fmt.Errorf("no database connection for data rollback")
+	}
+
+	migrations := Migrations()
+	if len(migrations) == 0 {
+		return fmt.Errorf("no migrations available for rollback")
+	}
+
+	for i := len(migrations) - 1; i >= 0; i-- {
+		m := migrations[i]
+		if m.ID <= int(toVersion) || m.ID > int(fromVersion) {
+			continue
+		}
+
+		re.logger.Infow("applying migration rollback", "id", m.ID, "name", m.Name)
+
+		if m.Down != "" {
+			if _, err := re.lockConn.ExecContext(ctx, m.Down); err != nil {
+				return fmt.Errorf("rollback migration %d (%s): %w", m.ID, m.Name, err)
+			}
+		}
+
+		if _, err := re.lockConn.ExecContext(ctx,
+			`DELETE FROM schema_migrations WHERE id = $1`,
+			m.ID,
+		); err != nil {
+			return fmt.Errorf("remove migration %d from history: %w", m.ID, err)
+		}
+	}
+
+	if err := re.versionStore.SetVersion(toVersion); err != nil {
+		return fmt.Errorf("update version store after rollback: %w", err)
+	}
+
+	re.logger.Infow("data rollback completed", "from", fromVersion, "to", toVersion)
 	return nil
 }
 
 func (re *RollbackEngine) defaultPostRollback(ctx context.Context, fromVersion, toVersion int32) error {
-	re.logger.Infow("running post-rollback checks", "from", fromVersion, "to", toVersion)
+	storedVersion, err := re.versionStore.GetVersion()
+	if err != nil {
+		return fmt.Errorf("query stored version: %w", err)
+	}
+
+	if storedVersion != toVersion {
+		return fmt.Errorf("rollback version mismatch: expected %d, got %d", toVersion, storedVersion)
+	}
+
+	re.logger.Infow("post-rollback verification passed", "verified_version", toVersion)
 	return nil
 }
 
 func (re *RollbackEngine) defaultFinalizeRollback(ctx context.Context, fromVersion, toVersion int32) error {
-	re.logger.Infow("finalizing rollback", "from", fromVersion, "to", toVersion)
+	checksum := fmt.Sprintf("sha256:v%d", toVersion)
+	if err := re.versionStore.SetVersionAndChecksum(toVersion, checksum); err != nil {
+		return fmt.Errorf("commit rollback version: %w", err)
+	}
 	re.versionCheckDone.Store(false)
+	re.logger.Infow("rollback finalized", "from", fromVersion, "to", toVersion, "checksum", checksum)
 	return nil
 }
 
@@ -232,15 +280,10 @@ func (re *RollbackEngine) RunRollback(ctx context.Context, targetVersion int32) 
 		result.Duration = time.Since(startTime)
 		return result, result.Error
 	}
-
-	lockReleased := false
 	defer func() {
-		if !lockReleased {
-			if releaseErr := re.releaseRollbackLock(ctx); releaseErr != nil {
-				re.logger.Errorw("failed to release rollback lock", "error", releaseErr)
-			}
+		if releaseErr := re.releaseRollbackLock(ctx); releaseErr != nil {
+			re.logger.Errorw("failed to release rollback lock", "error", releaseErr)
 		}
-		lockReleased = true
 	}()
 
 	if err := re.ValidateRollbackTarget(ctx, targetVersion); err != nil {
@@ -281,13 +324,6 @@ func (re *RollbackEngine) RunRollback(ctx context.Context, targetVersion int32) 
 		}
 
 		result.StepsCompleted = append(result.StepsCompleted, stepLabel)
-	}
-
-	if !re.dryRunMode {
-		lockReleased = true
-		if releaseErr := re.releaseRollbackLock(ctx); releaseErr != nil {
-			re.logger.Errorw("failed to release rollback lock", "error", releaseErr)
-		}
 	}
 
 	result.Success = true

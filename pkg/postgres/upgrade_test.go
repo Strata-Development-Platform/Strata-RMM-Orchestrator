@@ -19,7 +19,7 @@ func (m mockResult) RowsAffected() (int64, error)  { return 0, nil }
 
 // mockRow implements sql.Scanner for testing.
 type mockRow struct {
-	err   error
+	err    error
 	values []interface{}
 }
 
@@ -43,6 +43,14 @@ func (r *mockRow) Scan(dest ...interface{}) error {
 			case *int64:
 				if v, ok := r.values[i].(int64); ok {
 					*d = v
+				}
+			case *int32:
+				if v, ok := r.values[i].(int32); ok {
+					*d = v
+				} else if v, ok := r.values[i].(int64); ok {
+					*d = int32(v)
+				} else if v, ok := r.values[i].(int); ok {
+					*d = int32(v)
 				}
 			case *interface{}:
 				*d = r.values[i]

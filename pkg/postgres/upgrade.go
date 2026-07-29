@@ -143,31 +143,110 @@ func (um *UpgradeManager) runDefaultPhase(ctx context.Context, phase UpgradePhas
 }
 
 func (um *UpgradeManager) defaultPreCheck(ctx context.Context, version int32) error {
-	um.logger.Infow("running pre-check validations", "target_version", version)
+	currentVersion, err := um.GetSchemaVersion(ctx)
+	if err != nil {
+		return fmt.Errorf("get current version: %w", err)
+	}
+
+	migrations := Migrations()
+	if len(migrations) == 0 {
+		return fmt.Errorf("no migrations available; cannot upgrade")
+	}
+
+	maxID := migrations[len(migrations)-1].ID
+	if version > int32(maxID) {
+		return fmt.Errorf("target version %d exceeds maximum migration ID %d", version, maxID)
+	}
+
+	found := false
+	for _, m := range migrations {
+		if m.ID == int(version) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("target version %d is not a valid migration ID", version)
+	}
+
+	if currentVersion >= version {
+		return fmt.Errorf("current version %d is not less than target %d", currentVersion, version)
+	}
+
+	um.logger.Infow("pre-check passed", "current_version", currentVersion, "target_version", version, "migration_count", len(migrations))
 	return nil
 }
 
 func (um *UpgradeManager) defaultVersionUpgrade(ctx context.Context, version int32) error {
-	um.logger.Infow("updating schema version", "version", version)
-	if err := um.versionStore.SetVersionAndChecksum(version, "pending"); err != nil {
-		return fmt.Errorf("set version: %w", err)
+	um.logger.Infow("validating version upgrade path", "target_version", version)
+	if err := um.ValidateTarget(ctx, version); err != nil {
+		return fmt.Errorf("validate version upgrade: %w", err)
 	}
 	return nil
 }
 
 func (um *UpgradeManager) defaultDataMigration(ctx context.Context, version int32) error {
-	um.logger.Infow("running default data migration", "version", version)
+	currentVersion, err := um.GetSchemaVersion(ctx)
+	if err != nil {
+		return fmt.Errorf("get current version: %w", err)
+	}
+
+	migrations := Migrations()
+	if len(migrations) == 0 {
+		return fmt.Errorf("no migrations available for data migration")
+	}
+
+	for _, m := range migrations {
+		if m.ID <= int(currentVersion) || m.ID > int(version) {
+			continue
+		}
+
+		um.logger.Infow("applying migration", "id", m.ID, "name", m.Name)
+
+		if m.Up != "" {
+			if _, err := um.lockConn.ExecContext(ctx, m.Up); err != nil {
+				return fmt.Errorf("apply migration %d (%s): %w", m.ID, m.Name, err)
+			}
+		}
+
+		if _, err := um.lockConn.ExecContext(ctx,
+			`INSERT INTO schema_migrations (id, name) VALUES ($1, $2)
+			 ON CONFLICT (id) DO NOTHING`,
+			m.ID, m.Name,
+		); err != nil {
+			return fmt.Errorf("record migration %d: %w", m.ID, err)
+		}
+
+		if err := um.versionStore.SetVersion(int32(m.ID)); err != nil {
+			return fmt.Errorf("update version store for migration %d: %w", m.ID, err)
+		}
+	}
+
+	um.logger.Infow("data migration completed", "from_version", currentVersion, "to_version", version)
 	return nil
 }
 
 func (um *UpgradeManager) defaultPostUpgrade(ctx context.Context, version int32) error {
-	um.logger.Infow("running post-upgrade checks", "version", version)
+	storedVersion, err := um.versionStore.GetVersion()
+	if err != nil {
+		return fmt.Errorf("query stored version: %w", err)
+	}
+
+	if storedVersion != version {
+		return fmt.Errorf("stored version %d does not match target %d", storedVersion, version)
+	}
+
+	um.logger.Infow("post-upgrade verification passed", "verified_version", version)
 	return nil
 }
 
 func (um *UpgradeManager) defaultFinalize(ctx context.Context, version int32) error {
-	um.logger.Infow("finalizing upgrade", "version", version)
+	checksum := fmt.Sprintf("sha256:v%d", version)
+	if err := um.versionStore.SetVersionAndChecksum(version, checksum); err != nil {
+		return fmt.Errorf("commit final version: %w", err)
+	}
 	um.versionCheckDone.Store(false)
+	um.logger.Infow("upgrade finalized", "version", version, "checksum", checksum)
 	return nil
 }
 
