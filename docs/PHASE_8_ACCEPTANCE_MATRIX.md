@@ -45,25 +45,38 @@ Every Phase 8 implementation PR must:
 
 ## Phase 8A — Configuration and Startup Hardening
 
-Phase 8A status is intentionally separated from the program-wide A8-01…A8-26 gates above. “Implemented” is not “accepted” until exact-head CI and the linked evidence are terminal and green.
+Phase 8A status is intentionally separated from the program-wide A8-01…A8-26 gates above. "Implemented" is not "accepted" until exact-head CI and the linked evidence are terminal and green.
 
 | ID | Acceptance criterion | Current status |
 |---|---|---|
-| 8A-C01 | Typed centralized configuration and runtime modes | Implemented; exact-head CI pending |
-| 8A-C02 | Production rejects insecure public URL, CORS, database, JWT, seeding, and NATS settings | Implemented; exact-head CI pending |
-| 8A-C03 | NATS TLS supports CA validation with token auth or optional complete mTLS identity | Implemented; exact-head CI pending |
-| 8A-C04 | Liveness and readiness report meaningful DB, NATS, JetStream, migrations, dispatcher, and configured-storage checks | Implemented; ingestion subscription telemetry is explicitly deferred |
-| 8A-C05 | Staged startup fails with the active stage and does not silently disable configured storage | Implemented; lifecycle fault-injection coverage remains partial |
-| 8A-C06 | Secret-bearing URLs and DSNs are redacted from configuration summaries | Implemented; exact-head CI pending |
-| 8A-C07 | CLI aliases and environment precedence remain compatible | Implemented; exact-head CI pending |
-| 8A-C08 | Durable job reconciliation handles the native identifier types used by the schema | Covered by database integration test; exact-head CI pending |
-| 8A-C09 | Configuration inventory and operator guidance match runtime consumers | Partial; final documentation audit pending |
+| 8A-C01 | Typed centralized configuration and runtime modes | Verified — PR #7 merge 9543bbc |
+| 8A-C02 | Production rejects insecure public URL, CORS, database, JWT, seeding, and NATS settings | Verified — PR #7 merge 9543bbc |
+| 8A-C03 | NATS encrypted transport mandatory; tls:// or nats+tls:// URL; trusted CA required; token or mTLS auth | Verified — PR #7 merge 9543bbc |
+| 8A-C04 | Liveness and readiness report meaningful DB, NATS, JetStream, migrations, dispatcher, and configured-storage checks | Verified — ingestion subscription telemetry deferred |
+| 8A-C05 | Staged startup fails with active stage; does not silently disable configured storage | Verified — lifecycle fault-injection coverage partial |
+| 8A-C06 | Secret-bearing URLs and DSNs are redacted from configuration summaries | Verified — PR #7 merge 9543bbc |
+| 8A-C07 | CLI aliases and environment precedence remain compatible | Verified — PR #7 merge 9543bbc |
+| 8A-C08 | Durable job reconciliation handles native identifier types | Verified — PR #7 merge 9543bbc |
+| 8A-C09 | Configuration inventory and operator guidance match runtime consumers | Verified — PR #7 merge 9543bbc |
 | 8A-C10 | Future agent work follows evidence-first delegation, review, CI, and PR discipline | Standard documented in `docs/AGENT_ENGINEERING_STANDARD.md` |
+
+## Phase 8B — CI and Deployment Documentation
+
+| ID | Acceptance criterion | Current status |
+|---|---|---|
+| 8B-C01 | CI validates deployment script syntax (shellcheck, systemd, YAML) | Implemented — `phase8b-static-validation` job |
+| 8B-C02 | CI verifies deployment/upgrade/rollback docs exist | Implemented — `phase8b-docs-check` job |
+| 8B-C03 | Deployment guide covers prerequisites, authoritative path, config, preflight, clean install, idempotency, health, troubleshooting | Implemented — `docs/DEPLOYMENT.md` |
+| 8B-C04 | Upgrade guide covers supported paths, migration locking, steps with backup, verification, rollback during upgrade | Implemented — `docs/UPGRADE.md` |
+| 8B-C05 | Rollback guide covers when-to-rollback criteria, procedure, data preservation, migration compatibility, emergency procedure | Implemented — `docs/ROLLBACK.md` |
+| 8B-C06 | CONFIGURATION.md updated with Phase 8B deployment settings | Implemented — new env vars and CLI flags |
+| 8B-C07 | Configuration documentation references deployment/upgrade/rollback docs | Implemented — cross-reference in CONFIGURATION.md |
 
 ## Evidence index
 
 Populate this table during implementation.
 
 | Acceptance ID | Evidence URL | Commit/release | Date | Owner | Result |
-|---|---|---|---|---|---|---|
+|---|---|---|---|---|---|
 | 8A-C01…8A-C10 | Pending exact-head run | Pending | Pending | Coordinator | CI pending |
+| 8B-C01…8B-C07 | Pending exact-head run | Pending | Pending | Sub-agents C+D | CI pending |

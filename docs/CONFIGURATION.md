@@ -1,4 +1,4 @@
-# Configuration Reference (Phase 8A)
+# Configuration Reference (Phase 8B)
 
 ## Runtime Mode
 
@@ -124,10 +124,6 @@ The agent reads `agent.yaml` (default path: `~/.strata-rmm/agent.yaml` or `STRAT
 | `probe.poll_interval` | — | — | duration | `5m` | no | no | no | must be positive | probe snmp | config-file > default | no | — |
 | `probe.discovery_interval` | — | — | duration | `1h` | no | no | no | must be positive | probe discovery | config-file > default | no | — |
 
-## Setting Count
-
-**Total inventory: 53 settings** (33 orchestrator env/flag + 3 hardcoded JWT + 28 agent YAML/env + 10 probe CLI/config)
-
 ## Startup Sequence
 
 1. Load raw configuration from environment
@@ -158,7 +154,6 @@ Existing installations should set `STRATA_RUNTIME_MODE` to the appropriate value
 The default is `development`, preserving backward compatibility. Production
 deployments must explicitly set it to `production`.
 
-## Rollback
+For full deployment and rollback procedures, see `docs/DEPLOYMENT.md`, `docs/UPGRADE.md`, and `docs/ROLLBACK.md`.
 
-To revert to the previous startup behavior, remove or unset `STRATA_RUNTIME_MODE`.
-The orchestrator will default to `development` mode with relaxed validation.
+Use `strata-rmm orchestrator preflight` to validate configuration, database connectivity, and NATS connectivity before deployment.

@@ -34,7 +34,7 @@ func TestDurableJobRoundTripWithRealPostgresAndNATS(t *testing.T) {
 	if _, err := rawDB.Exec(`DROP SCHEMA public CASCADE; CREATE SCHEMA public`); err != nil {
 		t.Fatal(err)
 	}
-	if err := postgres.NewSchemaManager(rawDB).Apply(); err != nil {
+	if err := postgres.NewSchemaManager(rawDB).Apply(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if err := rawDB.Close(); err != nil {

@@ -1,346 +1,293 @@
-# Deployment
+# Deployment Guide (Phase 8B)
 
-## Production Topology
+## Prerequisites
 
-```
-                         ┌─────────────┐
-                         │   Clients   │
-                         │ (Web UI /   │
-                         │  API)       │
-                         └──────┬──────┘
-                                │ HTTPS (443)
-                                ▼
-                        ┌───────────────┐
-                        │    nginx      │
-                        │  (TLS term,   │
-                        │   rate limit, │
-                        │   reverse     │
-                        │   proxy)      │
-                        └───────┬───────┘
-                                │ HTTP (8080)
-                                ▼
-                     ┌───────────────────┐
-                     │   RMM API         │
-                     │   (Orchestrator)  │
-                     │   1+ replicas     │
-                     └───┬───────┬───────┘
-                         │       │
-                ┌────────┘       └────────┐
-                ▼                          ▼
-        ┌───────────────┐         ┌──────────────────┐
-        │    NATS       │         │  PostgreSQL 16 +  │
-        │  JetStream    │◄───────►│  TimescaleDB 2.x  │
-        │  2.10+        │         │  (relational +    │
-        │  (cluster)    │         │   metrics)        │
-        └───────┬───────┘         └──────────────────┘
-                │
-                │ outbound NATS (4222)
-                ▼
-        ┌───────────────────┐
-        │   Agents          │
-        │   (Go binary)     │
-        │   (Windows/Linux) │
-        └───────────────────┘
-```
+| Component | Version | Notes |
+|-----------|---------|-------|
+| Go | 1.25.x | Build toolchain for source installs |
+| PostgreSQL | 16.x | Relational database |
+| TimescaleDB | 2.28.x | Time-series extension (installed as PostgreSQL extension) |
+| NATS | 2.10+ | Messaging backbone with JetStream |
 
-### Optional Components
+### Optional Dependencies
 
-```
-┌──────────────┐    ┌──────────────┐    ┌──────────────┐
-│   MinIO /    │    │   Redis      │    │   Grafana    │
-│   S3         │    │   (cache/    │    │   (dash-     │
-│   (object    │    │    sessions) │    │    boards)   │
-│    store)    │    └──────────────┘    └──────────────┘
-└──────────────┘
-```
+| Component | Version | Purpose |
+|-----------|---------|---------|
+| MinIO | latest | Self-hosted S3-compatible object storage for recordings |
+| Redis | 7.x | Session cache (future) |
+| Grafana | 11.x | Observability dashboards |
 
-### Port Layout
+### Network Requirements
 
-| Service | Port | Protocol | Purpose |
-|---------|------|----------|---------|
-| nginx | 443 | HTTPS | TLS termination, reverse proxy |
-| nginx | 80 | HTTP | Redirect to HTTPS |
-| Orchestrator | 8080 | HTTP | Internal REST API (northbound) |
-| Orchestrator | 8443 | TCP | Tunnel gateway (southbound) |
-| NATS | 4222 | TCP | Client connections (agents, services) |
-| NATS | 8222 | HTTP | Monitoring dashboard |
-| PostgreSQL | 5432 | TCP | Database connections |
-| MinIO | 9000 | HTTP | Object storage API |
-| MinIO | 9001 | HTTP | Admin console |
-| Grafana | 3000 | HTTP | Dashboard UI |
+- Port 8080 (orchestrator API, internal)
+- Port 8443 (tunnel gateway, agent-facing)
+- Port 4222 (NATS client, agent-facing)
+- Port 5432 (PostgreSQL, internal)
 
 ---
 
-## Systemd Service Configuration
+## Authoritative Deployment Path
 
-### Orchestrator Service (`/etc/systemd/system/strata-rmm.service`)
+Two supported methods — choose **one**:
 
-```ini
-[Unit]
-Description=Strata RMM Orchestrator
-Documentation=https://strata-rmm.io/docs
-After=network-online.target nats.service postgresql.service
-Requires=nats.service postgresql.service
-Wants=network-online.target
+### A. Binary + systemd (bare metal / VM — production)
 
-[Service]
-Type=simple
-User=strata-rmm
-Group=strata-rmm
-ExecStart=/usr/local/bin/strata-rmm orchestrator \
-  --nats-url nats://localhost:4222 \
-  --timescale-dsn "postgres://strata:${POSTGRES_PASSWORD}@localhost:5432/strata_rmm?sslmode=require" \
-  --api-addr :8080 \
-  --tunnel-addr :8443 \
-  --storage-backend ${STORAGE_BACKEND:-minio} \
-  --storage-bucket ${STORAGE_BUCKET:-strata-recordings} \
-  --storage-endpoint ${STORAGE_ENDPOINT:-localhost:9000}
+1. Download the release binary or build from source.
+2. Place the binary at `/usr/local/bin/strata-rmm`.
+3. Create system user, config directory, data directory.
+4. Deploy systemd unit files from `deploy/`.
+5. Set environment variables (see Configuration).
+6. Start the orchestrator.
 
-# Security hardening
-ProtectSystem=full
-ProtectHome=true
-PrivateTmp=true
-NoNewPrivileges=true
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE
-AmbientCapabilities=CAP_NET_BIND_SERVICE
-ReadWritePaths=/var/lib/strata-rmm /var/log/strata-rmm
+### B. Docker Compose (single-host / staging)
 
-# Restart policy
-Restart=always
-RestartSec=10
-StartLimitIntervalSec=60
-StartLimitBurst=3
+Use `deploy/docker/docker-compose.yml`:
 
-# Logging
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
+```bash
+docker compose -f deploy/docker/docker-compose.yml up -d
 ```
 
-### NATS Service (`/etc/systemd/system/nats.service`)
+For production, override with a `.env` file or environment variables.
 
-```ini
-[Unit]
-Description=NATS Server
-Documentation=https://docs.nats.io/
-After=network.target
+---
 
-[Service]
-Type=simple
-User=nobody
-ExecStart=/usr/local/bin/nats-server -js -m 8222
-Restart=always
-RestartSec=5
-LimitNOFILE=1000000
+## Configuration
 
-[Install]
-WantedBy=multi-user.target
+All configuration is via environment variables. See `docs/CONFIGURATION.md` for the complete inventory.
+
+### Production Example
+
+```bash
+# Mode
+STRATA_RUNTIME_MODE=production
+
+# NATS
+NATS_URL=nats://nats.example.com:4222
+NATS_TOKEN=<secure-token>
+
+# Database
+TIMESCALE_DSN=postgres://strata_rmm_app:<password>@db.example.com:5432/strata_rmm?sslmode=require
+
+# API
+STRATA_API_ADDR=:8080
+STRATA_TUNNEL_ADDR=:8443
+STRATA_PUBLIC_URL=https://rmm.example.com
+CORS_ORIGINS=https://rmm.example.com
+
+# JWT
+JWT_SECRET=<64-char-hex-secret>
+
+# Storage
+STORAGE_BACKEND=s3
+STORAGE_BUCKET=strata-recordings-prod
+STORAGE_REGION=us-east-1
+
+# Performance
+DB_MAX_OPEN_CONNS=50
+DB_MAX_IDLE_CONNS=10
+DB_CONN_MAX_LIFETIME=10m
 ```
 
-### Agent Service (`/etc/systemd/system/strata-rmm-agent.service`)
+### Agent Example (`agent.yaml`)
 
-```ini
-[Unit]
-Description=Strata RMM Agent
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=root
-ExecStart=/usr/local/bin/strata-rmm agent --config /etc/strata-rmm/agent.yaml
-Restart=always
-RestartSec=30
-StartLimitIntervalSec=300
-StartLimitBurst=5
-
-[Install]
-WantedBy=multi-user.target
+```yaml
+agent:
+  tenant_id: "<uuid>"
+  log_level: info
+  data_dir: /var/lib/strata-rmm
+nats:
+  urls:
+    - nats://nats.example.com:4222
+  token: "<secure-token>"
+collect:
+  interval: 60s
+  enable_system: true
+  enable_hardware: true
+  enable_software: true
+  enable_network: true
+  enable_services: true
+store:
+  type: bbolt
+  path: /var/lib/strata-rmm/agent.db
+update:
+  enabled: true
+  check_interval: 24h
+  channel: stable
 ```
 
 ---
 
-## Environment Variables
+## Preflight Validation
 
-### Orchestrator
+Before deploying, run the `preflight` subcommand to validate configuration, database, and NATS connectivity:
 
-| Variable | Default | Required | Description |
-|----------|---------|----------|-------------|
-| `STRATA_RMM_NATS_URL` | `nats://localhost:4222` | Yes | NATS server URL |
-| `STRATA_RMM_TIMESCALE_DSN` | — | Yes | TimescaleDB connection string (`postgres://user:pass@host:5432/db?sslmode=require`) |
-| `STRATA_RMM_API_ADDR` | `:8080` | No | API listen address |
-| `STRATA_RMM_TUNNEL_ADDR` | `:8443` | No | Tunnel gateway listen address |
-| `POSTGRES_PASSWORD` | — | Yes | Database password (injected via secret) |
-| `JWT_SECRET` | — | Yes* | HMAC signing key (min 32 bytes) |
-| `STRATA_ALLOW_LEGACY_DEPLOYMENT_ENROLLMENT` | `false` | No | Temporary compatibility escape hatch for reusable deployment-ID enrollment; do not enable in production |
-| `STORAGE_BACKEND` | `local` | No | Storage type: `minio`, `s3`, `local`, `none` |
-| `STORAGE_BUCKET` | `strata-recordings` | No | Storage bucket name |
-| `STORAGE_ENDPOINT` | — | No | MinIO/S3 endpoint |
-| `STORAGE_REGION` | — | No | AWS region (S3 only) |
-| `STORAGE_ACCESS_KEY` | — | No | Storage access key |
-| `STORAGE_SECRET_KEY` | — | No | Storage secret key |
-| `STORAGE_USE_SSL` | `false` | No | Enable TLS for storage |
-| `STORAGE_KMS_KEY_ID` | — | No | KMS key ID for SSE-KMS |
-| `STRATA_RMM_LOG_LEVEL` | `info` | No | Log level: `debug`, `info`, `warn`, `error` |
+```bash
+# Validate configuration, database, and NATS
+strata-rmm orchestrator preflight
 
-*\* Required in production. Default dev secret must be changed.*
+# Check NATS connectivity
+nats ping -s nats://localhost:4222
 
-### Agent
+# Check database connectivity
+psql "$TIMESCALE_DSN" -c "SELECT extversion FROM pg_extension WHERE extname='timescaledb';"
 
-| Variable | Default | Required | Description |
-|----------|---------|----------|-------------|
-| `STRATA_RMM_NATS_URL` | `nats://localhost:4222` | Yes | NATS server URL |
-| `STRATA_RMM_DEPLOYMENT_ID` | — | Yes | Deployment/tenant identifier |
-| `STRATA_RMM_ENROLLMENT_TOKEN` | — | Yes | Agent enrollment token |
-| `STRATA_RMM_DATA_DIR` | `/var/lib/strata-rmm` | No | Agent data directory |
-| `STRATA_RMM_LOG_LEVEL` | `info` | No | Log level |
-| `STRATA_RMM_COLLECT_INTERVAL` | `60` | No | Metrics collection interval (seconds) |
-| `STRATA_RMM_HEARTBEAT_INTERVAL` | `30` | No | Heartbeat interval (seconds) |
+# Verify binary integrity
+sha256sum /usr/local/bin/strata-rmm
+```
+
+The orchestrator's `preflight` subcommand performs:
+
+1. Load and validate configuration via `LoadOrchestratorConfig()`
+2. Run `Validate()` — mode-independent requirement validation
+3. Run `ProductionValidate()` — production policy enforcement (when `STRATA_RUNTIME_MODE=production`)
+4. Ping the database to verify connectivity
+5. Connect to NATS to verify messaging connectivity
 
 ---
 
-## Firewall Rules
+## Clean Installation Steps
 
-### Inbound (Platform)
+### 1. System Preparation
 
-| Source | Dest Port | Protocol | Service | Purpose |
-|--------|-----------|----------|---------|---------|
-| Internet | 443 | TCP | nginx | HTTPS API + Web UI |
-| Internet | 8443 | TCP | Orchestrator | Tunnel gateway (RDP/SSH/VNC) |
-| Agents | 4222 | TCP | NATS | Agent NATS connections |
-| Internal | 5432 | TCP | PostgreSQL | DB connections (internal only) |
-| Internal | 8222 | TCP | NATS | NATS monitoring (admin only) |
-| Internal | 9000 | TCP | MinIO | Storage API (internal only) |
-| Internal | 9001 | TCP | MinIO | Admin console (internal only) |
-| Internal | 3000 | TCP | Grafana | Dashboards (admin only) |
+```bash
+# Create system user
+sudo useradd -r -s /bin/false strata-rmm
 
-### Outbound (Platform)
+# Create directories
+sudo mkdir -p /var/lib/strata-rmm /etc/strata-rmm
+sudo chown strata-rmm:strata-rmm /var/lib/strata-rmm /etc/strata-rmm
+sudo chmod 700 /var/lib/strata-rmm
+```
 
-| Dest | Port | Protocol | Service | Purpose |
-|------|------|----------|---------|---------|
-| GitHub | 443 | HTTPS | Orchestrator | Auto-update checks |
-| OSV.dev | 443 | HTTPS | Orchestrator | CVE feed sync |
-| NVD | 443 | HTTPS | Orchestrator | Optional CVE feed |
-| SMTP server | 587/465 | TCP | Orchestrator | Email notifications |
-| Slack/Teams | 443 | HTTPS | Orchestrator | Alert webhooks |
+### 2. Deploy Binary
 
-### Agent Outbound
+```bash
+sudo cp strata-rmm /usr/local/bin/strata-rmm
+sudo chmod 755 /usr/local/bin/strata-rmm
+```
 
-| Dest | Port | Protocol | Purpose |
-|------|------|----------|---------|
-| NATS server | 4222 | TCP | NATS messaging |
-| API server | 443/8080 | HTTPS | Registration + file downloads |
-
----
-
-## Non-Owner PostgreSQL Role Usage
-
-### Current State (Development)
-- Database user: `strata` (owner)
-- All DDL + DML operations executed as owner
-- RLS policies defined but enforced only when `app.tenant_id` is set
-
-### Production Requirement
-
-Create a restricted role for application usage:
+### 3. Set Up Database
 
 ```sql
--- Create application role
-CREATE ROLE strata_rmm_app WITH LOGIN PASSWORD '<strong-password>';
-GRANT CONNECT ON DATABASE strata_rmm TO strata_rmm_app;
-GRANT USAGE ON SCHEMA public TO strata_rmm_app;
+CREATE USER strata_rmm_app WITH LOGIN PASSWORD '<strong-password>';
+CREATE DATABASE strata_rmm OWNER strata_rmm_app;
+GRANT ALL PRIVILEGES ON DATABASE strata_rmm TO strata_rmm_app;
 
--- Table-level grants (read/write on data tables)
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO strata_rmm_app;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO strata_rmm_app;
-
--- Revoke DDL permissions
-REVOKE CREATE ON SCHEMA public FROM strata_rmm_app;
-
--- Future tables should also be accessible
-ALTER DEFAULT PRIVILEGES IN SCHEMA public
-  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO strata_rmm_app;
-
--- RLS must be enforced for this role
-ALTER TABLE tenants ENABLE ROW LEVEL SECURITY;
-ALTER TABLE devices ENABLE ROW LEVEL SECURITY;
--- ... (repeat for all tenant-scoped tables)
-
--- Set role in application connection
--- Connection string: postgres://strata_rmm_app:password@localhost:5432/strata_rmm?sslmode=require&application_name=strata-rmm
+-- Connect to strata_rmm
+\c strata_rmm
+CREATE EXTENSION IF NOT EXISTS timescaledb;
+GRANT ALL ON SCHEMA public TO strata_rmm_app;
 ```
 
-### Separation of Duties
+### 4. Configure Environment
 
-| Operation | Role | Purpose |
-|-----------|------|---------|
-| `strata` (owner) | Schema migrations | DDL operations only during deployments |
-| `strata_rmm_app` | Application | All DML during normal operation |
-| `strata_rmm_readonly` | Reporting/analytics | SELECT-only access for read replicas |
+Create `/etc/strata-rmm/orchestrator.env`:
+
+```bash
+STRATA_RUNTIME_MODE=production
+NATS_URL=nats://localhost:4222
+NATS_TOKEN=<token>
+TIMESCALE_DSN=postgres://strata_rmm_app:<password>@localhost:5432/strata_rmm?sslmode=require
+STRATA_API_ADDR=:8080
+STRATA_TUNNEL_ADDR=:8443
+STRATA_PUBLIC_URL=https://rmm.example.com
+CORS_ORIGINS=https://rmm.example.com
+JWT_SECRET=<64-char-secret>
+```
+
+### 5. Deploy Systemd Service
+
+```bash
+sudo cp deploy/strata-rmm-agent.service /etc/systemd/system/strata-rmm.service
+sudo systemctl daemon-reload
+sudo systemctl enable strata-rmm
+sudo systemctl start strata-rmm
+```
+
+### 6. Apply Migrations
+
+```bash
+sudo strata-rmm orchestrator --apply-migrations
+```
+
+### 7. Verify
+
+```bash
+curl http://localhost:8080/health
+# Expected: {"status":"ok","ready":"true"}
+```
 
 ---
 
-## Backup Procedures
+## Same-Version Reapplication (Idempotent)
 
-### Database (PostgreSQL + TimescaleDB)
+Reapplying the same release produces no duplicate resources or destructive drift.
 
-```bash
-# Full backup
-pg_dump -h localhost -U strata_rmm_app -d strata_rmm \
-  --format=custom \
-  --compress=9 \
-  --file=/backups/strata-rmm-$(date +%Y%m%d-%H%M%S).dump
-
-# TimescaleDB backup (requires --format=custom for parallel restore support)
-pg_dump -h localhost -U strata_rmm_app -d strata_rmm \
-  --format=custom \
-  --compress=9 \
-  --file=/backups/strata-timescaledb-$(date +%Y%m%d-%H%M%S).dump
-```
-
-### Restoration
+### Binary Reapplication
 
 ```bash
-# Restore full backup
-pg_restore -h localhost -U strata -d strata_rmm \
-  --clean \
-  --if-exists \
-  --jobs=4 \
-  /backups/strata-rmm-20260727-120000.dump
+# Replace binary (atomic copy)
+sudo cp strata-rmm /usr/local/bin/strata-rmm.tmp
+sudo mv /usr/local/bin/strata-rmm.tmp /usr/local/bin/strata-rmm
 
-# Verify restoration
-psql -U strata_rmm_app -d strata_rmm -c "SELECT COUNT(*) FROM devices;"
-psql -U strata_rmm_app -d strata_rmm -c "SELECT COUNT(*) FROM metrics;"
+# Restart service
+sudo systemctl restart strata-rmm
+
+# Verify no migration re-execution
+journalctl -u strata-rmm -n 20 | grep -i migration
+# Expected: "migrations already applied, skipping"
 ```
 
-### Object Storage (MinIO/S3)
+### Docker Reapplication
 
 ```bash
-# MinIO (mc client)
-mc mirror /data/minio/strata-recordings s3/backup-bucket/strata-recordings/
-
-# AWS S3 (cross-region replication or versioning)
-aws s3 sync s3://strata-recordings s3://strata-recordings-backup/
+docker compose -f deploy/docker/docker-compose.yml pull orchestrator
+docker compose -f deploy/docker/docker-compose.yml up -d --no-deps orchestrator
 ```
 
-### Schedule
+### Idempotency Guarantees
 
-| Backup | Frequency | Retention | Method |
-|--------|-----------|-----------|--------|
-| Database (full) | Daily | 30 days | pg_dump custom format |
-| Database (WAL) | Continuous | 7 days | WAL archiving |
-| Object store | Daily | 90 days | S3 sync / mc mirror |
-| Configuration | On change | 90 days | Git-tracked |
-| NATS streams | Daily | 7 days | `nats stream backup` |
+- **Migrations**: Each migration has a unique ID recorded in `schema_migrations`. Reapplying skips already-applied migrations.
+- **NATS streams**: Created with `max_msgs` / `max_age` — re-declaring the same config is a no-op.
+- **Systemd units**: Deploying the same unit file overwrites without duplication.
+- **Data directories**: Pre-existing directories are reused.
 
-### Automation (crontab)
+---
 
-```cron
-# Daily database backup at 2 AM
-0 2 * * * /usr/local/bin/backup-db.sh
+## Health Verification
 
-# Daily object store sync at 3 AM
-0 3 * * * /usr/local/bin/backup-storage.sh
+### Liveness
+
+```bash
+curl http://localhost:8080/health?liveness=1
+# {"status":"alive"}
 ```
+
+### Readiness
+
+```bash
+curl http://localhost:8080/health
+# {"status":"ok","ready":"true"}
+```
+
+### Full Diagnostic
+
+```bash
+curl http://localhost:8080/health?mode=full
+# Includes: DB status, NATS status, migrations, storage, JetStream
+```
+
+---
+
+## Troubleshooting
+
+| Symptom | Likely Cause | Action |
+|---------|-------------|--------|
+| Service fails to start | Missing `JWT_SECRET` or invalid DSN | Check `journalctl -u strata-rmm -n 50` |
+| NATS connection refused | NATS not running or wrong URL | `systemctl status nats`; verify URL |
+| Database connection failed | Wrong password or SSL mode | Verify `TIMESCALE_DSN`, check `sslmode` |
+| Migrations not applied | DB user lacks DDL permissions | Use owner role for migrations |
+| Health returns 503 | One or more dependencies unhealthy | Check `?mode=full` diagnostic |
+| CORS errors in browser | `CORS_ORIGINS` mismatch | Verify origin matches exactly |
+| Agents not connecting | NATS URL or token mismatch | Regenerate enrollment token |
+| Tunnel connections fail | Firewall blocking port 8443 | Check security group / iptables |

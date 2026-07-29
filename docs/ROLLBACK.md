@@ -1,325 +1,228 @@
-# Rollback Procedures
+# Rollback Procedures (Phase 8B)
 
-## Code Rollback
+## When to Rollback
 
-### Option A: Git Revert
+Initiate a rollback when any of the following occur after a deployment or upgrade:
 
-Revert a specific commit or range of commits and deploy the result.
-
-```bash
-# 1. Identify the commit(s) to revert
-git log --oneline -10
-
-# 2. Revert the bad commit (creates a new commit)
-git revert <bad-commit-hash>
-
-# 3. Push the revert
-git push origin main
-
-# 4. Deploy the reverted code
-```
-
-### Option B: Branch Checkout
-
-Switch to a known-good branch or tag.
-
-```bash
-# 1. List tags
-git tag -l
-
-# 2. Checkout the previous release tag
-git checkout tags/v1.2.3 -b rollback-v1.2.3
-
-# 3. Rebuild and deploy
-make build
-
-# 4. Push rollback branch
-git push origin rollback-v1.2.3
-```
-
-### Option C: Binary Rollback (Bare Metal)
-
-If the orchestrator has auto-updated and the new version is broken:
-
-```bash
-# 1. Stop the service
-systemctl stop strata-rmm
-
-# 2. Restore the previous binary
-cp /usr/local/bin/strata-rmm.bak /usr/local/bin/strata-rmm
-
-# 3. Start the service
-systemctl start strata-rmm
-
-# 4. Verify health
-curl http://localhost:8080/health
-
-# 5. Pin version to prevent re-update
-strata-rmm orchestrator update --pin v1.2.3
-```
-
-### Agent Rollback
-
-```bash
-# 1. Pause auto-updates for affected agents
-nats pub tenant.<msp_id>.rollout.<agent_id> '{"action":"pause"}'
-
-# 2. Force rollback on a specific agent
-nats pub tenant.<msp_id>.rollout.<agent_id> '{"action":"rollback"}'
-
-# 3. For mass rollback, set rollout to 0% on canary channel
-#    then manually trigger rollback per agent or group
-```
+| Condition | Severity | Action |
+|-----------|----------|--------|
+| Health endpoint returns non-200 for >2 consecutive checks | Critical | Immediate rollback |
+| Smoke test suite reports any FAIL | High | Rollback within 15 min |
+| Agent connectivity drops >20% of fleet | High | Rollback within 30 min |
+| Alert engine fails to load rules | Medium | Rollback within 1 hour |
+| Database migration errors | Critical | Halt deployment, rollback immediately |
+| NATS stream loss or corruption | Critical | Rollback and restore from backup |
+| Performance regression >50% latency increase | Medium | Investigate, rollback if confirmed |
 
 ---
 
-## Database Rollback
+## Rollback Procedure
 
-### Migration Reversal
-
-Database migrations are ordered (1..N). To rollback:
+### Step 1: Stop Candidate
 
 ```bash
-# 1. Connect to the database
-psql -U strata_rmm_app -d strata_rmm
+# Binary
+sudo systemctl stop strata-rmm
 
-# 2. Check current migration state
-SELECT id, name, applied_at FROM schema_migrations ORDER BY id;
+# Docker
+docker compose -f deploy/docker/docker-compose.yml stop orchestrator
 ```
 
-### Migration 24: Reporting Engine
-
-```sql
--- Reverse: Drop report engine tables
-DROP TABLE IF EXISTS generated_reports CASCADE;
-DROP TABLE IF EXISTS report_schedules CASCADE;
-
--- Remove migration record
-DELETE FROM schema_migrations WHERE id = 24;
-```
-
-### Migration 23: Software Deployment
-
-```sql
--- Reverse: Drop software deployment tables
-DROP TABLE IF EXISTS software_deployments CASCADE;
-DROP TABLE IF EXISTS software_packages CASCADE;
-
--- Remove migration record
-DELETE FROM schema_migrations WHERE id = 23;
-```
-
-### Migration 22: Scripting Engine
-
-```sql
--- Reverse: Drop scripting tables
-DROP TABLE IF EXISTS script_executions CASCADE;
-DROP TABLE IF EXISTS scripts CASCADE;
-
--- Remove migration record
-DELETE FROM schema_migrations WHERE id = 22;
-```
-
-### Migration 21: Agent Registrations
-
-```sql
--- Reverse: Drop agent registration table
-DROP TABLE IF EXISTS agent_registrations CASCADE;
-
--- Remove migration record
-DELETE FROM schema_migrations WHERE id = 21;
-```
-
-### Earlier Migrations (Partial Rollback)
-
-```sql
--- Migration 20: User tenant access
-DROP TABLE IF EXISTS audit_auth CASCADE;
-DROP TABLE IF EXISTS user_tenant_access CASCADE;
-DELETE FROM schema_migrations WHERE id = 20;
-
--- Migration 19: Encryption keys
-DROP TABLE IF EXISTS tenant_encryption_keys CASCADE;
-DELETE FROM schema_migrations WHERE id = 19;
-
--- Migration 18: CVE sync
-DROP TABLE IF EXISTS cve_package_ecosystem CASCADE;
-DROP TABLE IF EXISTS cve_sync_state CASCADE;
-DELETE FROM schema_migrations WHERE id = 18;
-
--- Migration 17: Session recordings
-DROP TABLE IF EXISTS session_recordings CASCADE;
-DELETE FROM schema_migrations WHERE id = 17;
-
--- Migration 16: MFA secrets
-DROP TABLE IF EXISTS mfa_secrets CASCADE;
-DELETE FROM schema_migrations WHERE id = 16;
-```
-
-### Full Database Reset (Development Only)
+### Step 2: Restore Previous Binary / Image
 
 ```bash
-# ⚠️ DESTRUCTIVE — for dev/staging only
-psql -U strata_rmm_app -d strata_rmm -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
-strata-rmm orchestrator --apply-migrations
+# Binary
+sudo mv /usr/local/bin/strata-rmm.pre-upgrade /usr/local/bin/strata-rmm
+
+# If no backup binary exists, redeploy from known-good artifact
+# wget https://github.com/.../releases/download/v0.2.0-beta/strata-rmm-linux-amd64
+
+# Docker — pin the previous image tag in docker-compose.override.yml
 ```
 
----
+### Step 3: Restore Previous Configuration
 
-## Service Restart Procedures
-
-### Full Platform Restart (Docker Compose)
+Production configuration must be preserved — restore the known-good config from backup:
 
 ```bash
-# 1. Pull the previous version
-docker compose pull orchestrator
+# Restore config files
+sudo cp /backups/strata-rmm-config-pre-upgrade/* /etc/strata-rmm/
 
-# 2. Rollback database if needed
-#    (execute migration reversal SQLs first)
-
-# 3. Restart all services
-docker compose down
-docker compose up -d
-
-# 4. Verify all services
-docker compose ps
-curl http://localhost:8080/health
+# Restore environment file
+sudo cp /backups/strata-rmm-config-pre-upgrade/orchestrator.env /etc/strata-rmm/orchestrator.env
 ```
 
-### Full Platform Restart (Bare Metal)
+### Step 4: Verify Schema Compatibility
 
 ```bash
-# 1. Stop services in dependency order
-systemctl stop strata-rmm
-systemctl stop nats
-systemctl stop postgresql
+# Run preflight to verify config, database, and NATS connectivity
+sudo /usr/local/bin/strata-rmm orchestrator preflight
 
-# 2. Start in reverse order
-systemctl start postgresql
-systemctl start nats
-systemctl start strata-rmm
-
-# 3. Verify
-systemctl status strata-rmm nats postgresql
-curl http://localhost:8080/health
+# Verify migration state is consistent with the restored binary
+psql -U strata_rmm_app -d strata_rmm -c "SELECT MAX(id) FROM schema_migrations;"
 ```
 
-### Rolling Restart (Kubernetes)
+### Step 5: Start and Wait for Readiness
 
 ```bash
-# Rollback to previous revision
-kubectl rollout undo deployment/strata-rmm -n strata-rmm
+# Start service
+sudo systemctl start strata-rmm
 
-# Monitor rollout status
-kubectl rollout status deployment/strata-rmm -n strata-rmm
+# Wait for readiness (retry up to 30 seconds)
+for i in $(seq 1 30); do
+  if curl -sf http://localhost:8080/health | jq -e '.ready == true' > /dev/null 2>&1; then
+    echo "READY"
+    break
+  fi
+  echo "waiting... ($i)"
+  sleep 1
+done
 
-# Verify
-kubectl get pods -n strata-rmm
-kubectl exec -it deploy/strata-rmm -n strata-rmm -- curl http://localhost:8080/health
-```
-
-### Single Service Restart
-
-```bash
-# Orchestrator only
-systemctl restart strata-rmm
-
-# NATS only
-systemctl restart nats
-
-# PostgreSQL only
-systemctl restart postgresql
-```
-
----
-
-## Verification Steps After Rollback
-
-### 1. Health Check
-
-```bash
-curl http://localhost:8080/health
-
-# Expected response:
-# {"status":"ok","time":"2026-07-27T12:00:00Z","version":"<rolled-back-version>"}
-```
-
-### 2. API Smoke Test
-
-```bash
-# Run the smoke test suite
+# Run smoke test
 ./scripts/smoke_test.sh
 
-# Expected output:
-# [PASS] Health endpoint returns ok
-# [PASS] Enrollment token generated
-# [PASS] CVE database has 10+ records
-# [PASS] MFA enrollment generated secret
-# [PASS] Recording list endpoint works
-# [PASS] All smoke tests passed!
-```
-
-### 3. Database Verification
-
-```bash
-# Check migration state matches expected rollback
-psql -U strata_rmm_app -d strata_rmm -c "SELECT id, name FROM schema_migrations ORDER BY id;"
-
-# Check data integrity
-psql -U strata_rmm_app -d strata_rmm -c "SELECT COUNT(*) FROM devices;"
-psql -U strata_rmm_app -d strata_rmm -c "SELECT COUNT(*) FROM tenants;"
-```
-
-### 4. Agent Connectivity
-
-```bash
-# Check device heartbeats (should be recent)
-curl http://localhost:8080/api/v1/heartbeat/<tenant-id>/<device-id>
-
-# Check online device count
+# Check agents reconnected
 curl http://localhost:8080/api/v1/overview | jq '.online_devices'
 ```
 
-### 5. Alerting Verification
+---
 
-```bash
-# Verify alert engine is running
-curl http://localhost:8080/api/v1/alerts/<tenant-id>
+## Data Preservation During Rollback
 
-# Create a test threshold rule and verify evaluation
-curl -X POST http://localhost:8080/api/v1/rules/<tenant-id> \
-  -H 'Content-Type: application/json' \
-  -d '{"id":"test-rollback","name":"rollback-test","type":"threshold","enabled":true,"severity":"info","metric_name":"cpu.percent","condition":"gt","threshold":0}'
+| Data | Preserved? | Mechanism |
+|------|-----------|-----------|
+| All tenant/device/metric data | Yes | Database unchanged; only binary rollback |
+| Migration state | Conditional | Reversed only if rolling back schema changes |
+| Session recordings | Yes | Object storage unaffected by code rollback |
+| Audit log | Yes | Append-only table preserved |
+| Alert history | Yes | Stored in database, unchanged |
+| Job queue | Yes | NATS JetStream persists across restarts |
+| CVE cache | Yes | Consider re-sync if schema changed |
+
+**Important**: Configuration secrets (JWT_SECRET, NATS_TOKEN) must match between the restored config and running state. If secrets were rotated as part of the upgrade, the rollback must restore the old secrets.
+
+---
+
+## Migration Compatibility
+
+All migrations are additive forward (CREATE TABLE IF NOT EXISTS, ADD COLUMN IF NOT EXISTS, CREATE INDEX IF NOT EXISTS). Down migrations use `DROP TABLE IF EXISTS ... CASCADE` for safe rollback.
+
+### Rollback Mechanism
+
+- The **RollbackEngine** applies each migration's `Down` script in reverse order.
+- `DROP TABLE IF EXISTS` guards make rollback idempotent (safe to run multiple times).
+- `DELETE FROM schema_migrations` removes the applied migration records.
+- Version store is updated via the same `schema_migrations` table.
+
+### Rollback SQL Examples
+
+```sql
+-- Use the RollbackEngine (recommended):
+/usr/local/bin/strata-rmm orchestrator rollback 24
+
+-- Manual revert (if engine unavailable):
+-- Apply the Down script for the migration to undo (from schema.go):
+psql -U strata_rmm_app -d strata_rmm -c "\i /path/to/migration-N-down.sql"
+-- Remove migration record
+DELETE FROM schema_migrations WHERE id = N;
+
+-- Verify
+SELECT id, name, applied_at FROM schema_migrations ORDER BY id;
 ```
 
-### 6. NATS Verification
+---
+
+## Emergency Rollback Procedure
+
+Use this when the standard rollback fails or when the system is in a degraded state that prevents normal operation.
+
+### Emergency: Binary won't start
 
 ```bash
-# Check NATS connections
-curl http://localhost:8222/connz | jq '.num_connections'
+# 1. Force stop
+sudo systemctl kill -s SIGKILL strata-rmm 2>/dev/null || true
 
-# Check NATS streams
+# 2. Remove suspect binary
+sudo rm -f /usr/local/bin/strata-rmm
+
+# 3. Restore backup binary
+sudo cp /backups/strata-rmm.pre-upgrade /usr/local/bin/strata-rmm
+
+# 4. Clear any stale PID/lock files
+sudo rm -f /var/lib/strata-rmm/*.lock /tmp/strata-rmm-*.pid 2>/dev/null || true
+
+# 5. Verify configuration and start
+sudo /usr/local/bin/strata-rmm orchestrator preflight && sudo systemctl start strata-rmm
+```
+
+### Emergency: Database migration half-applied
+
+```bash
+# 1. Check migration state
+psql -U strata_rmm_app -d strata_rmm -c "SELECT * FROM schema_migrations ORDER BY id;"
+
+# 2. Check for uncommitted schema changes in pg_catalog
+psql -U strata_rmm_app -d strata_rmm -c "SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename LIKE 'migration_%';"
+
+# 3. Rollback the migration using the engine (preferred):
+psql -U strata_rmm_app -d strata_rmm -c "DELETE FROM schema_migrations WHERE id = 25;"
+# Then re-run the RollbackEngine to re-apply down scripts cleanly
+
+# 3. Restore from backup if data corrupted
+pg_restore -h localhost -U strata -d strata_rmm --clean --if-exists \
+  /backups/pre-upgrade-*.dump
+```
+
+### Emergency: NATS data loss
+
+```bash
+# 1. Stop all services
+sudo systemctl stop strata-rmm nats
+
+# 2. Restore NATS JetStream data
+sudo cp -a /backups/nats-data/* /var/lib/nats/
+
+# 3. Restart services
+sudo systemctl start nats
+sudo systemctl start strata-rmm
+
+# 4. Verify streams
 nats stream list
+nats stream report
 ```
 
-### 7. Client UI Check
+### Emergency: Full system restore from backup
 
 ```bash
-# Verify Web UI loads
-curl -s http://localhost:8080 | head -20
-# Should return the index.html of the React app
+# 1. Stop all services
+docker compose -f deploy/docker/docker-compose.yml down
 
-# Verify protected endpoints work with valid JWT
-curl -H "Authorization: Bearer <valid-jwt>" http://localhost:8080/api/v1/overview
+# 2. Restore database
+pg_restore -h localhost -U strata -d strata_rmm --clean --if-exists \
+  --jobs=4 /backups/pre-upgrade-*.dump
+
+# 3. Restore configuration
+cp /backups/strata-rmm-config-pre-upgrade/* /etc/strata-rmm/
+
+# 4. Restore previous Docker image
+docker load -i /backups/strata-rmm-image-v0.2.0-beta.tar
+
+# 5. Restart stack
+docker compose -f deploy/docker/docker-compose.yml up -d
+
+# 6. Verify
+curl http://localhost:8080/health
 ```
 
-### Rollback Success Criteria
+---
 
-| Check | Expected | Action if Failed |
-|-------|----------|-----------------|
-| Health endpoint | `{"status":"ok"}` | Check logs: `journalctl -u strata-rmm -n 50` |
-| Smoke test | All PASS | Re-run, check specific failing test |
-| Device count | Matches pre-rollback | Check DB connection and migrations |
-| Agent heartbeats | < 5 min old | Check NATS connectivity |
-| Alert engine | Rules loaded | Check `alert_rules` table |
-| NATS connections | > 0 | Check `nats-server` service status |
+## Verification Matrix
+
+| Check | Command | Expected |
+|-------|---------|----------|
+| Health | `curl localhost:8080/health` | `{"status":"ok"}` |
+| Migrations | `psql -c "SELECT MAX(id) FROM schema_migrations"` | Matches pre-rollback |
+| Agents | `curl localhost:8080/api/v1/overview` | Device count matches |
+| NATS | `curl localhost:8222/connz` | Connections > 0 |
+| Storage | `curl localhost:8080/health?mode=full` | Storage backend OK |
+| Smoke | `./scripts/smoke_test.sh` | All PASS |

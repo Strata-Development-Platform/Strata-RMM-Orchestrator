@@ -29,7 +29,7 @@ app.kubernetes.io/name: {{ include "strata-rmm.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
-{{- define "strata-rmmm.serviceAccountName" -}}
+{{- define "strata-rmm.serviceAccountName" -}}
 {{- if .Values.orchestrator.serviceAccount.create }}
 {{- default (include "strata-rmm.fullname" .) .Values.orchestrator.serviceAccount.name }}
 {{- else }}
@@ -53,7 +53,7 @@ nats://{{ .Release.Name }}-nats:4222
 {{- if .Values.timescaledb.enabled }}
 postgres://{{ .Values.timescaledb.credentials.user }}:{{ .Values.timescaledb.credentials.password }}@timescaledb:5432/{{ .Values.timescaledb.credentials.database }}?sslmode=disable
 {{- else if .Values.postgresql.enabled }}
-postgres://{{ .Values.postgresql.auth.username }}:{{ .Values.postgresql.auth.password }}-postgres:5432/{{ .Values.postgresql.auth.database }}?sslmode=disable
+postgres://{{ .Values.postgresql.auth.username }}:{{ .Values.postgresql.auth.password }}@postgres:5432/{{ .Values.postgresql.auth.database }}?sslmode=disable
 {{- else }}
 {{- .Values.orchestrator.timescale.dsn }}
 {{- end }}

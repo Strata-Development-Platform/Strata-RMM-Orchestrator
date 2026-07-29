@@ -3,6 +3,7 @@
 package platform
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
@@ -33,7 +34,7 @@ func testDB(t *testing.T) *sql.DB {
 func applyMigrations(t *testing.T, db *sql.DB) {
 	t.Helper()
 	mgr := postgres.NewSchemaManager(db)
-	if err := mgr.Apply(); err != nil {
+	if err := mgr.Apply(context.Background()); err != nil {
 		t.Fatalf("apply migrations: %v", err)
 	}
 }
