@@ -1,5 +1,16 @@
 # Strata RMM Helm Chart Values
 # Global settings apply across all sub-charts
+replicaCount: 2
+
+image:
+  repository: stratalabs/strata-rmm
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8080
+
 global:
   imageRegistry: ""
   imagePullSecrets: []
