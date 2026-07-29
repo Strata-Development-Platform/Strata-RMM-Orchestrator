@@ -14,11 +14,11 @@ import (
 type UpgradePhase string
 
 const (
-	PreCheck      UpgradePhase = "pre_check"
+	PreCheck       UpgradePhase = "pre_check"
 	VersionUpgrade UpgradePhase = "version_upgrade"
-	DataMigration UpgradePhase = "data_migration"
-	PostUpgrade   UpgradePhase = "post_upgrade"
-	Finalize      UpgradePhase = "finalize"
+	DataMigration  UpgradePhase = "data_migration"
+	PostUpgrade    UpgradePhase = "post_upgrade"
+	Finalize       UpgradePhase = "finalize"
 )
 
 func (p UpgradePhase) String() string {
@@ -46,34 +46,9 @@ type VersionStore interface {
 	ExistsChecksum(string) (bool, error)
 }
 
-// versionStore implements the VersionStore interface by persisting schema version
-// and checksum to the schema_migrations table.
-type versionStore struct {
-	db    *sql.DB
-}
-
 // NewVersionStore creates a VersionStore backed by the given database connection.
-func NewVersionStore(db *sql.DB, logger *zap.SugaredLogger) *versionStore {
-	_ = logger // logger is reserved for future version store logging
-	return &versionStore{db: db}
-}
-
-func (vs *versionStore) GetVersion() (int32, error) {
-	var version sql.NullInt64
-	err := vs.db.QueryRowContext(context.Background(), "SELECT COALESCE(MAX(id), 0) FROM schema_migrations").Scan(&version)
-	if err != nil {
-		if err == ErrTableNotFound {
-			return 0, nil
-		}
-		return 0, fmt.Errorf("query schema_migrations for version: %w", err)
-	}
-	if !version.Valid {
-		return 0, nil
-	}
-	if version.Int64 > 2147483647 || version.Int64 < -2147483648 {
-		return 0, fmt.Errorf("version %d out of int32 range", version.Int64)
-	}
-	return int32(version.Int64), nil
+func NewVersionStore(db *sql.DB, logger *zap.SugaredLogger) *PostgresVersionStore {
+	return NewPostgresVersionStore(db, logger)
 }
 
 func int32FromInt(v int) int32 {
@@ -81,31 +56,6 @@ func int32FromInt(v int) int32 {
 		panic("value out of int32 range")
 	}
 	return int32(v)
-}
-
-func (vs *versionStore) SetVersion(v int32) error {
-	_, err := vs.db.ExecContext(context.Background(),
-		`UPDATE schema_migrations SET id = $1`, v)
-	if err != nil {
-		return fmt.Errorf("set version: %w", err)
-	}
-	return nil
-}
-
-func (vs *versionStore) SetVersionAndChecksum(v int32, cs string) error {
-	return vs.SetVersion(v)
-}
-
-func (vs *versionStore) GetChecksum(key string) (string, error) {
-	return "", nil
-}
-
-func (vs *versionStore) AddChecksum(key, value string) error {
-	return nil
-}
-
-func (vs *versionStore) ExistsChecksum(key string) (bool, error) {
-	return false, nil
 }
 
 type UpgradeResult struct {
@@ -186,9 +136,16 @@ func (um *UpgradeManager) RunPhase(ctx context.Context, phase UpgradePhase, vers
 		return um.runDefaultPhase(ctx, phase, version)
 	}
 
-	err := um.runWithRetry(ctx, func(ctx context.Context) error {
-		return hook(ctx, version)
-	})
+	var err error
+	if phase == DataMigration {
+		// Migration hooks can contain non-idempotent mutations. They must never
+		// be replayed automatically after an ambiguous failure.
+		err = hook(ctx, version)
+	} else {
+		err = um.runWithRetry(ctx, func(ctx context.Context) error {
+			return hook(ctx, version)
+		})
+	}
 
 	if err != nil {
 		um.logger.Errorw("phase hook failed", "phase", phase, "error", err)
@@ -316,7 +273,10 @@ func (um *UpgradeManager) defaultPostUpgrade(ctx context.Context, version int32)
 }
 
 func (um *UpgradeManager) defaultFinalize(ctx context.Context, version int32) error {
-	checksum := fmt.Sprintf("sha256:v%d", version)
+	checksum, err := MigrationChecksum(version)
+	if err != nil {
+		return fmt.Errorf("calculate migration checksum: %w", err)
+	}
 	if err := um.versionStore.SetVersionAndChecksum(version, checksum); err != nil {
 		return fmt.Errorf("commit final version: %w", err)
 	}
@@ -377,7 +337,9 @@ func (um *UpgradeManager) RunUpgrade(ctx context.Context, targetVersion int32) (
 		return nil, fmt.Errorf("acquire upgrade lock: %w", err)
 	}
 	defer func() {
-		if releaseErr := um.releaseUpgradeLock(ctx); releaseErr != nil {
+		releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if releaseErr := um.releaseUpgradeLock(releaseCtx); releaseErr != nil {
 			um.logger.Errorw("failed to release upgrade lock", "error", releaseErr)
 		}
 	}()
@@ -408,6 +370,13 @@ func (um *UpgradeManager) RunUpgrade(ctx context.Context, targetVersion int32) (
 		result.StepsCompleted = append(result.StepsCompleted, stepLabel)
 	}
 
+	releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := um.releaseUpgradeLock(releaseCtx); err != nil {
+		result.Error = err
+		result.Duration = time.Since(startTime)
+		return result, err
+	}
 	result.Success = true
 	result.Duration = time.Since(startTime)
 	um.logger.Infow("upgrade completed successfully", "from", fromVersion, "to", targetVersion, "duration", result.Duration)
@@ -512,19 +481,26 @@ func (um *UpgradeManager) releaseUpgradeLock(ctx context.Context) error {
 		return fmt.Errorf("upgrade lock connection unexpectedly nil")
 	}
 
-	_, err := um.lockConn.ExecContext(ctx, "SELECT pg_advisory_unlock($1)", upgradeLockID)
+	var unlocked bool
+	err := um.lockConn.QueryRowContext(ctx, "SELECT pg_advisory_unlock($1)", upgradeLockID).Scan(&unlocked)
 	if err != nil {
 		_ = um.lockConn.Close() //nolint:errcheck // best-effort cleanup on release failure
 		um.lockConn = nil
 		um.lockAcquired = false
 		return fmt.Errorf("release upgrade lock: %w", ErrLockReleaseFailed)
 	}
+	if !unlocked {
+		_ = um.lockConn.Close() //nolint:errcheck // best-effort cleanup when lock was not held
+		um.lockConn = nil
+		um.lockAcquired = false
+		return fmt.Errorf("upgrade lock was not held: %w", ErrLockHeld)
+	}
 
 	err = um.lockConn.Close()
 	um.lockConn = nil
 	um.lockAcquired = false
 	if err != nil {
-		um.logger.Errorw("error closing upgrade lock connection", "error", err)
+		return fmt.Errorf("close upgrade lock connection: %w", ErrLockReleaseFailed)
 	}
 
 	um.logger.Info("upgrade advisory lock released")

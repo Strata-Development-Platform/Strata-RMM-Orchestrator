@@ -8,11 +8,12 @@ import (
 type DeploymentState int
 
 const (
-	DeploymentStatePending    DeploymentState = iota
+	DeploymentStatePending DeploymentState = iota
 	DeploymentStateInProgress
 	DeploymentStateCompleted
 	DeploymentStateFailed
 	DeploymentStateRollingBack
+	DeploymentStateRolledBack
 )
 
 func (s DeploymentState) String() string {
@@ -27,18 +28,20 @@ func (s DeploymentState) String() string {
 		return "failed"
 	case DeploymentStateRollingBack:
 		return "rolling_back"
+	case DeploymentStateRolledBack:
+		return "rolled_back"
 	default:
 		return "unknown"
 	}
 }
 
 type DeploymentEvent struct {
-	ID              string         `json:"id"`
-	Version         string         `json:"version"`
-	PreviousVersion string         `json:"previous_version"`
-	State           DeploymentState `json:"state"`
-	Timestamp       time.Time      `json:"timestamp"`
-	Error           string         `json:"error,omitempty"`
+	ID              string            `json:"id"`
+	Version         string            `json:"version"`
+	PreviousVersion string            `json:"previous_version"`
+	State           DeploymentState   `json:"state"`
+	Timestamp       time.Time         `json:"timestamp"`
+	Error           string            `json:"error,omitempty"`
 	Metadata        map[string]string `json:"metadata,omitempty"`
 }
 
@@ -100,7 +103,7 @@ func (c *DeploymentController) TransitionTo(newState DeploymentState, errMsg str
 	c.current = newState
 
 	event := DeploymentEvent{
-		State:   newState,
+		State:     newState,
 		Timestamp: time.Now(),
 	}
 	if errMsg != "" {

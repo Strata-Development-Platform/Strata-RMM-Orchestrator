@@ -204,6 +204,7 @@ func TestDeploymentState_String(t *testing.T) {
 		{DeploymentStateCompleted, "completed"},
 		{DeploymentStateFailed, "failed"},
 		{DeploymentStateRollingBack, "rolling_back"},
+		{DeploymentStateRolledBack, "rolled_back"},
 		{DeploymentState(99), "unknown"},
 	}
 

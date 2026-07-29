@@ -158,11 +158,19 @@ func (s *APIServer) applyUpdate(ctx context.Context) {
 			s.updateMgr.dc.TransitionTo(DeploymentStateRollingBack, "")
 		}
 		s.updateMgr.logger.Error("update apply failed", zap.Error(err))
-		s.updateMgr.updater.Rollback()
+		rollbackErr := s.updateMgr.updater.Rollback()
 		if s.updateMgr.dc != nil {
-			s.updateMgr.dc.TransitionTo(DeploymentStateFailed, fmt.Sprintf("apply failed: %v", err))
+			if rollbackErr != nil {
+				s.updateMgr.dc.TransitionTo(DeploymentStateFailed, fmt.Sprintf("apply failed: %v; rollback failed: %v", err, rollbackErr))
+			} else {
+				s.updateMgr.dc.TransitionTo(DeploymentStateRolledBack, fmt.Sprintf("apply failed: %v", err))
+			}
 		}
-		s.updateMgr.status = "failed"
+		if rollbackErr != nil {
+			s.updateMgr.status = "rollback_failed"
+		} else {
+			s.updateMgr.status = "rolled_back"
+		}
 		return
 	}
 
@@ -172,11 +180,19 @@ func (s *APIServer) applyUpdate(ctx context.Context) {
 			s.updateMgr.dc.TransitionTo(DeploymentStateRollingBack, "")
 		}
 		s.updateMgr.logger.Error("update verification failed, rolling back", zap.Error(err))
-		s.updateMgr.updater.Rollback()
+		rollbackErr := s.updateMgr.updater.Rollback()
 		if s.updateMgr.dc != nil {
-			s.updateMgr.dc.TransitionTo(DeploymentStateFailed, fmt.Sprintf("verification failed: %v", err))
+			if rollbackErr != nil {
+				s.updateMgr.dc.TransitionTo(DeploymentStateFailed, fmt.Sprintf("verification failed: %v; rollback failed: %v", err, rollbackErr))
+			} else {
+				s.updateMgr.dc.TransitionTo(DeploymentStateRolledBack, fmt.Sprintf("verification failed: %v", err))
+			}
 		}
-		s.updateMgr.status = "rolled_back"
+		if rollbackErr != nil {
+			s.updateMgr.status = "rollback_failed"
+		} else {
+			s.updateMgr.status = "rolled_back"
+		}
 		return
 	}
 

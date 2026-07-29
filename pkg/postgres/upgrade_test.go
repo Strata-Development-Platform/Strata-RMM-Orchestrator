@@ -16,7 +16,7 @@ import (
 type mockResult struct{}
 
 func (m mockResult) LastInsertId() (int64, error) { return 0, nil }
-func (m mockResult) RowsAffected() (int64, error)  { return 0, nil }
+func (m mockResult) RowsAffected() (int64, error) { return 0, nil }
 
 // mockRow implements sql.Scanner for testing.
 type mockRow struct {
@@ -68,9 +68,9 @@ func newMockRow(err error, values ...interface{}) *mockRow {
 }
 
 var (
-	errGetVersion    = errors.New("get version error")
-	errSetVersion    = errors.New("set version error")
-	errLockTimeout   = errors.New("advisory lock acquisition timed out")
+	errGetVersion  = errors.New("get version error")
+	errSetVersion  = errors.New("set version error")
+	errLockTimeout = errors.New("advisory lock acquisition timed out")
 )
 
 // mockConn implements dbConnConn for testing.
@@ -611,5 +611,24 @@ func TestNewPostgresVersionStore_NilDB(t *testing.T) {
 	err = store.SetVersion(1)
 	if err == nil {
 		t.Fatal("expected error setting version with nil db")
+	}
+}
+
+func TestMigrationChecksumIsContentDerived(t *testing.T) {
+	checksum, err := MigrationChecksum(5)
+	if err != nil {
+		t.Fatalf("MigrationChecksum returned error: %v", err)
+	}
+	if len(checksum) != len("sha256:")+64 {
+		t.Fatalf("expected a SHA-256 digest, got %q", checksum)
+	}
+	if checksum == "sha256:v5" {
+		t.Fatal("checksum must be derived from migration content")
+	}
+}
+
+func TestMigrationChecksumRejectsUnknownVersion(t *testing.T) {
+	if _, err := MigrationChecksum(2147483647); err == nil {
+		t.Fatal("expected unknown migration version to fail")
 	}
 }

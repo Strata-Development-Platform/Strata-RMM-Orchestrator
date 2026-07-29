@@ -83,9 +83,15 @@ func (re *RollbackEngine) RunPhase(ctx context.Context, phase RollbackPhase, fro
 
 	hook, ok := re.rollbackHooks[phase]
 	if ok {
-		err := re.runWithRetry(ctx, func(ctx context.Context) error {
-			return hook(ctx, fromVersion, toVersion)
-		})
+		var err error
+		if phase == RBDataRollback {
+			// Rollback data hooks are not assumed to be replay-safe.
+			err = hook(ctx, fromVersion, toVersion)
+		} else {
+			err = re.runWithRetry(ctx, func(ctx context.Context) error {
+				return hook(ctx, fromVersion, toVersion)
+			})
+		}
 		if err != nil {
 			re.logger.Errorw("rollback phase hook failed", "phase", phase, "error", err)
 			return fmt.Errorf("phase %s hook failed: %w", phase, err)
@@ -214,7 +220,10 @@ func (re *RollbackEngine) defaultPostRollback(ctx context.Context, fromVersion, 
 }
 
 func (re *RollbackEngine) defaultFinalizeRollback(ctx context.Context, fromVersion, toVersion int32) error {
-	checksum := fmt.Sprintf("sha256:v%d", toVersion)
+	checksum, err := MigrationChecksum(toVersion)
+	if err != nil {
+		return fmt.Errorf("calculate migration checksum: %w", err)
+	}
 	if err := re.versionStore.SetVersionAndChecksum(toVersion, checksum); err != nil {
 		return fmt.Errorf("commit rollback version: %w", err)
 	}
@@ -281,7 +290,9 @@ func (re *RollbackEngine) RunRollback(ctx context.Context, targetVersion int32) 
 		return result, result.Error
 	}
 	defer func() {
-		if releaseErr := re.releaseRollbackLock(ctx); releaseErr != nil {
+		releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if releaseErr := re.releaseRollbackLock(releaseCtx); releaseErr != nil {
 			re.logger.Errorw("failed to release rollback lock", "error", releaseErr)
 		}
 	}()
@@ -326,6 +337,13 @@ func (re *RollbackEngine) RunRollback(ctx context.Context, targetVersion int32) 
 		result.StepsCompleted = append(result.StepsCompleted, stepLabel)
 	}
 
+	releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := re.releaseRollbackLock(releaseCtx); err != nil {
+		result.Error = err
+		result.Duration = time.Since(startTime)
+		return result, err
+	}
 	result.Success = true
 	result.Duration = time.Since(startTime)
 	re.logger.Infow("rollback completed successfully", "from", fromVersion, "to", targetVersion, "duration", result.Duration)
@@ -491,7 +509,7 @@ func (re *RollbackEngine) releaseRollbackLock(ctx context.Context) error {
 	re.lockConn = nil
 	re.lockAcquired = false
 	if err != nil {
-		re.logger.Errorw("error closing rollback lock connection", "error", err)
+		return fmt.Errorf("close rollback lock connection: %w", ErrLockReleaseFailed)
 	}
 
 	re.logger.Info("rollback advisory lock released")

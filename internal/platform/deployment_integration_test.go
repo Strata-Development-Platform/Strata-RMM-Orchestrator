@@ -63,7 +63,7 @@ func TestDeploymentController_FailureAndRollback(t *testing.T) {
 	dc.TransitionTo(DeploymentStateInProgress, "")
 	dc.TransitionTo(DeploymentStateFailed, "image pull backoff")
 	dc.TransitionTo(DeploymentStateRollingBack, "")
-	dc.TransitionTo(DeploymentStateCompleted, "")
+	dc.TransitionTo(DeploymentStateRolledBack, "")
 
 	events := dc.GetHistory()
 	if len(events) != 4 {
@@ -76,8 +76,8 @@ func TestDeploymentController_FailureAndRollback(t *testing.T) {
 
 	// lastEvent reflects the most recent transition
 	lastEvent := dc.GetLastEvent()
-	if lastEvent == nil || lastEvent.State != DeploymentStateCompleted {
-		t.Errorf("expected last event completed, got %+v", lastEvent)
+	if lastEvent == nil || lastEvent.State != DeploymentStateRolledBack {
+		t.Errorf("expected last event rolled back, got %+v", lastEvent)
 	}
 }
 
@@ -341,10 +341,10 @@ func TestDeploymentController_FailureLifecycle(t *testing.T) {
 	dc.Reset()
 	dc.TransitionTo(DeploymentStateInProgress, "")
 	dc.TransitionTo(DeploymentStateRollingBack, "")
-	dc.TransitionTo(DeploymentStateFailed, "apply failed: disk full")
+	dc.TransitionTo(DeploymentStateRolledBack, "apply failed: disk full")
 
-	if dc.GetState() != DeploymentStateFailed {
-		t.Fatalf("expected failed after rollback, got %v", dc.GetState())
+	if dc.GetState() != DeploymentStateRolledBack {
+		t.Fatalf("expected rolled back after successful restore, got %v", dc.GetState())
 	}
 
 	history = dc.GetHistory()

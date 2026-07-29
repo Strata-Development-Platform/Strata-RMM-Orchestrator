@@ -910,17 +910,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Validate Helm chart rendering
-        uses: helm/kind-action@v1.12.0
-        if: false
+      - name: Install Helm
+        uses: azure/setup-helm@v4
       - name: Validate Helm chart linting
         run: |
-          if command -v helm &>/dev/null; then
-            helm lint deploy/helm/strata-rmm/
-          fi
+          helm lint deploy/helm/strata-rmm/
+      - name: Validate Helm chart rendering
+        run: |
+          helm template strata-rmm deploy/helm/strata-rmm/ > /tmp/strata-rmm-rendered.yaml
+          test -s /tmp/strata-rmm-rendered.yaml
       - name: Validate docker-compose syntax
         run: |
-          python3 -c "import yaml; yaml.safe_load(open('deploy/docker/docker-compose.yml'))"
+          docker compose -f deploy/docker/docker-compose.yml config --quiet
       - name: Validate Kots application manifest
         run: |
           python3 -c "import yaml; yaml.safe_load(open('deploy/kots/application.yaml'))"
@@ -931,12 +932,9 @@ jobs:
           done
       - name: Verify systemd unit file exists and is valid
         run: |
-          if [ -f deploy/strata-rmm-agent.service ]; then
-            echo "OK: deploy/strata-rmm-agent.service exists"
-            if command -v systemd-analyze &>/dev/null; then
-              systemd-analyze verify deploy/strata-rmm-agent.service 2>/dev/null || echo "systemd-analyze warnings (non-fatal)"
-            fi
-          fi
+          test -f deploy/strata-rmm-agent.service
+          sed 's#ExecStart=/usr/local/bin/strata-rmm.*#ExecStart=/bin/true#' deploy/strata-rmm-agent.service > /tmp/strata-rmm-agent.service
+          systemd-analyze verify /tmp/strata-rmm-agent.service
       - name: Verify all deployment templates contain expected keys
         run: |
           python3 -c "import yaml; f=open('deploy/helm/strata-rmm/values.yaml'); v=yaml.safe_load(f); assert 'replicaCount' in v; assert 'image' in v; assert 'service' in v; print('OK: Helm values.yaml valid')"
