@@ -62,6 +62,8 @@ type APIServer struct {
 	// allowClaimPrincipal is restricted to isolated middleware unit tests. Production
 	// servers always resolve users, memberships, and agents from PostgreSQL.
 	allowClaimPrincipal bool
+
+	deploymentController *DeploymentController
 }
 
 func NewAPIServer(addr string, db *timescale.Client, nc *nats.Conn, logger *zap.Logger, tokenGen *auth.TokenGenerator) (*APIServer, error) {
@@ -136,6 +138,11 @@ func (s *APIServer) WithStorageBackend(sb storage.Backend) *APIServer {
 func (s *APIServer) WithVersion(version, commit string) *APIServer {
 	s.version = version
 	s.commit = commit
+	return s
+}
+
+func (s *APIServer) WithDeploymentController(dc *DeploymentController) *APIServer {
+	s.deploymentController = dc
 	return s
 }
 
@@ -338,6 +345,10 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("POST /api/v2/platform/support-grants", s.handleCreateSupportGrant)
 	mux.HandleFunc("DELETE /api/v2/platform/support-grants/{grantID}", s.handleRevokeSupportGrant)
 	mux.HandleFunc("GET /api/v2/context", s.handleContext)
+
+	// v2 API — deployment state
+	mux.HandleFunc("GET /api/v2/deployment/state", s.handleDeploymentState)
+	mux.HandleFunc("GET /api/v2/deployment/history", s.handleDeploymentHistory)
 
 	// Device operations
 	mux.HandleFunc("GET /api/v2/devices", s.handleListDevices)
@@ -1576,4 +1587,35 @@ func (s *APIServer) handleDeleteRecording(w http.ResponseWriter, r *http.Request
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+func (s *APIServer) handleDeploymentState(w http.ResponseWriter, r *http.Request) {
+	if s.deploymentController == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "deployment controller not configured"})
+		return
+	}
+	state := s.deploymentController.GetState()
+	lastEvent := s.deploymentController.GetLastEvent()
+	resp := map[string]interface{}{
+		"state": state.String(),
+	}
+	if lastEvent != nil {
+		resp["last_event"] = lastEvent
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *APIServer) handleDeploymentHistory(w http.ResponseWriter, r *http.Request) {
+	if s.deploymentController == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "deployment controller not configured"})
+		return
+	}
+	history := s.deploymentController.GetHistory()
+	if history == nil {
+		history = []DeploymentEvent{}
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"history": history,
+		"count":   len(history),
+	})
 }

@@ -2143,73 +2143,100 @@ func NewSchemaManager(db *sql.DB) *SchemaManager {
 }
 
 var (
-	ErrLockHeld    = errors.New("advisory lock held by another process")
-	ErrLockTimeout = errors.New("advisory lock acquisition timed out")
+	ErrTableNotFound         = errors.New("required table not found")
+	ErrLockHeld              = errors.New("advisory lock held by another process")
+	ErrLockTimeout           = errors.New("advisory lock acquisition timed out")
+	ErrLockReleaseFailed     = errors.New("advisory lock release returned error")
+	ErrSchemaVersionConflict = errors.New("schema version mismatch")
 )
 
-func (m *SchemaManager) acquireLock(ctx context.Context) error {
-	const maxAttempts = 5
-	const interval = 1 * time.Second
+func logLockAttempt(schemaVersion int) {
+	fmt.Fprintf(os.Stderr, "[INFO] attempting to acquire migration lock for schema version %d\n", schemaVersion)
+}
 
-	conn, err := m.db.Conn(ctx)
+func logMigrationAttempt(migrationID int) {
+	fmt.Fprintf(os.Stderr, "[INFO] applying migration %d\n", migrationID)
+}
+
+func (m *SchemaManager) acquireLock(ctx context.Context, schemaVersion int) error {
+	timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	conn, err := m.db.Conn(timeoutCtx)
 	if err != nil {
 		return fmt.Errorf("get database connection: %w", err)
 	}
 
-	ticker := time.NewTicker(interval)
+	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
-	for i := 0; i < maxAttempts; i++ {
+	logLockAttempt(schemaVersion)
+
+	for i := 0; i < 5; i++ {
 		select {
-		case <-ctx.Done():
-		_ = conn.Close()
-		return fmt.Errorf("advisory lock cancelled: %w", ctx.Err())
+		case <-timeoutCtx.Done():
+			_ = conn.Close()
+			return fmt.Errorf("advisory lock timed out: %w", context.DeadlineExceeded)
 		default:
 		}
 
 		var acquired bool
-		err := conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock($1)", migrationLockID).Scan(&acquired)
+		err := conn.QueryRowContext(timeoutCtx, "SELECT pg_try_advisory_lock($1)", migrationLockID).Scan(&acquired)
 		if err != nil {
-			if i < maxAttempts-1 {
+			if i < 4 {
 				<-ticker.C
 				continue
 			}
 			_ = conn.Close()
-			return fmt.Errorf("lock attempt %d/%d: %w", i+1, maxAttempts, err)
+			return fmt.Errorf("lock attempt %d/%d: %w", i+1, 5, err)
 		}
 		if acquired {
 			m.lockConn = conn
 			return nil
 		}
-		if i < maxAttempts-1 {
+		if i < 4 {
 			<-ticker.C
 		}
 	}
 
 	_ = conn.Close()
-	return fmt.Errorf("lock attempt %d/%d: %w", maxAttempts, maxAttempts, ErrLockTimeout)
+	return fmt.Errorf("lock attempt %d/%d: %w", 5, 5, ErrLockTimeout)
 }
 
-func (m *SchemaManager) releaseLock() {
+func (m *SchemaManager) releaseLock(ctx context.Context) error {
 	if m.lockConn == nil {
-		return
+		return nil
 	}
-	_, err := m.lockConn.ExecContext(context.Background(), "SELECT pg_advisory_unlock($1)", migrationLockID)
+	_, err := m.lockConn.ExecContext(ctx, "SELECT pg_advisory_unlock($1)", migrationLockID)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error releasing advisory lock: %v\n", err)
+		fmt.Fprintf(os.Stderr, "[WARN] error releasing advisory lock: %v\n", err)
+		return fmt.Errorf("release advisory lock: %w", ErrLockReleaseFailed)
 	}
 	closeErr := m.lockConn.Close()
 	if closeErr != nil {
-		fmt.Fprintf(os.Stderr, "error closing lock connection: %v\n", closeErr)
+		fmt.Fprintf(os.Stderr, "[WARN] error closing lock connection: %v\n", closeErr)
+		if err == nil {
+			return fmt.Errorf("close lock connection: %w", ErrLockReleaseFailed)
+		}
 	}
 	m.lockConn = nil
+	return nil
 }
 
 func (m *SchemaManager) Apply(ctx context.Context) error {
-	if err := m.acquireLock(ctx); err != nil {
+	finalSchemaVersion := 0
+	if migs := Migrations(); len(migs) > 0 {
+		finalSchemaVersion = migs[len(migs)-1].ID
+	}
+
+	if err := m.acquireLock(ctx, finalSchemaVersion); err != nil {
 		return fmt.Errorf("acquiring migration lock: %w", err)
 	}
-	defer m.releaseLock()
+	defer func() {
+		if releaseErr := m.releaseLock(ctx); releaseErr != nil {
+			fmt.Fprintf(os.Stderr, "[WARN] migration lock release failed: %v\n", releaseErr)
+		}
+	}()
 
 	_, err := m.lockConn.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -2223,6 +2250,8 @@ func (m *SchemaManager) Apply(ctx context.Context) error {
 	}
 
 	for _, mig := range Migrations() {
+		logMigrationAttempt(mig.ID)
+
 		var exists bool
 		err := m.lockConn.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE id = $1)`, mig.ID).Scan(&exists)
 		if err != nil {
