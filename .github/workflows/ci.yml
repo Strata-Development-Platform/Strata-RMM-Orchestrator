@@ -924,6 +924,8 @@ jobs:
           helm template strata-rmm deploy/helm/strata-rmm/ > /tmp/strata-rmm-rendered.yaml
           test -s /tmp/strata-rmm-rendered.yaml
       - name: Validate docker-compose syntax
+        env:
+          JWT_SECRET: ci-only-compose-render-secret-000000000000
         run: |
           docker compose -f deploy/docker/docker-compose.yml config --quiet
       - name: Validate Kots application manifest
