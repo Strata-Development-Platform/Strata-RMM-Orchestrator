@@ -62,7 +62,6 @@ var (
 	errGetVersion    = errors.New("get version error")
 	errSetVersion    = errors.New("set version error")
 	errLockTimeout   = errors.New("advisory lock acquisition timed out")
-	errLockRelease   = errors.New("advisory lock release failed")
 )
 
 // mockConn implements dbConnConn for testing.
@@ -408,7 +407,7 @@ func TestGetSchemaVersion_Caching(t *testing.T) {
 	}
 
 	// Change version in store — should still return cached value
-	store.SetVersion(99)
+	_ = store.SetVersion(99)
 	v2, err := um.GetSchemaVersion(ctx)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)

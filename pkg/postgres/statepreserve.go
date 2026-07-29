@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"sync"
 	"time"
@@ -151,7 +153,7 @@ func (sp *StatePreserver) SaveSnapshot(snapshot *StateSnapshot) (string, error) 
 		return "", fmt.Errorf("snapshot cannot be nil")
 	}
 
-	if err := os.MkdirAll(sp.backupDir, 0755); err != nil {
+	if err := os.MkdirAll(sp.backupDir, 0750); err != nil {
 		return "", fmt.Errorf("create backup directory: %w", err)
 	}
 
@@ -164,7 +166,7 @@ func (sp *StatePreserver) SaveSnapshot(snapshot *StateSnapshot) (string, error) 
 		return "", fmt.Errorf("marshal snapshot: %w", err)
 	}
 
-	if err := os.WriteFile(filepath, data, 0644); err != nil {
+	if err := os.WriteFile(filepath, data, 0600); err != nil {
 		return "", fmt.Errorf("write snapshot file: %w", err)
 	}
 
@@ -177,10 +179,14 @@ func (sp *StatePreserver) LoadSnapshot(id string) (*StateSnapshot, error) {
 		return nil, fmt.Errorf("snapshot id cannot be empty")
 	}
 
+	if !regexp.MustCompile(`^snap_\d{8}T\d{6}\.\d{3}Z_[0-9a-f]{8}$`).MatchString(id) {
+		return nil, fmt.Errorf("invalid snapshot id format")
+	}
+
 	filename := fmt.Sprintf("%s.json", id)
 	filepath := filepath.Join(sp.backupDir, filename)
 
-	data, err := os.ReadFile(filepath)
+	data, err := os.ReadFile(filepath) // #nosec G304 - filepath is validated via regex above
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("snapshot %s not found: %w", id, ErrTableNotFound)
@@ -447,9 +453,7 @@ func (sp *StatePreserver) ValidateSnapshot(ctx context.Context) error {
 		}
 	}
 
-	if len(snapshot.Indexes) < 0 {
-		return fmt.Errorf("negative index count")
-	}
+
 
 	for _, idx := range snapshot.Indexes {
 		if idx.Name == "" {
@@ -549,7 +553,10 @@ func (sp *StatePreserver) getSchemaVersion(ctx context.Context) (int32, error) {
 		return 0, nil
 	}
 
-	return int32(version.Int64), nil
+	if version.Int64 > math.MaxInt32 {
+		return 0, fmt.Errorf("schema version %d exceeds maximum value", version.Int64)
+	}
+	return int32(version.Int64), nil // #nosec G115 - guarded by MaxInt32 check above
 }
 
 func (sp *StatePreserver) getTableStats(ctx context.Context) (map[string]TableStat, error) {

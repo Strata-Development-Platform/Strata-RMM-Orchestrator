@@ -270,11 +270,13 @@ func (um *UpgradeManager) ValidateTarget(ctx context.Context, targetVersion int3
 
 	migrations := Migrations()
 	if len(migrations) > 0 {
-		maxID := int32(migrations[len(migrations)-1].ID)
-		if targetVersion > maxID {
+		maxID := int(migrations[len(migrations)-1].ID)
+		if int(targetVersion) > maxID {
 			return fmt.Errorf("target version %d exceeds maximum migration ID %d", targetVersion, maxID)
 		}
+		return nil
 	}
+
 
 	return nil
 }
