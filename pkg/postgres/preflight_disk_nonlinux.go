@@ -1,11 +1,8 @@
-//go:build !linux
+//go:build !linux && !windows
 
 package postgres
 
-import (
-	"os"
-	"syscall"
-)
+import "syscall"
 
 func diskSpaceOnDir(dir string) (int64, int64, error) {
 	var stat syscall.Statfs_t

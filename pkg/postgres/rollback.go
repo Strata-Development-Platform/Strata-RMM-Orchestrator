@@ -416,9 +416,13 @@ func (re *RollbackEngine) acquireRollbackLock(ctx context.Context) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, re.lockTimeout)
 	defer cancel()
 
-	conn, err := re.db.Conn(timeoutCtx)
+	rawConn, err := re.db.Conn(timeoutCtx)
 	if err != nil {
 		return fmt.Errorf("get database connection: %w", err)
+	}
+	conn, ok := rawConn.(dbConnConn)
+	if !ok {
+		return fmt.Errorf("database connection does not implement dbConnConn")
 	}
 
 	ticker := time.NewTicker(1 * time.Second)
@@ -427,7 +431,7 @@ func (re *RollbackEngine) acquireRollbackLock(ctx context.Context) error {
 	for i := 0; i < 5; i++ {
 		select {
 		case <-timeoutCtx.Done():
-			_ = conn.Close()
+			_ = conn.Close() //nolint:errcheck // best-effort cleanup on timeout
 			return fmt.Errorf("rollback lock timed out: %w", context.DeadlineExceeded)
 		default:
 		}
@@ -439,7 +443,7 @@ func (re *RollbackEngine) acquireRollbackLock(ctx context.Context) error {
 				<-ticker.C
 				continue
 			}
-			_ = conn.Close()
+			_ = conn.Close() //nolint:errcheck // best-effort cleanup on failure
 			return fmt.Errorf("lock attempt %d/%d: %w", i+1, 5, err)
 		}
 		if acquired {
@@ -453,7 +457,7 @@ func (re *RollbackEngine) acquireRollbackLock(ctx context.Context) error {
 		}
 	}
 
-	_ = conn.Close()
+	_ = conn.Close() //nolint:errcheck // best-effort cleanup after exhausted retries
 	return fmt.Errorf("rollback lock timed out after 5 attempts: %w", ErrLockTimeout)
 }
 
@@ -471,13 +475,13 @@ func (re *RollbackEngine) releaseRollbackLock(ctx context.Context) error {
 	var unlocked bool
 	err := re.lockConn.QueryRowContext(ctx, "SELECT pg_advisory_unlock($1)", rollbackLockID).Scan(&unlocked)
 	if err != nil {
-		_ = re.lockConn.Close()
+		_ = re.lockConn.Close() //nolint:errcheck // best-effort cleanup on release failure
 		re.lockConn = nil
 		re.lockAcquired = false
 		return fmt.Errorf("release rollback lock: %w", ErrLockReleaseFailed)
 	}
 	if !unlocked {
-		_ = re.lockConn.Close()
+		_ = re.lockConn.Close() //nolint:errcheck // best-effort cleanup when lock was not held
 		re.lockConn = nil
 		re.lockAcquired = false
 		return fmt.Errorf("rollback lock was not held: %w", ErrLockHeld)

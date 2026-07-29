@@ -106,10 +106,10 @@ func (m *mockConn) Close() error {
 
 // mockDB implements the dbConn interface for testing.
 type mockDB struct {
-	connFn func() (dbConnConn, error)
+	connFn func() (any, error)
 }
 
-func (m *mockDB) Conn(ctx context.Context) (dbConnConn, error) {
+func (m *mockDB) Conn(ctx context.Context) (any, error) {
 	if m.connFn == nil {
 		return &mockConn{}, nil
 	}
@@ -430,7 +430,7 @@ func TestGetSchemaVersion_Caching(t *testing.T) {
 // ---------------------------------------------------------------------------
 func TestRunUpgrade_LockError(t *testing.T) {
 	db := &mockDB{
-		connFn: func() (dbConnConn, error) {
+		connFn: func() (any, error) {
 			return nil, errLockTimeout
 		},
 	}

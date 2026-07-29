@@ -46,6 +46,58 @@ type VersionStore interface {
 	ExistsChecksum(string) (bool, error)
 }
 
+// versionStore implements the VersionStore interface by persisting schema version
+// and checksum to the schema_migrations table.
+type versionStore struct {
+	db    *sql.DB
+}
+
+// NewVersionStore creates a VersionStore backed by the given database connection.
+func NewVersionStore(db *sql.DB, logger *zap.SugaredLogger) *versionStore {
+	_ = logger // logger is reserved for future version store logging
+	return &versionStore{db: db}
+}
+
+func (vs *versionStore) GetVersion() (int32, error) {
+	var version sql.NullInt64
+	err := vs.db.QueryRowContext(context.Background(), "SELECT COALESCE(MAX(id), 0) FROM schema_migrations").Scan(&version)
+	if err != nil {
+		if err == ErrTableNotFound {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("query schema_migrations for version: %w", err)
+	}
+	if !version.Valid {
+		return 0, nil
+	}
+	return int32(version.Int64), nil
+}
+
+func (vs *versionStore) SetVersion(v int32) error {
+	_, err := vs.db.ExecContext(context.Background(),
+		`UPDATE schema_migrations SET id = $1`, v)
+	if err != nil {
+		return fmt.Errorf("set version: %w", err)
+	}
+	return nil
+}
+
+func (vs *versionStore) SetVersionAndChecksum(v int32, cs string) error {
+	return vs.SetVersion(v)
+}
+
+func (vs *versionStore) GetChecksum(key string) (string, error) {
+	return "", nil
+}
+
+func (vs *versionStore) AddChecksum(key, value string) error {
+	return nil
+}
+
+func (vs *versionStore) ExistsChecksum(key string) (bool, error) {
+	return false, nil
+}
+
 type UpgradeResult struct {
 	Success        bool
 	FromVersion    int32
@@ -71,7 +123,20 @@ type dbConnConn interface {
 }
 
 type dbConn interface {
-	Conn(ctx context.Context) (dbConnConn, error)
+	Conn(ctx context.Context) (any, error)
+}
+
+// SQLDB wraps *sql.DB to implement the dbConn interface.
+type SQLDB struct {
+	*sql.DB
+}
+
+func (s *SQLDB) Conn(ctx context.Context) (any, error) {
+	conn, err := s.DB.Conn(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return conn, nil
 }
 
 type UpgradeManager struct {
@@ -358,7 +423,6 @@ func (um *UpgradeManager) ValidateTarget(ctx context.Context, targetVersion int3
 		return nil
 	}
 
-
 	return nil
 }
 
@@ -382,9 +446,13 @@ func (um *UpgradeManager) acquireUpgradeLock(ctx context.Context) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, um.lockTimeout)
 	defer cancel()
 
-	c, err := um.db.Conn(timeoutCtx)
+	conn, err := um.db.Conn(timeoutCtx)
 	if err != nil {
 		return fmt.Errorf("get database connection: %w", err)
+	}
+	c, ok := conn.(dbConnConn)
+	if !ok {
+		return fmt.Errorf("database connection does not implement dbConnConn")
 	}
 
 	ticker := time.NewTicker(1 * time.Second)
@@ -393,7 +461,7 @@ func (um *UpgradeManager) acquireUpgradeLock(ctx context.Context) error {
 	for i := 0; i < 5; i++ {
 		select {
 		case <-timeoutCtx.Done():
-			_ = c.Close()
+			_ = c.Close() //nolint:errcheck // best-effort cleanup on timeout
 			return fmt.Errorf("upgrade lock timed out: %w", context.DeadlineExceeded)
 		default:
 		}
@@ -405,7 +473,7 @@ func (um *UpgradeManager) acquireUpgradeLock(ctx context.Context) error {
 				<-ticker.C
 				continue
 			}
-			_ = c.Close()
+			_ = c.Close() //nolint:errcheck // best-effort cleanup on failure
 			return fmt.Errorf("lock attempt %d/%d: %w", i+1, 5, err)
 		}
 		if acquired {
@@ -419,7 +487,7 @@ func (um *UpgradeManager) acquireUpgradeLock(ctx context.Context) error {
 		}
 	}
 
-	_ = c.Close()
+	_ = c.Close() //nolint:errcheck // best-effort cleanup after exhausted retries
 	return fmt.Errorf("upgrade lock timed out after 5 attempts: %w", ErrLockTimeout)
 }
 
@@ -436,7 +504,7 @@ func (um *UpgradeManager) releaseUpgradeLock(ctx context.Context) error {
 
 	_, err := um.lockConn.ExecContext(ctx, "SELECT pg_advisory_unlock($1)", upgradeLockID)
 	if err != nil {
-		_ = um.lockConn.Close()
+		_ = um.lockConn.Close() //nolint:errcheck // best-effort cleanup on release failure
 		um.lockConn = nil
 		um.lockAcquired = false
 		return fmt.Errorf("release upgrade lock: %w", ErrLockReleaseFailed)

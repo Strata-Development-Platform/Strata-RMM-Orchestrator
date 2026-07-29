@@ -236,6 +236,8 @@ func NewCommand(ctx context.Context, version, commit string, logger *zap.Logger)
 				WithUpdateManager(updateMgr).
 				WithDeploymentController(deploymentCtrl)
 
+			updateMgr.WithDeploymentController(deploymentCtrl)
+
 			api.RegisterHealth("deployment", func(ctx context.Context) error {
 				if deploymentCtrl.GetState() == platform.DeploymentStateFailed {
 					return fmt.Errorf("deployment in failed state")
@@ -341,6 +343,8 @@ func NewCommand(ctx context.Context, version, commit string, logger *zap.Logger)
 
 	cmd.AddCommand(NewUpdateCommand(ctx, version, logger))
 	cmd.AddCommand(newPreflightCommand(logger))
+	cmd.AddCommand(newUpgradeCommand(ctx, logger))
+	cmd.AddCommand(newRollbackCommand(ctx, logger))
 	return cmd
 }
 
@@ -550,4 +554,161 @@ func redactURL(raw string) string {
 		u.User = url.UserPassword(u.User.Username(), "***")
 	}
 	return u.String()
+}
+
+func newUpgradeCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
+	var targetVersion int32
+
+	cmd := &cobra.Command{
+		Use:   "upgrade [version]",
+		Short: "Upgrade the database schema to the specified version",
+		Long:  `Runs the full upgrade workflow: pre-check, version validation, data migration (applies pending Up migrations), post-upgrade verification, and finalize with checksum commit. Uses PostgreSQL advisory locks for concurrency safety.`,
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.LoadOrchestratorConfig()
+			if err != nil {
+				return fmt.Errorf("load config: %w", err)
+			}
+
+			if len(args) > 0 {
+				if _, err := fmt.Sscanf(args[0], "%d", &targetVersion); err != nil {
+					return fmt.Errorf("invalid target version %q: %w", args[0], err)
+				}
+			} else {
+				maxID := len(postgres.Migrations())
+				if maxID == 0 {
+					return fmt.Errorf("no migrations available")
+				}
+				targetVersion = int32(maxID)
+			}
+
+			db, err := timescale.NewClient(ctx, cfg.DB.DSN)
+			if err != nil {
+				return fmt.Errorf("connect to database: %w", err)
+			}
+			defer db.Close()
+
+			sugar := logger.Sugar()
+			sqlDB := &postgres.SQLDB{DB: db.DB()}
+			versionStore := postgres.NewVersionStore(db.DB(), sugar)
+
+			upgradeMgr := postgres.NewUpgradeManager(sqlDB, sugar, versionStore)
+
+			// Register custom hooks to integrate StatePreserver snapshots
+			snapshotDir := "/var/lib/strata-rmm/backups/state"
+			statePreserver := postgres.NewStatePreserver(db.DB(), sugar, snapshotDir)
+
+			upgradeMgr.RegisterHook(postgres.PreCheck, func(ctx context.Context, version int32) error {
+				snapID, snapErr := statePreserver.PreDeploySnapshot(ctx)
+				if snapErr != nil {
+					sugar.Warnw("pre-deploy snapshot failed, continuing without it", "error", snapErr)
+				} else {
+					sugar.Infow("pre-deploy snapshot created", "snapshot_id", snapID)
+				}
+				return nil
+			})
+
+			upgradeMgr.RegisterHook(postgres.DataMigration, func(ctx context.Context, version int32) error {
+				// The default data migration already applies Up migrations via lockConn.
+				// No additional hook needed — the default handler handles migration execution.
+				return nil
+			})
+
+			result, err := upgradeMgr.RunUpgrade(ctx, targetVersion)
+			if err != nil {
+				sugar.Errorw("upgrade failed", "error", err, "from_version", result.FromVersion, "to_version", targetVersion)
+				if result != nil && result.Success == false {
+					sugar.Warnw("upgrade failed — consider running rollback to revert", "target_version", targetVersion)
+				}
+				return fmt.Errorf("upgrade failed: %w", err)
+			}
+
+			sugar.Infow("upgrade completed successfully",
+				"from_version", result.FromVersion,
+				"to_version", result.ToVersion,
+				"duration", result.Duration.String(),
+				"steps", result.StepsCompleted,
+			)
+			return nil
+		},
+	}
+
+	cmd.Flags().Int32Var(&targetVersion, "to-version", 0, "Target schema version (default: latest migration)")
+	return cmd
+}
+
+func newRollbackCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
+	var targetVersion int32
+	var dryRun bool
+
+	cmd := &cobra.Command{
+		Use:   "rollback [version]",
+		Short: "Rollback the database schema to the specified version",
+		Long:  `Runs the full rollback workflow: pre-check, version downgrade validation, data rollback (applies Down migrations in reverse), post-rollback verification, and finalize with checksum commit. Uses PostgreSQL advisory locks for concurrency safety. Supports --dry-run for validation without executing changes.`,
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.LoadOrchestratorConfig()
+			if err != nil {
+				return fmt.Errorf("load config: %w", err)
+			}
+
+			if len(args) > 0 {
+				if _, err := fmt.Sscanf(args[0], "%d", &targetVersion); err != nil {
+					return fmt.Errorf("invalid target version %q: %w", args[0], err)
+				}
+			} else {
+				return fmt.Errorf("rollback requires a target version: orchestrator rollback <version>")
+			}
+
+			db, err := timescale.NewClient(ctx, cfg.DB.DSN)
+			if err != nil {
+				return fmt.Errorf("connect to database: %w", err)
+			}
+			defer db.Close()
+
+			sugar := logger.Sugar()
+			sqlDB := &postgres.SQLDB{DB: db.DB()}
+			versionStore := postgres.NewVersionStore(db.DB(), sugar)
+
+			rollbackEngine := postgres.NewRollbackEngine(sqlDB, sugar, versionStore)
+
+			// Register custom hooks to integrate StatePreserver snapshots
+			snapshotDir := "/var/lib/strata-rmm/backups/state"
+			statePreserver := postgres.NewStatePreserver(db.DB(), sugar, snapshotDir)
+
+			rollbackEngine.RegisterHook(postgres.RBPreCheck, func(ctx context.Context, fromVersion, toVersion int32) error {
+				snapID, snapErr := statePreserver.PreRollbackSnapshot(ctx)
+				if snapErr != nil {
+					sugar.Warnw("pre-rollback snapshot failed, continuing without it", "error", snapErr)
+				} else {
+					sugar.Infow("pre-rollback snapshot created", "snapshot_id", snapID)
+				}
+				return nil
+			})
+
+			if dryRun {
+				rollbackEngine.SetDryRun(true)
+				sugar.Info("running rollback in dry-run mode — no changes will be applied")
+			}
+
+			result, err := rollbackEngine.RunRollback(ctx, targetVersion)
+			if err != nil {
+				sugar.Errorw("rollback failed", "error", err, "from_version", result.FromVersion, "to_version", targetVersion)
+				return fmt.Errorf("rollback failed: %w", err)
+			}
+
+			sugar.Infow("rollback completed successfully",
+				"from_version", result.FromVersion,
+				"to_version", result.ToVersion,
+				"dry_run", result.DryRun,
+				"duration", result.Duration.String(),
+				"steps", result.StepsCompleted,
+			)
+			return nil
+		},
+	}
+
+	cmd.Flags().Int32Var(&targetVersion, "to-version", 0, "Target schema version for rollback")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Validate rollback without applying changes")
+	return cmd
 }

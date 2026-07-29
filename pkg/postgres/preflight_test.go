@@ -343,8 +343,8 @@ func TestAdversarial_PassesWhenAllChecksPass(t *testing.T) {
 func TestCheckCandidateArtifact_NotSet(t *testing.T) {
 	// Clear the env var
 	prev := os.Getenv("STRATA_ARTIFACT_PATH")
-	os.Unsetenv("STRATA_ARTIFACT_PATH")
-	defer os.Setenv("STRATA_ARTIFACT_PATH", prev)
+	_ = os.Unsetenv("STRATA_ARTIFACT_PATH")
+	defer func() { _ = os.Setenv("STRATA_ARTIFACT_PATH", prev) }()
 
 	cfg := &OrchestratorConfig{}
 	pc := NewPreflightChecker(nil, cfg, nil)
@@ -354,8 +354,8 @@ func TestCheckCandidateArtifact_NotSet(t *testing.T) {
 }
 
 func TestCheckCandidateArtifact_NotFound(t *testing.T) {
-	os.Setenv("STRATA_ARTIFACT_PATH", "/nonexistent/path/to/artifact")
-	defer os.Unsetenv("STRATA_ARTIFACT_PATH")
+	_ = os.Setenv("STRATA_ARTIFACT_PATH", "/nonexistent/path/to/artifact")
+	defer func() { _ = os.Unsetenv("STRATA_ARTIFACT_PATH") }()
 
 	cfg := &OrchestratorConfig{}
 	pc := NewPreflightChecker(nil, cfg, nil)
@@ -376,11 +376,11 @@ func TestCheckCandidateArtifact_WithChecksum(t *testing.T) {
 
 	// Compute expected checksum.
 	expectedChecksum := "abc" // wrong checksum
-	os.Setenv("STRATA_ARTIFACT_PATH", artifactPath)
-	os.Setenv("STRATA_ARTIFACT_CHECKSUM", expectedChecksum)
+	_ = os.Setenv("STRATA_ARTIFACT_PATH", artifactPath)
+	_ = os.Setenv("STRATA_ARTIFACT_CHECKSUM", expectedChecksum)
 	defer func() {
-		os.Unsetenv("STRATA_ARTIFACT_PATH")
-		os.Unsetenv("STRATA_ARTIFACT_CHECKSUM")
+		_ = os.Unsetenv("STRATA_ARTIFACT_PATH")
+		_ = os.Unsetenv("STRATA_ARTIFACT_CHECKSUM")
 	}()
 
 	cfg := &OrchestratorConfig{}
@@ -393,8 +393,8 @@ func TestCheckCandidateArtifact_WithChecksum(t *testing.T) {
 
 func TestCheckCandidateArtifact_Directory(t *testing.T) {
 	tmpDir := t.TempDir()
-	os.Setenv("STRATA_ARTIFACT_PATH", tmpDir)
-	defer os.Unsetenv("STRATA_ARTIFACT_PATH")
+	_ = os.Setenv("STRATA_ARTIFACT_PATH", tmpDir)
+	defer func() { _ = os.Unsetenv("STRATA_ARTIFACT_PATH") }()
 
 	cfg := &OrchestratorConfig{}
 	pc := NewPreflightChecker(nil, cfg, nil)
@@ -578,8 +578,7 @@ func TestCheckDiskSpace_PathNotDir(t *testing.T) {
 	// Create a file at the expected path.
 	f, err := os.CreateTemp(tmpDir, "not-a-dir")
 	require.NoError(t, err)
-	f.Close()
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	pc := NewPreflightChecker(nil, nil, nil)
 	check := pc.checkDiskSpaceOnDir(f.Name())
@@ -672,11 +671,11 @@ func TestCheckCandidateArtifact_ChecksumMatches(t *testing.T) {
 	actualChecksum, err := computeFileChecksum(artifactPath)
 	require.NoError(t, err)
 
-	os.Setenv("STRATA_ARTIFACT_PATH", artifactPath)
-	os.Setenv("STRATA_ARTIFACT_CHECKSUM", actualChecksum)
+	_ = os.Setenv("STRATA_ARTIFACT_PATH", artifactPath)
+	_ = os.Setenv("STRATA_ARTIFACT_CHECKSUM", actualChecksum)
 	defer func() {
-		os.Unsetenv("STRATA_ARTIFACT_PATH")
-		os.Unsetenv("STRATA_ARTIFACT_CHECKSUM")
+		_ = os.Unsetenv("STRATA_ARTIFACT_PATH")
+		_ = os.Unsetenv("STRATA_ARTIFACT_CHECKSUM")
 	}()
 
 	cfg := &OrchestratorConfig{}
@@ -801,11 +800,11 @@ func TestCheckCandidateArtifact_ChecksumCaseInsensitive(t *testing.T) {
 	require.NoError(t, err)
 
 	// Use uppercase version of the checksum.
-	os.Setenv("STRATA_ARTIFACT_PATH", artifactPath)
-	os.Setenv("STRATA_ARTIFACT_CHECKSUM", strings.ToUpper(actualChecksum))
+	_ = os.Setenv("STRATA_ARTIFACT_PATH", artifactPath)
+	_ = os.Setenv("STRATA_ARTIFACT_CHECKSUM", strings.ToUpper(actualChecksum))
 	defer func() {
-		os.Unsetenv("STRATA_ARTIFACT_PATH")
-		os.Unsetenv("STRATA_ARTIFACT_CHECKSUM")
+		_ = os.Unsetenv("STRATA_ARTIFACT_PATH")
+		_ = os.Unsetenv("STRATA_ARTIFACT_CHECKSUM")
 	}()
 
 	cfg := &OrchestratorConfig{}
@@ -814,4 +813,62 @@ func TestCheckCandidateArtifact_ChecksumCaseInsensitive(t *testing.T) {
 
 	assert.Equal(t, StatusPass, check.Status)
 	assert.Contains(t, check.Message, "verified")
+}
+
+// ---------------------------------------------------------------------------
+// Nested credential redaction tests
+// ---------------------------------------------------------------------------
+
+func TestRedactCredentials_NestedDSNAndNATS(t *testing.T) {
+	s := `connect error: postgresql://admin:secret@db:5432/app failed, also tried nats://user:token@nats:4222`
+	got := RedactCredentials(s)
+
+	assert.NotContains(t, got, "secret")
+	assert.NotContains(t, got, "token")
+	assert.Contains(t, got, "admin")
+	assert.Contains(t, got, "user")
+	assert.Contains(t, got, "***")
+}
+
+func TestRedactCredentials_ErrorWithDSNAndBearer(t *testing.T) {
+	s := `authentication failed: postgresql://svc:pass123@db/prod with token Bearer eyJhbGciOiJIUzI1NiJ9.test`
+	got := RedactCredentials(s)
+
+	assert.NotContains(t, got, "pass123")
+	assert.NotContains(t, got, "eyJhbGciOiJIUzI1NiJ9")
+	assert.Contains(t, got, "svc")
+	assert.Contains(t, got, "***")
+}
+
+func TestRedactCredentials_PasswordQueryMultipleParams(t *testing.T) {
+	s := `GET /api/v1/resource?password=secret1&user=admin&password=secret2 HTTP/1.1`
+	got := RedactCredentials(s)
+
+	assert.NotContains(t, got, "secret1")
+	assert.NotContains(t, got, "secret2")
+	assert.Contains(t, got, "password=***")
+	assert.Contains(t, got, "user=admin")
+}
+
+func TestRedactCredentials_AuthTokenAssignment(t *testing.T) {
+	s := `auth_token: "my-super-secret-auth-token-value"`
+	got := RedactCredentials(s)
+
+	assert.NotContains(t, got, "my-super-secret-auth-token-value")
+	assert.Contains(t, got, "***")
+}
+
+func TestRedactCredentials_APIKeyWithEquals(t *testing.T) {
+	s := `api_key = "sk-abc123def456ghi789jkl012mno345"`
+	got := RedactCredentials(s)
+
+	assert.NotContains(t, got, "sk-abc123def456ghi789jkl012mno345")
+	assert.Contains(t, got, "api_key")
+	assert.Contains(t, got, "***")
+}
+
+func TestRedactCredentials_PreserveNonCredentialURLs(t *testing.T) {
+	s := `http://localhost:8080/health and https://example.com/api`
+	got := RedactCredentials(s)
+	assert.Equal(t, s, got)
 }

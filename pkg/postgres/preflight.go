@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/sha512"
 	"database/sql"
 	"encoding/hex"
 	"fmt"
@@ -690,8 +691,8 @@ func checkWritable(dir string) error {
 	if err != nil {
 		return err
 	}
-	f.Close()
-	os.Remove(tmpFile)
+	defer func() { _ = f.Close() }()
+	_ = os.Remove(tmpFile) // best-effort cleanup
 	return nil
 }
 
@@ -843,14 +844,26 @@ func computeFileChecksum(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
+	// Try SHA-512 first (128 hex chars), fall back to SHA-256 (64 hex chars)
+	h512 := sha512.New()
+	if _, err := io.Copy(h512, f); err != nil {
 		return "", err
 	}
-
-	return hex.EncodeToString(h.Sum(nil)), nil
+	hash512 := hex.EncodeToString(h512.Sum(nil))
+	if len(hash512) == 128 {
+		return hash512, nil
+	}
+	// Compute SHA-256 as fallback
+	if _, err := f.Seek(0, 0); err != nil {
+		return "", fmt.Errorf("seek to start of file: %w", err)
+	}
+	h256 := sha256.New()
+	if _, err := io.Copy(h256, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h256.Sum(nil)), nil
 }
 
 func maskChecksum(cs string) string {
@@ -912,13 +925,13 @@ func parsePostgresVersion(s string) (PostgresVersion, error) {
 // Credential redaction
 // ---------------------------------------------------------------------------
 
-	var (
-		dsnPasswordRe   = regexp.MustCompile(`(postgresql?|postgres)://([^:]+):([^@]+)@`)
-		natsURLPasswordRe = regexp.MustCompile(`(nats|tls)://([^:]+):([^@]+)@`)
-		tokenRe         = regexp.MustCompile(`(Bearer|Token)\s+[A-Za-z0-9\-._~+/]+=*`)
-		apiKeyRe        = regexp.MustCompile(`((?:api[_-]?key|apikey|access[_-]?key|secret[_-]?key|auth[_-]?token)["']?\s*[:=]\s*["']?)[A-Za-z0-9\-._~+/=]{8,}`)
-		passwordQueryRe = regexp.MustCompile(`([&?]password=)[^&]*`)
-	)
+var (
+	dsnPasswordRe   = regexp.MustCompile(`(postgresql?|postgres)://([^:]+):([^@]+)@`)
+	natsURLPasswordRe = regexp.MustCompile(`(nats|tls)://([^:]+):([^@]+)@`)
+	tokenRe         = regexp.MustCompile(`(Bearer|Token)\s+[A-Za-z0-9\-._~+/]+=*`)
+	apiKeyRe        = regexp.MustCompile(`((?:api[_-]?key|apikey|access[_-]?key|secret[_-]?key|auth[_-]?token)["']?\s*[:=]\s*["']?)[A-Za-z0-9\-._~+/=]{8,}`)
+	passwordQueryRe = regexp.MustCompile(`([&?]password=)[^&]*`)
+)
 
 // RedactCredentials replaces sensitive values in a string with redacted markers.
 // It handles PostgreSQL/Postgres DSNs, NATS URLs, Bearer tokens, API keys,

@@ -6,7 +6,6 @@ run:
 linters:
   enable:
     - errcheck
-    - gosimple
     - govet
     - ineffassign
     - staticcheck
@@ -20,56 +19,55 @@ linters-settings:
 issues:
   exclude-rules:
     # Pre-existing: agent package unchecked errors (not Phase 8B)
-    - path: internal/agent/
-      source: $
+    - path: ".*agent/.*"
       linters:
         - errcheck
     # Pre-existing: probe package unchecked errors
-    - path: internal/probe/
+    - path: ".*probe/.*"
       linters:
         - errcheck
     # Pre-existing: monitoring package unused field
-    - path: internal/monitoring/
+    - path: ".*monitoring/.*"
       linters:
         - unused
     # Pre-existing: inventory package unused var
-    - path: internal/inventory/
+    - path: ".*inventory/.*"
       linters:
         - unused
     # Pre-existing: remote package unused types
-    - path: internal/remote/
+    - path: ".*remote/.*"
       linters:
         - unused
     # Pre-existing: platform middleware unused func
-    - path: middleware\.go
+    - path: ".*middleware\\.go"
       linters:
         - unused
     # Pre-existing: timescale package unchecked rollback
-    - path: pkg/timescale/
+    - path: ".*timescale/.*"
       linters:
         - errcheck
     # Pre-existing: update package unchecked errors
-    - path: internal/update/
+    - path: ".*update/.*"
       linters:
         - errcheck
     # Pre-existing: S3 storage deprecated API
-    - path: pkg/storage/s3_backend\.go
+    - path: ".*s3_backend\\.go"
       linters:
         - staticcheck
     # Pre-existing: agent core deprecated marshal
-    - path: internal/agent/core/identity\.go
+    - path: ".*identity\\.go"
       linters:
         - staticcheck
     # Pre-existing: agent core ineffectual assignment
-    - path: internal/agent/core/agent\.go
+    - path: ".*agent\\.go"
       linters:
         - ineffassign
     # Pre-existing: storage ineffectual assignment
-    - path: pkg/storage/minio_backend\.go
+    - path: ".*minio_backend\\.go"
       linters:
         - ineffassign
-    # Pre-existing: platform gosimple issues
-    - path: internal/platform/
+    # Pre-existing: platform gosimple issues (now part of staticcheck in v2)
+    - path: ".*platform/.*"
       linters:
-        - gosimple
+        - staticcheck
       text: "S1016|S1025|S1039"

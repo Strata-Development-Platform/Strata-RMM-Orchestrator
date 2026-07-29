@@ -105,29 +105,26 @@ curl http://localhost:8080/api/v1/overview | jq '.online_devices'
 
 ## Migration Compatibility
 
-### Additive Migrations (Safe to rollback)
+All migrations are additive forward (CREATE TABLE IF NOT EXISTS, ADD COLUMN IF NOT EXISTS, CREATE INDEX IF NOT EXISTS). Down migrations use `DROP TABLE IF EXISTS ... CASCADE` for safe rollback.
 
-- `CREATE TABLE` — simply drop the table
-- `ADD COLUMN` — existing code ignores unknown columns
-- `CREATE INDEX` — index persists but unused by old code; safe
+### Rollback Mechanism
 
-### Destructive Migrations (Require backup restore)
-
-- `DROP TABLE` — full schema restore from backup
-- `ALTER COLUMN TYPE` — full restore if data reformatted
-- `RENAME COLUMN` — full restore if old code references old name
+- The **RollbackEngine** applies each migration's `Down` script in reverse order.
+- `DROP TABLE IF EXISTS` guards make rollback idempotent (safe to run multiple times).
+- `DELETE FROM schema_migrations` removes the applied migration records.
+- Version store is updated via the same `schema_migrations` table.
 
 ### Rollback SQL Examples
 
 ```sql
--- Revert migration 25 (additive)
-DROP TABLE IF EXISTS phase_8b_feature CASCADE;
+-- Use the RollbackEngine (recommended):
+/usr/local/bin/strata-rmm orchestrator rollback 24
 
--- Revert migration 26 (additive column)
-ALTER TABLE devices DROP COLUMN IF EXISTS new_column;
-
--- Remove migration records
-DELETE FROM schema_migrations WHERE id IN (25, 26);
+-- Manual revert (if engine unavailable):
+-- Apply the Down script for the migration to undo (from schema.go):
+psql -U strata_rmm_app -d strata_rmm -c "\i /path/to/migration-N-down.sql"
+-- Remove migration record
+DELETE FROM schema_migrations WHERE id = N;
 
 -- Verify
 SELECT id, name, applied_at FROM schema_migrations ORDER BY id;
@@ -162,11 +159,14 @@ sudo /usr/local/bin/strata-rmm orchestrator preflight && sudo systemctl start st
 
 ```bash
 # 1. Check migration state
-psql -U strata -d strata_rmm -c "SELECT * FROM schema_migrations ORDER BY id;"
+psql -U strata_rmm_app -d strata_rmm -c "SELECT * FROM schema_migrations ORDER BY id;"
 
-# 2. Rollback partially-applied migration
-psql -U strata -d strata_rmm -c "DROP TABLE IF EXISTS partially_applied_table CASCADE;"
-psql -U strata -d strata_rmm -c "DELETE FROM schema_migrations WHERE id = 25;"
+# 2. Check for uncommitted schema changes in pg_catalog
+psql -U strata_rmm_app -d strata_rmm -c "SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename LIKE 'migration_%';"
+
+# 3. Rollback the migration using the engine (preferred):
+psql -U strata_rmm_app -d strata_rmm -c "DELETE FROM schema_migrations WHERE id = 25;"
+# Then re-run the RollbackEngine to re-apply down scripts cleanly
 
 # 3. Restore from backup if data corrupted
 pg_restore -h localhost -U strata -d strata_rmm --clean --if-exists \

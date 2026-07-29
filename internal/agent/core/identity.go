@@ -62,7 +62,7 @@ func (im *IdentityManager) RegisterWithDeploymentID(registerURL, deploymentID, e
 	}
 
 	keyBytes, _ := x509.MarshalECPrivateKey(key)
-	pubKeyBytes := elliptic.Marshal(elliptic.P256(), key.PublicKey.X, key.PublicKey.Y)
+	pubKeyBytes := elliptic.Marshal(elliptic.P256(), key.X, key.Y)
 
 	hostname, _ := os.Hostname()
 

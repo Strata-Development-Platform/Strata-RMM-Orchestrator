@@ -140,9 +140,10 @@ sudo systemctl stop strata-rmm
 # 2. Restore previous binary
 sudo mv /usr/local/bin/strata-rmm.pre-upgrade /usr/local/bin/strata-rmm
 
-# 3. Revert database migrations (run each in reverse order)
-psql -U strata_rmm_app -d strata_rmm -c "DROP TABLE IF EXISTS phase_8b_tables CASCADE;"
-psql -U strata_rmm_app -d strata_rmm -c "DELETE FROM schema_migrations WHERE id IN (25,26);"
+# 3. Revert database migrations (run the RollbackEngine or use the migration Down scripts)
+#    The RollbackEngine handles this automatically; manual revert example:
+#    psql -U strata_rmm_app -d strata_rmm -c "\i /path/to/down-migration-26.sql"
+#    psql -U strata_rmm_app -d strata_rmm -c "\i /path/to/down-migration-25.sql"
 
 # 4. Restore previous configuration
 cp /backups/strata-rmm-config-pre-upgrade/* /etc/strata-rmm/
@@ -187,7 +188,8 @@ docker compose -f deploy/docker/docker-compose.yml up -d --no-deps orchestrator
 
 ## Migration Compatibility
 
-- All migrations are **additive** (CREATE TABLE, ADD COLUMN, CREATE INDEX).
-- No destructive DDL (DROP, ALTER COLUMN TYPE) is included in supported upgrade paths.
+- All migrations are **additive** forward (CREATE TABLE IF NOT EXISTS, ADD COLUMN IF NOT EXISTS, CREATE INDEX IF NOT EXISTS).
+- Down migrations use `DROP TABLE IF EXISTS ... CASCADE` for safe rollback.
+- Rollback is safe to execute multiple times (IF EXISTS guards).
 - Old agent binaries remain compatible with the new orchestrator (backward-compatible NATS protocol).
 - New agent binaries require the orchestrator at v0.2.0-beta or later.

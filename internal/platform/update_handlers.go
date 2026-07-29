@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sync"
+	"time"
 
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/update"
 	"go.uber.org/zap"
@@ -15,6 +17,7 @@ type UpdateManager struct {
 	version string
 	apiAddr string
 	logger  *zap.Logger
+	dc      *DeploymentController
 }
 
 func NewUpdateManager(currentVersion, owner, repo, apiAddr string, logger *zap.Logger) *UpdateManager {
@@ -25,6 +28,11 @@ func NewUpdateManager(currentVersion, owner, repo, apiAddr string, logger *zap.L
 		apiAddr: apiAddr,
 		logger:  logger,
 	}
+}
+
+func (m *UpdateManager) WithDeploymentController(dc *DeploymentController) *UpdateManager {
+	m.dc = dc
+	return m
 }
 
 func (s *APIServer) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
@@ -55,6 +63,8 @@ func (s *APIServer) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+var updateMu sync.Mutex
+
 func (s *APIServer) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 	if s.updateMgr == nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "update manager not available"})
@@ -83,7 +93,18 @@ func (s *APIServer) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go s.applyUpdate(r.Context())
+	updateMu.Lock()
+	s.updateMgr.status = "applying"
+	updateMu.Unlock()
+
+	go func() {
+		defer func() {
+			updateMu.Lock()
+			s.updateMgr.status = "idle"
+			updateMu.Unlock()
+		}()
+		s.applyUpdate(r.Context())
+	}()
 
 	writeJSON(w, http.StatusAccepted, map[string]string{
 		"status":  "update_started",
@@ -94,32 +115,79 @@ func (s *APIServer) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 func (s *APIServer) applyUpdate(ctx context.Context) {
 	s.updateMgr.status = "applying"
 
+	if s.updateMgr.dc != nil {
+		s.updateMgr.dc.TransitionTo(DeploymentStateInProgress, "")
+		s.updateMgr.dc.RecordEvent(DeploymentEvent{
+			ID:      fmt.Sprintf("deploy-%d", time.Now().Unix()),
+			Version: s.updateMgr.version,
+			State:   DeploymentStateInProgress,
+		})
+	}
+
 	release, err := s.updateMgr.updater.Check(ctx)
 	if err != nil || release == nil {
+		if s.updateMgr.dc != nil {
+			s.updateMgr.dc.TransitionTo(DeploymentStateFailed, fmt.Sprintf("check failed: %v", err))
+		}
 		s.updateMgr.status = "idle"
 		return
 	}
 
+	if s.updateMgr.dc != nil {
+		prev := s.updateMgr.version
+		s.updateMgr.dc.RecordEvent(DeploymentEvent{
+			ID:              fmt.Sprintf("deploy-%d", time.Now().Unix()),
+			Version:         release.Version,
+			PreviousVersion: prev,
+			State:           DeploymentStateInProgress,
+		})
+	}
+
 	binaryPath, err := s.updateMgr.updater.Download(ctx, release)
 	if err != nil {
+		if s.updateMgr.dc != nil {
+			s.updateMgr.dc.TransitionTo(DeploymentStateFailed, fmt.Sprintf("download failed: %v", err))
+		}
 		s.updateMgr.logger.Error("update download failed", zap.Error(err))
 		s.updateMgr.status = "failed"
 		return
 	}
 
 	if err := s.updateMgr.updater.Apply(binaryPath); err != nil {
+		if s.updateMgr.dc != nil {
+			s.updateMgr.dc.TransitionTo(DeploymentStateRollingBack, "")
+		}
 		s.updateMgr.logger.Error("update apply failed", zap.Error(err))
 		s.updateMgr.updater.Rollback()
+		if s.updateMgr.dc != nil {
+			s.updateMgr.dc.TransitionTo(DeploymentStateFailed, fmt.Sprintf("apply failed: %v", err))
+		}
 		s.updateMgr.status = "failed"
 		return
 	}
 
 	healthURL := fmt.Sprintf("http://localhost%s/health", s.updateMgr.apiAddr)
 	if err := s.updateMgr.updater.Verify(ctx, healthURL); err != nil {
+		if s.updateMgr.dc != nil {
+			s.updateMgr.dc.TransitionTo(DeploymentStateRollingBack, "")
+		}
 		s.updateMgr.logger.Error("update verification failed, rolling back", zap.Error(err))
 		s.updateMgr.updater.Rollback()
+		if s.updateMgr.dc != nil {
+			s.updateMgr.dc.TransitionTo(DeploymentStateFailed, fmt.Sprintf("verification failed: %v", err))
+		}
 		s.updateMgr.status = "rolled_back"
 		return
+	}
+
+	if s.updateMgr.dc != nil {
+		s.updateMgr.dc.TransitionTo(DeploymentStateCompleted, "")
+		s.updateMgr.dc.RecordEvent(DeploymentEvent{
+			ID:              fmt.Sprintf("deploy-%d", time.Now().Unix()),
+			Version:         release.Version,
+			PreviousVersion: s.updateMgr.version,
+			State:           DeploymentStateCompleted,
+		})
 	}
 
 	s.updateMgr.logger.Info("update successful, restarting", zap.String("version", release.Version))

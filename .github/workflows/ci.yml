@@ -124,6 +124,7 @@ jobs:
           POSTGRES_USER: strata_test
           POSTGRES_PASSWORD: strata_test
           POSTGRES_DB: strata_test
+          POSTGRES_HOST_AUTH_METHOD: scram-sha-256
         ports:
           - 5432:5432
         options: >-
@@ -248,6 +249,7 @@ jobs:
           POSTGRES_DB: strata_test
           POSTGRES_USER: strata_test
           POSTGRES_PASSWORD: strata_test
+          POSTGRES_HOST_AUTH_METHOD: scram-sha-256
         ports:
           - 5432:5432
         options: >-
@@ -281,6 +283,7 @@ jobs:
           POSTGRES_DB: strata_test
           POSTGRES_USER: strata_test
           POSTGRES_PASSWORD: strata_test
+          POSTGRES_HOST_AUTH_METHOD: scram-sha-256
         ports:
           - 5432:5432
         options: >-
@@ -313,6 +316,7 @@ jobs:
           POSTGRES_DB: strata_test
           POSTGRES_USER: strata_test
           POSTGRES_PASSWORD: strata_test
+          POSTGRES_HOST_AUTH_METHOD: scram-sha-256
         ports:
           - 5432:5432
         options: >-
@@ -350,6 +354,7 @@ jobs:
           POSTGRES_DB: strata_test
           POSTGRES_USER: strata_test
           POSTGRES_PASSWORD: strata_test
+          POSTGRES_HOST_AUTH_METHOD: scram-sha-256
         ports:
           - 5432:5432
         options: >-
@@ -382,6 +387,7 @@ jobs:
           POSTGRES_DB: strata_test
           POSTGRES_USER: strata_test
           POSTGRES_PASSWORD: strata_test
+          POSTGRES_HOST_AUTH_METHOD: scram-sha-256
         ports:
           - 5432:5432
         options: >-
@@ -430,6 +436,7 @@ jobs:
           POSTGRES_DB: strata_test
           POSTGRES_USER: strata_test
           POSTGRES_PASSWORD: strata_test
+          POSTGRES_HOST_AUTH_METHOD: scram-sha-256
         ports:
           - 5432:5432
         options: >-
@@ -448,7 +455,7 @@ jobs:
       - name: Test inventory result ingestion
         run: |
           set -o pipefail
-          go test -tags=dbintegration ./internal/platform -count=1 -race -v -run "TestInventoryResultIdempotency|TestInventory" 2>&1 | tee /tmp/inv_test.log
+          go test -tags=dbintegration ./internal/platform -count=1 -race -v -run "TestInventoryResultIdempotency|TestInventoryStaleResultRejected|TestInventoryCrossDeviceRejected" 2>&1 | tee /tmp/inv_test.log
           grep -E '^--- (PASS|FAIL)' /tmp/inv_test.log
           if grep -q "no test files\|no tests to run" /tmp/inv_test.log; then echo "ERROR: zero tests executed" && exit 1; fi
 
@@ -522,6 +529,7 @@ jobs:
           POSTGRES_USER: strata_test
           POSTGRES_PASSWORD: strata_test
           POSTGRES_DB: strata_test
+          POSTGRES_HOST_AUTH_METHOD: scram-sha-256
         ports:
           - 5432:5432
         options: >-
@@ -803,6 +811,7 @@ jobs:
           POSTGRES_USER: strata_test
           POSTGRES_PASSWORD: strata_test
           POSTGRES_DB: strata_test
+          POSTGRES_HOST_AUTH_METHOD: scram-sha-256
         ports:
           - 5432:5432
         options: >-
