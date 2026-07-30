@@ -16,7 +16,7 @@ import (
 type S3Repository struct {
 	client     *s3.Client
 	bucket     string
-	uploadMgr  *manager.Uploader //nolint:staticcheck
+	uploadMgr  *manager.Uploader   //nolint:staticcheck
 	downloader *manager.Downloader //nolint:staticcheck
 }
 
@@ -28,8 +28,8 @@ func NewS3Repository(client *s3.Client, bucket string) (*S3Repository, error) {
 	return &S3Repository{
 		client:     client,
 		bucket:     bucket,
-	uploadMgr:  manager.NewUploader(client), //nolint:staticcheck
-	downloader: manager.NewDownloader(client), //nolint:staticcheck
+		uploadMgr:  manager.NewUploader(client),   //nolint:staticcheck
+		downloader: manager.NewDownloader(client), //nolint:staticcheck
 	}, nil
 }
 
