@@ -270,9 +270,9 @@ func TestIsKeyNotFound(t *testing.T) {
 	if !IsKeyNotFound(ErrKeyNotFound) {
 		t.Error("ErrKeyNotFound should be classified as KeyNotFound")
 	}
-	if !IsKeyNotFound(os.ErrNotExist) {
-		// This might not be true - depends on implementation
-	}
+	// os.ErrNotExist may or may not be classified as KeyNotFound
+	// depending on implementation - no assertion needed here
+	_ = os.ErrNotExist
 }
 
 // TestKeyIDFormat proves generated key IDs have rk- prefix.
