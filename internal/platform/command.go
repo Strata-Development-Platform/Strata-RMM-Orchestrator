@@ -9,21 +9,21 @@ import (
 const CurrentSchemaVersion = 1
 
 type CommandEnvelope struct {
-	SchemaVersion int               `json:"schema_version"`
-	EventID       string            `json:"event_id"`
-	JobID         string            `json:"job_id"`
-	TargetID      string            `json:"target_id"`
-	MSPID         string            `json:"msp_id"`
-	ClientID      string            `json:"client_id,omitempty"`
-	SiteID        string            `json:"site_id,omitempty"`
-	DeviceID      string            `json:"device_id"`
-	AgentID       string            `json:"agent_id,omitempty"`
-	CorrelationID string            `json:"correlation_id"`
-	Attempt       int               `json:"attempt"`
-	IssuedAt      string            `json:"issued_at"`
-	ExpiresAt     string            `json:"expires_at"`
-	CommandType   string            `json:"command_type"`
-	Payload       json.RawMessage   `json:"payload"`
+	SchemaVersion int             `json:"schema_version"`
+	EventID       string          `json:"event_id"`
+	JobID         string          `json:"job_id"`
+	TargetID      string          `json:"target_id"`
+	MSPID         string          `json:"msp_id"`
+	ClientID      string          `json:"client_id,omitempty"`
+	SiteID        string          `json:"site_id,omitempty"`
+	DeviceID      string          `json:"device_id"`
+	AgentID       string          `json:"agent_id,omitempty"`
+	CorrelationID string          `json:"correlation_id"`
+	Attempt       int             `json:"attempt"`
+	IssuedAt      string          `json:"issued_at"`
+	ExpiresAt     string          `json:"expires_at"`
+	CommandType   string          `json:"command_type"`
+	Payload       json.RawMessage `json:"payload"`
 }
 
 type Acknowledgement struct {
@@ -50,26 +50,26 @@ const (
 )
 
 type ResultEnvelope struct {
-	SchemaVersion   int                `json:"schema_version"`
-	MessageID       string             `json:"message_id"`
-	EventID         string             `json:"event_id"`
-	JobID           string             `json:"job_id"`
-	TargetID        string             `json:"target_id"`
-	MSPID           string             `json:"msp_id"`
-	ClientID        string             `json:"client_id,omitempty"`
-	SiteID          string             `json:"site_id,omitempty"`
-	DeviceID        string             `json:"device_id"`
-	AgentID         string             `json:"agent_id"`
-	CorrelationID   string             `json:"correlation_id"`
-	Attempt         int                `json:"attempt"`
-	Status          string             `json:"status"`
-	ExitCode        int                `json:"exit_code"`
-	Result          json.RawMessage    `json:"result"`
-	Error           string             `json:"error,omitempty"`
-	StartedAt       string             `json:"started_at"`
-	CompletedAt     string             `json:"completed_at"`
-	DurationMs      int64              `json:"duration_ms"`
-	Truncated       bool               `json:"truncated,omitempty"`
+	SchemaVersion int             `json:"schema_version"`
+	MessageID     string          `json:"message_id"`
+	EventID       string          `json:"event_id"`
+	JobID         string          `json:"job_id"`
+	TargetID      string          `json:"target_id"`
+	MSPID         string          `json:"msp_id"`
+	ClientID      string          `json:"client_id,omitempty"`
+	SiteID        string          `json:"site_id,omitempty"`
+	DeviceID      string          `json:"device_id"`
+	AgentID       string          `json:"agent_id"`
+	CorrelationID string          `json:"correlation_id"`
+	Attempt       int             `json:"attempt"`
+	Status        string          `json:"status"`
+	ExitCode      int             `json:"exit_code"`
+	Result        json.RawMessage `json:"result"`
+	Error         string          `json:"error,omitempty"`
+	StartedAt     string          `json:"started_at"`
+	CompletedAt   string          `json:"completed_at"`
+	DurationMs    int64           `json:"duration_ms"`
+	Truncated     bool            `json:"truncated,omitempty"`
 }
 
 func ValidateCommandEnvelope(raw []byte, enrolledMSPID, enrolledAgentID, enrolledDeviceID string) (*CommandEnvelope, error) {

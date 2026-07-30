@@ -298,6 +298,7 @@ func TestRunPhase_DefaultPhase(t *testing.T) {
 		t.Fatalf("expected no error with default, got: %v", err)
 	}
 }
+
 // ---------------------------------------------------------------------------
 // Test: version store error propagation
 // ---------------------------------------------------------------------------

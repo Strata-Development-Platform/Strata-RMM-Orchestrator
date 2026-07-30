@@ -1,47 +1,37 @@
 package backup
 
 import (
-	"context"
-	"database/sql"
+	"crypto/sha256"
+	"encoding/base64"
 	"testing"
-
-	"github.com/nats-io/nats.go"
 )
 
-func TestJetStreamBackupStore_Backup(t *testing.T) {
-	ctx := context.Background()
+func TestJetStreamBackupStore_NilConnection(t *testing.T) {
+	_, err := NewJetStreamBackupStore(nil, nil, nil)
+	if err == nil {
+		t.Fatal("expected error for nil NATS connection")
+	}
+}
 
-	nc, err := nats.Connect("nats://localhost:4222")
+func TestJetStreamBackupStore_Integrity(t *testing.T) {
+	err := verifyJetStreamIntegrity([]byte("test data"), "wrong-digest")
+	if err == nil {
+		t.Fatal("expected integrity check to fail")
+	}
+
+	data := []byte("test data")
+	digest := sha256.Sum256(data)
+	expectedDigest := base64.StdEncoding.EncodeToString(digest[:])
+	err = verifyJetStreamIntegrity(data, expectedDigest)
 	if err != nil {
-		t.Skipf("NATS not available: %v", err)
-	}
-	defer nc.Close()
-
-	store := NewJetStreamBackupStore(nc, (*sql.DB)(nil), nil)
-
-	backup, err := store.Backup(ctx)
-	if err != nil {
-		t.Logf("Backup (may fail if no streams): %v", err)
-	}
-
-	if backup != nil {
-		if backup.Integrity == "" {
-			t.Error("Integrity digest should not be empty")
-		}
-		if backup.Timestamp.IsZero() {
-			t.Error("Timestamp should be set")
-		}
+		t.Fatalf("expected integrity check to pass: %v", err)
 	}
 }
 
-func TestJetStreamBackupStore_ListBackups(t *testing.T) {
-	t.Skip("Skipping test - requires database connection")
-}
-
-func TestJetStreamBackupStore_DeleteBackup(t *testing.T) {
-	t.Skip("Skipping test - requires database connection")
-}
-
-func TestJetStreamBackupStore_InvalidStream(t *testing.T) {
-	t.Skip("Skipping test - requires database connection")
+func TestJetStreamBackupStore_GenerateID(t *testing.T) {
+	id1 := generateJetStreamBackupID()
+	id2 := generateJetStreamBackupID()
+	if id1 == id2 {
+		t.Fatal("generated backup IDs should be unique")
+	}
 }

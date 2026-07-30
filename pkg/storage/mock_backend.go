@@ -13,9 +13,9 @@ import (
 )
 
 type MockBackend struct {
-	mu       sync.RWMutex
-	objects  map[string]*mockObject
-	callLog  []string
+	mu      sync.RWMutex
+	objects map[string]*mockObject
+	callLog []string
 }
 
 type mockObject struct {

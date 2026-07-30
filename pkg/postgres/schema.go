@@ -2145,7 +2145,7 @@ func Migrations() []Migration {
 }
 
 type SchemaManager struct {
-	db      *sql.DB
+	db       *sql.DB
 	lockConn *sql.Conn
 }
 
@@ -2162,7 +2162,6 @@ var (
 )
 
 var migrationLockID = GetLockID() // int64, safe for pg_try_advisory_lock
-
 
 func logLockAttempt(schemaVersion int) {
 	fmt.Fprintf(os.Stderr, "[INFO] attempting to acquire migration lock for schema version %d\n", schemaVersion)

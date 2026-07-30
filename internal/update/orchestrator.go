@@ -26,9 +26,9 @@ type OrchestratorUpdater struct {
 }
 
 type GitHubRelease struct {
-	TagName string      `json:"tag_name"`
+	TagName string        `json:"tag_name"`
 	Assets  []GitHubAsset `json:"assets"`
-	Body    string      `json:"body"`
+	Body    string        `json:"body"`
 }
 
 type GitHubAsset struct {
@@ -38,9 +38,9 @@ type GitHubAsset struct {
 }
 
 type OrchestratorRelease struct {
-	Version  string `json:"version"`
-	URL      string `json:"url"`
-	Checksum string `json:"checksum"`
+	Version   string `json:"version"`
+	URL       string `json:"url"`
+	Checksum  string `json:"checksum"`
 	Changelog string `json:"changelog"`
 }
 

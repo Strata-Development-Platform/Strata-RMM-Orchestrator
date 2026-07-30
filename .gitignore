@@ -48,3 +48,4 @@ build/
 # Generated files
 *.pb.go
 *_mock.go
+strata-rmm-orchestrator

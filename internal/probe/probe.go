@@ -12,11 +12,11 @@ import (
 )
 
 type Probe struct {
-	ID        string
-	TenantID  string
-	NATS      *nats.Conn
-	Logger    *zap.Logger
-	Config    Config
+	ID       string
+	TenantID string
+	NATS     *nats.Conn
+	Logger   *zap.Logger
+	Config   Config
 
 	mu        sync.RWMutex
 	targets   []SNMPTarget
@@ -26,37 +26,37 @@ type Probe struct {
 }
 
 type Config struct {
-	ProbeID           string             `yaml:"probe_id"`
-	TenantID          string             `yaml:"tenant_id"`
-	NATSURL           string             `yaml:"nats_url"`
-	SNMPTargets       []SNMPTarget       `yaml:"snmp_targets"`
-	DiscoveryEnabled  bool               `yaml:"discovery_enabled"`
-	DiscoverySubnets  []string           `yaml:"discovery_subnets"`
-	FlowEnabled       bool               `yaml:"flow_enabled"`
-	FlowPort          int                `yaml:"flow_port"`
-	FlowProtocols     []string           `yaml:"flow_protocols"`
-	PollInterval      time.Duration      `yaml:"poll_interval"`
-	DiscoveryInterval time.Duration      `yaml:"discovery_interval"`
+	ProbeID           string        `yaml:"probe_id"`
+	TenantID          string        `yaml:"tenant_id"`
+	NATSURL           string        `yaml:"nats_url"`
+	SNMPTargets       []SNMPTarget  `yaml:"snmp_targets"`
+	DiscoveryEnabled  bool          `yaml:"discovery_enabled"`
+	DiscoverySubnets  []string      `yaml:"discovery_subnets"`
+	FlowEnabled       bool          `yaml:"flow_enabled"`
+	FlowPort          int           `yaml:"flow_port"`
+	FlowProtocols     []string      `yaml:"flow_protocols"`
+	PollInterval      time.Duration `yaml:"poll_interval"`
+	DiscoveryInterval time.Duration `yaml:"discovery_interval"`
 }
 
 type SNMPTarget struct {
-	Host    string `yaml:"host"`
-	Port    int    `yaml:"port"`
-	Version string `yaml:"version"` // v1, v2c, v3
-	Community string `yaml:"community"`
-	V3       SNMPV3Config `yaml:"v3"`
-	OIDs     []string `yaml:"oids"`
-	Interval time.Duration `yaml:"interval"`
-	Labels   map[string]string `yaml:"labels"`
+	Host      string            `yaml:"host"`
+	Port      int               `yaml:"port"`
+	Version   string            `yaml:"version"` // v1, v2c, v3
+	Community string            `yaml:"community"`
+	V3        SNMPV3Config      `yaml:"v3"`
+	OIDs      []string          `yaml:"oids"`
+	Interval  time.Duration     `yaml:"interval"`
+	Labels    map[string]string `yaml:"labels"`
 }
 
 type SNMPV3Config struct {
-	Username   string `yaml:"username"`
-	AuthProto  string `yaml:"auth_proto"`  // MD5, SHA
-	AuthPass   string `yaml:"auth_pass"`
-	PrivProto  string `yaml:"priv_proto"`  // DES, AES
-	PrivPass   string `yaml:"priv_pass"`
-	Context    string `yaml:"context"`
+	Username  string `yaml:"username"`
+	AuthProto string `yaml:"auth_proto"` // MD5, SHA
+	AuthPass  string `yaml:"auth_pass"`
+	PrivProto string `yaml:"priv_proto"` // DES, AES
+	PrivPass  string `yaml:"priv_pass"`
+	Context   string `yaml:"context"`
 }
 
 func New(id, tenantID string, nc *nats.Conn, cfg Config, logger *zap.Logger) *Probe {
@@ -208,13 +208,13 @@ func (p *Probe) healthReportLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			payload := map[string]interface{}{
-				"probe_id":    p.ID,
-				"tenant_id":   p.TenantID,
-				"status":      "online",
+				"probe_id":     p.ID,
+				"tenant_id":    p.TenantID,
+				"status":       "online",
 				"snmp_targets": len(p.Config.SNMPTargets),
-				"discovery":   p.Config.DiscoveryEnabled,
-				"flow":        p.Config.FlowEnabled,
-				"time":        time.Now().UTC(),
+				"discovery":    p.Config.DiscoveryEnabled,
+				"flow":         p.Config.FlowEnabled,
+				"time":         time.Now().UTC(),
 			}
 			data, _ := json.Marshal(payload)
 			subject := fmt.Sprintf("tenant.%s.probe.%s.heartbeat", p.TenantID, p.ID)

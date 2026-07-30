@@ -41,15 +41,15 @@ func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 			logger.Info("connected to NATS", zap.String("url", nc.ConnectedUrl()))
 
 			cfg := probe.Config{
-				ProbeID:          fmt.Sprintf("probe-%s", tenantID),
-				TenantID:         tenantID,
-				NATSURL:          natsURL,
-				DiscoveryEnabled: true,
-				DiscoverySubnets: []string{},
-				FlowEnabled:      true,
-				FlowPort:         2055,
-				FlowProtocols:    []string{"netflow9", "ipfix"},
-				PollInterval:     5 * time.Minute,
+				ProbeID:           fmt.Sprintf("probe-%s", tenantID),
+				TenantID:          tenantID,
+				NATSURL:           natsURL,
+				DiscoveryEnabled:  true,
+				DiscoverySubnets:  []string{},
+				FlowEnabled:       true,
+				FlowPort:          2055,
+				FlowProtocols:     []string{"netflow9", "ipfix"},
+				PollInterval:      5 * time.Minute,
 				DiscoveryInterval: 1 * time.Hour,
 			}
 

@@ -58,11 +58,11 @@ func (s *APIServer) handleRemoteSessionInput(w http.ResponseWriter, r *http.Requ
 	sessionID := r.PathValue("sessionID")
 
 	var input struct {
-		X    float64 `json:"x"`
-		Y    float64 `json:"y"`
-		Type string  `json:"type"`
-		Button string `json:"button,omitempty"`
-		Key   string `json:"key,omitempty"`
+		X      float64 `json:"x"`
+		Y      float64 `json:"y"`
+		Type   string  `json:"type"`
+		Button string  `json:"button,omitempty"`
+		Key    string  `json:"key,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid input"})

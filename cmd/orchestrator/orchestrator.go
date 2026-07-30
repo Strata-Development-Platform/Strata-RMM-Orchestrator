@@ -223,9 +223,9 @@ func NewCommand(ctx context.Context, version, commit string, logger *zap.Logger)
 			}
 			api.WithVersion(version, commit).
 				WithHTTPConfig(
-				cfg.HTTP.ReadTimeout, cfg.HTTP.WriteTimeout, cfg.HTTP.IdleTimeout,
-				cfg.HTTP.MaxBodySizeBytes, cfg.HTTP.CORSOrigins,
-			)
+					cfg.HTTP.ReadTimeout, cfg.HTTP.WriteTimeout, cfg.HTTP.IdleTimeout,
+					cfg.HTTP.MaxBodySizeBytes, cfg.HTTP.CORSOrigins,
+				)
 			deploymentCtrl := platform.NewDeploymentController()
 
 			api.WithReleaseServer(releaseServer).
@@ -425,20 +425,20 @@ func newPreflightCommand(logger *zap.Logger) *cobra.Command {
 
 			// Build orchestrator config subset for preflight
 			orchCfg := &postgres.OrchestratorConfig{
-				NATSURL:         cfg.NATS.URL,
-				NATSToken:       cfg.NATS.Token,
-				NATSTLSEnabled:  cfg.NATS.TLSEnabled,
-				DBDSN:           cfg.DB.DSN,
-				DBMaxOpenConns:  cfg.DB.MaxOpenConns,
-				DBMaxIdleConns:  cfg.DB.MaxIdleConns,
+				NATSURL:           cfg.NATS.URL,
+				NATSToken:         cfg.NATS.Token,
+				NATSTLSEnabled:    cfg.NATS.TLSEnabled,
+				DBDSN:             cfg.DB.DSN,
+				DBMaxOpenConns:    cfg.DB.MaxOpenConns,
+				DBMaxIdleConns:    cfg.DB.MaxIdleConns,
 				DBConnMaxLifetime: cfg.DB.ConnMaxLifetime,
-				StorageBackend:  cfg.Storage.Backend,
-				StorageBucket:   cfg.Storage.Bucket,
-				StorageEndpoint: cfg.Storage.Endpoint,
-				StorageAccessKey: cfg.Storage.AccessKey,
-				StorageSecretKey: cfg.Storage.SecretKey,
-				StorageUseSSL:   cfg.Storage.UseSSL,
-				JWTSecret:       cfg.JWT.Secret,
+				StorageBackend:    cfg.Storage.Backend,
+				StorageBucket:     cfg.Storage.Bucket,
+				StorageEndpoint:   cfg.Storage.Endpoint,
+				StorageAccessKey:  cfg.Storage.AccessKey,
+				StorageSecretKey:  cfg.Storage.SecretKey,
+				StorageUseSSL:     cfg.Storage.UseSSL,
+				JWTSecret:         cfg.JWT.Secret,
 			}
 
 			// Connect to database
@@ -485,10 +485,10 @@ func newPreflightCommand(logger *zap.Logger) *cobra.Command {
 			}
 
 			output := map[string]interface{}{
-				"results": redactedResult.Checks,
-				"warnings": redactedResult.Warnings,
-				"failures": redactedResult.Failures,
-				"pass":     redactedResult.Pass,
+				"results":   redactedResult.Checks,
+				"warnings":  redactedResult.Warnings,
+				"failures":  redactedResult.Failures,
+				"pass":      redactedResult.Pass,
 				"timestamp": redactedResult.Timestamp.Format(time.RFC3339),
 			}
 			data, _ := json.MarshalIndent(output, "", "  ")

@@ -22,9 +22,9 @@ import (
 )
 
 type Dispatcher struct {
-	db     *timescale.Client
-	nc     *nats.Conn
-	logger *zap.Logger
+	db       *timescale.Client
+	nc       *nats.Conn
+	logger   *zap.Logger
 	stopCh   chan struct{}
 	stopOnce sync.Once
 	wg       sync.WaitGroup
@@ -35,10 +35,10 @@ type Dispatcher struct {
 func NewDispatcher(db *timescale.Client, nc *nats.Conn, logger *zap.Logger) *Dispatcher {
 	host, _ := os.Hostname()
 	return &Dispatcher{
-		db:     db,
-		nc:     nc,
-		logger: logger,
-		stopCh: make(chan struct{}),
+		db:       db,
+		nc:       nc,
+		logger:   logger,
+		stopCh:   make(chan struct{}),
 		workerID: fmt.Sprintf("%s-%s", host, uuid.NewString()),
 	}
 }

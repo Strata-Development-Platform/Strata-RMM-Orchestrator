@@ -7,14 +7,14 @@ import (
 
 func TestRecordingResult(t *testing.T) {
 	result := &RecordingResult{
-		RecordingID:   "rec-1",
-		SessionID:     "session-1",
-		TenantID:      "tenant-1",
-		DeviceID:      "device-1",
-		StorageKey:    "recordings/tenant-1/device-1/rec-1.raw",
-		SizeBytes:     1024,
-		Duration:      time.Minute,
-		Format:        FormatRaw,
+		RecordingID:    "rec-1",
+		SessionID:      "session-1",
+		TenantID:       "tenant-1",
+		DeviceID:       "device-1",
+		StorageKey:     "recordings/tenant-1/device-1/rec-1.raw",
+		SizeBytes:      1024,
+		Duration:       time.Minute,
+		Format:         FormatRaw,
 		ChecksumSHA256: "abc123",
 	}
 

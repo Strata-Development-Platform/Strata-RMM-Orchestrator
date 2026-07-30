@@ -20,9 +20,9 @@ import (
 type RecordingFormat string
 
 const (
-	FormatMKV  RecordingFormat = "mkv"
-	FormatMP4  RecordingFormat = "mp4"
-	FormatRaw  RecordingFormat = "raw"
+	FormatMKV RecordingFormat = "mkv"
+	FormatMP4 RecordingFormat = "mp4"
+	FormatRaw RecordingFormat = "raw"
 )
 
 type RecordingResult struct {
@@ -42,7 +42,7 @@ type RecordingResult struct {
 type RecorderMode int
 
 const (
-	ModeRaw  RecorderMode = iota
+	ModeRaw RecorderMode = iota
 	ModeVideo
 )
 

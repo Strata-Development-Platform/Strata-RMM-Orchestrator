@@ -145,16 +145,16 @@ func (s *APIServer) handleListEndpointAuditEvidence(w http.ResponseWriter, r *ht
 	defer func() { _ = rows.Close() }()
 
 	type evidenceRow struct {
-		ID              string `json:"id"`
-		MSPID           string `json:"msp_id"`
-		ActorUserID     string `json:"actor_user_id"`
-		Action          string `json:"action"`
-		Targets         string `json:"targets"`
-		StateTransition string `json:"state_transition"`
-		CorrelationID   string `json:"correlation_id,omitempty"`
-		JobID           string `json:"job_id,omitempty"`
-		ResultSummary   string `json:"result_summary"`
-		FailureReason   string `json:"failure_reason"`
+		ID              string    `json:"id"`
+		MSPID           string    `json:"msp_id"`
+		ActorUserID     string    `json:"actor_user_id"`
+		Action          string    `json:"action"`
+		Targets         string    `json:"targets"`
+		StateTransition string    `json:"state_transition"`
+		CorrelationID   string    `json:"correlation_id,omitempty"`
+		JobID           string    `json:"job_id,omitempty"`
+		ResultSummary   string    `json:"result_summary"`
+		FailureReason   string    `json:"failure_reason"`
 		CreatedAt       time.Time `json:"created_at"`
 	}
 
@@ -182,5 +182,3 @@ func (s *APIServer) handleListEndpointAuditEvidence(w http.ResponseWriter, r *ht
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"evidence": results})
 }
-
-

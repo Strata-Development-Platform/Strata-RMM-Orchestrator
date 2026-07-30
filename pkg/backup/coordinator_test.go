@@ -2,111 +2,191 @@ package backup
 
 import (
 	"context"
-	"database/sql"
 	"testing"
 	"time"
 )
 
-func TestRecoveryCoordinator_Transition(t *testing.T) {
-	db, err := sql.Open("postgres", "postgres://test:test@localhost:5432/test?sslmode=disable")
-	if err != nil {
-		t.Skipf("PostgreSQL not available: %v", err)
+func TestRecoveryCoordinator_InitialState(t *testing.T) {
+	c := NewRecoveryCoordinator(nil, nil)
+	if c.GetCurrentState() != StateIdle {
+		t.Fatalf("expected initial state Idle, got %s", c.GetCurrentState().String())
 	}
-	defer db.Close()
+}
 
-	coordinator := NewRecoveryCoordinator(db, nil)
-
-	err = coordinator.transitionTo(context.Background(), StateDiscovery)
+func TestRecoveryCoordinator_ValidTransition(t *testing.T) {
+	c := NewRecoveryCoordinator(nil, nil)
+	err := c.transitionTo(context.Background(), StateDiscovery)
 	if err != nil {
-		t.Fatalf("Initial transition failed: %v", err)
+		t.Fatalf("expected valid transition Idle->Discovery: %v", err)
 	}
-
-	if coordinator.GetCurrentState() != StateDiscovery {
-		t.Errorf("Expected state StateDiscovery, got %v", coordinator.GetCurrentState())
+	if c.GetCurrentState() != StateDiscovery {
+		t.Fatalf("expected state Discovery, got %s", c.GetCurrentState().String())
 	}
 }
 
 func TestRecoveryCoordinator_InvalidTransition(t *testing.T) {
-	db, err := sql.Open("postgres", "postgres://test:test@localhost:5432/test?sslmode=disable")
-	if err != nil {
-		t.Skipf("PostgreSQL not available: %v", err)
-	}
-	defer db.Close()
-
-	coordinator := NewRecoveryCoordinator(db, nil)
-
-	err = coordinator.transitionTo(context.Background(), StateCompleted)
+	c := NewRecoveryCoordinator(nil, nil)
+	err := c.transitionTo(context.Background(), StateCompleted)
 	if err == nil {
-		t.Error("Expected error for invalid transition")
+		t.Fatal("expected error for invalid transition Idle->Completed")
 	}
 }
 
-func TestRecoveryCoordinator_GetStateHistory(t *testing.T) {
-	db, err := sql.Open("postgres", "postgres://test:test@localhost:5432/test?sslmode=disable")
-	if err != nil {
-		t.Skipf("PostgreSQL not available: %v", err)
-	}
-	defer db.Close()
+func TestRecoveryCoordinator_StateHistory(t *testing.T) {
+	c := NewRecoveryCoordinator(nil, nil)
+	c.transitionTo(context.Background(), StateDiscovery)
+	c.transitionTo(context.Background(), StatePreFlight)
+	c.transitionTo(context.Background(), StateQuiesce)
 
-	coordinator := NewRecoveryCoordinator(db, nil)
-
-	coordinator.transitionTo(context.Background(), StateDiscovery)
-	coordinator.transitionTo(context.Background(), StatePreFlight)
-
-	history := coordinator.GetStateHistory()
-	if len(history) < 2 {
-		t.Errorf("Expected at least 2 events, got %d", len(history))
+	history := c.GetStateHistory()
+	if len(history) < 3 {
+		t.Fatalf("expected at least 3 events, got %d", len(history))
 	}
 }
 
 func TestRecoveryCoordinator_SetTimeout(t *testing.T) {
-	db, err := sql.Open("postgres", "postgres://test:test@localhost:5432/test?sslmode=disable")
-	if err != nil {
-		t.Skipf("PostgreSQL not available: %v", err)
+	c := NewRecoveryCoordinator(nil, nil)
+	c.SetTimeout(30 * time.Minute)
+	if c.timeout != 30*time.Minute {
+		t.Fatalf("expected timeout 30m, got %v", c.timeout)
 	}
-	defer db.Close()
+}
 
-	coordinator := NewRecoveryCoordinator(db, nil)
+func TestRecoveryCoordinator_SetDryRun(t *testing.T) {
+	c := NewRecoveryCoordinator(nil, nil)
+	c.SetDryRun(true)
+	if !c.dryRun {
+		t.Fatal("expected dryRun to be true")
+	}
+}
 
-	coordinator.SetTimeout(30 * time.Minute)
+func TestRecoveryCoordinator_DryRunRecovery(t *testing.T) {
+	c := NewRecoveryCoordinator(nil, nil)
+	c.SetDryRun(true)
+	c.SetBackupID("test-backup-id")
 
-	if coordinator.timeout != 30*time.Minute {
-		t.Errorf("Expected timeout 30m, got %v", coordinator.timeout)
+	result, err := c.Recover(context.Background())
+	if err != nil {
+		t.Fatalf("dry-run recovery should not error: %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("dry-run recovery should succeed")
+	}
+	if result.State != StateCompleted {
+		t.Fatalf("expected final state Completed, got %s", result.State.String())
+	}
+}
+
+func TestRecoveryCoordinator_Rollback(t *testing.T) {
+	c := NewRecoveryCoordinator(nil, nil)
+	c.SetBackupID("test-backup-id")
+	c.currentState = StatePreFlight
+
+	result, err := c.Rollback(context.Background())
+	if err != nil {
+		t.Fatalf("rollback should not error: %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("rollback should succeed")
 	}
 }
 
 func TestRecoveryCoordinator_GetRPOMetrics(t *testing.T) {
-	db, err := sql.Open("postgres", "postgres://test:test@localhost:5432/test?sslmode=disable")
-	if err != nil {
-		t.Skipf("PostgreSQL not available: %v", err)
-	}
-	defer db.Close()
-
-	coordinator := NewRecoveryCoordinator(db, nil)
-
-	metrics := coordinator.GetRPOMetrics()
-
+	c := NewRecoveryCoordinator(nil, nil)
+	metrics := c.GetRPOMetrics()
 	if metrics.DataLossWindow <= 0 {
-		t.Error("Data loss window should be positive")
+		t.Fatal("data loss window should be positive")
 	}
-
 	if metrics.MaxAcceptableRPO <= 0 {
-		t.Error("Max RPO should be positive")
+		t.Fatal("max RPO should be positive")
 	}
 }
 
 func TestRecoveryCoordinator_GetRTOMetrics(t *testing.T) {
-	db, err := sql.Open("postgres", "postgres://test:test@localhost:5432/test?sslmode=disable")
-	if err != nil {
-		t.Skipf("PostgreSQL not available: %v", err)
-	}
-	defer db.Close()
-
-	coordinator := NewRecoveryCoordinator(db, nil)
-
-	metrics := coordinator.GetRTOMetrics()
-
+	c := NewRecoveryCoordinator(nil, nil)
+	metrics := c.GetRTOMetrics()
 	if metrics.RecoveryStartTime.IsZero() {
-		t.Error("Recovery start time should be set")
+		t.Fatal("recovery start time should be set")
+	}
+}
+
+func TestRecoveryCoordinator_GenerateRecoveryID(t *testing.T) {
+	id1 := generateRecoveryID()
+	id2 := generateRecoveryID()
+	if id1 == id2 {
+		t.Fatal("generated recovery IDs should be unique")
+	}
+}
+
+func TestRecoveryCoordinator_StateMachineRollbackOnFailure(t *testing.T) {
+	c := NewRecoveryCoordinator(nil, nil)
+	ctx := context.Background()
+
+	c.transitionTo(ctx, StateDiscovery)
+
+	err := c.transitionTo(ctx, StateCompleted)
+	if err == nil {
+		t.Fatal("expected invalid transition error")
+	}
+
+	c.transitionTo(ctx, StateRollback)
+	if c.GetCurrentState() != StateRollback {
+		t.Fatalf("expected state Rollback, got %s", c.GetCurrentState().String())
+	}
+}
+
+func TestRecoveryCoordinator_LockAcquisitionWithNilDB(t *testing.T) {
+	c := NewRecoveryCoordinator(nil, nil)
+	err := c.acquireLock(context.Background())
+	if err != nil {
+		t.Fatalf("lock acquisition with nil DB should succeed: %v", err)
+	}
+}
+
+func TestRecoveryCoordinator_20StateEnum(t *testing.T) {
+	expected := 20
+	count := 0
+	for s := StateIdle; s <= StateCompleted; s++ {
+		count++
+		_ = s.String()
+	}
+	if count != expected {
+		t.Fatalf("expected %d states, got %d", expected, count)
+	}
+}
+
+func TestRecoveryCoordinator_AllTransitionsAreValid(t *testing.T) {
+	validTransitions := map[RecoveryState][]RecoveryState{
+		StateIdle:                  {StateDiscovery},
+		StateDiscovery:             {StatePreFlight, StateRollback},
+		StatePreFlight:             {StateQuiesce, StateRollback},
+		StateQuiesce:               {StateBackupDatabase, StateRollback},
+		StateBackupDatabase:        {StateBackupJetStream, StateRollback},
+		StateBackupJetStream:       {StateBackupObjectStorage, StateRollback},
+		StateBackupObjectStorage:   {StateVerifyIntegrity, StateRollback},
+		StateVerifyIntegrity:       {StatePreRestoreValidation, StateRollback},
+		StatePreRestoreValidation:  {StateRestoreDatabase, StateRollback},
+		StateRestoreDatabase:       {StateRestoreJetStream, StateRollback},
+		StateRestoreJetStream:      {StateRestoreObjectStorage, StateRollback},
+		StateRestoreObjectStorage:  {StatePostRestoreValidation, StateRollback},
+		StatePostRestoreValidation: {StateHealthCheck, StateRollback},
+		StateHealthCheck:           {StateVerification, StateRollback},
+		StateVerification:          {StateRPOValidation, StateRollback},
+		StateRPOValidation:         {StateRTOValidation, StateRollback},
+		StateRTOValidation:         {StateCleanup, StateRollback},
+		StateCleanup:               {StateCompleted, StateRollback},
+		StateRollback:              {StateCleanup},
+		StateCompleted:             {},
+	}
+
+	coord := NewRecoveryCoordinator(nil, nil)
+	for from, targets := range validTransitions {
+		for _, to := range targets {
+			coord.currentState = from
+			err := coord.transitionTo(context.Background(), to)
+			if err != nil {
+				t.Fatalf("transition %s->%s should be valid but got: %v", from.String(), to.String(), err)
+			}
+		}
 	}
 }

@@ -9,16 +9,20 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"os/exec"
 	"time"
 
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/encrypt"
 )
 
 var (
-	ErrBackupNotFound   = errors.New("backup not found")
-	ErrIntegrityCheck   = errors.New("backup integrity check failed")
-	ErrRestoreFailed    = errors.New("restore failed")
-	ErrBackupCorrupted  = errors.New("backup data corrupted")
+	ErrBackupNotFound        = errors.New("backup not found")
+	ErrIntegrityCheck        = errors.New("backup integrity check failed")
+	ErrRestoreFailed         = errors.New("restore failed")
+	ErrBackupCorrupted       = errors.New("backup data corrupted")
+	ErrBinaryNotFound        = errors.New("pg_dump/pg_restore binary not found")
+	ErrEncryptionKeyRequired = errors.New("encryption key is required")
+	ErrTargetDSNRequired     = errors.New("target DSN is required for restore")
 )
 
 type BackupMetadata struct {
@@ -38,27 +42,44 @@ type BackupMetadata struct {
 type BackupStore struct {
 	db        *sql.DB
 	encryptor *encrypt.KeyStore
+	pgDump    string
+	pgRestore string
+	pgDSN     string
 }
 
-func NewBackupStore(db *sql.DB, encryptor *encrypt.KeyStore) *BackupStore {
-	return &BackupStore{db: db, encryptor: encryptor}
+func NewBackupStore(db *sql.DB, encryptor *encrypt.KeyStore, pgDSN string) *BackupStore {
+	s := &BackupStore{db: db, encryptor: encryptor, pgDSN: pgDSN}
+	s.pgDump, _ = exec.LookPath("pg_dump")
+	s.pgRestore, _ = exec.LookPath("pg_restore")
+	return s
+}
+
+func (s *BackupStore) binaryAvailable() error {
+	if s.pgDump == "" {
+		return fmt.Errorf("%w: pg_dump not found in PATH", ErrBinaryNotFound)
+	}
+	if s.pgRestore == "" {
+		return fmt.Errorf("%w: pg_restore not found in PATH", ErrBinaryNotFound)
+	}
+	return nil
 }
 
 func (s *BackupStore) CreateBackup(ctx context.Context, databaseType string) (*BackupMetadata, error) {
 	if databaseType != "postgresql" && databaseType != "timescaledb" {
 		return nil, fmt.Errorf("unsupported database type: %s", databaseType)
 	}
+	if s.encryptor == nil {
+		return nil, fmt.Errorf("%w: encryptor cannot be nil", ErrEncryptionKeyRequired)
+	}
+	if err := s.binaryAvailable(); err != nil {
+		return nil, err
+	}
 
 	startTime := time.Now()
 
-	var key *encrypt.TenantKey
-	var err error
-
-	if s.encryptor != nil {
-		key, err = s.encryptor.GetActiveKey(ctx, "system")
-		if err != nil {
-			return nil, fmt.Errorf("get encryption key: %w", err)
-		}
+	key, err := s.encryptor.GetActiveKey(ctx, "system")
+	if err != nil {
+		return nil, fmt.Errorf("get encryption key: %w", err)
 	}
 
 	data, tableCount, rowEstimate, err := s.dumpDatabase(ctx, databaseType)
@@ -66,19 +87,9 @@ func (s *BackupStore) CreateBackup(ctx context.Context, databaseType string) (*B
 		return nil, fmt.Errorf("dump database: %w", err)
 	}
 
-	var encryptedData []byte
-	var scheme, keyRef string
-	if key != nil {
-		encryptedData, err = s.encryptData(data, key)
-		if err != nil {
-			return nil, fmt.Errorf("encrypt backup: %w", err)
-		}
-		scheme = string(key.Encryption)
-		keyRef = key.ID
-	} else {
-		encryptedData = data
-		scheme = "none"
-		keyRef = "none"
+	encryptedData, err := s.encryptData(data, key)
+	if err != nil {
+		return nil, fmt.Errorf("encrypt backup: %w", err)
 	}
 
 	digest := sha256.Sum256(encryptedData)
@@ -93,8 +104,8 @@ func (s *BackupStore) CreateBackup(ctx context.Context, databaseType string) (*B
 		RowEstimate:     rowEstimate,
 		DataSize:        int64(len(encryptedData)),
 		Compression:     "none",
-		Scheme:          scheme,
-		KeyReference:    keyRef,
+		Scheme:          string(key.Encryption),
+		KeyReference:    key.ID,
 		IntegrityDigest: integrityDigest,
 	}
 
@@ -106,7 +117,11 @@ func (s *BackupStore) CreateBackup(ctx context.Context, databaseType string) (*B
 	return metadata, nil
 }
 
-func (s *BackupStore) RestoreBackup(ctx context.Context, backupID string) error {
+func (s *BackupStore) RestoreBackup(ctx context.Context, backupID string, targetDSN string) error {
+	if targetDSN == "" {
+		return fmt.Errorf("%w", ErrTargetDSNRequired)
+	}
+
 	metadata, data, err := s.loadBackupData(ctx, backupID)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrBackupNotFound, err)
@@ -117,21 +132,21 @@ func (s *BackupStore) RestoreBackup(ctx context.Context, backupID string) error 
 		return fmt.Errorf("%w: %v", ErrIntegrityCheck, err)
 	}
 
-	var decryptedData []byte
-	if metadata.Scheme != "none" && metadata.KeyReference != "none" && s.encryptor != nil {
-		key, err := s.getKeyByID(ctx, metadata.KeyReference)
-		if err != nil {
-			return fmt.Errorf("get encryption key: %w", err)
-		}
-		decryptedData, err = s.decryptData(data, key)
-		if err != nil {
-			return fmt.Errorf("decrypt backup: %w", err)
-		}
-	} else {
-		decryptedData = data
+	if metadata.Scheme == "none" || metadata.KeyReference == "" || s.encryptor == nil {
+		return fmt.Errorf("%w: backup %s has no encryption scheme", ErrEncryptionKeyRequired, backupID)
 	}
 
-	err = s.restoreDatabase(ctx, metadata.DatabaseType, decryptedData)
+	key, err := s.getKeyByID(ctx, metadata.KeyReference)
+	if err != nil {
+		return fmt.Errorf("get encryption key: %w", err)
+	}
+
+	decryptedData, err := s.decryptData(data, key)
+	if err != nil {
+		return fmt.Errorf("decrypt backup: %w", err)
+	}
+
+	err = s.restoreDatabase(ctx, decryptedData, targetDSN)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrRestoreFailed, err)
 	}
@@ -158,93 +173,96 @@ func (s *BackupStore) ListBackups(ctx context.Context) ([]*BackupMetadata, error
 			&b.RowEstimate, &b.DataSize, &b.Compression, &b.Scheme, &b.KeyReference, &b.IntegrityDigest,
 		)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("scan backup row: %w", err)
 		}
 		backups = append(backups, &b)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows iteration: %w", err)
 	}
 	return backups, nil
 }
 
 func (s *BackupStore) DeleteBackup(ctx context.Context, backupID string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM backups WHERE id = $1`, backupID)
+	res, err := s.db.ExecContext(ctx, `DELETE FROM backups WHERE id = $1`, backupID)
 	if err != nil {
 		return fmt.Errorf("delete backup: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("%w: %s", ErrBackupNotFound, backupID)
 	}
 	return nil
 }
 
 func (s *BackupStore) dumpDatabase(ctx context.Context, databaseType string) ([]byte, int, int64, error) {
-	if databaseType == "postgresql" {
-		return s.dumpPostgreSQL(ctx)
-	}
-	return s.dumpTimescaleDB(ctx)
-}
-
-func (s *BackupStore) dumpPostgreSQL(ctx context.Context) ([]byte, int, int64, error) {
 	var tableCount int
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public'`).Scan(&tableCount)
 	if err != nil {
-		return nil, 0, 0, fmt.Errorf("count tables: %w", err)
+		tableCount = 0
 	}
-
 	var rowEstimate int64
 	err = s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(n_live_tup), 0) FROM pg_stat_user_tables`).Scan(&rowEstimate)
 	if err != nil {
-		return nil, 0, 0, fmt.Errorf("estimate rows: %w", err)
+		rowEstimate = 0
 	}
 
-	var buf bytes.Buffer
-	err = s.db.QueryRowContext(ctx, `SELECT pg_dump('--no-owner --no-privileges --format=custom')`).Scan(&buf)
-	if err != nil {
-		return nil, 0, 0, fmt.Errorf("dump database: %w", err)
+	var dsn string
+	if s.pgDSN != "" {
+		dsn = s.pgDSN
+	} else {
+		dsn = s.buildDSN()
 	}
 
-	return buf.Bytes(), tableCount, rowEstimate, nil
+	args := []string{
+		"--no-owner",
+		"--no-privileges",
+		"--format=custom",
+		"-d", dsn,
+	}
+
+	var stdout, stderr bytes.Buffer
+	dumpCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
+	defer cancel()
+
+	cmd := exec.CommandContext(dumpCtx, s.pgDump, args...)
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return nil, 0, 0, fmt.Errorf("pg_dump failed: %w\nstderr: %s", err, stderr.String())
+	}
+	return stdout.Bytes(), tableCount, rowEstimate, nil
 }
 
-func (s *BackupStore) dumpTimescaleDB(ctx context.Context) ([]byte, int, int64, error) {
-	var tableCount int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public'`).Scan(&tableCount)
-	if err != nil {
-		return nil, 0, 0, fmt.Errorf("count tables: %w", err)
+func (s *BackupStore) restoreDatabase(ctx context.Context, data []byte, targetDSN string) error {
+	args := []string{
+		"--no-owner",
+		"--no-privileges",
+		"--clean",
+		"--if-exists",
+		"-d", targetDSN,
 	}
 
-	var rowEstimate int64
-	err = s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(n_live_tup), 0) FROM pg_stat_user_tables`).Scan(&rowEstimate)
-	if err != nil {
-		return nil, 0, 0, fmt.Errorf("estimate rows: %w", err)
-	}
+	var stderr bytes.Buffer
+	restoreCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
+	defer cancel()
 
-	var buf bytes.Buffer
-	err = s.db.QueryRowContext(ctx, `SELECT pg_dump('--no-owner --no-privileges --format=custom')`).Scan(&buf)
-	if err != nil {
-		return nil, 0, 0, fmt.Errorf("dump database: %w", err)
-	}
+	cmd := exec.CommandContext(restoreCtx, s.pgRestore, args...)
+	cmd.Stdin = bytes.NewReader(data)
+	cmd.Stderr = &stderr
 
-	return buf.Bytes(), tableCount, rowEstimate, nil
-}
-
-func (s *BackupStore) restoreDatabase(ctx context.Context, databaseType string, data []byte) error {
-	if databaseType == "postgresql" {
-		return s.restorePostgreSQL(ctx, data)
-	}
-	return s.restoreTimescaleDB(ctx, data)
-}
-
-func (s *BackupStore) restorePostgreSQL(ctx context.Context, data []byte) error {
-	_, err := s.db.ExecContext(ctx, string(data))
-	if err != nil {
-		return fmt.Errorf("restore database: %w", err)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("pg_restore failed: %w\nstderr: %s", err, stderr.String())
 	}
 	return nil
 }
 
-func (s *BackupStore) restoreTimescaleDB(ctx context.Context, data []byte) error {
-	_, err := s.db.ExecContext(ctx, string(data))
-	if err != nil {
-		return fmt.Errorf("restore database: %w", err)
+func (s *BackupStore) buildDSN() string {
+	if s.pgDSN != "" {
+		return s.pgDSN
 	}
-	return nil
+	return "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable"
 }
 
 func (s *BackupStore) encryptData(data []byte, key *encrypt.TenantKey) ([]byte, error) {
@@ -280,10 +298,7 @@ func (s *BackupStore) storeBackupMetadata(ctx context.Context, metadata *BackupM
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 	`, metadata.ID, metadata.Timestamp, metadata.DatabaseType, metadata.Version, metadata.TableCount,
 		metadata.RowEstimate, metadata.DataSize, metadata.Compression, metadata.Scheme, metadata.KeyReference, metadata.IntegrityDigest, data)
-	if err != nil {
-		return fmt.Errorf("store backup: %w", err)
-	}
-	return nil
+	return err
 }
 
 func (s *BackupStore) loadBackupData(ctx context.Context, backupID string) (*BackupMetadata, []byte, error) {
@@ -303,28 +318,19 @@ func (s *BackupStore) loadBackupData(ctx context.Context, backupID string) (*Bac
 }
 
 func (s *BackupStore) getKeyByID(ctx context.Context, keyID string) (*encrypt.TenantKey, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	var key encrypt.TenantKey
+	err := s.db.QueryRowContext(ctx, `
 		SELECT id, tenant_id, key_alias, kms_type, encryption, kms_key_id, key_material, region, endpoint, status, created_at, rotated_at, expires_at
 		FROM tenant_encryption_keys WHERE id = $1
-	`, keyID)
+	`, keyID).Scan(
+		&key.ID, &key.TenantID, &key.KeyAlias, &key.KMSProvider, &key.Encryption,
+		&key.KMSKeyID, &key.KeyMaterial, &key.Region, &key.Endpoint, &key.Status,
+		&key.CreatedAt, &key.RotatedAt, &key.ExpiresAt,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("get key by id: %w", err)
+		return nil, fmt.Errorf("key not found: %s: %w", keyID, err)
 	}
-	defer rows.Close()
-
-	var key encrypt.TenantKey
-	for rows.Next() {
-		err := rows.Scan(
-			&key.ID, &key.TenantID, &key.KeyAlias, &key.KMSProvider, &key.Encryption,
-			&key.KMSKeyID, &key.KeyMaterial, &key.Region, &key.Endpoint, &key.Status,
-			&key.CreatedAt, &key.RotatedAt, &key.ExpiresAt,
-		)
-		if err != nil {
-			continue
-		}
-		return &key, nil
-	}
-	return nil, fmt.Errorf("key not found: %s", keyID)
+	return &key, nil
 }
 
 func generateDatabaseBackupID() string {

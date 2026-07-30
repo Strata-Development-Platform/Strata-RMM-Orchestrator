@@ -18,13 +18,13 @@ type Config struct {
 }
 
 type AgentConfig struct {
-	TenantID        string `yaml:"tenant_id"`
-	AgentID         string `yaml:"agent_id"`
-	DeploymentID    string `yaml:"deployment_id"`
-	EnrollmentToken string `yaml:"enrollment_token"`
-	RegisterURL     string `yaml:"register_url"`
-	LogLevel        string `yaml:"log_level"`
-	DataDir         string `yaml:"data_dir"`
+	TenantID        string            `yaml:"tenant_id"`
+	AgentID         string            `yaml:"agent_id"`
+	DeploymentID    string            `yaml:"deployment_id"`
+	EnrollmentToken string            `yaml:"enrollment_token"`
+	RegisterURL     string            `yaml:"register_url"`
+	LogLevel        string            `yaml:"log_level"`
+	DataDir         string            `yaml:"data_dir"`
 	Tags            map[string]string `yaml:"tags"`
 }
 

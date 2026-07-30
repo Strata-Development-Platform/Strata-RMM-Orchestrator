@@ -38,14 +38,14 @@ func ParseRuntimeMode(s string) (RuntimeMode, error) {
 }
 
 type NATSConfig struct {
-	URL             string
-	Token           string
-	TLSEnabled      bool
-	TLSCertFile     string
-	TLSKeyFile      string
-	TLSCAFile       string
-	ReconnectWait   time.Duration
-	MaxReconnects   int
+	URL           string
+	Token         string
+	TLSEnabled    bool
+	TLSCertFile   string
+	TLSKeyFile    string
+	TLSCAFile     string
+	ReconnectWait time.Duration
+	MaxReconnects int
 }
 
 type DatabaseConfig struct {
@@ -73,10 +73,10 @@ type JWTConfig struct {
 }
 
 type HTTPConfig struct {
-	APIAddr          string
-	TunnelAddr       string
-	PublicURL        string
-	CORSOrigins      []string
+	APIAddr     string
+	TunnelAddr  string
+	PublicURL   string
+	CORSOrigins []string
 	// TrustedProxies — deferred to a later phase.
 	ReadTimeout      time.Duration
 	WriteTimeout     time.Duration
@@ -527,20 +527,20 @@ func splitTrim(s, sep string) []string {
 
 func (c *OrchestratorConfig) RedactedSummary() map[string]interface{} {
 	return map[string]interface{}{
-		"runtime_mode":    string(c.RuntimeMode),
-		"nats_url":        redactURL(c.NATS.URL),
-		"nats_tls":        c.NATS.TLSEnabled,
-		"db_dsn":          redactDSN(c.DB.DSN),
-		"db_pool_max":     c.DB.MaxOpenConns,
-		"db_pool_idle":    c.DB.MaxIdleConns,
-		"storage_type":    c.Storage.Backend,
-		"storage_bucket":  c.Storage.Bucket,
-		"api_addr":        c.HTTP.APIAddr,
-		"tunnel_addr":     c.HTTP.TunnelAddr,
-		"public_url":      c.HTTP.PublicURL,
-		"cors_origins":    c.HTTP.CORSOrigins,
-		"jwt_configured":  c.JWT.Secret != "",
-		"seed_dev":        c.Seeding.SeedDev,
+		"runtime_mode":   string(c.RuntimeMode),
+		"nats_url":       redactURL(c.NATS.URL),
+		"nats_tls":       c.NATS.TLSEnabled,
+		"db_dsn":         redactDSN(c.DB.DSN),
+		"db_pool_max":    c.DB.MaxOpenConns,
+		"db_pool_idle":   c.DB.MaxIdleConns,
+		"storage_type":   c.Storage.Backend,
+		"storage_bucket": c.Storage.Bucket,
+		"api_addr":       c.HTTP.APIAddr,
+		"tunnel_addr":    c.HTTP.TunnelAddr,
+		"public_url":     c.HTTP.PublicURL,
+		"cors_origins":   c.HTTP.CORSOrigins,
+		"jwt_configured": c.JWT.Secret != "",
+		"seed_dev":       c.Seeding.SeedDev,
 	}
 }
 

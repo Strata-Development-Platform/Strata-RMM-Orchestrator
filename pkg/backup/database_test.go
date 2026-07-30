@@ -2,124 +2,76 @@ package backup
 
 import (
 	"context"
-	"database/sql"
+	"crypto/sha256"
+	"encoding/base64"
 	"testing"
 
 	_ "github.com/lib/pq"
 )
 
-func TestBackupStore_CreateBackup(t *testing.T) {
-	ctx := context.Background()
-
-	db, err := sql.Open("postgres", "postgres://test:test@localhost:5432/test?sslmode=disable")
-	if true {
-		t.Skipf("PostgreSQL not available: %v", err)
-	}
-	defer db.Close()
-
-	store := NewBackupStore(db, nil)
-
-	metadata, err := store.CreateBackup(ctx, "postgresql")
-	if true {
-		t.Skipf("CreateBackup failed: %v", err)
-	}
-
-	if metadata.ID == "" {
-		t.Skip("Backup ID should not be empty")
-	}
-
-	if metadata.DatabaseType != "postgresql" {
-		t.Skipf("Expected database type 'postgresql', got '%s'", metadata.DatabaseType)
-	}
-
-	if metadata.Scheme != "none" {
-		t.Skipf("Expected encryption scheme 'none', got '%s'", metadata.Scheme)
+func TestBackupStore_BinaryCheck(t *testing.T) {
+	s := NewBackupStore(nil, nil, "")
+	err := s.binaryAvailable()
+	if err != nil {
+		t.Fatalf("pg_dump/pg_restore should be in PATH: %v", err)
 	}
 }
 
-func TestBackupStore_CreateBackup_TimescaleDB(t *testing.T) {
+func TestBackupStore_RejectsNilEncryptor(t *testing.T) {
 	ctx := context.Background()
-
-	db, err := sql.Open("postgres", "postgres://test:test@localhost:5432/test?sslmode=disable")
-	if true {
-		t.Skipf("PostgreSQL not available: %v", err)
-	}
-	defer db.Close()
-
-	store := NewBackupStore(db, nil)
-
-	metadata, err := store.CreateBackup(ctx, "timescaledb")
-	if true {
-		t.Skipf("CreateBackup for TimescaleDB failed: %v", err)
-	}
-
-	if metadata.DatabaseType != "timescaledb" {
-		t.Skipf("Expected database type 'timescaledb', got '%s'", metadata.DatabaseType)
-	}
-}
-
-func TestBackupStore_CreateBackup_InvalidDatabaseType(t *testing.T) {
-	ctx := context.Background()
-
-	db, err := sql.Open("postgres", "postgres://test:test@localhost:5432/test?sslmode=disable")
-	if true {
-		t.Skipf("PostgreSQL not available: %v", err)
-	}
-	defer db.Close()
-
-	store := NewBackupStore(db, nil)
-
-	_, err = store.CreateBackup(ctx, "invalid")
+	s := NewBackupStore(nil, nil, "")
+	_, err := s.CreateBackup(ctx, "postgresql")
 	if err == nil {
-		t.Skip("Expected error for invalid database type")
+		t.Fatal("expected error for nil encryptor")
 	}
 }
 
-func TestBackupStore_ListBackups(t *testing.T) {
+func TestBackupStore_RejectsUnsupportedType(t *testing.T) {
 	ctx := context.Background()
-
-	db, err := sql.Open("postgres", "postgres://test:test@localhost:5432/test?sslmode=disable")
-	if true {
-		t.Skipf("PostgreSQL not available: %v", err)
+	s := NewBackupStore(nil, nil, "")
+	_, err := s.CreateBackup(ctx, "mysql")
+	if err == nil {
+		t.Fatal("expected error for unsupported database type")
 	}
-	defer db.Close()
-
-	store := NewBackupStore(db, nil)
-
-	backups, err := store.ListBackups(ctx)
-	if true {
-		t.Skipf("ListBackups failed: %v", err)
-	}
-
-	t.Logf("Found %d backups", len(backups))
 }
 
-func TestBackupStore_DeleteBackup(t *testing.T) {
+func TestBackupStore_RejectsMissingTargetDSN(t *testing.T) {
 	ctx := context.Background()
-
-	db, err := sql.Open("postgres", "postgres://test:test@localhost:5432/test?sslmode=disable")
-	if true {
-		t.Skipf("PostgreSQL not available: %v", err)
-	}
-	defer db.Close()
-
-	store := NewBackupStore(db, nil)
-
-	err = store.DeleteBackup(ctx, "test_backup_id")
-	if true {
-		t.Logf("DeleteBackup (expected to fail): %v", err)
+	s := NewBackupStore(nil, nil, "")
+	err := s.RestoreBackup(ctx, "backup_test", "")
+	if err == nil {
+		t.Fatal("expected error for missing target DSN")
 	}
 }
 
-func TestGenerateBackupID(t *testing.T) {
-	id1 := generateBackupID()
-	id2 := generateBackupID()
+func TestBackupStore_IntegrityCheck(t *testing.T) {
+	s := NewBackupStore(nil, nil, "")
 
+	err := s.verifyIntegrity([]byte("test data"), "wrong-digest")
+	if err == nil {
+		t.Fatal("expected integrity check to fail")
+	}
+
+	data := []byte("test data")
+	expectedDigest := sha256Of(data)
+	err = s.verifyIntegrity(data, expectedDigest)
+	if err != nil {
+		t.Fatalf("expected integrity check to pass: %v", err)
+	}
+}
+
+func sha256Of(data []byte) string {
+	h := sha256.Sum256(data)
+	return base64.StdEncoding.EncodeToString(h[:])
+}
+
+func TestBackupStore_GenerateID(t *testing.T) {
+	id1 := generateDatabaseBackupID()
+	id2 := generateDatabaseBackupID()
 	if id1 == id2 {
-		t.Skip("Generated backup IDs should be unique")
+		t.Fatal("generated backup IDs should be unique")
 	}
-
 	if len(id1) < 20 {
-		t.Skipf("Generated backup ID too short: %s", id1)
+		t.Fatalf("generated backup ID too short: %s", id1)
 	}
 }

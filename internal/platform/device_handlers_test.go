@@ -44,7 +44,6 @@ func TestValidateIdempotencyKey(t *testing.T) {
 	}
 }
 
-
 func TestRequestIPAddress(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/api/v2/devices/device/action", nil)
 	request.RemoteAddr = net.JoinHostPort("192.0.2.10", "4242")
@@ -56,7 +55,6 @@ func TestRequestIPAddress(t *testing.T) {
 		t.Fatalf("requestIPAddress() without port = %q", got)
 	}
 }
-
 
 func TestPhase7AgentRoutesRequireAgentPrincipal(t *testing.T) {
 	server := &APIServer{}
