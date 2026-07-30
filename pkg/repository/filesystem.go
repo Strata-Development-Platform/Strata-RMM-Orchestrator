@@ -69,10 +69,10 @@ func (r *FilesystemRepository) WriteComponent(_ context.Context, backupSetID, co
 	}
 	tmpName := tmpFile.Name()
 
-	defer func() {
-		tmpFile.Close()
-		os.Remove(tmpName)
-	}()
+ 	defer func() {
+ 		tmpFile.Close() //nolint:errcheck
+ 		os.Remove(tmpName) //nolint:errcheck
+ 	}()
 
 	if _, err := io.Copy(tmpFile, reader); err != nil {
 		return fmt.Errorf("write component: %w", err)
@@ -254,17 +254,17 @@ func atomicWrite(path string, data []byte, perm os.FileMode) error {
 	tmpName := tmpFile.Name()
 
 	if _, err := tmpFile.Write(data); err != nil {
-		tmpFile.Close()
-		os.Remove(tmpName)
+		tmpFile.Close() //nolint:errcheck
+		os.Remove(tmpName) //nolint:errcheck
 		return err
 	}
 	if err := tmpFile.Chmod(perm); err != nil {
-		tmpFile.Close()
-		os.Remove(tmpName)
+		tmpFile.Close() //nolint:errcheck
+		os.Remove(tmpName) //nolint:errcheck
 		return err
 	}
 	if err := tmpFile.Close(); err != nil {
-		os.Remove(tmpName)
+		os.Remove(tmpName) //nolint:errcheck
 		return err
 	}
 	return os.Rename(tmpName, path)

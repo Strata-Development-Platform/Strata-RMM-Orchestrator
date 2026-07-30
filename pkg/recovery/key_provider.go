@@ -310,10 +310,10 @@ func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
  		os.Remove(tmpName) //nolint:errcheck
  		return err
  	}
-	if err := tmpFile.Close(); err != nil {
-		os.Remove(tmpName)
-		return err
-	}
+ 	if err := tmpFile.Close(); err != nil {
+ 		os.Remove(tmpName) //nolint:errcheck
+ 		return err
+ 	}
 	return os.Rename(tmpName, path)
 }
 
