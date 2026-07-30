@@ -175,11 +175,11 @@ func Unmarshal(data []byte) (*Envelope, error) {
 type MetadataAuth struct {
 	mu            sync.Mutex
 	buf           []byte
-	backupSetID   string
-	componentID   string
-	environmentID string
-	keyID         string
-	tenantScope   string
+	backupSetID   string //nolint:unused // reserved for future use
+	componentID   string //nolint:unused // reserved for future use
+	environmentID string //nolint:unused // reserved for future use
+	keyID         string //nolint:unused // reserved for future use
+	tenantScope   string //nolint:unused // reserved for future use
 }
 
 // NewMetadataAuth creates a new metadata authenticator.

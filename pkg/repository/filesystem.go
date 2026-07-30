@@ -69,10 +69,10 @@ func (r *FilesystemRepository) WriteComponent(_ context.Context, backupSetID, co
 	}
 	tmpName := tmpFile.Name()
 
- 	defer func() {
- 		tmpFile.Close() //nolint:errcheck
- 		os.Remove(tmpName) //nolint:errcheck
- 	}()
+	defer func() {
+		tmpFile.Close()    //nolint:errcheck
+		os.Remove(tmpName) //nolint:errcheck
+	}()
 
 	if _, err := io.Copy(tmpFile, reader); err != nil {
 		return fmt.Errorf("write component: %w", err)
@@ -254,12 +254,12 @@ func atomicWrite(path string, data []byte, perm os.FileMode) error {
 	tmpName := tmpFile.Name()
 
 	if _, err := tmpFile.Write(data); err != nil {
-		tmpFile.Close() //nolint:errcheck
+		tmpFile.Close()    //nolint:errcheck
 		os.Remove(tmpName) //nolint:errcheck
 		return err
 	}
 	if err := tmpFile.Chmod(perm); err != nil {
-		tmpFile.Close() //nolint:errcheck
+		tmpFile.Close()    //nolint:errcheck
 		os.Remove(tmpName) //nolint:errcheck
 		return err
 	}
@@ -271,7 +271,7 @@ func atomicWrite(path string, data []byte, perm os.FileMode) error {
 }
 
 // pathSanitizer prevents directory traversal.
-func pathSanitizer(base, requested string) (string, error) {
+func pathSanitizer(base, requested string) (string, error) { //nolint:unused // reserved for future use
 	cleaned := filepath.Clean(filepath.Join(base, requested))
 	if !strings.HasPrefix(cleaned, base) {
 		return "", fmt.Errorf("path traversal detected")

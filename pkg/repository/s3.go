@@ -68,7 +68,7 @@ func (r *S3Repository) WriteComponent(ctx context.Context, backupSetID, componen
 	key := r.objectKey(backupSetID, componentID)
 
 	// Upload with bounded concurrency via manager
-	_, err := r.uploadMgr.Upload(ctx, &s3.PutObjectInput{
+	_, err := r.uploadMgr.Upload(ctx, &s3.PutObjectInput{ //nolint:staticcheck
 		Bucket: aws.String(r.bucket),
 		Key:    aws.String(key),
 		Body:   reader,
