@@ -2127,21 +2127,97 @@ func Migrations() []Migration {
 				ALTER TABLE endpoint_approval_requests DROP COLUMN IF EXISTS operation_payload;
 			`,
 		},
-		{
-			ID:   62,
-			Name: "add_waiting_status_to_job_targets",
-			Up: `
-				ALTER TABLE job_targets DROP CONSTRAINT IF EXISTS job_targets_status_check;
-				ALTER TABLE job_targets ADD CONSTRAINT job_targets_status_check
-					CHECK (status IN ('pending','queued','dispatched','acknowledged','running','succeeded','failed','cancelled','expired','waiting'));
-			`,
-			Down: `
-				ALTER TABLE job_targets DROP CONSTRAINT IF EXISTS job_targets_status_check;
-				ALTER TABLE job_targets ADD CONSTRAINT job_targets_status_check
-					CHECK (status IN ('pending','queued','dispatched','acknowledged','running','succeeded','failed','cancelled','expired'));
-			`,
-		},
-	}
+			{
+				ID:   62,
+				Name: "add_waiting_status_to_job_targets",
+				Up: `
+					ALTER TABLE job_targets DROP CONSTRAINT IF EXISTS job_targets_status_check;
+					ALTER TABLE job_targets ADD CONSTRAINT job_targets_status_check
+						CHECK (status IN ('pending','queued','dispatched','acknowledged','running','succeeded','failed','cancelled','expired','waiting'));
+				`,
+				Down: `
+					ALTER TABLE job_targets DROP CONSTRAINT IF EXISTS job_targets_status_check;
+					ALTER TABLE job_targets ADD CONSTRAINT job_targets_status_check
+						CHECK (status IN ('pending','queued','dispatched','acknowledged','running','succeeded','failed','cancelled','expired'));
+				`,
+			},
+			{
+				ID:   63,
+				Name: "create_backup_tables",
+				Up: `
+					CREATE TABLE IF NOT EXISTS backups (
+						id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+						timestamp       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+						database_type   TEXT NOT NULL,
+						version         TEXT NOT NULL,
+						table_count     INT NOT NULL,
+						row_estimate    BIGINT NOT NULL,
+						data_size       BIGINT NOT NULL,
+						compression     TEXT NOT NULL,
+						scheme          TEXT NOT NULL,
+						key_reference   TEXT NOT NULL,
+						integrity_digest TEXT NOT NULL,
+						data            BYTEA NOT NULL,
+						UNIQUE(database_type, timestamp)
+					);
+					CREATE INDEX IF NOT EXISTS idx_backups_timestamp ON backups(timestamp DESC);
+					CREATE INDEX IF NOT EXISTS idx_backups_database_type ON backups(database_type);
+				`,
+				Down: `DROP TABLE IF EXISTS backups CASCADE;`,
+			},
+			{
+				ID:   64,
+				Name: "create_jetstream_backup_tables",
+				Up: `
+					CREATE TABLE IF NOT EXISTS jetstream_backups (
+						id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+						integrity TEXT NOT NULL,
+						timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+						version   TEXT NOT NULL,
+						data      BYTEA NOT NULL
+					);
+					CREATE INDEX IF NOT EXISTS idx_jetstream_backups_timestamp ON jetstream_backups(timestamp DESC);
+				`,
+				Down: `DROP TABLE IF EXISTS jetstream_backups CASCADE;`,
+			},
+			{
+				ID:   65,
+				Name: "create_object_storage_backup_tables",
+				Up: `
+					CREATE TABLE IF NOT EXISTS object_storage_backups (
+						id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+						bucket    TEXT NOT NULL,
+						integrity TEXT NOT NULL,
+						timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+						version   TEXT NOT NULL,
+						data      BYTEA NOT NULL
+					);
+					CREATE INDEX IF NOT EXISTS idx_object_storage_backups_timestamp ON object_storage_backups(timestamp DESC);
+					CREATE INDEX IF NOT EXISTS idx_object_storage_backups_bucket ON object_storage_backups(bucket);
+				`,
+				Down: `DROP TABLE IF EXISTS object_storage_backups CASCADE;`,
+			},
+			{
+				ID:   66,
+				Name: "create_recovery_state_table",
+				Up: `
+					CREATE TABLE IF NOT EXISTS recovery_state (
+						id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+						recovery_id UUID NOT NULL UNIQUE,
+						state       INT NOT NULL,
+						phase       INT NOT NULL,
+						backup_id   TEXT,
+						events      TEXT NOT NULL,
+						created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+						updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+					);
+					CREATE INDEX IF NOT EXISTS idx_recovery_state_recovery_id ON recovery_state(recovery_id);
+					CREATE INDEX IF NOT EXISTS idx_recovery_state_state ON recovery_state(state);
+					CREATE INDEX IF NOT EXISTS idx_recovery_state_backup_id ON recovery_state(backup_id);
+				`,
+				Down: `DROP TABLE IF EXISTS recovery_state CASCADE;`,
+			},
+		}
 }
 
 type SchemaManager struct {
