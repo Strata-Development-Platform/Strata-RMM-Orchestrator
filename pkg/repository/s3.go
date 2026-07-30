@@ -28,8 +28,8 @@ func NewS3Repository(client *s3.Client, bucket string) (*S3Repository, error) {
 	return &S3Repository{
 		client:     client,
 		bucket:     bucket,
-		uploadMgr:  manager.NewUploader(client),
-		downloader: manager.NewDownloader(client),
+	uploadMgr:  manager.NewUploader(client), //nolint:staticcheck
+	downloader: manager.NewDownloader(client), //nolint:staticcheck
 	}, nil
 }
 

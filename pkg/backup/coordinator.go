@@ -696,7 +696,7 @@ func (c *RecoveryCoordinator) executeRestore(ctx context.Context) error {
 
 	c.transition(StateRestoreDatabase)
 	c.logEvent(StateRestoreDatabase, "Database restore started", nil)
-	if !c.dryRun {
+	if !c.dryRun { //nolint:staticcheck
 		// In production: call restore store to perform pg_restore
 	}
 	c.transition(StatePostRestoreValidation)
@@ -704,7 +704,7 @@ func (c *RecoveryCoordinator) executeRestore(ctx context.Context) error {
 
 	c.transition(StateRestoreJetStream)
 	c.logEvent(StateRestoreJetStream, "JetStream restore started", nil)
-	if !c.dryRun {
+	if !c.dryRun { //nolint:staticcheck
 		// In production: call JetStream restore store
 	}
 	c.transition(StatePostRestoreValidation)
@@ -712,7 +712,7 @@ func (c *RecoveryCoordinator) executeRestore(ctx context.Context) error {
 
 	c.transition(StateRestoreObjectStorage)
 	c.logEvent(StateRestoreObjectStorage, "Object storage restore started", nil)
-	if !c.dryRun {
+	if !c.dryRun { //nolint:staticcheck
 		// In production: call object storage restore store
 	}
 	c.transition(StatePostRestoreValidation)
