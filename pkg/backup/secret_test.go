@@ -5,6 +5,7 @@ package backup
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -45,5 +46,5 @@ func TestSecretRedaction_EventDuration(t *testing.T) {
 		Duration: 30 * 1000000000, // 30 seconds in nanoseconds
 	}
 
-	require.Equal(t, int64(30*1000000000), event.Duration)
+	require.Equal(t, time.Duration(30*1000000000), event.Duration)
 }

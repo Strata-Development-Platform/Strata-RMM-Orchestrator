@@ -116,8 +116,8 @@ jobs:
         with:
           go-version: "1.25"
           cache: true
-      - name: Run migration tests
-        run: go test ./pkg/postgres/... -count=1 -v -race -run "TestMigration"
+      - name: Apply migrations and run checksum tests
+        run: go test ./pkg/postgres/... -count=1 -v -race -tags=dbintegration -run "TestApplyMigrations|TestMigration"
       - name: Verify backup tables created by migrations
         run: |
           PGPASSWORD=strata_test psql -h localhost -U strata_test -d strata_test -c \

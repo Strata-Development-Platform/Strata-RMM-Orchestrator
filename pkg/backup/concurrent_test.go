@@ -28,7 +28,9 @@ func TestConcurrentRecovery_StateTransitions(t *testing.T) {
 	require.True(t, isValidTransition(StateRestoreObjectStorage, StatePostRestoreValidation))
 	require.True(t, isValidTransition(StatePostRestoreValidation, StateHealthCheck))
 	require.True(t, isValidTransition(StateHealthCheck, StateVerification))
-	require.True(t, isValidTransition(StateVerification, StateCompleted))
+	require.True(t, isValidTransition(StateVerification, StateRPOValidation))
+	require.True(t, isValidTransition(StateRPOValidation, StateRTOValidation))
+	require.True(t, isValidTransition(StateRTOValidation, StateCompleted))
 }
 
 func TestConcurrentRecovery_InvalidTransitions(t *testing.T) {

@@ -52,6 +52,8 @@ func TestEndToEnd_RestorePath(t *testing.T) {
 		StatePostRestoreValidation,
 		StateHealthCheck,
 		StateVerification,
+		StateRPOValidation,
+		StateRTOValidation,
 		StateCompleted,
 	}
 
