@@ -162,10 +162,10 @@ Run on the orchestrator host or via secure shell.`,
 	cmd.Flags().StringVar(&timeout, "timeout", "4h", "Maximum recovery duration (default: 4h)")
 	cmd.Flags().BoolVar(&confirm, "confirm", false, "Acknowledge destructive restore operation (required)")
 
- 	// Restore operation requires --backup-id and --target-dsn
- 	_ = cmd.RegisterFlagCompletionFunc("operation", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
- 		return []string{"preflight", "restore", "status", "verify"}, cobra.ShellCompDirectiveNoFileComp
- 	})
+	// Restore operation requires --backup-id and --target-dsn
+	_ = cmd.RegisterFlagCompletionFunc("operation", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return []string{"preflight", "restore", "status", "verify"}, cobra.ShellCompDirectiveNoFileComp
+	})
 
 	return cmd
 }

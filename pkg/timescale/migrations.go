@@ -27,11 +27,6 @@ func AllMigrations() []Migration {
 		},
 	}
 }
-			Name:    "alerts_and_probes_schema",
-			SQL:     Migration002,
-		},
-	}
-}
 
 func (m Migration) String() string {
 	return fmt.Sprintf("v%d: %s", m.Version, m.Name)
