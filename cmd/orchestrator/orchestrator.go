@@ -345,6 +345,7 @@ func NewCommand(ctx context.Context, version, commit string, logger *zap.Logger)
 	cmd.AddCommand(newPreflightCommand(logger))
 	cmd.AddCommand(newUpgradeCommand(ctx, logger))
 	cmd.AddCommand(newRollbackCommand(ctx, logger))
+	cmd.AddCommand(newRecoveryCommand(ctx, logger))
 	return cmd
 }
 
