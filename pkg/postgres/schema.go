@@ -2168,7 +2168,7 @@ func Migrations() []Migration {
 
 				CREATE TABLE IF NOT EXISTS recovery_operations (
 					id              BIGSERIAL PRIMARY KEY,
-					recovery_id     TEXT NOT NULL,
+					recovery_id     TEXT NOT NULL UNIQUE,
 					operation       TEXT NOT NULL,
 					phase           TEXT NOT NULL DEFAULT 'unknown',
 					state           TEXT NOT NULL DEFAULT 'idle',
@@ -2205,19 +2205,25 @@ func Migrations() []Migration {
 			ID:   64,
 			Name: "add_recovery_state_enum",
 			Up: `
-				CREATE TYPE IF NOT EXISTS recovery_state_enum AS ENUM (
-					'idle', 'discovery', 'preflight', 'quiesce',
-					'backup_database', 'backup_jetstream', 'backup_object_storage', 'verify_integrity',
-					'pre_restore_validation', 'restore_database', 'restore_jetstream', 'restore_object_storage',
-					'post_restore_validation', 'health_check', 'verification',
-					'rpo_validation', 'rto_validation',
-					'rollback', 'cleanup', 'completed'
-				);
+				-- Create enum type with idempotent check using pg_type catalog
+				DO $$ BEGIN
+				    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'recovery_state_enum') THEN
+				        CREATE TYPE recovery_state_enum AS ENUM (
+				            'idle', 'discovery', 'preflight', 'quiesce',
+				            'backup_database', 'backup_jetstream', 'backup_object_storage', 'verify_integrity',
+				            'pre_restore_validation', 'restore_database', 'restore_jetstream', 'restore_object_storage',
+				            'post_restore_validation', 'health_check', 'verification',
+				            'rpo_validation', 'rto_validation',
+				            'rollback', 'cleanup', 'completed'
+				        );
+				    END IF;
+				END $$;
 
-				ALTER TABLE recovery_operations ADD COLUMN IF NOT EXISTS recovery_state recovery_state_enum DEFAULT 'idle';
+				ALTER TABLE recovery_operations ADD COLUMN IF NOT EXISTS recovery_state recovery_state_enum DEFAULT 'idle'::recovery_state_enum;
 				CREATE INDEX IF NOT EXISTS idx_recovery_ops_state ON recovery_operations(recovery_state);
 
-				ALTER TABLE backup_records ADD COLUMN IF NOT EXISTS recovery_id TEXT REFERENCES recovery_operations(recovery_id);
+				-- FK references primary key (id), not recovery_id
+				ALTER TABLE backup_records ADD COLUMN IF NOT EXISTS recovery_id BIGINT REFERENCES recovery_operations(id) ON DELETE SET NULL;
 				CREATE INDEX IF NOT EXISTS idx_backup_records_recovery_id ON backup_records(recovery_id);
 			`,
 			Down: `

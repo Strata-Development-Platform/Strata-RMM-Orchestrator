@@ -107,14 +107,19 @@ type BackupConfig struct {
 	ExternalBackupEndpoint  string
 	ExternalBackupAccessKey string
 	ExternalBackupSecretKey string
+	RepositoryType          string
+	ExternalBucket          string
+	KeyProviderPath         string
+	SourceDSN               string
 }
 
 func (b *BackupConfig) validate() error {
 	if b.RetentionDays < 0 {
 		return fmt.Errorf("RetentionDays must be non-negative")
 	}
-	if b.EncryptionScheme != "" && b.EncryptionScheme != "aes-256-gcm" && b.EncryptionScheme != "aes-256-cbc" {
-		return fmt.Errorf("unsupported encryption scheme: %s", b.EncryptionScheme)
+	// F8C-13: Only authenticated encryption allowed — AES-256-GCM exclusively.
+	if b.EncryptionScheme != "" && b.EncryptionScheme != "aes-256-gcm" {
+		return fmt.Errorf("unsupported encryption scheme: %s (only aes-256-gcm is allowed)", b.EncryptionScheme)
 	}
 	if b.DatabaseType != "" && b.DatabaseType != "postgresql" && b.DatabaseType != "timescaledb" {
 		return fmt.Errorf("unsupported database type: %s", b.DatabaseType)
@@ -475,7 +480,11 @@ func LoadOrchestratorConfig() (*OrchestratorConfig, error) {
 		cfg.Backup.Enabled = v
 	}
 	cfg.Backup.Schedule = envStr("STRATA_BACKUP_SCHEDULE", "")
-	cfg.Backup.RetentionDays = envInt("STRATA_BACKUP_RETENTION_DAYS", 30)
+	if v, err := envInt("STRATA_BACKUP_RETENTION_DAYS", 30); err != nil {
+		errs = append(errs, fmt.Sprintf("STRATA_BACKUP_RETENTION_DAYS: %v", err))
+	} else {
+		cfg.Backup.RetentionDays = v
+	}
 	cfg.Backup.EncryptionKeyID = os.Getenv("STRATA_BACKUP_ENCRYPTION_KEY_ID")
 	cfg.Backup.DatabaseType = envStr("STRATA_BACKUP_DATABASE_TYPE", "timescaledb")
 	cfg.Backup.TargetDSN = os.Getenv("STRATA_BACKUP_TARGET_DSN")
@@ -543,13 +552,11 @@ func envIntStrict(key string, def int) (int, error) {
 	return n, nil
 }
 
-// envInt returns the integer value of the env var, or def if empty/unparseable.
-func envInt(key string, def int) int {
-	v, err := envIntStrict(key, def)
-	if err != nil {
-		return def
-	}
-	return v
+// envInt returns the integer value of the env var, or def if empty.
+// A supplied but unparseable value returns an error (strict parsing).
+// Deprecated: use envIntStrict for explicit error handling.
+func envInt(key string, def int) (int, error) {
+	return envIntStrict(key, def)
 }
 
 func envInt64Strict(key string, def int64) (int64, error) {
