@@ -170,15 +170,197 @@ jobs:
         run: |
           go test ./pkg/config/... -count=1 -v -race -run "TestEnvIntStrict"
 
-  phase8c-full-suite:
-    name: Full Test Suite (race detection)
-    runs-on: ubuntu-latest
-    needs: [phase8c-static-validation]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.25"
-          cache: true
-      - name: Run all tests
-        run: go test ./... -count=1 -race -short
+   phase8c-postgres-integration:
+     name: PostgreSQL Backup/Restore Integration
+     runs-on: ubuntu-latest
+     services:
+       postgres:
+         image: postgres:16
+         env:
+           POSTGRES_USER: strata_test
+           POSTGRES_PASSWORD: strata_test
+           POSTGRES_DB: strata_test
+         ports:
+           - 5432:5432
+         options: >-
+           --health-cmd "pg_isready -U strata_test -d strata_test"
+           --health-interval 5s
+           --health-timeout 5s
+           --health-retries 10
+     env:
+       TEST_POSTGRES_DSN: postgres://strata_test:strata_test@localhost:5432/strata_test?sslmode=disable
+     steps:
+       - uses: actions/checkout@v4
+       - uses: actions/setup-go@v5
+         with:
+           go-version: "1.25"
+           cache: true
+       - name: Run PostgreSQL integration tests
+         run: go test ./pkg/backup/... -count=1 -v -race -tags=integration -run "TestPostgreSQL"
+       - name: Verify pg_dump/pg_restore available
+         run: |
+           which pg_dump && pg_dump --version
+           which pg_restore && pg_restore --version
+
+   phase8c-jetstream-integration:
+     name: JetStream Backup/Restore Integration
+     runs-on: ubuntu-latest
+     services:
+       nats:
+         image: nats:latest
+         ports:
+           - 4222:4222
+         options: >-
+           --health-cmd "nats --server nats://localhost:4222 conns"
+           --health-interval 5s
+           --health-timeout 5s
+           --health-retries 10
+     env:
+       NATS_URL: nats://localhost:4222
+     steps:
+       - uses: actions/checkout@v4
+       - uses: actions/setup-go@v5
+         with:
+           go-version: "1.25"
+           cache: true
+       - name: Run JetStream integration tests
+         run: go test ./pkg/backup/... -count=1 -v -race -tags=integration -run "TestJetStream"
+
+   phase8c-s3-integration:
+     name: S3 Backup/Restore Integration
+     runs-on: ubuntu-latest
+     services:
+       minio:
+         image: minio/minio:latest
+         ports:
+           - 9000:9000
+           - 9001:9001
+         env:
+           MINIO_ROOT_USER: minioadmin
+           MINIO_ROOT_PASSWORD: minioadmin
+         options: >-
+           --health-cmd "mc alias set myminio http://localhost:9000 minioadmin minioadmin && mc ls myminio"
+           --health-interval 10s
+           --health-timeout 10s
+           --health-retries 10
+     env:
+       S3_ENDPOINT: http://localhost:9000
+     steps:
+       - uses: actions/checkout@v4
+       - uses: actions/setup-go@v5
+         with:
+           go-version: "1.25"
+           cache: true
+       - name: Wait for MinIO to be ready
+         run: sleep 10
+       - name: Run S3 integration tests
+         run: go test ./pkg/backup/... -count=1 -v -race -tags=integration -run "TestS3"
+
+   phase8c-concurrent-recovery:
+     name: Concurrent Recovery Exclusion
+     runs-on: ubuntu-latest
+     steps:
+       - uses: actions/checkout@v4
+       - uses: actions/setup-go@v5
+         with:
+           go-version: "1.25"
+           cache: true
+       - name: Run concurrent recovery tests
+         run: go test ./pkg/backup/... -count=1 -v -race -tags=integration -run "TestConcurrent"
+
+   phase8c-quiescing:
+     name: Quiescing Behavior Tests
+     runs-on: ubuntu-latest
+     steps:
+       - uses: actions/checkout@v4
+       - uses: actions/setup-go@v5
+         with:
+           go-version: "1.25"
+           cache: true
+       - name: Run quiescing tests
+         run: go test ./pkg/backup/... -count=1 -v -race -tags=integration -run "TestQuiescing"
+
+   phase8c-failure-injection:
+     name: Failure Injection Tests
+     runs-on: ubuntu-latest
+     steps:
+       - uses: actions/checkout@v4
+       - uses: actions/setup-go@v5
+         with:
+           go-version: "1.25"
+           cache: true
+       - name: Run failure injection tests
+         run: go test ./pkg/backup/... -count=1 -v -race -tags=integration -run "TestFailure"
+
+   phase8c-tenant-preservation:
+     name: Tenant Preservation Tests
+     runs-on: ubuntu-latest
+     steps:
+       - uses: actions/checkout@v4
+       - uses: actions/setup-go@v5
+         with:
+           go-version: "1.25"
+           cache: true
+       - name: Run tenant preservation tests
+         run: go test ./pkg/backup/... -count=1 -v -race -tags=integration -run "TestTenant"
+
+   phase8c-durable-job-preservation:
+     name: Durable Job Preservation Tests
+     runs-on: ubuntu-latest
+     steps:
+       - uses: actions/checkout@v4
+       - uses: actions/setup-go@v5
+         with:
+           go-version: "1.25"
+           cache: true
+       - name: Run durable job preservation tests
+         run: go test ./pkg/backup/... -count=1 -v -race -tags=integration -run "TestDurable"
+
+   phase8c-secret-redaction:
+     name: Secret Redaction Tests
+     runs-on: ubuntu-latest
+     steps:
+       - uses: actions/checkout@v4
+       - uses: actions/setup-go@v5
+         with:
+           go-version: "1.25"
+           cache: true
+       - name: Run secret redaction tests
+         run: go test ./pkg/backup/... -count=1 -v -race -tags=integration -run "TestSecret"
+
+   phase8c-rpo-rto:
+     name: RPO/RTO Measurement Tests
+     runs-on: ubuntu-latest
+     steps:
+       - uses: actions/checkout@v4
+       - uses: actions/setup-go@v5
+         with:
+           go-version: "1.25"
+           cache: true
+       - name: Run RPO/RTO measurement tests
+         run: go test ./pkg/backup/... -count=1 -v -race -tags=integration -run "TestRPO|TestRTO"
+
+   phase8c-end-to-end:
+     name: End-to-End Recovery Tests
+     runs-on: ubuntu-latest
+     steps:
+       - uses: actions/checkout@v4
+       - uses: actions/setup-go@v5
+         with:
+           go-version: "1.25"
+           cache: true
+       - name: Run end-to-end recovery tests
+         run: go test ./pkg/backup/... -count=1 -v -race -tags=integration -run "TestEndToEnd"
+
+   phase8c-full-suite:
+     name: Full Test Suite (race detection)
+     runs-on: ubuntu-latest
+     needs: [phase8c-static-validation]
+     steps:
+       - uses: actions/checkout@v4
+       - uses: actions/setup-go@v5
+         with:
+           go-version: "1.25"
+           cache: true
+       - name: Run all tests
+         run: go test ./... -count=1 -race -short
