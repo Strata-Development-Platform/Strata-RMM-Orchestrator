@@ -116,7 +116,7 @@ SAFETY:
   - Source-equals-target is always rejected (no in-place restore).
   - Artifact integrity is verified before any mutation.
   - Post-restore verification queries the target database.
-  - No --force flag: mandatory safety checks cannot be bypassed.
+   - Mandatory safety checks cannot be bypassed.
 
 HOST-LEVEL: This command requires direct host access.
 Run on the orchestrator host or via secure shell.`,
