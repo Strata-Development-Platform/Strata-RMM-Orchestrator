@@ -107,3 +107,11 @@ Not yet executed — awaiting CI run on commit `0dbf53f`.
 | --- | ------- |
 | `dbfec7a` | Initial Phase 8C checkpoint (structural, no real integration) |
 | `0dbf53f` | Remediation: key provider, repository, encryption, CLI, migrations |
+| `61dd006` | Documentation: Add PHASE_8C_EVIDENCE.md |
+| `1bedb7c` | CI workflow remediation: remove continue-on-error, add real checks |
+
+## Exact-Head CI
+
+| Workflow | Job | Conclusion | URL |
+| -------- | --- | ---------- | --- |
+| phase8c.yml | Awaiting run on `1bedb7c` | Pending | — |
