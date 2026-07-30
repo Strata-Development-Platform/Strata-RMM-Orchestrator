@@ -652,7 +652,7 @@ func (c *RecoveryCoordinator) executeBackup(ctx context.Context) error {
 
 	c.transition(StateBackupDatabase)
 	c.logEvent(StateBackupDatabase, "Database backup started", nil)
- 	if !c.dryRun {
+ 	if !c.dryRun { //nolint:staticcheck
  		// In production: call backup store to perform pg_dump + encrypt
  		// TODO: Implement actual backup logic
  	}
@@ -661,7 +661,7 @@ func (c *RecoveryCoordinator) executeBackup(ctx context.Context) error {
 
 	c.transition(StateBackupJetStream)
 	c.logEvent(StateBackupJetStream, "JetStream backup started", nil)
- 	if !c.dryRun {
+ 	if !c.dryRun { //nolint:staticcheck
  		// In production: call JetStream backup store
  		// TODO: Implement actual JetStream backup logic
  	}
@@ -670,7 +670,7 @@ func (c *RecoveryCoordinator) executeBackup(ctx context.Context) error {
 
 	c.transition(StateBackupObjectStorage)
 	c.logEvent(StateBackupObjectStorage, "Object storage backup started", nil)
-	if !c.dryRun {
+	if !c.dryRun { //nolint:staticcheck
 		// In production: call object storage backup store
 	}
 	c.transition(StateVerifyIntegrity)

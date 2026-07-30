@@ -16,8 +16,8 @@ import (
 type S3Repository struct {
 	client     *s3.Client
 	bucket     string
-	uploadMgr  *manager.Uploader
-	downloader *manager.Downloader
+	uploadMgr  *manager.Uploader //nolint:staticcheck
+	downloader *manager.Downloader //nolint:staticcheck
 }
 
 // NewS3Repository creates a repository backed by an S3 bucket.
