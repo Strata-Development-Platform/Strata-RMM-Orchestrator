@@ -254,7 +254,7 @@ jobs:
       - name: Wait for MinIO to be ready
         run: sleep 10
       - name: Run S3 integration tests
-        run: go test ./pkg/backup/... -count=1 -v -race -tags=integration -run "TestS3"
+        run: go test ./pkg/backup/... -count=1 -v -race -tags=integration -run "TestObjectStorage"
 
   phase8c-concurrent-recovery:
     name: Concurrent Recovery Exclusion

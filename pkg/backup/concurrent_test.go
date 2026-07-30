@@ -63,9 +63,7 @@ func TestConcurrentRecovery_EventConcurrency(t *testing.T) {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			coordinator.mu.Lock()
 			coordinator.Events()
-			coordinator.mu.Unlock()
 		}(i)
 	}
 
