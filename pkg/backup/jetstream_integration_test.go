@@ -66,12 +66,12 @@ func TestJetStreamBackup_ObjectConfig(t *testing.T) {
 	// Verify object configuration
 
 	obj := BackupObjectConfig{
-		Key:       "test/key",
-		Bucket:    "test-bucket",
-		Size:      1024,
-		ETag:      "abc123",
-		LastMod:   "2024-01-01",
-		Checksum:  "sha256:abc123",
+		Key:      "test/key",
+		Bucket:   "test-bucket",
+		Size:     1024,
+		ETag:     "abc123",
+		LastMod:  "2024-01-01",
+		Checksum: "sha256:abc123",
 	}
 
 	require.Equal(t, "test/key", obj.Key)

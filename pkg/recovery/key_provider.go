@@ -35,20 +35,20 @@ type KeyProvider interface {
 
 // RecoveryKey represents a single encryption key managed by the provider.
 type RecoveryKey struct {
-	ID         string    `json:"id"`
-	Alias      string    `json:"alias"`
-	KeyMaterial []byte   `json:"-"` // Never serialized
-	CreatedAt  time.Time `json:"created_at"`
-	Active     bool      `json:"active"`
-	Provider   string    `json:"provider"`
+	ID          string    `json:"id"`
+	Alias       string    `json:"alias"`
+	KeyMaterial []byte    `json:"-"` // Never serialized
+	CreatedAt   time.Time `json:"created_at"`
+	Active      bool      `json:"active"`
+	Provider    string    `json:"provider"`
 }
 
 // Key errors.
 var (
-	ErrKeyNotFound        = fmt.Errorf("key not found")
+	ErrKeyNotFound         = fmt.Errorf("key not found")
 	ErrProviderUnavailable = fmt.Errorf("key provider unavailable")
-	ErrInvalidKeyID       = fmt.Errorf("invalid key ID format")
-	ErrMalformedKeyFile   = fmt.Errorf("malformed key file")
+	ErrInvalidKeyID        = fmt.Errorf("invalid key ID format")
+	ErrMalformedKeyFile    = fmt.Errorf("malformed key file")
 )
 
 // IsKeyNotFound reports whether err indicates a missing key.
@@ -259,11 +259,11 @@ func (p *FileKeyProvider) loadKeys() error {
 			continue
 		}
 		k := &RecoveryKey{
-			ID:         meta.ID,
-			Alias:      meta.Alias,
-			CreatedAt:  meta.CreatedAt,
-			Active:     meta.Active,
-			Provider:   meta.Provider,
+			ID:          meta.ID,
+			Alias:       meta.Alias,
+			CreatedAt:   meta.CreatedAt,
+			Active:      meta.Active,
+			Provider:    meta.Provider,
 			KeyMaterial: nil, // loaded on demand
 		}
 		p.keys[meta.ID] = k

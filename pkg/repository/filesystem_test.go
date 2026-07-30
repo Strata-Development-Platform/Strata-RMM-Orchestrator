@@ -116,11 +116,11 @@ func TestFilesystemRepositoryManifest(t *testing.T) {
 	}
 
 	manifest := &Manifest{
-		Version:          ManifestVersion,
-		BackupSetID:      "bs-001",
-		EnvironmentID:    "prod",
-		StartedAt:        time.Now(),
-		CompletedAt:      time.Now(),
+		Version:       ManifestVersion,
+		BackupSetID:   "bs-001",
+		EnvironmentID: "prod",
+		StartedAt:     time.Now(),
+		CompletedAt:   time.Now(),
 		RequiredComponents: []ComponentRef{
 			{ID: "db", Type: ComponentDatabase, ArtifactLoc: "backups/bs-001/components/db", PlaintextDigest: "sha256:test", CiphertextDigest: "sha256:test", EncryptedSize: 1024, OriginalSize: 2048},
 			{ID: "js", Type: ComponentJetStream, ArtifactLoc: "backups/bs-001/components/js", PlaintextDigest: "sha256:test", CiphertextDigest: "sha256:test", EncryptedSize: 512, OriginalSize: 1024},
@@ -158,11 +158,11 @@ func TestFilesystemRepositoryListBackupSets(t *testing.T) {
 			t.Fatalf("create %s: %v", id, err)
 		}
 		m := &Manifest{
-			Version:          ManifestVersion,
-			BackupSetID:      id,
-			EnvironmentID:    "prod",
-			StartedAt:        time.Now(),
-			CompletedAt:      time.Now(),
+			Version:            ManifestVersion,
+			BackupSetID:        id,
+			EnvironmentID:      "prod",
+			StartedAt:          time.Now(),
+			CompletedAt:        time.Now(),
 			RequiredComponents: []ComponentRef{{ID: "db", Type: ComponentDatabase, ArtifactLoc: "backups/bs-001/components/db", PlaintextDigest: "sha256:test", CiphertextDigest: "sha256:test", EncryptedSize: 1024, OriginalSize: 2048}},
 		}
 		if err := r.FinalizeBackupSet(context.Background(), m); err != nil {
@@ -290,8 +290,8 @@ func TestFilesystemRepositoryManifestValidation(t *testing.T) {
 
 	// No components
 	badManifest2 := &Manifest{
-		Version:          ManifestVersion,
-		BackupSetID:      "bs-bad",
+		Version:            ManifestVersion,
+		BackupSetID:        "bs-bad",
 		RequiredComponents: []ComponentRef{},
 	}
 	err = r.FinalizeBackupSet(context.Background(), badManifest2)
@@ -301,8 +301,8 @@ func TestFilesystemRepositoryManifestValidation(t *testing.T) {
 
 	// Unsupported version
 	badManifest3 := &Manifest{
-		Version:          99,
-		BackupSetID:      "bs-bad",
+		Version:            99,
+		BackupSetID:        "bs-bad",
 		RequiredComponents: []ComponentRef{{ID: "db", Type: ComponentDatabase, ArtifactLoc: "backups/bs-001/components/db", PlaintextDigest: "sha256:test", CiphertextDigest: "sha256:test", EncryptedSize: 1024, OriginalSize: 2048}},
 	}
 	err = r.FinalizeBackupSet(context.Background(), badManifest3)
@@ -343,8 +343,8 @@ func TestFilesystemRepositoryAtomicWrite(t *testing.T) {
 func TestManifestVerify(t *testing.T) {
 	// Valid manifest
 	m := &Manifest{
-		Version:          ManifestVersion,
-		BackupSetID:      "bs-001",
+		Version:            ManifestVersion,
+		BackupSetID:        "bs-001",
 		RequiredComponents: []ComponentRef{{ID: "db", Type: ComponentDatabase, ArtifactLoc: "backups/bs-001/components/db", PlaintextDigest: "sha256:test", CiphertextDigest: "sha256:test", EncryptedSize: 1024, OriginalSize: 2048}},
 	}
 	if err := m.VerifyManifest(); err != nil {
@@ -353,8 +353,8 @@ func TestManifestVerify(t *testing.T) {
 
 	// Empty component ID
 	m2 := &Manifest{
-		Version:          ManifestVersion,
-		BackupSetID:      "bs-001",
+		Version:            ManifestVersion,
+		BackupSetID:        "bs-001",
 		RequiredComponents: []ComponentRef{{ID: "", Type: ComponentDatabase}},
 	}
 	if err := m2.VerifyManifest(); err == nil {
@@ -363,8 +363,8 @@ func TestManifestVerify(t *testing.T) {
 
 	// Missing type
 	m3 := &Manifest{
-		Version:          ManifestVersion,
-		BackupSetID:      "bs-001",
+		Version:            ManifestVersion,
+		BackupSetID:        "bs-001",
 		RequiredComponents: []ComponentRef{{ID: "db", Type: ""}},
 	}
 	if err := m3.VerifyManifest(); err == nil {
@@ -373,8 +373,8 @@ func TestManifestVerify(t *testing.T) {
 
 	// Missing artifact location
 	m4 := &Manifest{
-		Version:          ManifestVersion,
-		BackupSetID:      "bs-001",
+		Version:            ManifestVersion,
+		BackupSetID:        "bs-001",
 		RequiredComponents: []ComponentRef{{ID: "db", Type: ComponentDatabase, ArtifactLoc: ""}},
 	}
 	if err := m4.VerifyManifest(); err == nil {

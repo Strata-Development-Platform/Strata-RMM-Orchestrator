@@ -96,12 +96,12 @@ func (r *FilesystemRepository) FinalizeComponent(_ context.Context, backupSetID,
 
 	// Write a component status file with digest information
 	status := struct {
-		ComponentID        string `json:"component_id"`
-		PlaintextDigest    string `json:"plaintext_digest"`
-		CiphertextDigest   string `json:"ciphertext_digest"`
-		EncryptedSize      int64  `json:"encrypted_size"`
-		OriginalSize       int64  `json:"original_size"`
-		Status             string `json:"status"`
+		ComponentID      string `json:"component_id"`
+		PlaintextDigest  string `json:"plaintext_digest"`
+		CiphertextDigest string `json:"ciphertext_digest"`
+		EncryptedSize    int64  `json:"encrypted_size"`
+		OriginalSize     int64  `json:"original_size"`
+		Status           string `json:"status"`
 	}{
 		ComponentID:      componentID,
 		PlaintextDigest:  plaintextDigest,

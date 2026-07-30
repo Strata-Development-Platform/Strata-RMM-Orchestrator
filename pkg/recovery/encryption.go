@@ -24,13 +24,13 @@ const EnvelopeVersion = 1
 //
 // The associated_data_hash authenticates metadata that must not be substituted.
 type Envelope struct {
-	Version          uint8   `json:"version"`
-	Nonce            []byte  `json:"-"`
-	AssociatedData   []byte  `json:"associated_data"` // metadata to authenticate (for first-write)
-	ADHash           []byte  `json:"-"`               // pre-computed AD hash (for serialization)
-	Ciphertext       []byte  `json:"-"`               // ciphertext + GCM tag appended
-	EncryptedSize    int     `json:"encrypted_size"`
-	OriginalSize     int     `json:"original_size"`
+	Version        uint8  `json:"version"`
+	Nonce          []byte `json:"-"`
+	AssociatedData []byte `json:"associated_data"` // metadata to authenticate (for first-write)
+	ADHash         []byte `json:"-"`               // pre-computed AD hash (for serialization)
+	Ciphertext     []byte `json:"-"`               // ciphertext + GCM tag appended
+	EncryptedSize  int    `json:"encrypted_size"`
+	OriginalSize   int    `json:"original_size"`
 }
 
 // Encrypt produces an authenticated envelope for the given plaintext and metadata.
@@ -173,13 +173,13 @@ func Unmarshal(data []byte) (*Envelope, error) {
 
 // MetadataAuth assembles the associated data bytes that bind metadata to encryption.
 type MetadataAuth struct {
-	mu           sync.Mutex
-	buf          []byte
-	backupSetID  string
-	componentID  string
+	mu            sync.Mutex
+	buf           []byte
+	backupSetID   string
+	componentID   string
 	environmentID string
-	keyID        string
-	tenantScope  string
+	keyID         string
+	tenantScope   string
 }
 
 // NewMetadataAuth creates a new metadata authenticator.

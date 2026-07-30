@@ -25,48 +25,48 @@ const (
 
 // BackupSet represents a logical backup grouping of components.
 type BackupSet struct {
-	ID            string        `json:"id"`
-	EnvironmentID string        `json:"environment_id"`
-	SourceCommit  string        `json:"source_commit"`
-	SourceRelease string        `json:"source_release"`
-	SchemaVersion int           `json:"schema_version"`
-	StartedAt     time.Time     `json:"started_at"`
-	CompletedAt   time.Time     `json:"completed_at"`
-	ProtectedAt   time.Time     `json:"protected_at"`
+	ID            string         `json:"id"`
+	EnvironmentID string         `json:"environment_id"`
+	SourceCommit  string         `json:"source_commit"`
+	SourceRelease string         `json:"source_release"`
+	SchemaVersion int            `json:"schema_version"`
+	StartedAt     time.Time      `json:"started_at"`
+	CompletedAt   time.Time      `json:"completed_at"`
+	ProtectedAt   time.Time      `json:"protected_at"`
 	Components    []ComponentRef `json:"components"`
-	Verified      bool          `json:"verified"`
+	Verified      bool           `json:"verified"`
 }
 
 // ComponentRef identifies a component within a backup set.
 type ComponentRef struct {
-	ID          string        `json:"id"`
-	Type        ComponentType `json:"type"`
-	ArtifactLoc string        `json:"artifact_location"`
-	PlaintextDigest string    `json:"plaintext_digest"`
-	CiphertextDigest string   `json:"ciphertext_digest"`
-	EncryptedSize int64        `json:"encrypted_size"`
-	OriginalSize int64         `json:"original_size"`
-	Encryption   string        `json:"encryption"`
-	KeyID        string        `json:"key_id"`
-	TenantScope  string        `json:"tenant_scope,omitempty"`
-	Verified     bool          `json:"verified"`
+	ID               string        `json:"id"`
+	Type             ComponentType `json:"type"`
+	ArtifactLoc      string        `json:"artifact_location"`
+	PlaintextDigest  string        `json:"plaintext_digest"`
+	CiphertextDigest string        `json:"ciphertext_digest"`
+	EncryptedSize    int64         `json:"encrypted_size"`
+	OriginalSize     int64         `json:"original_size"`
+	Encryption       string        `json:"encryption"`
+	KeyID            string        `json:"key_id"`
+	TenantScope      string        `json:"tenant_scope,omitempty"`
+	Verified         bool          `json:"verified"`
 }
 
 // Manifest is the authoritative record of a finalized backup set.
 type Manifest struct {
-	Version          int           `json:"manifest_version"`
-	BackupSetID      string        `json:"backup_set_id"`
-	EnvironmentID    string        `json:"environment_id"`
-	SourceCommit     string        `json:"source_commit"`
-	SourceRelease    string        `json:"source_release"`
-	SchemaVersion    int           `json:"schema_version"`
-	StartedAt        time.Time     `json:"started_at"`
-	CompletedAt      time.Time     `json:"completed_at"`
-	ProtectedAt      time.Time     `json:"protected_at"`
+	Version            int            `json:"manifest_version"`
+	BackupSetID        string         `json:"backup_set_id"`
+	EnvironmentID      string         `json:"environment_id"`
+	SourceCommit       string         `json:"source_commit"`
+	SourceRelease      string         `json:"source_release"`
+	SchemaVersion      int            `json:"schema_version"`
+	StartedAt          time.Time      `json:"started_at"`
+	CompletedAt        time.Time      `json:"completed_at"`
+	ProtectedAt        time.Time      `json:"protected_at"`
 	RequiredComponents []ComponentRef `json:"required_components"`
-	VerificationStatus string       `json:"verification_status"`
-	CompatibilityLow  string        `json:"compatibility_low,omitempty"`
-	CompatibilityHigh string        `json:"compatibility_high,omitempty"`
+	VerificationStatus string         `json:"verification_status"`
+	CompatibilityLow   string         `json:"compatibility_low,omitempty"`
+	CompatibilityHigh  string         `json:"compatibility_high,omitempty"`
 }
 
 // VerifyManifest validates that the manifest is structurally complete.

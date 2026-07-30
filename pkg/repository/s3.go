@@ -137,8 +137,8 @@ func (r *S3Repository) FinalizeBackupSet(ctx context.Context, manifest *Manifest
 
 func (r *S3Repository) ListBackupSets(ctx context.Context) ([]BackupSet, error) {
 	paginator := s3.NewListObjectsV2Paginator(r.client, &s3.ListObjectsV2Input{
-		Bucket:  aws.String(r.bucket),
-		Prefix:  aws.String("backups/"),
+		Bucket:    aws.String(r.bucket),
+		Prefix:    aws.String("backups/"),
 		Delimiter: aws.String("/"),
 	})
 

@@ -87,12 +87,12 @@ Run on the orchestrator host or via secure shell.`,
 // newRecoveryCommand creates the recovery subcommand.
 func newRecoveryCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 	var (
-		backupID   string
-		targetDSN  string
-		dryRun     bool
-		timeout    string
-		operation  string
-		confirm    bool
+		backupID  string
+		targetDSN string
+		dryRun    bool
+		timeout   string
+		operation string
+		confirm   bool
 	)
 
 	cmd := &cobra.Command{

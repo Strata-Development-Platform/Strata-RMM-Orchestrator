@@ -20,12 +20,12 @@ func TestObjectStorageBackup_ObjectConfig(t *testing.T) {
 	// Verify object configuration structure
 
 	config := BackupObjectConfig{
-		Key:       "backup/test.json",
-		Bucket:    "backup-bucket",
-		Size:      2048,
-		ETag:      "d41d8cd98f00b204e9800998ecf8427e",
-		LastMod:   "2024-01-01T00:00:00Z",
-		Checksum:  "sha256:abc123",
+		Key:      "backup/test.json",
+		Bucket:   "backup-bucket",
+		Size:     2048,
+		ETag:     "d41d8cd98f00b204e9800998ecf8427e",
+		LastMod:  "2024-01-01T00:00:00Z",
+		Checksum: "sha256:abc123",
 	}
 
 	require.Equal(t, "backup/test.json", config.Key)
@@ -40,9 +40,9 @@ func TestObjectStorageBackup_EmptyBucket(t *testing.T) {
 	// Verify empty bucket handling
 
 	config := BackupObjectConfig{
-		Key:   "",
+		Key:    "",
 		Bucket: "",
-		Size:  0,
+		Size:   0,
 	}
 
 	require.Equal(t, "", config.Key)
