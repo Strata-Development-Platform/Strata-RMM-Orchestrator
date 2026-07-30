@@ -65,7 +65,7 @@ func TestFilesystemRepositoryWriteAndReadComponent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read component: %v", err)
 	}
-	defer body.Close()
+	defer body.Close() //nolint:errcheck
 
 	buf := make([]byte, len(payload))
 	n, err := body.Read(buf)

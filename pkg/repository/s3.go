@@ -177,7 +177,7 @@ func (r *S3Repository) ReadManifest(ctx context.Context, backupSetID string) (*M
 	if err != nil {
 		return nil, fmt.Errorf("read manifest: %w", err)
 	}
-	defer result.Body.Close()
+	defer result.Body.Close() //nolint:errcheck
 
 	data, err := io.ReadAll(result.Body)
 	if err != nil {
@@ -208,7 +208,7 @@ func (r *S3Repository) VerifyIntegrity(ctx context.Context, backupSetID, compone
 	if err != nil {
 		return err
 	}
-	defer body.Close()
+	defer body.Close() //nolint:errcheck
 
 	data, err := io.ReadAll(body)
 	if err != nil {

@@ -652,17 +652,19 @@ func (c *RecoveryCoordinator) executeBackup(ctx context.Context) error {
 
 	c.transition(StateBackupDatabase)
 	c.logEvent(StateBackupDatabase, "Database backup started", nil)
-	if !c.dryRun {
-		// In production: call backup store to perform pg_dump + encrypt
-	}
+ 	if !c.dryRun {
+ 		// In production: call backup store to perform pg_dump + encrypt
+ 		// TODO: Implement actual backup logic
+ 	}
 	c.transition(StateVerifyIntegrity)
 	c.logEvent(StateVerifyIntegrity, "Database backup integrity verified", nil)
 
 	c.transition(StateBackupJetStream)
 	c.logEvent(StateBackupJetStream, "JetStream backup started", nil)
-	if !c.dryRun {
-		// In production: call JetStream backup store
-	}
+ 	if !c.dryRun {
+ 		// In production: call JetStream backup store
+ 		// TODO: Implement actual JetStream backup logic
+ 	}
 	c.transition(StateVerifyIntegrity)
 	c.logEvent(StateVerifyIntegrity, "JetStream backup integrity verified", nil)
 
