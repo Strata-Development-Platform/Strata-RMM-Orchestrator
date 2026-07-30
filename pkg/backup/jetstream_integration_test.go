@@ -29,7 +29,7 @@ func TestJetStreamBackup_Configuration(t *testing.T) {
 
 	require.Equal(t, "TEST_STREAM", config.Name)
 	require.Equal(t, []string{"test.>"}, config.Subjects)
-	require.Equal(t, 3600, config.MaxAge)
+	require.Equal(t, int64(3600), config.MaxAge)
 }
 
 func TestJetStreamBackup_MessageStructure(t *testing.T) {
