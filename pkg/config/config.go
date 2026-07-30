@@ -38,14 +38,14 @@ func ParseRuntimeMode(s string) (RuntimeMode, error) {
 }
 
 type NATSConfig struct {
-	URL             string
-	Token           string
-	TLSEnabled      bool
-	TLSCertFile     string
-	TLSKeyFile      string
-	TLSCAFile       string
-	ReconnectWait   time.Duration
-	MaxReconnects   int
+	URL           string
+	Token         string
+	TLSEnabled    bool
+	TLSCertFile   string
+	TLSKeyFile    string
+	TLSCAFile     string
+	ReconnectWait time.Duration
+	MaxReconnects int
 }
 
 type DatabaseConfig struct {
@@ -73,10 +73,10 @@ type JWTConfig struct {
 }
 
 type HTTPConfig struct {
-	APIAddr          string
-	TunnelAddr       string
-	PublicURL        string
-	CORSOrigins      []string
+	APIAddr     string
+	TunnelAddr  string
+	PublicURL   string
+	CORSOrigins []string
 	// TrustedProxies — deferred to a later phase.
 	ReadTimeout      time.Duration
 	WriteTimeout     time.Duration
@@ -90,6 +90,38 @@ type SeedingConfig struct {
 	DevAdminPwd   string
 }
 
+type BackupConfig struct {
+	Enabled                 bool
+	Schedule                string
+	RetentionDays           int
+	EncryptionKeyID         string
+	DatabaseType            string
+	TargetDSN               string
+	BackupDirectory         string
+	EncryptionScheme        string
+	RPO                     string
+	RTO                     string
+	AdvisoryLockID          string
+	ExternalBackupBucket    string
+	ExternalBackupRegion    string
+	ExternalBackupEndpoint  string
+	ExternalBackupAccessKey string
+	ExternalBackupSecretKey string
+}
+
+func (b *BackupConfig) validate() error {
+	if b.RetentionDays < 0 {
+		return fmt.Errorf("RetentionDays must be non-negative")
+	}
+	if b.EncryptionScheme != "" && b.EncryptionScheme != "aes-256-gcm" && b.EncryptionScheme != "aes-256-cbc" {
+		return fmt.Errorf("unsupported encryption scheme: %s", b.EncryptionScheme)
+	}
+	if b.DatabaseType != "" && b.DatabaseType != "postgresql" && b.DatabaseType != "timescaledb" {
+		return fmt.Errorf("unsupported database type: %s", b.DatabaseType)
+	}
+	return nil
+}
+
 type OrchestratorConfig struct {
 	RuntimeMode RuntimeMode
 	NATS        NATSConfig
@@ -98,6 +130,7 @@ type OrchestratorConfig struct {
 	JWT         JWTConfig
 	HTTP        HTTPConfig
 	Seeding     SeedingConfig
+	Backup      BackupConfig
 	Version     string
 	Commit      string
 }
@@ -157,6 +190,7 @@ func (c *OrchestratorConfig) Validate() error {
 	check("Storage", c.Storage.validate())
 	check("JWT.Secret", c.JWT.validate())
 	check("Seeding", c.Seeding.validate(c.RuntimeMode))
+	check("Backup", c.Backup.validate())
 
 	if len(errs) > 0 {
 		return fmt.Errorf("configuration validation failed:\n  - %s", strings.Join(errs, "\n  - "))
@@ -434,6 +468,28 @@ func LoadOrchestratorConfig() (*OrchestratorConfig, error) {
 	cfg.Seeding.DevAdminEmail = os.Getenv("STRATA_DEV_ADMIN_EMAIL")
 	cfg.Seeding.DevAdminPwd = os.Getenv("STRATA_DEV_ADMIN_PASSWORD_HASH")
 
+	// Backup configuration
+	if v, err := envBoolStrict("STRATA_BACKUP_ENABLED"); err != nil {
+		errs = append(errs, fmt.Sprintf("STRATA_BACKUP_ENABLED: %v", err))
+	} else {
+		cfg.Backup.Enabled = v
+	}
+	cfg.Backup.Schedule = envStr("STRATA_BACKUP_SCHEDULE", "")
+	cfg.Backup.RetentionDays = envInt("STRATA_BACKUP_RETENTION_DAYS", 30)
+	cfg.Backup.EncryptionKeyID = os.Getenv("STRATA_BACKUP_ENCRYPTION_KEY_ID")
+	cfg.Backup.DatabaseType = envStr("STRATA_BACKUP_DATABASE_TYPE", "timescaledb")
+	cfg.Backup.TargetDSN = os.Getenv("STRATA_BACKUP_TARGET_DSN")
+	cfg.Backup.BackupDirectory = envStr("STRATA_BACKUP_DIRECTORY", "/var/lib/strata-rmm/backups")
+	cfg.Backup.EncryptionScheme = envStr("STRATA_BACKUP_ENCRYPTION_SCHEME", "aes-256-gcm")
+	cfg.Backup.RPO = envStr("STRATA_BACKUP_RPO", "15m")
+	cfg.Backup.RTO = envStr("STRATA_BACKUP_RTO", "4h")
+	cfg.Backup.AdvisoryLockID = os.Getenv("STRATA_BACKUP_ADVISORY_LOCK_ID")
+	cfg.Backup.ExternalBackupBucket = os.Getenv("STRATA_BACKUP_EXTERNAL_BUCKET")
+	cfg.Backup.ExternalBackupRegion = os.Getenv("STRATA_BACKUP_EXTERNAL_REGION")
+	cfg.Backup.ExternalBackupEndpoint = os.Getenv("STRATA_BACKUP_EXTERNAL_ENDPOINT")
+	cfg.Backup.ExternalBackupAccessKey = os.Getenv("STRATA_BACKUP_EXTERNAL_ACCESS_KEY")
+	cfg.Backup.ExternalBackupSecretKey = os.Getenv("STRATA_BACKUP_EXTERNAL_SECRET_KEY")
+
 	if len(errs) > 0 {
 		return nil, fmt.Errorf("configuration load errors:\n  - %s", strings.Join(errs, "\n  - "))
 	}
@@ -487,6 +543,15 @@ func envIntStrict(key string, def int) (int, error) {
 	return n, nil
 }
 
+// envInt returns the integer value of the env var, or def if empty/unparseable.
+func envInt(key string, def int) int {
+	v, err := envIntStrict(key, def)
+	if err != nil {
+		return def
+	}
+	return v
+}
+
 func envInt64Strict(key string, def int64) (int64, error) {
 	v := strings.TrimSpace(os.Getenv(key))
 	if v == "" {
@@ -527,20 +592,20 @@ func splitTrim(s, sep string) []string {
 
 func (c *OrchestratorConfig) RedactedSummary() map[string]interface{} {
 	return map[string]interface{}{
-		"runtime_mode":    string(c.RuntimeMode),
-		"nats_url":        redactURL(c.NATS.URL),
-		"nats_tls":        c.NATS.TLSEnabled,
-		"db_dsn":          redactDSN(c.DB.DSN),
-		"db_pool_max":     c.DB.MaxOpenConns,
-		"db_pool_idle":    c.DB.MaxIdleConns,
-		"storage_type":    c.Storage.Backend,
-		"storage_bucket":  c.Storage.Bucket,
-		"api_addr":        c.HTTP.APIAddr,
-		"tunnel_addr":     c.HTTP.TunnelAddr,
-		"public_url":      c.HTTP.PublicURL,
-		"cors_origins":    c.HTTP.CORSOrigins,
-		"jwt_configured":  c.JWT.Secret != "",
-		"seed_dev":        c.Seeding.SeedDev,
+		"runtime_mode":   string(c.RuntimeMode),
+		"nats_url":       redactURL(c.NATS.URL),
+		"nats_tls":       c.NATS.TLSEnabled,
+		"db_dsn":         redactDSN(c.DB.DSN),
+		"db_pool_max":    c.DB.MaxOpenConns,
+		"db_pool_idle":   c.DB.MaxIdleConns,
+		"storage_type":   c.Storage.Backend,
+		"storage_bucket": c.Storage.Bucket,
+		"api_addr":       c.HTTP.APIAddr,
+		"tunnel_addr":    c.HTTP.TunnelAddr,
+		"public_url":     c.HTTP.PublicURL,
+		"cors_origins":   c.HTTP.CORSOrigins,
+		"jwt_configured": c.JWT.Secret != "",
+		"seed_dev":       c.Seeding.SeedDev,
 	}
 }
 
