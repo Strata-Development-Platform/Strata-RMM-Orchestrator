@@ -301,15 +301,15 @@ func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
 	tmpName := tmpFile.Name()
 
 	if _, err := tmpFile.Write(data); err != nil {
-		tmpFile.Close()
-		os.Remove(tmpName)
-		return err
-	}
-	if err := tmpFile.Chmod(perm); err != nil {
-		tmpFile.Close()
-		os.Remove(tmpName)
-		return err
-	}
+ 		tmpFile.Close() //nolint:errcheck
+ 		os.Remove(tmpName) //nolint:errcheck
+ 		return err
+ 	}
+ 	if err := tmpFile.Chmod(perm); err != nil {
+ 		tmpFile.Close() //nolint:errcheck
+ 		os.Remove(tmpName) //nolint:errcheck
+ 		return err
+ 	}
 	if err := tmpFile.Close(); err != nil {
 		os.Remove(tmpName)
 		return err
