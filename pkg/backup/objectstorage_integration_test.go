@@ -40,7 +40,7 @@ func TestObjectStorageRecovery_RoundTrip(t *testing.T) {
 		contentType string
 		tenant      string
 	}{
-		{"tenant-a/empty.bin", nil, "application/octet-stream", "tenant-a"},
+		{"tenant-a/empty.bin", []byte{}, "application/octet-stream", "tenant-a"},
 		{"tenant-a/nested/report.txt", []byte("tenant A report"), "text/plain", "tenant-a"},
 		{"tenant-b/binary.dat", []byte{0, 1, 2, 3, 254, 255}, "application/octet-stream", "tenant-b"},
 		{"tenant-b/large.bin", large, "application/octet-stream", "tenant-b"},

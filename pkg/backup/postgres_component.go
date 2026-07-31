@@ -94,6 +94,7 @@ func (r *PostgreSQLRecovery) Restore(ctx context.Context, source io.Reader) erro
 		return fmt.Errorf("prepare pg_restore connection: %w", err)
 	}
 	cmd.Env = commandEnv
+	cmd.Args = append(cmd.Args, "--dbname="+environmentValue(commandEnv, "PGDATABASE"))
 	cmd.Stdin = source
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
@@ -112,6 +113,16 @@ func (r *PostgreSQLRecovery) Restore(ctx context.Context, source io.Reader) erro
 		return fmt.Errorf("reset restored recovery mutation gate: %w", err)
 	}
 	return nil
+}
+
+func environmentValue(environment []string, name string) string {
+	prefix := name + "="
+	for index := len(environment) - 1; index >= 0; index-- {
+		if strings.HasPrefix(environment[index], prefix) {
+			return strings.TrimPrefix(environment[index], prefix)
+		}
+	}
+	return ""
 }
 
 // Verify confirms that the target accepts queries after restore.
