@@ -1,8 +1,11 @@
 package platform
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,6 +19,12 @@ import (
 
 	"go.uber.org/zap"
 )
+
+//go:embed agent_install_linux.sh
+var agentLinuxInstallScript string
+
+//go:embed agent_install_windows.ps1
+var agentWindowsInstallScript string
 
 type ReleaseServer struct {
 	cacheDir   string
@@ -76,13 +85,77 @@ func (rs *ReleaseServer) getCachedBinary(ctx context.Context, platformKey string
 		return "", fmt.Errorf("fetch release: %w", err)
 	}
 
-	assetName := fmt.Sprintf("strata-rmm")
+	osName, arch, _ := strings.Cut(platformKey, "/")
+	assetName := fmt.Sprintf("strata-rmm-agent-%s-%s.tar.gz", osName, arch)
 	for _, a := range release.Assets {
 		if a.Name == assetName {
-			return rs.downloadAndCache(ctx, a.BrowserDownloadURL, cachedPath)
+			return rs.downloadAgentArchive(ctx, a.BrowserDownloadURL, cachedPath, platformKey, osName)
 		}
 	}
 	return "", fmt.Errorf("no asset found for %s", platformKey)
+}
+
+func (rs *ReleaseServer) downloadAgentArchive(ctx context.Context, sourceURL, destPath, platformKey, osName string) (string, error) {
+	archivePath := destPath + ".tar.gz"
+	if _, err := rs.downloadAndCache(ctx, sourceURL, archivePath); err != nil {
+		return "", err
+	}
+	defer os.Remove(archivePath)
+
+	archiveFile, err := os.Open(archivePath) // #nosec G304 -- path is constrained by downloadAndCache.
+	if err != nil {
+		return "", err
+	}
+	defer archiveFile.Close()
+	gzipReader, err := gzip.NewReader(archiveFile)
+	if err != nil {
+		return "", fmt.Errorf("open agent archive: %w", err)
+	}
+	defer gzipReader.Close()
+
+	wanted := "strata-agent"
+	if osName == "windows" {
+		wanted += ".exe"
+	}
+	tarReader := tar.NewReader(gzipReader)
+	for {
+		header, err := tarReader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return "", fmt.Errorf("read agent archive: %w", err)
+		}
+		if header.Typeflag != tar.TypeReg || filepath.Base(header.Name) != wanted {
+			continue
+		}
+		if header.Size <= 0 || header.Size > 250<<20 {
+			return "", fmt.Errorf("agent binary has invalid size")
+		}
+		tempPath := destPath + ".tmp"
+		output, err := os.OpenFile(tempPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755) // #nosec G304 -- destination is constrained to the release cache.
+		if err != nil {
+			return "", err
+		}
+		_, copyErr := io.CopyN(output, tarReader, header.Size)
+		closeErr := output.Close()
+		if copyErr != nil || closeErr != nil {
+			_ = os.Remove(tempPath)
+			if copyErr != nil {
+				return "", copyErr
+			}
+			return "", closeErr
+		}
+		if err := os.Rename(tempPath, destPath); err != nil {
+			_ = os.Remove(tempPath)
+			return "", err
+		}
+		rs.mu.Lock()
+		rs.cached[platformKey] = destPath
+		rs.mu.Unlock()
+		return destPath, nil
+	}
+	return "", fmt.Errorf("agent archive does not contain %s", wanted)
 }
 
 func releaseCacheName(platformKey string) (string, error) {
@@ -288,9 +361,39 @@ read -p "Reboot now? [Y/n]: " REBOOT
 REBOOT="${REBOOT:-Y}"
 if [[ "$REBOOT" =~ ^[Yy]$ ]]; then echo "Rebooting..."; sleep 3; reboot; fi
 `
+	installScript = agentLinuxInstallScript
 	w.Header().Set("Content-Type", "text/x-shellscript")
 	w.Header().Set("Content-Disposition", "attachment; filename=install.sh")
 	w.Write([]byte(installScript))
+}
+
+func (s *APIServer) handleWindowsInstallScript(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename=install.ps1")
+	_, _ = w.Write([]byte(agentWindowsInstallScript))
+}
+
+func (s *APIServer) handleReleaseChecksum(w http.ResponseWriter, r *http.Request) {
+	osName := r.PathValue("os")
+	arch := r.PathValue("arch")
+	binaryPath, err := s.releaseServer.getCachedBinary(r.Context(), fmt.Sprintf("%s/%s", osName, arch))
+	if err != nil {
+		http.Error(w, "binary not found", http.StatusNotFound)
+		return
+	}
+	file, err := os.Open(binaryPath) // #nosec G304 -- path is constrained to the release cache.
+	if err != nil {
+		http.Error(w, "binary not found", http.StatusNotFound)
+		return
+	}
+	defer file.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		http.Error(w, "checksum unavailable", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = fmt.Fprintf(w, "%x  strata-agent\n", hash.Sum(nil))
 }
 
 func (s *APIServer) handleReleaseBinary(w http.ResponseWriter, r *http.Request) {
@@ -299,6 +402,14 @@ func (s *APIServer) handleReleaseBinary(w http.ResponseWriter, r *http.Request) 
 
 	if osName == "" || arch == "" {
 		http.Error(w, "os and arch required", http.StatusBadRequest)
+		return
+	}
+	if osName == "windows" && arch == "installer" {
+		s.handleWindowsInstallScript(w, r)
+		return
+	}
+	if r.URL.Query().Get("checksum") == "sha256" {
+		s.handleReleaseChecksum(w, r)
 		return
 	}
 
