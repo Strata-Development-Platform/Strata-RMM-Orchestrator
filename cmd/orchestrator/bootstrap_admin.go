@@ -85,7 +85,7 @@ func readBootstrapPassword(path string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open password file: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	password, err := io.ReadAll(io.LimitReader(file, 74))
 	if err != nil {
