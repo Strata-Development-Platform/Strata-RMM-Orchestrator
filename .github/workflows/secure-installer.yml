@@ -86,7 +86,12 @@ jobs:
         run: |
           printf '%s' 'correct horse battery staple' > /tmp/bootstrap-password
           chmod 600 /tmp/bootstrap-password
-          sudo env STRATA_BOOTSTRAP_PASSWORD_FILE=/tmp/bootstrap-password             ./scripts/install-platform.sh             --mode docker             --domain rmm.example.test             --admin-email owner@example.test             --prepare-only
+          sudo env STRATA_BOOTSTRAP_PASSWORD_FILE=/tmp/bootstrap-password \
+            bash ./scripts/install-platform.sh \
+            --mode docker \
+            --domain rmm.example.test \
+            --admin-email owner@example.test \
+            --prepare-only
           sudo test "$(stat -c '%a' deploy/docker/secrets/postgres_password)" = 600
           sudo test "$(stat -c '%a' deploy/docker/secrets/jwt_secret)" = 600
           sudo test -s deploy/docker/secrets/platform_ca.crt
@@ -94,4 +99,7 @@ jobs:
           sudo test -s deploy/docker/secrets/postgres_server.crt
       - name: Build orchestrator and web-console images
         run: |
-          sudo docker compose             --env-file deploy/docker/.install.env             -f deploy/docker/docker-compose.install.yml             build orchestrator web
+          sudo docker compose \
+            --env-file deploy/docker/.install.env \
+            -f deploy/docker/docker-compose.install.yml \
+            build orchestrator web
