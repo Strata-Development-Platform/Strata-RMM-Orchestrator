@@ -186,14 +186,14 @@ func (s *APIServer) handleExportMSP(w http.ResponseWriter, r *http.Request) {
 		memberships, err := db.QueryContext(r.Context(), `
 			SELECT id, user_id, role, scope_type, scope_id, status, created_at
 			FROM memberships
-			WHERE (scope_type = 'msp' AND scope_id = $1)
+			WHERE (scope_type = 'msp' AND scope_id = $1::text)
 			   OR (scope_type = 'client' AND scope_id IN (
-			     SELECT id::text FROM client_organizations WHERE msp_id = $1
+			     SELECT id::text FROM client_organizations WHERE msp_id = $1::uuid
 			   ))
 			   OR (scope_type = 'site' AND scope_id IN (
 			     SELECT s.id::text FROM sites s
 			     JOIN client_organizations c ON c.id = s.client_id
-			     WHERE c.msp_id = $1
+			     WHERE c.msp_id = $1::uuid
 			   ))
 			ORDER BY id LIMIT $2
 		`, mspID, remaining)
@@ -232,14 +232,14 @@ func (s *APIServer) handleExportMSP(w http.ResponseWriter, r *http.Request) {
 		  + (SELECT COUNT(*) FROM sites s JOIN client_organizations c ON c.id = s.client_id WHERE c.msp_id = $1)
 		  + (SELECT COUNT(*) FROM devices WHERE msp_id = $1)
 		  + (SELECT COUNT(*) FROM memberships
-		     WHERE (scope_type = 'msp' AND scope_id = $1)
+		     WHERE (scope_type = 'msp' AND scope_id = $1::text)
 		        OR (scope_type = 'client' AND scope_id IN (
-		          SELECT id::text FROM client_organizations WHERE msp_id = $1
+		          SELECT id::text FROM client_organizations WHERE msp_id = $1::uuid
 		        ))
 		        OR (scope_type = 'site' AND scope_id IN (
 		          SELECT s.id::text FROM sites s
 		          JOIN client_organizations c ON c.id = s.client_id
-		          WHERE c.msp_id = $1
+		          WHERE c.msp_id = $1::uuid
 		        )))
 	`, mspID).Scan(&totalRecords); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "export count unavailable"})

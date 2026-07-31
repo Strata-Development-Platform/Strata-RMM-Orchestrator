@@ -98,14 +98,14 @@ func (s *APIServer) handleOffboardMSP(w http.ResponseWriter, r *http.Request) {
 		{`UPDATE memberships
 		  SET status = 'revoked'
 		  WHERE status = 'active' AND (
-		    (scope_type = 'msp' AND scope_id = $1)
+		    (scope_type = 'msp' AND scope_id = $1::text)
 		    OR (scope_type = 'client' AND scope_id IN (
-		      SELECT id::text FROM client_organizations WHERE msp_id = $1
+		      SELECT id::text FROM client_organizations WHERE msp_id = $1::uuid
 		    ))
 		    OR (scope_type = 'site' AND scope_id IN (
 		      SELECT s.id::text
 		      FROM sites s JOIN client_organizations c ON c.id = s.client_id
-		      WHERE c.msp_id = $1
+		      WHERE c.msp_id = $1::uuid
 		    ))
 		  )`, []interface{}{mspID}},
 		{`UPDATE support_access_grants

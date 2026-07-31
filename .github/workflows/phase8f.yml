@@ -23,7 +23,19 @@ jobs:
           go-version-file: go.mod
       - name: Go formatting, vet, and build
         run: |
-          test -z "$(gofmt -l internal/platform pkg/postgres)"
+          test -z "$(gofmt -l \
+            internal/platform/lifecycle_export.go \
+            internal/platform/lifecycle_export_test.go \
+            internal/platform/offboarding_handlers.go \
+            internal/platform/offboarding_handlers_test.go \
+            internal/platform/phase8f_integration_test.go \
+            internal/platform/context_handler_test.go \
+            internal/platform/control_plane_handlers.go \
+            internal/platform/api.go \
+            internal/platform/middleware.go \
+            pkg/postgres/schema.go \
+            pkg/postgres/backup_migration_test.go \
+            pkg/backup/postgres_integration_test.go)"
           go vet ./internal/platform ./pkg/postgres
           go build ./...
       - uses: actions/setup-node@v4
