@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
+	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/backup"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/config"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/recovery"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/repository"
@@ -225,6 +226,45 @@ func runRestore(cfg *config.OrchestratorConfig, backupID, targetDSN string, dryR
 	fmt.Printf("  Dry run: %v\n", dryRun)
 	fmt.Printf("  Timeout: %s\n", timeout)
 	fmt.Printf("  Confirmed: %v\n", confirm)
+
+	// Initialize key provider if configured
+	var kp recovery.KeyProvider
+	if cfg.Backup.KeyProviderPath != "" {
+		fp, err := recovery.NewFileKeyProvider(cfg.Backup.KeyProviderPath)
+		if err != nil {
+			return fmt.Errorf("initialize key provider: %w", err)
+		}
+		kp = fp
+		logger.Info("key provider initialized", zap.String("provider", fp.ProviderName()))
+	} else {
+		logger.Warn("no key provider configured; encryption operations will use in-memory keys")
+	}
+
+	// Initialize repository if configured
+	var repo repository.Repository
+	if cfg.Backup.ExternalBucket != "" {
+		switch cfg.Backup.RepositoryType {
+		case "s3":
+			// In production: create S3 repository with credentials from config
+			logger.Warn("S3 repository: credentials must be configured via environment")
+			// repo = repository.NewS3Repository(...) // Placeholder
+		case "filesystem":
+			// In production: create filesystem repository
+			logger.Warn("filesystem repository: path must be configured")
+			// repo = repository.NewFilesystemRepository(...) // Placeholder
+		default:
+			logger.Warn("unknown repository type; using placeholder")
+		}
+	}
+
+	// Create coordinator with dependencies
+	coordinator := backup.NewRecoveryCoordinatorWithDeps(nil, nil, kp, repo, nil)
+	coordinator.SetBackupID(backupID)
+	coordinator.SetDryRun(dryRun)
+	coordinator.SetTimeout(timeout)
+
+	fmt.Printf("Coordinator initialized with key provider: %v, repository: %v\n",
+		kp != nil, repo != nil)
 
 	return nil
 }

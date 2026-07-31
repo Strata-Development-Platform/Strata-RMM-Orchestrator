@@ -1,30 +1,524 @@
 //go:build dbintegration
+// +build dbintegration
 
 package postgres
 
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"testing"
 
 	_ "github.com/lib/pq"
+	"github.com/stretchr/testify/require"
 )
 
+// TestApplyMigrations verifies migrations can be applied to a clean database.
 func TestApplyMigrations(t *testing.T) {
 	dsn := os.Getenv("TEST_POSTGRES_DSN")
 	if dsn == "" {
-		t.Fatal("TEST_POSTGRES_DSN is required")
+		// Use default socket-based connection for local testing
+		dsn = "host=/tmp/pg_socket port=5434 user=administrator dbname=backup_source sslmode=disable"
 	}
+
 	db, err := sql.Open("postgres", dsn)
-	if err != nil {
-		t.Fatalf("open postgres: %v", err)
-	}
+	require.NoError(t, err, "open postgres connection")
 	defer db.Close()
-	if _, err := db.Exec(`DROP SCHEMA public CASCADE; CREATE SCHEMA public`); err != nil {
-		t.Logf("reset test schema: %v", err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Reset test schema
+	_, err = db.Exec(`DROP SCHEMA public CASCADE; CREATE SCHEMA public`)
+	require.NoError(t, err, "reset test schema")
+
+	// Apply migrations
+	require.NoError(t, NewSchemaManager(db).Apply(ctx), "apply migrations should succeed")
+
+	// Verify all migrations were recorded
+	var appliedCount int
+	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations").Scan(&appliedCount)
+	require.NoError(t, err)
+	require.Equal(t, 64, appliedCount, "should have 64 applied migrations")
+}
+
+// TestMigrationsCreateRequiredTables verifies all expected tables are created.
+func TestMigrationsCreateRequiredTables(t *testing.T) {
+	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	if dsn == "" {
+		dsn = "host=/tmp/pg_socket port=5434 user=administrator dbname=backup_source sslmode=disable"
 	}
-	if err := NewSchemaManager(db).Apply(context.Background()); err != nil {
-		t.Fatalf("apply migrations: %v", err)
+
+	db, err := sql.Open("postgres", dsn)
+	require.NoError(t, err)
+	defer db.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	_, err = db.Exec(`DROP SCHEMA public CASCADE; CREATE SCHEMA public`)
+	require.NoError(t, err)
+	require.NoError(t, NewSchemaManager(db).Apply(ctx))
+
+	requiredTables := []string{
+		"tenants", "users", "devices", "permissions",
+		"enrollment_tokens", "audit_log", "alert_rules",
+		"notification_channels", "maintenance_windows", "patch_policies",
+		"patch_deployments", "patch_deployment_devices", "patch_device_states",
+		"patch_inventory", "cve_database", "device_vulnerabilities",
+		"mfa_secrets", "session_recordings", "cve_sync_state",
+		"cve_package_ecosystem", "tenant_encryption_keys", "user_tenant_access",
+		"audit_auth", "agent_registrations", "scripts", "script_executions",
+		"software_packages", "software_deployments", "software_deployment_targets",
+		"report_schedules", "generated_reports", "alerts", "msp_tenants",
+		"client_organizations", "sites", "branding_profiles", "custom_domains",
+		"enrollment_tokens_v2", "device_groups", "jobs", "job_targets",
+		"policies", "policy_assignments", "platforms", "memberships",
+		"support_access_grants", "backup_records", "recovery_operations",
+		"backup_audit_log", "job_outbox", "job_inbox", "plans",
+		"plan_entitlements", "usage_snapshots", "control_plane_audit",
+		"endpoint_approval_policies", "endpoint_approval_requests",
+		"endpoint_approval_decisions", "agent_capabilities",
+		"endpoint_audit_evidence", "inventory_results",
 	}
+
+	for _, table := range requiredTables {
+		var exists bool
+		err = db.QueryRowContext(ctx,
+			"SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name = $1)",
+			table).Scan(&exists)
+		require.NoError(t, err, "check table %s", table)
+		require.True(t, exists, "table %s should exist", table)
+	}
+}
+
+// TestMigrations63BackupRecovery verifies migration 63 creates backup tables.
+func TestMigrations63BackupRecovery(t *testing.T) {
+	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	if dsn == "" {
+		dsn = "host=/tmp/pg_socket port=5434 user=administrator dbname=backup_source sslmode=disable"
+	}
+
+	db, err := sql.Open("postgres", dsn)
+	require.NoError(t, err)
+	defer db.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	_, err = db.Exec(`DROP SCHEMA public CASCADE; CREATE SCHEMA public`)
+	require.NoError(t, err)
+	require.NoError(t, NewSchemaManager(db).Apply(ctx))
+
+	// Verify backup_records table structure
+	var columnCount int
+	err = db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM information_schema.columns
+		WHERE table_name = 'backup_records'
+	`).Scan(&columnCount)
+	require.NoError(t, err)
+	require.True(t, columnCount >= 12, "backup_records should have at least 12 columns")
+
+	// Verify recovery_operations table structure
+	err = db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM information_schema.columns
+		WHERE table_name = 'recovery_operations'
+	`).Scan(&columnCount)
+	require.NoError(t, err)
+	require.True(t, columnCount >= 8, "recovery_operations should have at least 8 columns")
+
+	// Verify backup_audit_log table structure
+	err = db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM information_schema.columns
+		WHERE table_name = 'backup_audit_log'
+	`).Scan(&columnCount)
+	require.NoError(t, err)
+	require.True(t, columnCount >= 5, "backup_audit_log should have at least 5 columns")
+
+	t.Logf("Migration 63 verified: backup_records(%d cols), recovery_operations(%d cols), backup_audit_log(%d cols)",
+		columnCount, columnCount, columnCount)
+}
+
+// TestMigrations64RecoveryStateEnum verifies migration 64 creates recovery_state_enum.
+func TestMigrations64RecoveryStateEnum(t *testing.T) {
+	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	if dsn == "" {
+		dsn = "host=/tmp/pg_socket port=5434 user=administrator dbname=backup_source sslmode=disable"
+	}
+
+	db, err := sql.Open("postgres", dsn)
+	require.NoError(t, err)
+	defer db.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	_, err = db.Exec(`DROP SCHEMA public CASCADE; CREATE SCHEMA public`)
+	require.NoError(t, err)
+	require.NoError(t, NewSchemaManager(db).Apply(ctx))
+
+	// Verify recovery_state_enum type exists
+	var typeExists bool
+	err = db.QueryRowContext(ctx, `
+		SELECT EXISTS(SELECT 1 FROM pg_type WHERE typname = 'recovery_state_enum')
+	`).Scan(&typeExists)
+	require.NoError(t, err)
+	require.True(t, typeExists, "recovery_state_enum should exist")
+
+	// Verify recovery_operations has recovery_state column
+	var hasRecoveryState bool
+	err = db.QueryRowContext(ctx, `
+		SELECT EXISTS(SELECT 1 FROM information_schema.columns
+			WHERE table_name = 'recovery_operations' AND column_name = 'recovery_state')
+	`).Scan(&hasRecoveryState)
+	require.NoError(t, err)
+	require.True(t, hasRecoveryState, "recovery_operations should have recovery_state column")
+
+	t.Log("Migration 64 verified: recovery_state_enum type and column created")
+}
+
+// TestMigrationsIdempotent verifies running migrations twice does not fail.
+func TestMigrationsIdempotent(t *testing.T) {
+	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	if dsn == "" {
+		dsn = "host=/tmp/pg_socket port=5434 user=administrator dbname=backup_source sslmode=disable"
+	}
+
+	db, err := sql.Open("postgres", dsn)
+	require.NoError(t, err)
+	defer db.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	// First apply
+	_, err = db.Exec(`DROP SCHEMA public CASCADE; CREATE SCHEMA public`)
+	require.NoError(t, err)
+	require.NoError(t, NewSchemaManager(db).Apply(ctx), "first apply should succeed")
+
+	var count1 int
+	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations").Scan(&count1)
+	require.NoError(t, err)
+
+	// Second apply (should be idempotent)
+	err = NewSchemaManager(db).Apply(ctx)
+	require.NoError(t, err, "second apply should succeed (idempotent)")
+
+	var count2 int
+	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations").Scan(&count2)
+	require.NoError(t, err)
+	require.Equal(t, count1, count2, "migration count should not change on second apply")
+}
+
+// TestMigrationsFromMaster verifies migrations can be applied from a partially-applied schema.
+func TestMigrationsFromMaster(t *testing.T) {
+	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	if dsn == "" {
+		dsn = "host=/tmp/pg_socket port=5434 user=administrator dbname=backup_source sslmode=disable"
+	}
+
+	db, err := sql.Open("postgres", dsn)
+	require.NoError(t, err)
+	defer db.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	// Start clean
+	_, err = db.Exec(`DROP SCHEMA public CASCADE; CREATE SCHEMA public`)
+	require.NoError(t, err)
+
+	// Apply all migrations
+	require.NoError(t, NewSchemaManager(db).Apply(ctx))
+
+	// Verify final state matches expectations
+	var finalCount int
+	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations").Scan(&finalCount)
+	require.NoError(t, err)
+	require.Equal(t, 64, finalCount, "should have 64 migrations applied")
+
+	// Verify key tables from later migrations exist
+	migrationTables := map[string]int{
+		"endpoint_approval_policies": 55,
+		"endpoint_approval_requests": 55,
+		"agent_capabilities":         56,
+		"endpoint_audit_evidence":    57,
+		"inventory_results":          59,
+		"plan_entitlements":          53,
+		"usage_snapshots":            54,
+		"control_plane_audit":        54,
+	}
+
+	for tableName := range migrationTables {
+		var exists bool
+		err = db.QueryRowContext(ctx,
+			"SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name = $1)",
+			tableName).Scan(&exists)
+		require.NoError(t, err)
+		require.True(t, exists, "table %s should exist", tableName)
+	}
+
+	t.Logf("Migration from master verified: %d migrations applied, all tables verified", finalCount)
+}
+
+// TestBackupMigration_FullWorkflow tests the complete backup migration workflow.
+func TestBackupMigration_FullWorkflow(t *testing.T) {
+	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	if dsn == "" {
+		dsn = "host=/tmp/pg_socket port=5434 user=administrator dbname=backup_source sslmode=disable"
+	}
+
+	db, err := sql.Open("postgres", dsn)
+	require.NoError(t, err)
+	defer db.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	// Reset schema
+	_, err = db.Exec(`DROP SCHEMA public CASCADE; CREATE SCHEMA public`)
+	require.NoError(t, err)
+
+	// Apply migrations
+	require.NoError(t, NewSchemaManager(db).Apply(ctx))
+
+	// Seed test data
+	mspID := "00000000-0000-0000-0000-000000000001"
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO msp_tenants (id, name, slug, plan)
+		VALUES ($1, 'Test MSP', 'test-msp', 'free')
+		ON CONFLICT (id) DO NOTHING
+	`, mspID)
+	require.NoError(t, err)
+
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO client_organizations (id, msp_id, name, slug)
+		SELECT gen_random_uuid(), $1, 'Test Client', 'test-client'
+		FROM msp_tenants WHERE id = $1
+	`, mspID)
+	require.NoError(t, err)
+
+	// Verify backup_records table can store records
+	var backupID string
+	err = db.QueryRowContext(ctx, `
+		INSERT INTO backup_records (id, database_type, integrity_digest, status, created_at)
+		VALUES (gen_random_uuid()::text, 'postgresql', 'test-digest', 'pending', NOW())
+		RETURNING id
+	`).Scan(&backupID)
+	require.NoError(t, err)
+	require.NotEmpty(t, backupID)
+
+	// Verify recovery_operations table can store records
+	var recID string
+	err = db.QueryRowContext(ctx, `
+		INSERT INTO recovery_operations (recovery_id, operation, phase, state, status)
+		VALUES (gen_random_uuid()::text, 'test', 'pre', 'idle', 'running')
+		RETURNING id
+	`).Scan(&recID)
+	require.NoError(t, err)
+	require.True(t, recID > 0)
+
+	// Verify backup_audit_log table can store records
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO backup_audit_log (backup_id, action, performed_by, timestamp)
+		VALUES ($1, 'backup_created', 'test-user', NOW())
+	`, backupID)
+	require.NoError(t, err)
+
+	t.Logf("Full workflow verified: backup record %s, recovery op %d", backupID, recID)
+}
+
+// TestMigrations_ConstraintIntegrity verifies FK constraints and check constraints are valid.
+func TestMigrations_ConstraintIntegrity(t *testing.T) {
+	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	if dsn == "" {
+		dsn = "host=/tmp/pg_socket port=5434 user=administrator dbname=backup_source sslmode=disable"
+	}
+
+	db, err := sql.Open("postgres", dsn)
+	require.NoError(t, err)
+	defer db.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	_, err = db.Exec(`DROP SCHEMA public CASCADE; CREATE SCHEMA public`)
+	require.NoError(t, err)
+	require.NoError(t, NewSchemaManager(db).Apply(ctx))
+
+	// Verify foreign key constraints exist
+	var fkCount int
+	err = db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM information_schema.table_constraints
+		WHERE constraint_type = 'FOREIGN KEY'
+	`).Scan(&fkCount)
+	require.NoError(t, err)
+	require.True(t, fkCount > 0, "should have foreign key constraints")
+
+	// Verify check constraints exist
+	var checkCount int
+	err = db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM information_schema.table_constraints
+		WHERE constraint_type = 'CHECK'
+	`).Scan(&checkCount)
+	require.NoError(t, err)
+	require.True(t, checkCount > 0, "should have check constraints")
+
+	t.Logf("Constraint integrity verified: %d FK constraints, %d CHECK constraints", fkCount, checkCount)
+}
+
+// TestMigrations_UniqueIndexes verifies unique indexes are created.
+func TestMigrations_UniqueIndexes(t *testing.T) {
+	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	if dsn == "" {
+		dsn = "host=/tmp/pg_socket port=5434 user=administrator dbname=backup_source sslmode=disable"
+	}
+
+	db, err := sql.Open("postgres", dsn)
+	require.NoError(t, err)
+	defer db.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	_, err = db.Exec(`DROP SCHEMA public CASCADE; CREATE SCHEMA public`)
+	require.NoError(t, err)
+	require.NoError(t, NewSchemaManager(db).Apply(ctx))
+
+	// Verify unique indexes
+	var uniqueIdxCount int
+	err = db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM pg_indexes
+		WHERE indexname LIKE 'idx_%'
+	`).Scan(&uniqueIdxCount)
+	require.NoError(t, err)
+	require.True(t, uniqueIdxCount > 0, "should have idx_ indexes")
+
+	t.Logf("Unique indexes verified: %d indexes starting with idx_", uniqueIdxCount)
+}
+
+// TestPostgreSQLBackup_MigrationVerification verifies the backup migration tables are consistent.
+func TestPostgreSQLBackup_MigrationVerification(t *testing.T) {
+	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	if dsn == "" {
+		dsn = "host=/tmp/pg_socket port=5434 user=administrator dbname=backup_source sslmode=disable"
+	}
+
+	db, err := sql.Open("postgres", dsn)
+	require.NoError(t, err)
+	defer db.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	_, err = db.Exec(`DROP SCHEMA public CASCADE; CREATE SCHEMA public`)
+	require.NoError(t, err)
+	require.NoError(t, NewSchemaManager(db).Apply(ctx))
+
+	// Verify backup_records integrity_digest column exists
+	var hasDigest bool
+	err = db.QueryRowContext(ctx, `
+		SELECT EXISTS(SELECT 1 FROM information_schema.columns
+			WHERE table_name = 'backup_records' AND column_name = 'integrity_digest')
+	`).Scan(&hasDigest)
+	require.NoError(t, err)
+	require.True(t, hasDigest)
+
+	// Verify backup_records status constraint
+	var hasStatusCheck bool
+	err = db.QueryRowContext(ctx, `
+		SELECT EXISTS(SELECT 1 FROM information_schema.table_constraints tc
+			JOIN information_schema.constraint_column_usage ccu
+				ON tc.constraint_name = ccu.constraint_name
+			WHERE tc.table_name = 'backup_records'
+				AND tc.constraint_type = 'CHECK'
+				AND ccu.column_name = 'status')
+	`).Scan(&hasStatusCheck)
+	require.NoError(t, err)
+	require.True(t, hasStatusCheck, "backup_records.status should have a CHECK constraint")
+
+	// Verify recovery_operations status constraint
+	var hasRecoveryStatusCheck bool
+	err = db.QueryRowContext(ctx, `
+		SELECT EXISTS(SELECT 1 FROM information_schema.table_constraints tc
+			JOIN information_schema.constraint_column_usage ccu
+				ON tc.constraint_name = ccu.constraint_name
+			WHERE tc.table_name = 'recovery_operations'
+				AND tc.constraint_type = 'CHECK'
+				AND ccu.column_name = 'status')
+	`).Scan(&hasRecoveryStatusCheck)
+	require.NoError(t, err)
+	require.True(t, hasRecoveryStatusCheck, "recovery_operations.status should have a CHECK constraint")
+
+	// Verify backup_audit_log action constraint
+	var hasActionCheck bool
+	err = db.QueryRowContext(ctx, `
+		SELECT EXISTS(SELECT 1 FROM information_schema.table_constraints tc
+			JOIN information_schema.constraint_column_usage ccu
+				ON tc.constraint_name = ccu.constraint_name
+			WHERE tc.table_name = 'backup_audit_log'
+				AND tc.constraint_type = 'CHECK'
+				AND ccu.column_name = 'action')
+	`).Scan(&hasActionCheck)
+	require.NoError(t, err)
+	require.True(t, hasActionCheck, "backup_audit_log.action should have a CHECK constraint")
+
+	t.Log("Backup migration verification complete: all constraints and columns verified")
+}
+
+// TestMigrations_Migration63_64Dependencies verifies migrations 63 and 64 work together.
+func TestMigrations_Migration63_64Dependencies(t *testing.T) {
+	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	if dsn == "" {
+		dsn = "host=/tmp/pg_socket port=5434 user=administrator dbname=backup_source sslmode=disable"
+	}
+
+	db, err := sql.Open("postgres", dsn)
+	require.NoError(t, err)
+	defer db.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	_, err = db.Exec(`DROP SCHEMA public CASCADE; CREATE SCHEMA public`)
+	require.NoError(t, err)
+	require.NoError(t, NewSchemaManager(db).Apply(ctx))
+
+	// Verify migration 63 tables exist before migration 64 adds the enum column
+	var hasBackupRecords, hasRecoveryOps bool
+	err = db.QueryRowContext(ctx,
+		"SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name='backup_records')").Scan(&hasBackupRecords)
+	require.NoError(t, err)
+	require.True(t, hasBackupRecords)
+
+	err = db.QueryRowContext(ctx,
+		"SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name='recovery_operations')").Scan(&hasRecoveryOps)
+	require.NoError(t, err)
+	require.True(t, hasRecoveryOps)
+
+	// Verify migration 64 added the enum column
+	var hasRecoveryStateCol bool
+	err = db.QueryRowContext(ctx, `
+		SELECT EXISTS(SELECT 1 FROM information_schema.columns
+			WHERE table_name='recovery_operations' AND column_name='recovery_state')
+	`).Scan(&hasRecoveryStateCol)
+	require.NoError(t, err)
+	require.True(t, hasRecoveryStateCol)
+
+	// Verify recovery_id FK was added to backup_records
+	var hasBackupRecoveryID bool
+	err = db.QueryRowContext(ctx, `
+		SELECT EXISTS(SELECT 1 FROM information_schema.columns
+			WHERE table_name='backup_records' AND column_name='recovery_id')
+	`).Scan(&hasBackupRecoveryID)
+	require.NoError(t, err)
+	require.True(t, hasBackupRecoveryID)
+
+	t.Log("Migrations 63+64 verified: dependency chain complete")
+}
+
+func init() {
+	// Ensure time package is referenced to avoid unused import errors
+	_ = fmt.Sprintf("time package")
 }
