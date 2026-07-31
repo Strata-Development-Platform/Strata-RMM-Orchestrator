@@ -128,7 +128,7 @@ func (s *Session) Start(capturer Capturer, injector InputInjector) error {
 		return fmt.Errorf("injector init: %w", err)
 	}
 
-	inputSubject := fmt.Sprintf("tenant.%s.tunnel.%s.input", s.TenantID, s.ID)
+	inputSubject := fmt.Sprintf("tenant.%s.agent.%s.tunnel.%s.input", s.TenantID, s.DeviceID, s.ID)
 	sub, err := s.nc.Subscribe(inputSubject, s.handleInput)
 	if err != nil {
 		capturer.Close()
@@ -139,7 +139,7 @@ func (s *Session) Start(capturer Capturer, injector InputInjector) error {
 	s.inputSub = sub
 	s.mu.Unlock()
 
-	ctrlSubject := fmt.Sprintf("tenant.%s.tunnel.%s.ctrl", s.TenantID, s.ID)
+	ctrlSubject := fmt.Sprintf("tenant.%s.agent.%s.tunnel.%s.ctrl", s.TenantID, s.DeviceID, s.ID)
 	s.nc.Subscribe(ctrlSubject, s.handleControl)
 
 	s.wg.Add(1)
@@ -184,7 +184,7 @@ func (s *Session) frameLoop() {
 	ticker := time.NewTicker(frameInterval)
 	defer ticker.Stop()
 
-	frameSubject := fmt.Sprintf("tenant.%s.tunnel.%s.frame", s.TenantID, s.ID)
+	frameSubject := fmt.Sprintf("tenant.%s.agent.%s.tunnel.%s.frame", s.TenantID, s.DeviceID, s.ID)
 
 	for {
 		select {
@@ -390,7 +390,7 @@ func (m *Manager) startSession(sessionID string, width, height, quality, fps int
 		return
 	}
 
-	pubSubj := fmt.Sprintf("tenant.%s.tunnel.%s.ctrl", m.tenantID, sessionID)
+	pubSubj := fmt.Sprintf("tenant.%s.agent.%s.tunnel.%s.ctrl", m.tenantID, m.agentID, sessionID)
 	m.nc.Publish(pubSubj, []byte(`{"action":"started"}`))
 }
 
