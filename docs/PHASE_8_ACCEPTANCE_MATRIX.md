@@ -143,8 +143,8 @@ Implementation evidence is maintained in [Phase 8G evidence](PHASE_8G_EVIDENCE.m
 
 | ID | Acceptance criterion | Current status |
 |---|---|---|
-| A8-22 | Every privileged route has role and cross-scope negative proof | Route policy implemented; exact-head CI pending |
-| A8-23 | Dependency, image, secret, SBOM, static-analysis, frontend, and browser gates pass | Workflow implemented; exact-head CI pending |
+| A8-22 | Every privileged route has role and cross-scope negative proof | CI verified at `ebeee2de6f3ddb354ebb41fef2959ceeefaf5082`; hosted adversarial review remains recommended |
+| A8-23 | Dependency, image, secret, SBOM, static-analysis, frontend, and browser gates pass | 69/69 exact-head jobs passed; see Phase 8G evidence |
 | A8-24 | Four-scenario incident-response tabletop is signed | Not accepted; procedure/template only |
 | A8-25 | Alert/runbook owners and escalation paths are exercised | Partial; hosted delivery audit pending |
 | A8-26 | Mandatory evidence and residual risks receive signed go/no-go | Not accepted |
