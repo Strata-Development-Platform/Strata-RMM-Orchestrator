@@ -158,6 +158,19 @@ func TestProductionRequiresMetricsToken(t *testing.T) {
 	}
 }
 
+func TestProductionRejectsUnauthenticatedRawTunnelGateway(t *testing.T) {
+	cfg := productionConfig(NATSConfig{
+		URL: "tls://nats.example.com:4222", Token: "validtok", TLSEnabled: true,
+		TLSCAFile: "ca.pem", AdvertiseURLs: []string{"tls://agents.example.com:4222"},
+		ReconnectWait: 5, MaxReconnects: -1,
+	})
+	cfg.HTTP.TunnelAddr = ":9091"
+	err := cfg.ProductionValidate()
+	if err == nil || !strings.Contains(err.Error(), "raw tunnel gateway") {
+		t.Fatalf("expected unsafe tunnel rejection, got %v", err)
+	}
+}
+
 func TestValidateProductionRejectsDevPlaceholder(t *testing.T) {
 	cfg := &OrchestratorConfig{
 		RuntimeMode: ModeProduction,
@@ -432,6 +445,9 @@ func TestValidateRejectsSeedDevInProduction(t *testing.T) {
 }
 
 func productionConfig(natsCfg NATSConfig) *OrchestratorConfig {
+	if len(natsCfg.AdvertiseURLs) == 0 {
+		natsCfg.AdvertiseURLs = []string{"tls://nats.example.com:4222"}
+	}
 	return &OrchestratorConfig{
 		RuntimeMode:   ModeProduction,
 		JWT:           JWTConfig{Secret: "abcdefghijklmnopqrstuvwxyz123456"},
@@ -439,6 +455,25 @@ func productionConfig(natsCfg NATSConfig) *OrchestratorConfig {
 		NATS:          natsCfg,
 		HTTP:          HTTPConfig{APIAddr: ":8080", PublicURL: "https://rmm.example.com", ReadTimeout: 5, WriteTimeout: 5, MaxBodySizeBytes: 1000},
 		Observability: ObservabilityConfig{MetricsToken: "0123456789abcdef0123456789abcdef"},
+	}
+}
+
+func TestLoadAgentNATSAdvertiseURLs(t *testing.T) {
+	setenv(t, "NATS_ADVERTISE_URLS", " tls://nats-a.example.com:4222, nats+tls://nats-b.example.com:4222 ")
+	cfg, err := LoadOrchestratorConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.NATS.AdvertiseURLs) != 2 || cfg.NATS.AdvertiseURLs[0] != "tls://nats-a.example.com:4222" {
+		t.Fatalf("NATS advertise URLs = %#v", cfg.NATS.AdvertiseURLs)
+	}
+}
+
+func TestProductionRejectsMissingAgentNATSAdvertiseURL(t *testing.T) {
+	cfg := productionConfig(NATSConfig{URL: "tls://nats.internal:4222", Token: "validtok", TLSEnabled: true, TLSCAFile: "ca.pem"})
+	cfg.NATS.AdvertiseURLs = nil
+	if err := cfg.ProductionValidate(); err == nil || !strings.Contains(err.Error(), "AdvertiseURLs") {
+		t.Fatalf("ProductionValidate() error = %v, want agent advertise URL failure", err)
 	}
 }
 
