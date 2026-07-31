@@ -54,19 +54,19 @@ builds:
 
 archives:
   - id: agent
-    builds: [agent]
+    ids: [agent]
     name_template: "{{ .ProjectName }}-agent-{{ .Version }}-{{ .Os }}-{{ .Arch }}"
     formats: [tar.gz]
     files: [LICENSE, README.md]
 
   # The in-app/CLI updater consumes this raw, checksum-verified executable.
   - id: orchestrator
-    builds: [orchestrator]
+    ids: [orchestrator]
     name_template: "{{ .ProjectName }}-orchestrator-{{ .Version }}-{{ .Os }}-{{ .Arch }}"
     formats: [binary]
 
   - id: probe
-    builds: [probe]
+    ids: [probe]
     name_template: "{{ .ProjectName }}-probe-{{ .Version }}-{{ .Os }}-{{ .Arch }}"
     formats: [tar.gz]
     files: [LICENSE, README.md]
@@ -74,7 +74,7 @@ archives:
 nfpms:
   - id: orchestrator-packages
     package_name: strata-rmm-orchestrator
-    builds: [orchestrator]
+    ids: [orchestrator]
     vendor: Strata Development Platform
     homepage: https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator
     maintainer: Strata Development Platform
@@ -88,7 +88,7 @@ nfpms:
 
   - id: agent-packages
     package_name: strata-rmm-agent
-    builds: [agent]
+    ids: [agent]
     vendor: Strata Development Platform
     homepage: https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator
     maintainer: Strata Development Platform
@@ -105,7 +105,7 @@ checksum:
   algorithm: sha256
 
 snapshot:
-  name_template: "{{ .Tag }}-next"
+  version_template: "{{ incpatch .Version }}-next"
 
 changelog:
   sort: asc
