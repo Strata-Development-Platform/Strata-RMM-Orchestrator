@@ -95,23 +95,40 @@ func (rs *ReleaseServer) getCachedBinary(ctx context.Context, platformKey string
 	return "", fmt.Errorf("no asset found for %s", platformKey)
 }
 
+func openWithinDir(root, candidate string) (*os.File, error) {
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return nil, fmt.Errorf("resolve release cache root: %w", err)
+	}
+	candidateAbs, err := filepath.Abs(candidate)
+	if err != nil {
+		return nil, fmt.Errorf("resolve release cache path: %w", err)
+	}
+	rel, err := filepath.Rel(rootAbs, candidateAbs)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) {
+		return nil, fmt.Errorf("release artifact escapes cache directory")
+	}
+	// #nosec G304,G703 -- candidateAbs is constrained to rootAbs above.
+	return os.Open(candidateAbs)
+}
+
 func (rs *ReleaseServer) downloadAgentArchive(ctx context.Context, sourceURL, destPath, platformKey, osName string) (string, error) {
 	archivePath := destPath + ".tar.gz"
 	if _, err := rs.downloadAndCache(ctx, sourceURL, archivePath); err != nil {
 		return "", err
 	}
-	defer os.Remove(archivePath)
+	defer func() { _ = os.Remove(archivePath) }()
 
-	archiveFile, err := os.Open(archivePath) // #nosec G304 -- path is constrained by downloadAndCache.
+	archiveFile, err := openWithinDir(rs.cacheDir, archivePath)
 	if err != nil {
 		return "", err
 	}
-	defer archiveFile.Close()
+	defer func() { _ = archiveFile.Close() }()
 	gzipReader, err := gzip.NewReader(archiveFile)
 	if err != nil {
 		return "", fmt.Errorf("open agent archive: %w", err)
 	}
-	defer gzipReader.Close()
+	defer func() { _ = gzipReader.Close() }()
 
 	wanted := "strata-agent"
 	if osName == "windows" {
@@ -381,12 +398,12 @@ func (s *APIServer) handleReleaseChecksum(w http.ResponseWriter, r *http.Request
 		http.Error(w, "binary not found", http.StatusNotFound)
 		return
 	}
-	file, err := os.Open(binaryPath) // #nosec G304 -- path is constrained to the release cache.
+	file, err := openWithinDir(s.releaseServer.cacheDir, binaryPath)
 	if err != nil {
 		http.Error(w, "binary not found", http.StatusNotFound)
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	hash := sha256.New()
 	if _, err := io.Copy(hash, file); err != nil {
 		http.Error(w, "checksum unavailable", http.StatusInternalServerError)
