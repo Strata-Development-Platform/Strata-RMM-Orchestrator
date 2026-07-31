@@ -17,6 +17,12 @@ type RemoteSessionRequest struct {
 	FPS      int    `json:"fps,omitempty"`
 }
 
+type remoteSessionBinding struct {
+	TenantID string
+	DeviceID string
+	AgentID  string
+}
+
 func (s *APIServer) handleRemoteSessionStart(w http.ResponseWriter, r *http.Request) {
 	var req RemoteSessionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.DeviceID == "" {
@@ -31,6 +37,7 @@ func (s *APIServer) handleRemoteSessionStart(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	sessionID := uuid.New().String()
+	s.bindRemoteSession(sessionID, remoteSessionBinding{TenantID: tenantID, DeviceID: req.DeviceID, AgentID: agentID})
 
 	cmdPayload, _ := json.Marshal(map[string]interface{}{
 		"type":       "remote_start",
@@ -43,6 +50,7 @@ func (s *APIServer) handleRemoteSessionStart(w http.ResponseWriter, r *http.Requ
 
 	subject := fmt.Sprintf("tenant.%s.cmd.%s", tenantID, agentID)
 	if err := s.nats.Publish(subject, cmdPayload); err != nil {
+		s.deleteRemoteSession(sessionID)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "dispatch failed"})
 		return
 	}
@@ -74,14 +82,14 @@ func (s *APIServer) handleRemoteSessionInput(w http.ResponseWriter, r *http.Requ
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid input"})
 		return
 	}
-	agentID, err := s.resolveRemoteAgent(r, tenantID, input.DeviceID)
-	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "active device not found"})
+	binding, ok := s.remoteSession(sessionID)
+	if !ok || binding.TenantID != tenantID || binding.DeviceID != input.DeviceID {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "remote session not found for device"})
 		return
 	}
 
 	payload, _ := json.Marshal(input)
-	subject := fmt.Sprintf("tenant.%s.agent.%s.tunnel.%s.input", tenantID, agentID, sessionID)
+	subject := fmt.Sprintf("tenant.%s.agent.%s.tunnel.%s.input", tenantID, binding.AgentID, sessionID)
 	if err := s.nats.Publish(subject, payload); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "publish failed"})
 		return
@@ -98,9 +106,9 @@ func (s *APIServer) handleRemoteSessionStop(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "device_id required"})
 		return
 	}
-	agentID, err := s.resolveRemoteAgent(r, tenantID, deviceID)
-	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "active device not found"})
+	binding, ok := s.remoteSession(sessionID)
+	if !ok || binding.TenantID != tenantID || binding.DeviceID != deviceID {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "remote session not found for device"})
 		return
 	}
 
@@ -109,13 +117,33 @@ func (s *APIServer) handleRemoteSessionStop(w http.ResponseWriter, r *http.Reque
 		"session_id": sessionID,
 	})
 
-	subject := fmt.Sprintf("tenant.%s.cmd.%s", tenantID, agentID)
+	subject := fmt.Sprintf("tenant.%s.cmd.%s", tenantID, binding.AgentID)
 	if err := s.nats.Publish(subject, cmdPayload); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "publish failed"})
 		return
 	}
+	s.deleteRemoteSession(sessionID)
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "stopping"})
+}
+
+func (s *APIServer) bindRemoteSession(sessionID string, binding remoteSessionBinding) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.remoteSessions[sessionID] = binding
+}
+
+func (s *APIServer) remoteSession(sessionID string) (remoteSessionBinding, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	binding, ok := s.remoteSessions[sessionID]
+	return binding, ok
+}
+
+func (s *APIServer) deleteRemoteSession(sessionID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.remoteSessions, sessionID)
 }
 
 func (s *APIServer) resolveRemoteAgent(r *http.Request, tenantID, deviceID string) (string, error) {

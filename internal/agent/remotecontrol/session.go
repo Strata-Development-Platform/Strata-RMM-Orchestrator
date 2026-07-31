@@ -21,10 +21,10 @@ import (
 type SessionState string
 
 const (
-	SessionPending  SessionState = "pending"
-	SessionActive   SessionState = "active"
-	SessionClosing  SessionState = "closing"
-	SessionClosed   SessionState = "closed"
+	SessionPending SessionState = "pending"
+	SessionActive  SessionState = "active"
+	SessionClosing SessionState = "closing"
+	SessionClosed  SessionState = "closed"
 )
 
 type RemoteCommand struct {
@@ -38,7 +38,7 @@ type RemoteCommand struct {
 }
 
 type InputEvent struct {
-	Type   string  `json:"type"`   // mousemove, mousedown, mouseup, keydown, keyup
+	Type   string  `json:"type"` // mousemove, mousedown, mouseup, keydown, keyup
 	X      float64 `json:"x,omitempty"`
 	Y      float64 `json:"y,omitempty"`
 	Button int     `json:"button,omitempty"` // 0=left, 1=middle, 2=right
@@ -323,12 +323,12 @@ func (m *Manager) Start(ctx context.Context) error {
 	var err error
 	m.sub, err = m.nc.Subscribe(subject, func(msg *nats.Msg) {
 		var cmd struct {
-			Type       string `json:"type"`
-			SessionID  string `json:"session_id"`
-			Width      int    `json:"width"`
-			Height     int    `json:"height"`
-			Quality    int    `json:"quality"`
-			FPS        int    `json:"fps"`
+			Type      string `json:"type"`
+			SessionID string `json:"session_id"`
+			Width     int    `json:"width"`
+			Height    int    `json:"height"`
+			Quality   int    `json:"quality"`
+			FPS       int    `json:"fps"`
 		}
 		if err := json.Unmarshal(msg.Data, &cmd); err != nil {
 			return

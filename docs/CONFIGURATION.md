@@ -134,6 +134,7 @@ The agent reads `agent.yaml` (default path: `~/.strata-rmm/agent.yaml` or `STRAT
 | `collect.enable_services` | — | — | bool | `true` | no | no | no | — | agent collector | config-file > default | no | — |
 | `store.type` | — | — | string | `bbolt` | no | no | no | — | agent local store | config-file > default | no | — |
 | `store.path` | — | — | string | `~/.strata-rmm/agent.db` | no | no | no | writable path | agent local store | config-file > default | no | — |
+| `store.queue_max_items` | — | — | integer | `10000` | no | no | no | greater than zero | combined offline metric/event queue limit | config-file > default | no | new samples are rejected when full |
 | `update.enabled` | — | — | bool | `true` | no | no | no | — | agent auto-update | config-file > default | no | — |
 | `update.check_interval` | — | — | duration | `24h` | no | no | no | — | agent auto-update | config-file > default | no | — |
 | `update.channel` | — | — | string | `stable` | no | no | no | — | agent auto-update | config-file > default | no | — |

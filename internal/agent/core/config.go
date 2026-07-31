@@ -19,13 +19,13 @@ type Config struct {
 }
 
 type AgentConfig struct {
-	TenantID        string `yaml:"tenant_id"`
-	AgentID         string `yaml:"agent_id"`
-	DeploymentID    string `yaml:"deployment_id,omitempty"`
-	EnrollmentToken string `yaml:"enrollment_token,omitempty"`
-	RegisterURL     string `yaml:"register_url"`
-	LogLevel        string `yaml:"log_level"`
-	DataDir         string `yaml:"data_dir"`
+	TenantID        string            `yaml:"tenant_id"`
+	AgentID         string            `yaml:"agent_id"`
+	DeploymentID    string            `yaml:"deployment_id,omitempty"`
+	EnrollmentToken string            `yaml:"enrollment_token,omitempty"`
+	RegisterURL     string            `yaml:"register_url"`
+	LogLevel        string            `yaml:"log_level"`
+	DataDir         string            `yaml:"data_dir"`
 	Tags            map[string]string `yaml:"tags"`
 }
 
@@ -49,8 +49,9 @@ type CollectConfig struct {
 }
 
 type StoreConfig struct {
-	Type string `yaml:"type"`
-	Path string `yaml:"path"`
+	Type          string `yaml:"type"`
+	Path          string `yaml:"path"`
+	QueueMaxItems int    `yaml:"queue_max_items"`
 }
 
 type UpdateConfig struct {
@@ -81,8 +82,9 @@ func DefaultConfig() *Config {
 			EnableSvc:    true,
 		},
 		Store: StoreConfig{
-			Type: "bbolt",
-			Path: filepath.Join(defaultDataDir(), "agent.db"),
+			Type:          "bbolt",
+			Path:          filepath.Join(defaultDataDir(), "agent.db"),
+			QueueMaxItems: 10000,
 		},
 		Update: UpdateConfig{
 			Enabled:       true,
@@ -132,6 +134,9 @@ func (c *Config) Validate() error {
 	if c.Collect.Interval < time.Second {
 		return fmt.Errorf("collect.interval must be at least 1s")
 	}
+	if c.Store.QueueMaxItems <= 0 {
+		return fmt.Errorf("store.queue_max_items must be greater than zero")
+	}
 	return nil
 }
 
@@ -139,6 +144,9 @@ func (c *Config) Validate() error {
 // a one-time enrollment configuration. Runtime validation remains strict and is
 // performed after registration has populated the tenant and messaging identity.
 func (c *Config) ValidateBootstrap() error {
+	if c.Store.QueueMaxItems <= 0 {
+		return fmt.Errorf("store.queue_max_items must be greater than zero")
+	}
 	if c.Agent.TenantID != "" {
 		return c.Validate()
 	}

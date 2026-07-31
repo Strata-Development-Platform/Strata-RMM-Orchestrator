@@ -1,10 +1,32 @@
 package core
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
 )
+
+func TestStoreQueueCapacityIncludesMetricsAndEvents(t *testing.T) {
+	store, err := NewStoreWithLimit(filepath.Join(t.TempDir(), "agent.db"), 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	now := time.Unix(1700000000, 0)
+	if err := store.QueueMetric(StoredMetric{Name: "cpu", Timestamp: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.QueueMetric(StoredMetric{Name: "cpu", Timestamp: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.QueueEvent(StoredEvent{Type: "audit", Timestamp: now}); !errors.Is(err, ErrQueueFull) {
+		t.Fatalf("QueueEvent error = %v, want ErrQueueFull", err)
+	}
+	if size, err := store.QueueSize(); err != nil || size != 2 {
+		t.Fatalf("QueueSize = %d, %v; want 2, nil", size, err)
+	}
+}
 
 func TestQueuedMetricsRemainUntilAcknowledged(t *testing.T) {
 	store, err := NewStore(filepath.Join(t.TempDir(), "agent.db"))

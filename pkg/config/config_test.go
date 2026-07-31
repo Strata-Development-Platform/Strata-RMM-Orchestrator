@@ -171,6 +171,18 @@ func TestProductionRejectsUnauthenticatedRawTunnelGateway(t *testing.T) {
 	}
 }
 
+func TestProductionRejectsLoopbackAdvertisedNATSURL(t *testing.T) {
+	cfg := productionConfig(NATSConfig{
+		URL: "tls://nats.example.com:4222", Token: "validtok", TLSEnabled: true,
+		TLSCAFile: "ca.pem", AdvertiseURLs: []string{"tls://127.0.0.1:4222"},
+		ReconnectWait: 5, MaxReconnects: -1,
+	})
+	err := cfg.ProductionValidate()
+	if err == nil || !strings.Contains(err.Error(), "loopback") {
+		t.Fatalf("expected loopback advertised NATS URL rejection, got %v", err)
+	}
+}
+
 func TestValidateProductionRejectsDevPlaceholder(t *testing.T) {
 	cfg := &OrchestratorConfig{
 		RuntimeMode: ModeProduction,

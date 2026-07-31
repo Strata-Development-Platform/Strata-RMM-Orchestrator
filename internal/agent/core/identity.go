@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/hex"
@@ -23,13 +24,13 @@ import (
 )
 
 type Identity struct {
-	AgentID  string `json:"agent_id"`
-	TenantID string `json:"tenant_id"`
-	Token    string `json:"-"`
+	AgentID  string   `json:"agent_id"`
+	TenantID string   `json:"tenant_id"`
+	Token    string   `json:"-"`
 	NATSURLs []string `json:"-"`
-	CertPEM  []byte `json:"cert_pem"`
-	KeyPEM   []byte `json:"key_pem"`
-	CAPEM    []byte `json:"ca_pem"`
+	CertPEM  []byte   `json:"cert_pem"`
+	KeyPEM   []byte   `json:"key_pem"`
+	CAPEM    []byte   `json:"ca_pem"`
 }
 
 type IdentityManager struct {
@@ -41,22 +42,41 @@ func NewIdentityManager(dataDir string) *IdentityManager {
 }
 
 func (im *IdentityManager) LoadOrCreate(tenantID, enrollmentToken string) (*Identity, error) {
-	os.MkdirAll(im.dir, 0700)
+	if err := os.MkdirAll(im.dir, 0700); err != nil {
+		return nil, fmt.Errorf("creating identity directory: %w", err)
+	}
 
 	ident, err := im.load()
 	if err == nil && ident != nil {
+		if tenantID != "" && ident.TenantID != tenantID {
+			return nil, fmt.Errorf("stored identity tenant does not match configured tenant")
+		}
 		return ident, nil
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("loading stored identity: %w", err)
+	}
+	if err != nil && identityStateExists(im.dir) {
+		return nil, fmt.Errorf("stored identity is incomplete: %w", err)
+	}
+	if enrollmentToken == "" {
+		return nil, fmt.Errorf("stored identity is missing and enrollment token is unavailable")
 	}
 
 	return im.enroll(tenantID, enrollmentToken)
 }
 
 func (im *IdentityManager) RegisterWithDeploymentID(registerURL, deploymentID, enrollmentToken string) (*Identity, error) {
-	os.MkdirAll(im.dir, 0700)
+	if err := os.MkdirAll(im.dir, 0700); err != nil {
+		return nil, fmt.Errorf("creating identity directory: %w", err)
+	}
 
 	ident, err := im.load()
 	if err == nil && ident != nil {
 		return ident, nil
+	}
+	if err != nil && (!os.IsNotExist(err) || identityStateExists(im.dir)) {
+		return nil, fmt.Errorf("loading stored identity: %w", err)
 	}
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -179,9 +199,9 @@ func (im *IdentityManager) load() (*Identity, error) {
 	ident.CAPEM = caPEM
 
 	var metaData struct {
-		AgentID  string `json:"agent_id"`
-		TenantID string `json:"tenant_id"`
-		Token    string `json:"token"`
+		AgentID  string   `json:"agent_id"`
+		TenantID string   `json:"tenant_id"`
+		Token    string   `json:"token"`
 		NATSURLs []string `json:"nats_urls"`
 	}
 	if err := json.Unmarshal(meta, &metaData); err != nil {
@@ -191,6 +211,17 @@ func (im *IdentityManager) load() (*Identity, error) {
 	ident.TenantID = metaData.TenantID
 	ident.Token = metaData.Token
 	ident.NATSURLs = append([]string(nil), metaData.NATSURLs...)
+	if ident.AgentID == "" || ident.TenantID == "" {
+		return nil, fmt.Errorf("identity metadata is missing endpoint binding")
+	}
+	certificate, err := tls.X509KeyPair(ident.CertPEM, ident.KeyPEM)
+	if err != nil {
+		return nil, fmt.Errorf("identity certificate and key are invalid: %w", err)
+	}
+	leaf, err := x509.ParseCertificate(certificate.Certificate[0])
+	if err != nil || leaf.Subject.CommonName != ident.AgentID {
+		return nil, fmt.Errorf("identity certificate does not match endpoint")
+	}
 
 	return ident, nil
 }
@@ -241,7 +272,9 @@ func (im *IdentityManager) enroll(tenantID, enrollmentToken string) (*Identity, 
 }
 
 func (im *IdentityManager) save(ident *Identity) error {
-	os.MkdirAll(im.dir, 0700)
+	if err := os.MkdirAll(im.dir, 0700); err != nil {
+		return err
+	}
 
 	if err := os.WriteFile(filepath.Join(im.dir, "agent.crt"), ident.CertPEM, 0600); err != nil {
 		return err
@@ -265,4 +298,13 @@ func (im *IdentityManager) save(ident *Identity) error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(im.dir, "meta.json"), meta, 0600)
+}
+
+func identityStateExists(dir string) bool {
+	for _, name := range []string{"agent.crt", "agent.key", "ca.crt", "meta.json"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+			return true
+		}
+	}
+	return false
 }

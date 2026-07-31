@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"strconv"
@@ -356,8 +357,13 @@ func (c *OrchestratorConfig) ProductionValidate() error {
 	}
 	for _, raw := range c.NATS.AdvertiseURLs {
 		u, err := url.Parse(raw)
-		if err != nil || u.Host == "" || (u.Scheme != "tls" && u.Scheme != "nats+tls") {
-			errs = append(errs, "NATS.AdvertiseURLs: production agent URLs must use tls or nats+tls")
+		if err != nil || u.Host == "" || u.User != nil || (u.Scheme != "tls" && u.Scheme != "nats+tls") {
+			errs = append(errs, "NATS.AdvertiseURLs: production agent URLs must be absolute tls or nats+tls URLs without credentials")
+			break
+		}
+		host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+		if host == "localhost" || host == "host.docker.internal" || net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback() {
+			errs = append(errs, "NATS.AdvertiseURLs: production agent URLs must not use a loopback or container-local host")
 			break
 		}
 	}

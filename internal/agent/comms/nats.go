@@ -95,7 +95,7 @@ func (c *Client) Connect(ctx context.Context) error {
 
 func (c *Client) tlsConfig() (*tls.Config, error) {
 	tlsCfg := &tls.Config{
-		MinVersion:   tls.VersionTLS12,
+		MinVersion: tls.VersionTLS12,
 	}
 	if c.cfg.CertFile != "" {
 		cert, err := tls.LoadX509KeyPair(c.cfg.CertFile, c.cfg.KeyFile)

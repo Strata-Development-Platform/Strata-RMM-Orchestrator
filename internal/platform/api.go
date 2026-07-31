@@ -70,6 +70,7 @@ type APIServer struct {
 	metricsToken         string
 	agentNATSURLs        []string
 	agentNATSCA          []byte
+	remoteSessions       map[string]remoteSessionBinding
 }
 
 func NewAPIServer(addr string, db *timescale.Client, nc *nats.Conn, logger *zap.Logger, tokenGen *auth.TokenGenerator) (*APIServer, error) {
@@ -85,6 +86,7 @@ func NewAPIServer(addr string, db *timescale.Client, nc *nats.Conn, logger *zap.
 		tokenGen:       tokenGen,
 		healthRegistry: NewHealthRegistry(),
 		httpMetrics:    observability.NewHTTPRegistry(),
+		remoteSessions: make(map[string]remoteSessionBinding),
 	}
 	if db != nil {
 		s.mfaStore = auth.NewMFAStore(db.DB())

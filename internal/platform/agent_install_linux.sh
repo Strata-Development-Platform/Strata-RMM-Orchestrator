@@ -49,8 +49,10 @@ BINARY_URL="$SERVER_URL/releases/latest/agent/$OS/$ARCH"
 
 info "Downloading the signed release candidate"
 curl --fail --silent --show-error --location --proto "$CURL_PROTO" --tlsv1.2 \
+	--connect-timeout 10 --max-time 300 --retry 3 --retry-delay 2 --retry-all-errors \
   --output "$TEMP_DIR/$BINARY_NAME" "$BINARY_URL"
 curl --fail --silent --show-error --location --proto "$CURL_PROTO" --tlsv1.2 \
+	--connect-timeout 10 --max-time 60 --retry 3 --retry-delay 2 --retry-all-errors \
   --output "$TEMP_DIR/$BINARY_NAME.sha256" "$BINARY_URL?checksum=sha256"
 (cd "$TEMP_DIR" && sha256sum --check "$BINARY_NAME.sha256") || fail "agent checksum verification failed"
 
@@ -72,6 +74,7 @@ collect:
 store:
   type: bbolt
   path: "$DATA_DIR/agent.db"
+  queue_max_items: 10000
 update:
   enabled: false
 EOF

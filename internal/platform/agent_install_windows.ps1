@@ -9,6 +9,18 @@ $BinaryPath = Join-Path $InstallDir 'strata-agent.exe'
 $ServiceName = 'StrataRMMAgent'
 
 function Fail([string]$Message) { throw "Strata RMM install failed: $Message" }
+function Invoke-BoundedDownload([string]$Uri, [string]$OutFile) {
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        try {
+            Invoke-WebRequest -UseBasicParsing -Uri $Uri -OutFile $OutFile -TimeoutSec 300
+            return
+        } catch {
+            Remove-Item -Force -ErrorAction SilentlyContinue $OutFile
+            if ($attempt -eq 3) { throw }
+            Start-Sleep -Seconds (2 * $attempt)
+        }
+    }
+}
 
 $serverUri = $null
 if (-not [Uri]::TryCreate($ServerUrl, [UriKind]::Absolute, [ref]$serverUri)) { Fail 'RMM_SERVER_URL must be an absolute URL' }
@@ -45,8 +57,8 @@ try {
     $binaryUrl = "$ServerUrl/releases/latest/agent/windows/$arch"
 
     Write-Host '==> Downloading verified Strata RMM agent'
-    Invoke-WebRequest -UseBasicParsing -Uri $binaryUrl -OutFile $downloadedBinary
-    Invoke-WebRequest -UseBasicParsing -Uri "$binaryUrl?checksum=sha256" -OutFile $downloadedChecksum
+    Invoke-BoundedDownload -Uri $binaryUrl -OutFile $downloadedBinary
+    Invoke-BoundedDownload -Uri "$binaryUrl?checksum=sha256" -OutFile $downloadedChecksum
     $expectedHash = ((Get-Content -Raw $downloadedChecksum).Trim() -split '\s+')[0]
     if ($expectedHash -notmatch '^[a-fA-F0-9]{64}$') { Fail 'invalid checksum response' }
     $actualHash = (Get-FileHash -Algorithm SHA256 $downloadedBinary).Hash
@@ -70,6 +82,7 @@ collect:
 store:
   type: bbolt
   path: '$escapedData\agent.db'
+  queue_max_items: 10000
 update:
   enabled: false
 "@ | Set-Content -Encoding UTF8 -Path $ConfigPath

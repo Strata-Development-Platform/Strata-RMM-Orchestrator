@@ -213,3 +213,28 @@ func TestValidateBootstrapRejectsSubsecondCollection(t *testing.T) {
 		t.Fatalf("ValidateBootstrap() error = %v, want interval failure", err)
 	}
 }
+
+func TestIdentityManagerRejectsCorruptStoredIdentity(t *testing.T) {
+	dataDir := t.TempDir()
+	identityDir := filepath.Join(dataDir, "identity")
+	if err := os.MkdirAll(identityDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(identityDir, "meta.json"), []byte("not-json"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	manager := NewIdentityManager(dataDir)
+	if _, err := manager.LoadOrCreate("tenant-a", "replacement-token"); err == nil {
+		t.Fatal("LoadOrCreate accepted corrupt identity and attempted re-enrollment")
+	}
+}
+
+func TestIdentityManagerRejectsConfiguredTenantMismatch(t *testing.T) {
+	manager := NewIdentityManager(t.TempDir())
+	if _, err := manager.enroll("tenant-a", "bootstrap"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.LoadOrCreate("tenant-b", ""); err == nil {
+		t.Fatal("LoadOrCreate accepted identity from another tenant")
+	}
+}

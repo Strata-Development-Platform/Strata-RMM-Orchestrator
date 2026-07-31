@@ -90,17 +90,22 @@ func (a *Agent) Start(ctx context.Context) error {
 		return fmt.Errorf("invalid config: %w", err)
 	}
 
-	os.MkdirAll(a.cfg.Agent.DataDir, 0700)
+	if err := os.MkdirAll(a.cfg.Agent.DataDir, 0700); err != nil {
+		return fmt.Errorf("creating data directory: %w", err)
+	}
 
 	identMgr := NewIdentityManager(a.cfg.Agent.DataDir)
 	ident, err := identMgr.LoadOrCreate(a.cfg.Agent.TenantID, a.cfg.Agent.EnrollmentToken)
 	if err != nil {
 		return fmt.Errorf("identity setup: %w", err)
 	}
+	if a.cfg.Agent.AgentID != "" && ident.AgentID != a.cfg.Agent.AgentID {
+		return fmt.Errorf("identity setup: stored endpoint does not match configured endpoint")
+	}
 	a.identity = ident
 	a.logger.Info("agent identity established", "agent_id", ident.AgentID, "tenant_id", ident.TenantID)
 
-	store, err := NewStore(a.cfg.Store.Path)
+	store, err := NewStoreWithLimit(a.cfg.Store.Path, a.cfg.Store.QueueMaxItems)
 	if err != nil {
 		return fmt.Errorf("store setup: %w", err)
 	}

@@ -96,8 +96,8 @@ func TestAuthorizeAgentNATSCredentialRejectsUserAndInvalidTokens(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, token := range map[string]string{
-		"missing": "",
-		"malformed": "not-a-jwt",
+		"missing":    "",
+		"malformed":  "not-a-jwt",
 		"user token": userToken,
 	} {
 		t.Run(name, func(t *testing.T) {
