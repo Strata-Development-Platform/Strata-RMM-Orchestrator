@@ -48,3 +48,7 @@ build/
 # Generated files
 *.pb.go
 *_mock.go
+
+# Generated clean-install credentials
+deploy/docker/secrets/
+deploy/docker/.install.env
