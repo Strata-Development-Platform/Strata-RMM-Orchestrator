@@ -516,9 +516,9 @@ func (s *APIServer) handleAgentRegister(w http.ResponseWriter, r *http.Request) 
 	}
 
 	agentID := uuid.NewString()
-	pubKey, err := hex.DecodeString(req.PublicKey)
+	pubKey, err := decodeAgentPublicKey(req.PublicKey)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "public_key must be hexadecimal"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "public_key must be an uncompressed P-256 public key"})
 		return
 	}
 	var deviceID string
@@ -561,8 +561,8 @@ func (s *APIServer) handleAgentRegister(w http.ResponseWriter, r *http.Request) 
 	}
 	committed = true
 
-	natsURLs := []string{}
-	if s.nats != nil {
+	natsURLs := append([]string(nil), s.agentNATSURLs...)
+	if len(natsURLs) == 0 && s.nats != nil {
 		natsURLs = append(natsURLs, s.nats.ConnectedUrl())
 	}
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
@@ -571,8 +571,17 @@ func (s *APIServer) handleAgentRegister(w http.ResponseWriter, r *http.Request) 
 		"tenant_id": tenantID,
 		"token":     token,
 		"nats_urls": natsURLs,
+		"ca_pem":    string(s.agentNATSCA),
 		"interval":  60,
 	})
+}
+
+func decodeAgentPublicKey(encoded string) ([]byte, error) {
+	publicKey, err := hex.DecodeString(encoded)
+	if err != nil || len(publicKey) != 65 || publicKey[0] != 4 {
+		return nil, fmt.Errorf("invalid uncompressed P-256 public key")
+	}
+	return publicKey, nil
 }
 
 func (s *APIServer) handleAgentConfig(w http.ResponseWriter, r *http.Request) {
