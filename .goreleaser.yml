@@ -105,7 +105,7 @@ checksum:
   algorithm: sha256
 
 snapshot:
-  version_template: "{{ incpatch .Version }}-next"
+  version_template: "0.0.0-next"
 
 changelog:
   sort: asc
