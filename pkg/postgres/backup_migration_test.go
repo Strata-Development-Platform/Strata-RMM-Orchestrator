@@ -26,10 +26,11 @@ func setupTestDB(t *testing.T, ctx context.Context) (*sql.DB, string) {
 	t.Helper()
 
 	rawDSN := os.Getenv("TEST_POSTGRES_DSN")
-	var host, user, password string
+	var host, port, user, password string
 
 	if rawDSN == "" {
 		host = "/tmp/pg_socket"
+		port = "5434"
 		user = "administrator"
 		password = ""
 	} else {
@@ -46,21 +47,31 @@ func setupTestDB(t *testing.T, ctx context.Context) (*sql.DB, string) {
 		hostPart := connStr[atIdx+1:]
 
 		dbIdx := strings.Index(hostPart, "/")
+		var hostPort string
 		if dbIdx == -1 {
-			host = hostPart
+			hostPort = hostPart
 		} else {
-			host = hostPart[:dbIdx]
+			hostPort = hostPart[:dbIdx]
 		}
 
-		colonIdx := strings.Index(creds, ":")
-		if colonIdx == -1 {
+		colonIdx := strings.LastIndex(hostPort, ":")
+		if colonIdx > -1 {
+			host = hostPort[:colonIdx]
+			port = hostPort[colonIdx+1:]
+		} else {
+			host = hostPort
+			port = "5432"
+		}
+
+		colonIdx2 := strings.Index(creds, ":")
+		if colonIdx2 == -1 {
 			require.Fail(t, "invalid admin DSN: missing : in credentials", "dsn="+rawDSN)
 		}
-		user = creds[:colonIdx]
-		password = creds[colonIdx+1:]
+		user = creds[:colonIdx2]
+		password = creds[colonIdx2+1:]
 	}
 
-	adminDSN := makeMigrationDSN(host, user, password, "postgres")
+	adminDSN := makeMigrationDSN(host, port, user, password, "postgres")
 
 	adminDB, err := sql.Open("postgres", adminDSN)
 	require.NoError(t, err)
@@ -73,7 +84,7 @@ func setupTestDB(t *testing.T, ctx context.Context) (*sql.DB, string) {
 	_, err := adminDB.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE %s", pqIdent(dbName)))
 	require.NoError(t, err)
 
-	testDSN := makeMigrationDSN(host, user, password, dbName)
+	testDSN := makeMigrationDSN(host, port, user, password, dbName)
 
 	db, err := sql.Open("postgres", testDSN)
 	require.NoError(t, err)
@@ -93,7 +104,7 @@ func pqIdent(name string) string {
 }
 
 // makeMigrationDSN builds a PostgreSQL DSN from components using libpq key-value format.
-func makeMigrationDSN(host, user, password, dbname string) string {
+func makeMigrationDSN(host, port, user, password, dbname string) string {
 	if host == "/tmp/pg_socket" {
 		if password != "" {
 			return "host=" + host + " user=" + user + " password=" + password + " dbname=" + dbname + " sslmode=disable"
@@ -101,9 +112,9 @@ func makeMigrationDSN(host, user, password, dbname string) string {
 		return "host=" + host + " user=" + user + " dbname=" + dbname + " sslmode=disable"
 	}
 	if password != "" {
-		return "host=" + host + " user=" + user + " password=" + password + " dbname=" + dbname + " sslmode=disable"
+		return "host=" + host + " port=" + port + " user=" + user + " password=" + password + " dbname=" + dbname + " sslmode=disable"
 	}
-	return "host=" + host + " user=" + user + " dbname=" + dbname + " sslmode=disable"
+	return "host=" + host + " port=" + port + " user=" + user + " dbname=" + dbname + " sslmode=disable"
 }
 
 // TestApplyMigrations verifies migrations can be applied to a clean database.

@@ -37,11 +37,12 @@ func setupPGEnv(t *testing.T) pgEnv {
 
 	// Use CI service connection or fall back to local defaults
 	rawDSN := os.Getenv("TEST_POSTGRES_DSN")
-	var host, user, password string
+	var host, port, user, password string
 
 	if rawDSN == "" {
 		// Local development: connect via socket
 		host = "/tmp/pg_socket"
+		port = "5434"
 		user = "administrator"
 		password = ""
 	} else {
@@ -61,10 +62,21 @@ func setupPGEnv(t *testing.T) pgEnv {
 		hostPart := connStr[atIdx+1:]
 
 		dbIdx := strings.Index(hostPart, "/")
+		var hostPort string
 		if dbIdx == -1 {
-			host = hostPart
+			hostPort = hostPart
 		} else {
-			host = hostPart[:dbIdx]
+			hostPort = hostPart[:dbIdx]
+		}
+
+		// Split host:port into host and port
+		colonIdx := strings.LastIndex(hostPort, ":")
+		if colonIdx > -1 {
+			host = hostPort[:colonIdx]
+			port = hostPort[colonIdx+1:]
+		} else {
+			host = hostPort
+			port = "5432"
 		}
 
 		// Split credentials
@@ -77,7 +89,7 @@ func setupPGEnv(t *testing.T) pgEnv {
 	}
 
 	// Admin DSN: connect to 'postgres' database to create/drop test databases
-	adminDSN := makeDSN(host, user, password, "postgres", true)
+	adminDSN := makeDSN(host, port, user, password, "postgres")
 
 	db, err := sql.Open("postgres", adminDSN)
 	require.NoError(t, err, "admin PostgreSQL connect")
@@ -99,8 +111,8 @@ func setupPGEnv(t *testing.T) pgEnv {
 	_, err = db.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE %s", pqIdent(targetDB)))
 	require.NoError(t, err)
 
-	sourceDSN := makeDSN(host, user, password, sourceDB, true)
-	targetDSN := makeDSN(host, user, password, targetDB, true)
+	sourceDSN := makeDSN(host, port, user, password, sourceDB)
+	targetDSN := makeDSN(host, port, user, password, targetDB)
 
 	// Verify both are pingable
 	srcDB, err := sql.Open("postgres", sourceDSN)
@@ -131,18 +143,16 @@ func pqIdent(name string) string {
 }
 
 // makeDSN builds a PostgreSQL DSN from components using libpq key-value format.
-func makeDSN(host, user, password, dbname string, useSSL bool) string {
-	dsn := "sslmode=disable"
+func makeDSN(host, port, user, password, dbname string) string {
 	if host == "/tmp/pg_socket" {
-		dsn = "host=" + host + " user=" + user + " dbname=" + dbname + " sslmode=disable"
 		if password != "" {
-			dsn = "host=" + host + " user=" + user + " password=" + password + " dbname=" + dbname + " sslmode=disable"
+			return "host=" + host + " user=" + user + " password=" + password + " dbname=" + dbname + " sslmode=disable"
 		}
-	} else {
-		dsn = "host=" + host + " user=" + user + " dbname=" + dbname + " sslmode=disable"
-		if password != "" {
-			dsn = "host=" + host + " user=" + user + " password=" + password + " dbname=" + dbname + " sslmode=disable"
-		}
+		return "host=" + host + " user=" + user + " dbname=" + dbname + " sslmode=disable"
+	}
+	dsn := "host=" + host + " port=" + port + " user=" + user + " dbname=" + dbname + " sslmode=disable"
+	if password != "" {
+		dsn = "host=" + host + " port=" + port + " user=" + user + " password=" + password + " dbname=" + dbname + " sslmode=disable"
 	}
 	return dsn
 }
