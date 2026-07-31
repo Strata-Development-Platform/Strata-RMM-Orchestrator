@@ -25,12 +25,19 @@ jobs:
           cache: true
       - name: Formatting
         run: |
-          test -z "$(gofmt -l \
-            internal/observability internal/synthetic cmd/synthetic \
-            internal/platform/api.go internal/platform/auth_handlers.go \
-            internal/platform/logging_test.go internal/platform/metrics_test.go \
-            internal/platform/middleware.go pkg/config/config.go pkg/config/config_test.go \
-            cmd/orchestrator/orchestrator.go main.go)"
+          targets=(
+            internal/observability internal/synthetic cmd/synthetic
+            internal/platform/api.go internal/platform/auth_handlers.go
+            internal/platform/logging_test.go internal/platform/metrics_test.go
+            internal/platform/middleware.go pkg/config/config.go pkg/config/config_test.go
+            cmd/orchestrator/orchestrator.go main.go
+          )
+          unformatted="$(gofmt -l "${targets[@]}")"
+          if [ -n "$unformatted" ]; then
+            printf 'gofmt required for:\n%s\n' "$unformatted"
+            gofmt -d "${targets[@]}"
+            exit 1
+          fi
       - name: Vet and build
         run: |
           go vet ./internal/observability/... ./internal/synthetic/... ./internal/platform/... ./cmd/synthetic/... ./pkg/config/...
