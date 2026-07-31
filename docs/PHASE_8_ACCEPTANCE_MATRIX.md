@@ -110,3 +110,19 @@ exercise are recorded.
 | A8-12 | Independent public, login, authenticated API, agent, and storage synthetics | Implemented; environment exercise pending |
 | A8-13 | Metrics, synthetic output, and request logs exclude credentials and raw resource identifiers | CI verified; broader Phase 8G audit remains |
 | A8-25 | Phase 8D alerts have owners, severities, and tested runbook links | Implemented; paging delivery exercise pending |
+
+## Phase 8E — Resilience Validation
+
+Phase 8E adds a bounded load runner and reconnect dispersion policy, then
+defines the evidence boundary between short CI contracts and mandatory
+environment exercises.
+
+| ID | Acceptance criterion | Current status |
+|---|---|---|
+| A8-14 | Agreed MSP, technician, API, and agent workload meets latency/error objectives | Harness implemented; environment baseline pending |
+| A8-15 | Twenty-four-hour soak has no unbounded resource or queue growth | Evidence contract implemented; 24-hour exercise pending |
+| A8-16 | Fleet reconnect is dispersed and returns to steady state without loss or duplicate destructive work | Jitter policy implemented; environment storm pending |
+| A8-17 | Required dependency failures degrade safely and recover | CI readiness contract pending; environment matrix pending |
+
+Detailed procedure and evidence: [Resilience testing](RESILIENCE_TESTING.md) and
+[Phase 8E evidence](PHASE_8E_EVIDENCE.md).

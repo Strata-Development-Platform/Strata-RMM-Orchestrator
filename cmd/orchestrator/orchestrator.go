@@ -19,6 +19,7 @@ import (
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/inventory"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/monitoring"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/platform"
+	"github.com/strata-rmm/strata-rmm-orchestrator/internal/reconnect"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/remote"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/reporting"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/update"
@@ -508,7 +509,9 @@ func newPreflightCommand(logger *zap.Logger) *cobra.Command {
 func connectNATS(cfg *config.OrchestratorConfig) (*nats.Conn, error) {
 	natsOpts := []nats.Option{
 		nats.Name("StrataRMM-Orchestrator"),
-		nats.ReconnectWait(cfg.NATS.ReconnectWait),
+		nats.CustomReconnectDelay(func(attempts int) time.Duration {
+			return reconnect.Delay(cfg.NATS.ReconnectWait, 2*time.Minute, attempts, nil)
+		}),
 		nats.MaxReconnects(cfg.NATS.MaxReconnects),
 		nats.RetryOnFailedConnect(true),
 	}
