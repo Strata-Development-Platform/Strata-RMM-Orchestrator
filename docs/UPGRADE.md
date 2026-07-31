@@ -1,195 +1,82 @@
-# Upgrade Procedure (Phase 8B)
+# Upgrade and Release Packages
 
-## Supported Upgrade Paths
+Strata RMM releases use immutable semantic-version tags such as `v0.3.0`. A published release contains SHA-256 checksums, Sigstore signatures, build provenance, raw orchestrator binaries for the application updater, portable agent/probe archives, and native Linux packages.
 
-| From | To | Migration Required |
-|------|----|-------------------|
-| v0.1.x | v0.2.0-beta | Yes |
-| v0.2.0-beta (same minor) | v0.2.0-beta (newer build) | No (if schema unchanged) |
+Do not install from `latest`, an unpinned container tag, or an asset whose checksum is unavailable.
 
-Unsupported (full reinstall required):
-- v0.0.x (pre-alpha) → any
-- Cross-major without documented migration
+## Artifact choices
 
-## Migration Locking
+| Deployment | Supported artifact | Upgrade mechanism |
+|---|---|---|
+| Debian/Ubuntu host | `strata-rmm-orchestrator_<version>_<arch>.deb` | `apt`/local package install with an explicit version |
+| RPM-based host | `strata-rmm-orchestrator_<version>_<arch>.rpm` | `dnf`/local package install with an explicit version |
+| Endpoint host | `strata-rmm-agent` package or OS archive | Managed agent rollout; do not mass-upgrade outside a deployment ring |
+| Application updater | `strata-rmm-orchestrator-<version>-linux-<arch>` | Check, download, checksum verification, staged apply |
+| Docker/Kubernetes | Image pinned by version and digest | Deployment controller or orchestrator-specific rollout |
 
-When an upgrade involves database schema changes, the orchestrator acquires a **PostgreSQL advisory lock** (`pg_try_advisory_lock`):
+The secure clean-installer will configure the service account, environment file, database, broker, storage, and first administrator. Installing a package alone intentionally does not invent credentials or start an unconfigured production service.
 
-1. The lock is acquired at the connection level using `pg_try_advisory_lock`.
-2. If another process holds the lock, the new process retries up to 5 times with 1-second intervals.
-3. The lock is released after the migration completes (success or rollback).
-4. A failed migration prevents the orchestrator from starting.
+## Native package upgrade
 
----
+1. Read the release notes and supported source-version boundary.
+2. Back up PostgreSQL and `/etc/strata-rmm`.
+3. Download the package and `checksums.txt` from the same immutable GitHub release.
+4. Verify the exact filename:
 
-## Upgrade Steps
+   ```bash
+   sha256sum --ignore-missing --check checksums.txt
+   ```
 
-### 1. Backup
+5. Verify the Sigstore signature and certificate according to the release policy.
+6. Install the explicit package file:
 
-```bash
-# Full database backup
-pg_dump -h localhost -U strata_rmm_app -d strata_rmm \
-  --format=custom --compress=9 \
-  --file=/backups/pre-upgrade-$(date +%Y%m%d-%H%M%S).dump
+   ```bash
+   sudo apt install ./strata-rmm-orchestrator_VERSION_ARCH.deb
+   # or
+   sudo dnf install ./strata-rmm-orchestrator_VERSION_ARCH.rpm
+   ```
 
-# Backup configuration
-cp -r /etc/strata-rmm /backups/strata-rmm-config-pre-upgrade/
+7. Run the documented preflight/migration procedure for that release.
+8. Restart `strata-rmm.service`, then verify readiness and authenticated smoke tests.
 
-# Backup binary
-cp /usr/local/bin/strata-rmm /usr/local/bin/strata-rmm.pre-upgrade
-```
+Never pipe a network download directly into a privileged shell.
 
-### 2. Pull New Binary / Image
+## Application and CLI upgrades
 
-**Binary:**
+The updater accepts only a newer valid semantic version. It requires the exact platform artifact and an exact SHA-256 entry from `checksums.txt`; missing or malformed provenance fails closed. Numeric ordering is used, so `1.10.0` correctly follows `1.9.0`, and prereleases sort below their final release.
 
-```bash
-# Download release
-wget https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/releases/download/v0.2.0-beta/strata-rmm-linux-amd64
-sudo mv strata-rmm-linux-amd64 /usr/local/bin/strata-rmm
-sudo chmod 755 /usr/local/bin/strata-rmm
-```
+The raw binary is staged under `/var/lib/strata-rmm/updates`. Applying it must remain controlled by the deployment lifecycle: backup, schema compatibility check, migration lock, service restart, bounded readiness verification, and rollback or forward-fix decision. The administrative UI and CLI must call that same lifecycle controller rather than independently replacing files.
 
-**Docker:**
+Until the lifecycle controller is exposed through an operator-authorized API/command, use the explicit native package or digest-pinned container procedure. This document does not claim an unexposed in-app button is production-ready.
 
-```bash
-docker compose -f deploy/docker/docker-compose.yml pull orchestrator
-```
+## Container upgrades
 
-### 3. Run Preflight
+Pin both the release version and image digest. Preserve the current healthy digest as the rollback target. Pull and validate the candidate, run schema compatibility checks, deploy it, and switch traffic only after readiness and authenticated smoke tests pass.
 
-```bash
-# Validate configuration, database, and NATS connectivity
-/usr/local/bin/strata-rmm orchestrator preflight
-```
+A mutable `latest` tag is not release evidence.
 
-### 4. Apply Migration
+## Rollback safety
 
-```bash
-# Apply pending migrations
-sudo /usr/local/bin/strata-rmm orchestrator --apply-migrations
-```
+A binary rollback is allowed only when the previous binary is compatible with the current schema. Never run destructive down migrations merely to make an older binary start.
 
-Expected output:
+If compatibility is not proven:
 
-```
-2026/07/28 10:00:00 INFO applying migration id=25 name="phase-8b"
-2026/07/28 10:00:01 INFO migration applied id=25
-2026/07/28 10:00:01 INFO all migrations applied (current: 25)
-```
+- retain the new schema;
+- stop the failed rollout;
+- deploy a forward fix built for that schema;
+- preserve database, audit, and durable-job records;
+- record the failed deployment and recovery result.
 
-### 5. Start New Version
+If compatibility is proven, restore the previously verified package or image digest, verify readiness, and retain an audit record. A deployment failure remains a failed result even when rollback succeeds.
 
-**Binary:**
+## Release workflow
 
-```bash
-sudo systemctl restart strata-rmm
-```
+A semantic-version tag triggers `Publish Versioned Release`. The workflow:
 
-**Docker:**
+- proves the tag commit is on `master`;
+- runs updater contract tests;
+- builds platform artifacts and Debian/RPM packages;
+- publishes checksums, Sigstore signatures, and certificates;
+- attaches GitHub build-provenance attestations.
 
-```bash
-docker compose -f deploy/docker/docker-compose.yml up -d --no-deps orchestrator
-```
-
-### 6. Verify Health
-
-```bash
-# Check health endpoint
-curl http://localhost:8080/health
-# {"status":"ok","ready":"true","version":"v0.2.0-beta"}
-
-# Run smoke tests
-./scripts/smoke_test.sh
-
-# Verify migration state
-psql -U strata_rmm_app -d strata_rmm -c "SELECT MAX(id), COUNT(*) FROM schema_migrations;"
-
-# Check agents reconnected
-curl http://localhost:8080/api/v1/overview | jq '.online_devices'
-```
-
----
-
-## Rollback During Upgrade
-
-If the upgrade fails at any step:
-
-### Before migration applied
-
-```bash
-# Stop the new version
-sudo systemctl stop strata-rmm
-
-# Restore previous binary
-sudo mv /usr/local/bin/strata-rmm.pre-upgrade /usr/local/bin/strata-rmm
-
-# Restart
-sudo systemctl start strata-rmm
-
-# Verify
-curl http://localhost:8080/health
-```
-
-### After migration applied
-
-```bash
-# 1. Stop the new version
-sudo systemctl stop strata-rmm
-
-# 2. Restore previous binary
-sudo mv /usr/local/bin/strata-rmm.pre-upgrade /usr/local/bin/strata-rmm
-
-# 3. Revert database migrations (run the RollbackEngine or use the migration Down scripts)
-#    The RollbackEngine handles this automatically; manual revert example:
-#    psql -U strata_rmm_app -d strata_rmm -c "\i /path/to/down-migration-26.sql"
-#    psql -U strata_rmm_app -d strata_rmm -c "\i /path/to/down-migration-25.sql"
-
-# 4. Restore previous configuration
-cp /backups/strata-rmm-config-pre-upgrade/* /etc/strata-rmm/
-
-# 5. Start previous version
-sudo systemctl start strata-rmm
-
-# 6. Verify
-curl http://localhost:8080/health
-```
-
-### Docker rollback
-
-```bash
-# Pin the previous image tag in docker-compose.override.yml
-# Then restart
-docker compose -f deploy/docker/docker-compose.yml up -d --no-deps orchestrator
-```
-
----
-
-## Data Preservation Guarantees
-
-| Data Type | Preserved During Upgrade | Preserved During Rollback |
-|-----------|------------------------|--------------------------|
-| Tenant records | Yes | Yes |
-| Device records | Yes | Yes |
-| Metrics/timeseries | Yes | Yes |
-| Audit log | Yes | Yes |
-| Session recordings | Yes | Yes |
-| Alert history | Yes | Yes |
-| Job queue | Yes (drained before upgrade) | Yes (re-queued) |
-| Agent enrollment tokens | Yes | Yes |
-| CVE database | Yes | Yes |
-
-### What is NOT preserved
-
-- In-flight NATS messages not yet consumed (re-published by agents on reconnect)
-- Ephemeral cache state (e.g., in-memory rate limiter counters)
-
----
-
-## Migration Compatibility
-
-- All migrations are **additive** forward (CREATE TABLE IF NOT EXISTS, ADD COLUMN IF NOT EXISTS, CREATE INDEX IF NOT EXISTS).
-- Down migrations use `DROP TABLE IF EXISTS ... CASCADE` for safe rollback.
-- Rollback is safe to execute multiple times (IF EXISTS guards).
-- Old agent binaries remain compatible with the new orchestrator (backward-compatible NATS protocol).
-- New agent binaries require the orchestrator at v0.2.0-beta or later.
+The GitHub `release` environment should require appropriate reviewer approval for production releases. Snapshot artifacts built in pull requests are test evidence only and must not be promoted as releases.

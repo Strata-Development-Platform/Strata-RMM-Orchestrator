@@ -1,0 +1,24 @@
+[Unit]
+Description=Strata RMM Orchestrator
+Documentation=https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=strata-rmm
+Group=strata-rmm
+EnvironmentFile=/etc/strata-rmm/orchestrator.env
+ExecStart=/usr/local/bin/strata-orchestrator orchestrator
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/strata-rmm
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

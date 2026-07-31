@@ -1,0 +1,23 @@
+[Unit]
+Description=Strata RMM Agent
+Documentation=https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/strata-agent agent --config /etc/strata-rmm/agent.yaml
+Restart=always
+RestartSec=5
+StartLimitBurst=3
+StartLimitIntervalSec=60
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=read-only
+CapabilityBoundingSet=
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
