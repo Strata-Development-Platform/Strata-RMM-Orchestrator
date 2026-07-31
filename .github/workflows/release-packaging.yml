@@ -59,7 +59,7 @@ jobs:
           find dist -maxdepth 1 -type f -name 'strata-rmm-orchestrator-*.rpm' -print -quit | grep -q .
           find dist -maxdepth 1 -type f -name 'strata-rmm-agent-*.deb' -print -quit | grep -q .
           find dist -maxdepth 1 -type f -name 'strata-rmm-agent-*.rpm' -print -quit | grep -q .
-          sha256sum --check dist/checksums.txt
+          (cd dist && sha256sum --check checksums.txt)
       - name: Upload snapshot evidence
         uses: actions/upload-artifact@v4
         with:
