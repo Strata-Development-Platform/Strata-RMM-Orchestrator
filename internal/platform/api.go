@@ -71,6 +71,8 @@ type APIServer struct {
 	agentNATSURLs        []string
 	agentNATSCA          []byte
 	remoteSessions       map[string]remoteSessionBinding
+	remoteSessionTTL     time.Duration
+	remoteSessionNow     func() time.Time
 }
 
 func NewAPIServer(addr string, db *timescale.Client, nc *nats.Conn, logger *zap.Logger, tokenGen *auth.TokenGenerator) (*APIServer, error) {
@@ -78,15 +80,17 @@ func NewAPIServer(addr string, db *timescale.Client, nc *nats.Conn, logger *zap.
 		return nil, fmt.Errorf("token generator is required")
 	}
 	s := &APIServer{
-		addr:           addr,
-		db:             db,
-		nats:           nc,
-		totp:           auth.NewTOTPManager(),
-		logger:         logger,
-		tokenGen:       tokenGen,
-		healthRegistry: NewHealthRegistry(),
-		httpMetrics:    observability.NewHTTPRegistry(),
-		remoteSessions: make(map[string]remoteSessionBinding),
+		addr:             addr,
+		db:               db,
+		nats:             nc,
+		totp:             auth.NewTOTPManager(),
+		logger:           logger,
+		tokenGen:         tokenGen,
+		healthRegistry:   NewHealthRegistry(),
+		httpMetrics:      observability.NewHTTPRegistry(),
+		remoteSessions:   make(map[string]remoteSessionBinding),
+		remoteSessionTTL: 30 * time.Minute,
+		remoteSessionNow: time.Now,
 	}
 	if db != nil {
 		s.mfaStore = auth.NewMFAStore(db.DB())
@@ -501,6 +505,7 @@ func (s *APIServer) handleMetrics(w http.ResponseWriter, r *http.Request) {
 
 func (s *APIServer) Stop(ctx context.Context) error {
 	s.setReadiness(false)
+	s.clearRemoteSessions()
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	return s.server.Shutdown(ctx)

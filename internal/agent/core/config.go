@@ -147,6 +147,9 @@ func (c *Config) ValidateBootstrap() error {
 	if c.Store.QueueMaxItems <= 0 {
 		return fmt.Errorf("store.queue_max_items must be greater than zero")
 	}
+	if c.Agent.TenantID != "" && c.Agent.EnrollmentToken != "" {
+		return fmt.Errorf("agent.enrollment_token cannot be combined with agent.tenant_id; orchestrator registration is required")
+	}
 	if c.Agent.TenantID != "" {
 		return c.Validate()
 	}

@@ -19,8 +19,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 type Identity struct {
@@ -41,7 +39,11 @@ func NewIdentityManager(dataDir string) *IdentityManager {
 	return &IdentityManager{dir: filepath.Join(dataDir, "identity")}
 }
 
-func (im *IdentityManager) LoadOrCreate(tenantID, enrollmentToken string) (*Identity, error) {
+// LoadExisting loads identity material previously issued through orchestrator
+// registration. It never manufactures identity locally: a missing identity must
+// go through RegisterWithDeploymentID so the enrollment credential is consumed
+// by the server-side registration transaction.
+func (im *IdentityManager) LoadExisting(tenantID string) (*Identity, error) {
 	if err := os.MkdirAll(im.dir, 0700); err != nil {
 		return nil, fmt.Errorf("creating identity directory: %w", err)
 	}
@@ -59,11 +61,7 @@ func (im *IdentityManager) LoadOrCreate(tenantID, enrollmentToken string) (*Iden
 	if err != nil && identityStateExists(im.dir) {
 		return nil, fmt.Errorf("stored identity is incomplete: %w", err)
 	}
-	if enrollmentToken == "" {
-		return nil, fmt.Errorf("stored identity is missing and enrollment token is unavailable")
-	}
-
-	return im.enroll(tenantID, enrollmentToken)
+	return nil, fmt.Errorf("stored identity is missing; orchestrator registration is required")
 }
 
 func (im *IdentityManager) RegisterWithDeploymentID(registerURL, deploymentID, enrollmentToken string) (*Identity, error) {
@@ -221,51 +219,6 @@ func (im *IdentityManager) load() (*Identity, error) {
 	leaf, err := x509.ParseCertificate(certificate.Certificate[0])
 	if err != nil || leaf.Subject.CommonName != ident.AgentID {
 		return nil, fmt.Errorf("identity certificate does not match endpoint")
-	}
-
-	return ident, nil
-}
-
-func (im *IdentityManager) enroll(tenantID, enrollmentToken string) (*Identity, error) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, fmt.Errorf("generating key: %w", err)
-	}
-
-	agentID := uuid.New().String()
-	serial, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-
-	tmpl := &x509.Certificate{
-		SerialNumber: serial,
-		Subject: pkix.Name{
-			CommonName:   agentID,
-			Organization: []string{tenantID},
-		},
-		NotBefore:             time.Now(),
-		NotAfter:              time.Now().Add(365 * 24 * time.Hour),
-		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-		BasicConstraintsValid: true,
-	}
-
-	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	if err != nil {
-		return nil, fmt.Errorf("creating cert: %w", err)
-	}
-
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
-	keyBytes, _ := x509.MarshalECPrivateKey(key)
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyBytes})
-
-	ident := &Identity{
-		AgentID:  agentID,
-		TenantID: tenantID,
-		CertPEM:  certPEM,
-		KeyPEM:   keyPEM,
-	}
-
-	if err := im.save(ident); err != nil {
-		return nil, fmt.Errorf("saving identity: %w", err)
 	}
 
 	return ident, nil

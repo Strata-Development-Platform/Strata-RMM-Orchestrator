@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -10,6 +11,15 @@ import (
 
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/agent/core"
 )
+
+func TestTenantIDFlagCannotBypassOrchestratorRegistration(t *testing.T) {
+	cmd := NewCommand(context.Background(), zap.NewNop())
+	cmd.SetArgs([]string{"--tenant-id", "tenant-a", "--enrollment-token", "untrusted-local-token"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "orchestrator registration is required") {
+		t.Fatalf("Execute() error = %v, want orchestrator registration requirement", err)
+	}
+}
 
 type testCollector struct {
 	mu    sync.Mutex

@@ -9,7 +9,7 @@ The endpoint agent is intended for controlled, ephemeral internal-alpha environm
 - Identity state is stored with owner-only file modes on Unix. Incomplete, corrupt, certificate/key-mismatched, or tenant-mismatched state fails closed instead of silently creating a replacement identity.
 - The BoltDB offline queue survives restart, retains entries until publish acknowledgement, and enforces a combined metric/event capacity (`store.queue_max_items`, default `10000`). Capacity exhaustion rejects new entries rather than allowing unbounded growth.
 - Production configuration rejects missing, plaintext, credential-bearing, loopback, and container-local advertised NATS URLs.
-- Remote session input and stop operations must match the tenant, device, and agent binding established when the session started. Bindings intentionally disappear on orchestrator restart, causing old sessions to fail closed.
+- Remote session input and stop operations must match the tenant, device, and agent binding established when the session was dispatched. Pending bindings expire after 30 minutes, are removed on stop or failed dispatch, and disappear on orchestrator shutdown/restart. The start response is `pending`; the current HTTP path does not prove that the endpoint accepted or activated the session.
 - Linux and Windows installers validate TLS, verify SHA-256 checksums, bound download attempts, preserve the data directory during binary replacement, and fail if enrollment material remains in the runtime configuration.
 
 ## Supported internal-alpha matrix
@@ -27,6 +27,8 @@ The endpoint agent is intended for controlled, ephemeral internal-alpha environm
 Before promotion, capture exact-head CI evidence and run the end-to-end exercise against ephemeral PostgreSQL/TimescaleDB, NATS with JetStream, and object storage. The exercise must cover enrollment replay, process restarts, a broker outage and queue replay, duplicate ingestion, harmless job dispatch, and cross-tenant/cross-endpoint denials. Linux systemd and Windows service installation must also execute on representative supported hosts. Vulnerability, container, and secret scans must complete successfully.
 
 Release downloads currently resolve the configured GitHub release before being cached and served with a same-origin checksum. Promotion requires pinning and recording immutable release/tag identity in deployment evidence; a mutable `latest` response must not be treated as authoritative provenance.
+
+The frontend audit currently reports advisories in `vite`/`esbuild` (development tooling) and `react-router-dom`/`react-router` (production navigation). npm offers fixes only through semver-major Vite 8 and React Router 7 upgrades, so they are not changed as part of this endpoint-agent remediation. Hosted-alpha review must either validate those migrations separately or formally accept the remaining exposure; the development server must not be exposed to untrusted networks.
 
 ## Rollback
 

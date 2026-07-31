@@ -18,9 +18,11 @@ type RemoteSessionRequest struct {
 }
 
 type remoteSessionBinding struct {
-	TenantID string
-	DeviceID string
-	AgentID  string
+	TenantID  string
+	DeviceID  string
+	AgentID   string
+	CreatedAt time.Time
+	ExpiresAt time.Time
 }
 
 func (s *APIServer) handleRemoteSessionStart(w http.ResponseWriter, r *http.Request) {
@@ -63,6 +65,8 @@ func (s *APIServer) handleRemoteSessionStart(w http.ResponseWriter, r *http.Requ
 		"input_topic": fmt.Sprintf("tenant.%s.agent.%s.tunnel.%s.input", tenantID, agentID, sessionID),
 		"ctrl_topic":  fmt.Sprintf("tenant.%s.agent.%s.tunnel.%s.ctrl", tenantID, agentID, sessionID),
 		"created_at":  time.Now().UTC().Format(time.RFC3339),
+		"expires_at":  time.Now().Add(s.remoteSessionLifetime()).UTC().Format(time.RFC3339),
+		"status":      "pending",
 	})
 }
 
@@ -82,8 +86,8 @@ func (s *APIServer) handleRemoteSessionInput(w http.ResponseWriter, r *http.Requ
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid input"})
 		return
 	}
-	binding, ok := s.remoteSession(sessionID)
-	if !ok || binding.TenantID != tenantID || binding.DeviceID != input.DeviceID {
+	binding, ok := s.remoteSessionFor(sessionID, tenantID, input.DeviceID, "")
+	if !ok {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "remote session not found for device"})
 		return
 	}
@@ -106,8 +110,8 @@ func (s *APIServer) handleRemoteSessionStop(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "device_id required"})
 		return
 	}
-	binding, ok := s.remoteSession(sessionID)
-	if !ok || binding.TenantID != tenantID || binding.DeviceID != deviceID {
+	binding, ok := s.remoteSessionFor(sessionID, tenantID, deviceID, "")
+	if !ok {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "remote session not found for device"})
 		return
 	}
@@ -130,13 +134,24 @@ func (s *APIServer) handleRemoteSessionStop(w http.ResponseWriter, r *http.Reque
 func (s *APIServer) bindRemoteSession(sessionID string, binding remoteSessionBinding) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	now := s.remoteSessionTime()
+	s.cleanupExpiredRemoteSessionsLocked(now)
+	if s.remoteSessions == nil {
+		s.remoteSessions = make(map[string]remoteSessionBinding)
+	}
+	binding.CreatedAt = now
+	binding.ExpiresAt = now.Add(s.remoteSessionLifetime())
 	s.remoteSessions[sessionID] = binding
 }
 
-func (s *APIServer) remoteSession(sessionID string) (remoteSessionBinding, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+func (s *APIServer) remoteSessionFor(sessionID, tenantID, deviceID, agentID string) (remoteSessionBinding, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cleanupExpiredRemoteSessionsLocked(s.remoteSessionTime())
 	binding, ok := s.remoteSessions[sessionID]
+	if !ok || binding.TenantID != tenantID || binding.DeviceID != deviceID || agentID != "" && binding.AgentID != agentID {
+		return remoteSessionBinding{}, false
+	}
 	return binding, ok
 }
 
@@ -144,6 +159,34 @@ func (s *APIServer) deleteRemoteSession(sessionID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.remoteSessions, sessionID)
+}
+
+func (s *APIServer) clearRemoteSessions() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	clear(s.remoteSessions)
+}
+
+func (s *APIServer) cleanupExpiredRemoteSessionsLocked(now time.Time) {
+	for sessionID, binding := range s.remoteSessions {
+		if !binding.ExpiresAt.After(now) {
+			delete(s.remoteSessions, sessionID)
+		}
+	}
+}
+
+func (s *APIServer) remoteSessionTime() time.Time {
+	if s.remoteSessionNow != nil {
+		return s.remoteSessionNow()
+	}
+	return time.Now()
+}
+
+func (s *APIServer) remoteSessionLifetime() time.Duration {
+	if s.remoteSessionTTL > 0 {
+		return s.remoteSessionTTL
+	}
+	return 30 * time.Minute
 }
 
 func (s *APIServer) resolveRemoteAgent(r *http.Request, tenantID, deviceID string) (string, error) {

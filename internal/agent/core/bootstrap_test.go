@@ -1,9 +1,14 @@
 package core
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +18,35 @@ import (
 	"testing"
 	"time"
 )
+
+func testIdentity(t *testing.T, tenantID, agentID string) *Identity {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: agentID, Organization: []string{tenantID}},
+		NotBefore:    time.Now().Add(-time.Minute),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &Identity{
+		AgentID: agentID, TenantID: tenantID,
+		CertPEM: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
+		KeyPEM:  pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}),
+	}
+}
 
 func TestValidateBootstrapAllowsOneTimeEnrollment(t *testing.T) {
 	cfg := DefaultConfig()
@@ -224,17 +258,46 @@ func TestIdentityManagerRejectsCorruptStoredIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	manager := NewIdentityManager(dataDir)
-	if _, err := manager.LoadOrCreate("tenant-a", "replacement-token"); err == nil {
-		t.Fatal("LoadOrCreate accepted corrupt identity and attempted re-enrollment")
+	if _, err := manager.LoadExisting("tenant-a"); err == nil {
+		t.Fatal("LoadExisting accepted corrupt identity")
 	}
 }
 
 func TestIdentityManagerRejectsConfiguredTenantMismatch(t *testing.T) {
-	manager := NewIdentityManager(t.TempDir())
-	if _, err := manager.enroll("tenant-a", "bootstrap"); err != nil {
+	dataDir := t.TempDir()
+	manager := NewIdentityManager(dataDir)
+	identity := testIdentity(t, "tenant-a", "agent-a")
+	if err := manager.save(identity); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := manager.LoadOrCreate("tenant-b", ""); err == nil {
-		t.Fatal("LoadOrCreate accepted identity from another tenant")
+	if _, err := manager.LoadExisting("tenant-b"); err == nil {
+		t.Fatal("LoadExisting accepted identity from another tenant")
+	}
+}
+
+func TestValidateBootstrapRejectsTenantIDEnrollmentBypass(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Agent.TenantID = "tenant-a"
+	cfg.Agent.EnrollmentToken = "must-be-consumed-server-side"
+	cfg.NATS.Token = "untrusted-local-token"
+	if err := cfg.ValidateBootstrap(); err == nil || !strings.Contains(err.Error(), "orchestrator registration is required") {
+		t.Fatalf("ValidateBootstrap() error = %v, want registration requirement", err)
+	}
+}
+
+func TestLoadExistingPreservesIssuedIdentityAcrossRestart(t *testing.T) {
+	manager := NewIdentityManager(t.TempDir())
+	want := testIdentity(t, "tenant-a", "agent-a")
+	want.Token = "issued-agent-token"
+	want.NATSURLs = []string{"tls://nats.example.test:4222"}
+	if err := manager.save(want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := manager.LoadExisting("tenant-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.AgentID != want.AgentID || got.TenantID != want.TenantID || got.Token != want.Token {
+		t.Fatalf("restarted identity = %#v, want %#v", got, want)
 	}
 }

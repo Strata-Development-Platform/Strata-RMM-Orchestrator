@@ -95,7 +95,7 @@ func (a *Agent) Start(ctx context.Context) error {
 	}
 
 	identMgr := NewIdentityManager(a.cfg.Agent.DataDir)
-	ident, err := identMgr.LoadOrCreate(a.cfg.Agent.TenantID, a.cfg.Agent.EnrollmentToken)
+	ident, err := identMgr.LoadExisting(a.cfg.Agent.TenantID)
 	if err != nil {
 		return fmt.Errorf("identity setup: %w", err)
 	}
