@@ -229,43 +229,48 @@ helm upgrade strata-rmm strata-rmm/strata-rmm
 ### Linux (systemd)
 
 ```bash
-# One-command install with deployment ID
-curl -sSL https://releases.strata-rmm.io/install.sh | sudo bash -s -- --deployment-id YOUR_DEPLOYMENT_ID
+# Download the installer, inspect it, then run it with a one-time enrollment token.
+export RMM_SERVER_URL="https://rmm.example.com"
+curl --fail --proto '=https' --tlsv1.2 -o /tmp/strata-install.sh "$RMM_SERVER_URL/install.sh"
+less /tmp/strata-install.sh
+sudo env RMM_SERVER_URL="$RMM_SERVER_URL" RMM_ENROLLMENT_TOKEN="YOUR_ONE_TIME_TOKEN" sh /tmp/strata-install.sh
 ```
 
-Or manually:
+The installer verifies the release SHA-256 digest, installs a hardened systemd
+unit, waits for enrollment, and fails unless the agent consumes the one-time
+token. Do not place the token in shell history on shared systems; omit the
+environment variable and run interactively to receive a hidden prompt.
 
-```bash
-# Download
-curl -LO https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/releases/latest/download/strata-agent-linux-amd64
-chmod +x strata-agent-linux-amd64
-sudo mv strata-agent-linux-amd64 /usr/local/bin/strata-rmm
+For internal alpha, the checksum and binary are delivered through the same
+authenticated release service over HTTPS. Independent release-signature
+verification is still required before production beta; checksum verification
+alone does not protect against compromise of the release service.
 
-# Run
-strata-rmm agent --deployment-id YOUR_DEPLOYMENT_ID --nats-url nats://your-server:4222
+### Windows (PowerShell service)
+
+Run the following from an elevated 64-bit PowerShell session:
+
+```powershell
+$env:RMM_SERVER_URL = 'https://rmm.example.com'
+Invoke-WebRequest -UseBasicParsing -Uri "$env:RMM_SERVER_URL/releases/latest/agent/windows/installer" -OutFile "$env:TEMP\strata-install.ps1"
+Get-Content "$env:TEMP\strata-install.ps1"
+& "$env:TEMP\strata-install.ps1"
 ```
 
-### Windows (MSI)
+The installer prompts securely for the enrollment token, verifies the downloaded
+binary checksum, restricts the data directory ACL to SYSTEM and Administrators,
+creates the `StrataRMMAgent` Windows service, and verifies that enrollment
+removed the bootstrap token.
 
-1. Download the MSI from [GitHub Releases](https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/releases)
-2. Run the installer
-3. The agent will prompt for a deployment ID on first run
-4. Or configure in `C:\ProgramData\StrataRMM\agent.yaml`
+For unattended approved deployment, supply `RMM_ENROLLMENT_TOKEN` through the
+endpoint-management system's protected secret mechanism and remove it from that
+system after execution.
 
 ### macOS
 
-```bash
-# Download
-curl -LO https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/releases/latest/download/strata-agent-darwin-amd64
-chmod +x strata-agent-darwin-amd64
-sudo mv strata-agent-darwin-amd64 /usr/local/bin/strata-rmm
-
-# Remove quarantine (required for unsigned binaries)
-xattr -d com.apple.quarantine /usr/local/bin/strata-rmm
-
-# Run
-strata-rmm agent --deployment-id YOUR_DEPLOYMENT_ID
-```
+The binary build is covered by CI, but a signed/notarized package and launchd
+installer are not yet implemented. macOS deployment is therefore unsupported
+for internal alpha; do not bypass Gatekeeper or remove quarantine attributes.
 
 ---
 
