@@ -124,6 +124,10 @@ ENV
 
   local compose=(docker compose --env-file "$COMPOSE_DIR/.install.env" -f "$COMPOSE_DIR/docker-compose.install.yml")
   "${compose[@]}" config --quiet
+  if [[ "$PREPARE_ONLY" == "true" ]]; then
+    printf 'Docker installation configuration prepared and validated.\n'
+    return
+  fi
   "${compose[@]}" up -d postgres nats
   "${compose[@]}" run --rm --no-deps     -v "$admin_password:/run/bootstrap/admin-password:ro"     orchestrator orchestrator bootstrap-admin --email "$ADMIN_EMAIL"     --tenant-name "$PLATFORM_NAME" --password-file /run/bootstrap/admin-password
   rm -f "$admin_password"
