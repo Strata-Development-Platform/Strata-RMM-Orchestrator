@@ -96,18 +96,17 @@ func pqIdent(name string) string {
 func makeMigrationDSN(host, user, password, dbname string) string {
 	dsn := ""
 	if host == "/tmp/pg_socket" {
-		dsn = "host=" + host + " user=" + user
 		if password != "" {
-			dsn += " password=" + password
+			dsn = "host=" + host + " user=" + user + " password=" + password + " dbname=" + dbname + " sslmode=disable"
+		} else {
+			dsn = "host=" + host + " user=" + user + " dbname=" + dbname + " sslmode=disable"
 		}
-		dsn += " dbname=" + dbname + " sslmode=disable"
 	} else {
 		if password != "" {
-			dsn = user + ":" + password + "@" + host
+			dsn = user + ":" + password + "@" + host + "/" + dbname + "?sslmode=disable"
 		} else {
-			dsn = user + "@" + host
+			dsn = user + "@" + host + "/" + dbname + "?sslmode=disable"
 		}
-		dsn += " dbname=" + dbname + " sslmode=disable"
 	}
 	return dsn
 }

@@ -135,19 +135,17 @@ func makeDSN(host, user, password, dbname string, useSSL bool) string {
 	dsn := ""
 	if host == "/tmp/pg_socket" {
 		// Local development: use Unix socket
-		dsn = "host=" + host + " user=" + user
+		dsn = "host=" + host + " user=" + user + " dbname=" + dbname + " sslmode=disable"
 		if password != "" {
-			dsn += " password=" + password
+			dsn = "host=" + host + " user=" + user + " password=" + password + " dbname=" + dbname + " sslmode=disable"
 		}
-		dsn += " dbname=" + dbname + " sslmode=disable"
 	} else {
-		// CI: use TCP connection
+		// CI: use TCP connection format user:pass@host:port/dbname?sslmode=disable
 		if password != "" {
-			dsn = user + ":" + password + "@" + host
+			dsn = user + ":" + password + "@" + host + "/" + dbname + "?sslmode=disable"
 		} else {
-			dsn = user + "@" + host
+			dsn = user + "@" + host + "/" + dbname + "?sslmode=disable"
 		}
-		dsn += " dbname=" + dbname + " sslmode=disable"
 	}
 	return dsn
 }
