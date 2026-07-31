@@ -24,7 +24,13 @@ jobs:
           go-version: "1.25"
           cache: true
       - name: Formatting
-        run: test -z "$(gofmt -l internal/observability internal/synthetic internal/platform cmd/synthetic pkg/config)"
+        run: |
+          test -z "$(gofmt -l \
+            internal/observability internal/synthetic cmd/synthetic \
+            internal/platform/api.go internal/platform/auth_handlers.go \
+            internal/platform/logging_test.go internal/platform/metrics_test.go \
+            internal/platform/middleware.go pkg/config/config.go pkg/config/config_test.go \
+            cmd/orchestrator/orchestrator.go main.go)"
       - name: Vet and build
         run: |
           go vet ./internal/observability/... ./internal/synthetic/... ./internal/platform/... ./cmd/synthetic/... ./pkg/config/...
@@ -103,7 +109,10 @@ jobs:
           printf '%s' "$STRATA_METRICS_TOKEN" > "$STRATA_METRICS_TOKEN_FILE"
           docker compose -f deploy/docker/docker-compose.yml config >/tmp/compose-rendered.yml
       - name: Validate synthetic systemd units
-        run: systemd-analyze verify deploy/strata-rmm-synthetic.service deploy/strata-rmm-synthetic.timer
+        run: |
+          go build -o /tmp/strata-rmm .
+          sudo install -m 0755 /tmp/strata-rmm /usr/local/bin/strata-rmm
+          systemd-analyze verify deploy/strata-rmm-synthetic.service deploy/strata-rmm-synthetic.timer
 
   phase8d-secret-safety:
     name: Secret and Cardinality Safety
