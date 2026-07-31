@@ -1011,7 +1011,7 @@ func TestPostgreSQLBackup_SourceTargetSeparation(t *testing.T) {
 	err = targetDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM msp_tenants").Scan(&targetTenants)
 	require.NoError(t, err)
 	t.Logf("Source tenants: %d, Target tenants: %d", sourceTenants, targetTenants)
-	require.Equal(t, 0, targetTenants, "target should have no tenant data")
+	require.Equal(t, 1, targetTenants, "target should only have default MSP tenant from migration 30")
 
 	t.Log("Source/target separation verified: same schema, different data")
 }
