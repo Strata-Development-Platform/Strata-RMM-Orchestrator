@@ -265,7 +265,7 @@ func seedSourceDB(t *testing.T, ctx context.Context, dsn string) {
 		_, err = db.ExecContext(ctx, `
 			INSERT INTO jobs (id, msp_id, client_id, type, status, priority, payload, max_retries, max_devices)
 			VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6::jsonb, 3, 10)
-		`, msp1ID, client1ID, tc.jobType, tc.status, tc.priority)
+		`, msp1ID, client1ID, tc.jobType, tc.status, tc.priority, tc.payload)
 		require.NoError(t, err)
 	}
 
