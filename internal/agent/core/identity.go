@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"math/big"
 	"net/http"
 	"os"
@@ -24,6 +25,8 @@ import (
 type Identity struct {
 	AgentID  string `json:"agent_id"`
 	TenantID string `json:"tenant_id"`
+	Token    string `json:"-"`
+	NATSURLs []string `json:"-"`
 	CertPEM  []byte `json:"cert_pem"`
 	KeyPEM   []byte `json:"key_pem"`
 	CAPEM    []byte `json:"ca_pem"`
@@ -81,7 +84,13 @@ func (im *IdentityManager) RegisterWithDeploymentID(registerURL, deploymentID, e
 		"public_key":       hex.EncodeToString(pubKeyBytes),
 	})
 
-	resp, err := http.Post(registerURL, "application/json", bytes.NewReader(body))
+	request, err := http.NewRequest(http.MethodPost, registerURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("build register request: %w", err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(request)
 	if err != nil {
 		return nil, fmt.Errorf("register request: %w", err)
 	}
@@ -97,23 +106,40 @@ func (im *IdentityManager) RegisterWithDeploymentID(registerURL, deploymentID, e
 		TenantID string   `json:"tenant_id"`
 		Token    string   `json:"token"`
 		NatsURLs []string `json:"nats_urls"`
+		CAPEM    string   `json:"ca_pem"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&regResp); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&regResp); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	if regResp.AgentID == "" || regResp.TenantID == "" || regResp.Token == "" || len(regResp.NatsURLs) == 0 {
+		return nil, fmt.Errorf("registration response missing agent identity or messaging configuration")
 	}
 
 	ident = &Identity{
 		AgentID:  regResp.AgentID,
 		TenantID: regResp.TenantID,
+		Token:    regResp.Token,
+		NATSURLs: append([]string(nil), regResp.NatsURLs...),
+		CAPEM:    []byte(regResp.CAPEM),
 		KeyPEM:   pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyBytes}),
 	}
 
-	certDER, _ := x509.CreateCertificate(rand.Reader, &x509.Certificate{
-		SerialNumber: big.NewInt(time.Now().Unix()),
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return nil, fmt.Errorf("generating certificate serial: %w", err)
+	}
+	certificate := &x509.Certificate{
+		SerialNumber: serial,
 		Subject:      pkix.Name{CommonName: regResp.AgentID, Organization: []string{regResp.TenantID}},
-		NotBefore:    time.Now(),
+		NotBefore:    time.Now().Add(-time.Minute),
 		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
-	}, &x509.Certificate{}, &key.PublicKey, key)
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, certificate, certificate, &key.PublicKey, key)
+	if err != nil {
+		return nil, fmt.Errorf("creating endpoint certificate: %w", err)
+	}
 	ident.CertPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
 
 	if err := im.save(ident); err != nil {
@@ -140,7 +166,7 @@ func (im *IdentityManager) load() (*Identity, error) {
 		return nil, err
 	}
 	caPEM, err := os.ReadFile(caPath)
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
 	meta, err := os.ReadFile(metaPath)
@@ -155,12 +181,16 @@ func (im *IdentityManager) load() (*Identity, error) {
 	var metaData struct {
 		AgentID  string `json:"agent_id"`
 		TenantID string `json:"tenant_id"`
+		Token    string `json:"token"`
+		NATSURLs []string `json:"nats_urls"`
 	}
 	if err := json.Unmarshal(meta, &metaData); err != nil {
 		return nil, err
 	}
 	ident.AgentID = metaData.AgentID
 	ident.TenantID = metaData.TenantID
+	ident.Token = metaData.Token
+	ident.NATSURLs = append([]string(nil), metaData.NATSURLs...)
 
 	return ident, nil
 }
@@ -225,6 +255,14 @@ func (im *IdentityManager) save(ident *Identity) error {
 		}
 	}
 
-	meta := fmt.Sprintf(`{"agent_id":"%s","tenant_id":"%s"}`, ident.AgentID, ident.TenantID)
-	return os.WriteFile(filepath.Join(im.dir, "meta.json"), []byte(meta), 0600)
+	meta, err := json.Marshal(struct {
+		AgentID  string   `json:"agent_id"`
+		TenantID string   `json:"tenant_id"`
+		Token    string   `json:"token,omitempty"`
+		NATSURLs []string `json:"nats_urls,omitempty"`
+	}{ident.AgentID, ident.TenantID, ident.Token, ident.NATSURLs})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(im.dir, "meta.json"), meta, 0600)
 }
