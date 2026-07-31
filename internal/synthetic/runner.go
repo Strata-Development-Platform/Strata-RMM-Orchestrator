@@ -94,7 +94,7 @@ func (r *Runner) login(ctx context.Context) (string, Result) {
 	if err != nil {
 		return "", Result{Name: "login", Duration: time.Since(started), Error: "request failed"}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	result := Result{Name: "login", StatusCode: resp.StatusCode, Duration: time.Since(started)}
 	if resp.StatusCode != http.StatusOK {
 		result.Error = "unexpected status"
@@ -124,7 +124,7 @@ func (r *Runner) get(ctx context.Context, name, path, token string) Result {
 	if err != nil {
 		return Result{Name: name, Duration: time.Since(started), Error: "request failed"}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBytes))
 	result := Result{Name: name, StatusCode: resp.StatusCode, Duration: time.Since(started)}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {

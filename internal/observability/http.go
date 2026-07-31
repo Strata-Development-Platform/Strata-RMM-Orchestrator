@@ -127,7 +127,7 @@ func (r *HTTPRegistry) writeJobMetrics(w io.Writer) {
 		writeCollectorResult(w, false)
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	type state struct {
 		status  string
