@@ -92,8 +92,8 @@ jobs:
             --domain rmm.example.test \
             --admin-email owner@example.test \
             --prepare-only
-          sudo test "$(stat -c '%a' deploy/docker/secrets/postgres_password)" = 600
-          sudo test "$(stat -c '%a' deploy/docker/secrets/jwt_secret)" = 600
+          test "$(sudo stat -c '%a' deploy/docker/secrets/postgres_password)" = 600
+          test "$(sudo stat -c '%a' deploy/docker/secrets/jwt_secret)" = 600
           sudo test -s deploy/docker/secrets/platform_ca.crt
           sudo test -s deploy/docker/secrets/nats_server.crt
           sudo test -s deploy/docker/secrets/postgres_server.crt
