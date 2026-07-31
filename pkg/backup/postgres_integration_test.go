@@ -38,12 +38,17 @@ func setupPGEnv(t *testing.T) pgEnv {
 	// Use CI service connection or fall back to local defaults
 	adminDSN := os.Getenv("TEST_POSTGRES_DSN")
 	if adminDSN == "" {
-		adminDSN = "host=/tmp/pg_socket port=5434 user=administrator sslmode=disable"
-		// Remove dbname if present for admin connection
-		adminDSN = strings.ReplaceAll(adminDSN, "?sslmode=disable", "")
-		adminDSN = strings.ReplaceAll(adminDSN, "dbname=backup_source", "")
-		adminDSN = strings.ReplaceAll(adminDSN, "dbname=backup_target", "")
-		adminDSN = strings.ReplaceAll(adminDSN, "dbname=strata_test", "")
+		adminDSN = "host=/tmp/pg_socket port=5434 user=administrator dbname=postgres sslmode=disable"
+	} else {
+		// For CI: connect to 'postgres' database for admin operations (creating/dropping test DBs)
+		// Strip any dbname query param and add dbname=postgres
+		adminDSN = strings.Split(adminDSN, "?")[0]
+		if !strings.Contains(adminDSN, "dbname=") {
+			adminDSN += " dbname=postgres"
+		} else {
+			adminDSN = strings.ReplaceAll(adminDSN, "dbname=strata_test", "dbname=postgres")
+		}
+		adminDSN += "?sslmode=disable"
 	}
 
 	// Trim leading 'postgres://' or 'postgresql://'
@@ -52,7 +57,7 @@ func setupPGEnv(t *testing.T) pgEnv {
 
 	db, err := sql.Open("postgres", adminDSN)
 	require.NoError(t, err, "admin PostgreSQL connect")
-	require.NoError(t, db.PingContext(ctx), "admin PostgreSQL ping")
+	require.NoError(t, db.PingContext(ctx), "admin PostgreSQL ping: dsn="+adminDSN)
 	defer db.Close()
 
 	sourceDB := "backup_src_" + t.Name()

@@ -28,12 +28,18 @@ func setupTestDB(t *testing.T, ctx context.Context) (*sql.DB, string) {
 	// Use CI service connection or fall back to local defaults
 	dsn := os.Getenv("TEST_POSTGRES_DSN")
 	if dsn == "" {
-		dsn = "host=/tmp/pg_socket port=5434 user=administrator sslmode=disable"
+		dsn = "host=/tmp/pg_socket port=5434 user=administrator dbname=postgres sslmode=disable"
+	} else {
+		// For CI: connect to 'postgres' database for admin operations (creating/dropping test DBs)
+		dsn = strings.Split(dsn, "?")[0]
+		if !strings.Contains(dsn, "dbname=") {
+			dsn += " dbname=postgres"
+		} else {
+			dsn = strings.ReplaceAll(dsn, "dbname=strata_test", "dbname=postgres")
+		}
+		dsn += "?sslmode=disable"
 	}
-	// Strip dbname for admin connection
-	dsn = strings.ReplaceAll(dsn, "dbname=backup_source", "")
-	dsn = strings.ReplaceAll(dsn, "dbname=backup_target", "")
-	dsn = strings.ReplaceAll(dsn, "dbname=strata_test", "")
+
 	dsn = strings.TrimPrefix(dsn, "postgres://")
 	dsn = strings.TrimPrefix(dsn, "postgresql://")
 
@@ -44,8 +50,9 @@ func setupTestDB(t *testing.T, ctx context.Context) (*sql.DB, string) {
 	dbName := testDBName(t)
 
 	// Drop if exists, then create
-	adminDB.ExecContext(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %s", pqIdent(dbName)))
-	require.NoError(t, adminDB.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE %s", pqIdent(dbName))))
+	adminDB.ExecContext(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %s", pqIdent(dbName))) //nolint:errcheck
+	_, err := adminDB.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE %s", pqIdent(dbName)))
+	require.NoError(t, err)
 
 	testDSN := dsn + " dbname=" + dbName + " sslmode=disable"
 
