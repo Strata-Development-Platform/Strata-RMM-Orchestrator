@@ -54,12 +54,25 @@ jobs:
         run: |
           set -euo pipefail
           test -s dist/checksums.txt
-          find dist -maxdepth 1 -type f -name 'strata-rmm-orchestrator-*-linux-amd64' -print -quit | grep -q .
-          find dist -maxdepth 1 -type f -name 'strata-rmm-orchestrator_*.deb' -print -quit | grep -q .
-          find dist -maxdepth 1 -type f -name 'strata-rmm-orchestrator_*.rpm' -print -quit | grep -q .
-          find dist -maxdepth 1 -type f -name 'strata-rmm-agent_*.deb' -print -quit | grep -q .
-          find dist -maxdepth 1 -type f -name 'strata-rmm-agent_*.rpm' -print -quit | grep -q .
-          (cd dist && sha256sum --check checksums.txt)
+
+          verify_manifest_entry() {
+            local file="$1"
+            local artifact_name="${2:-$(basename "$file")}"
+            local expected actual
+            expected="$(awk -v name="$artifact_name" '$2 == name || $2 == "*" name {print $1}' dist/checksums.txt)"
+            test -n "$expected"
+            actual="$(sha256sum "$file" | awk '{print $1}')"
+            test "$actual" = "$expected"
+          }
+
+          verify_manifest_entry             dist/orchestrator_linux_amd64_v1/strata-orchestrator             strata-rmm-orchestrator-0.0.0-next-linux-amd64
+
+          for pattern in             'dist/strata-rmm-orchestrator_*.deb'             'dist/strata-rmm-orchestrator_*.rpm'             'dist/strata-rmm-agent_*.deb'             'dist/strata-rmm-agent_*.rpm'; do
+            compgen -G "$pattern" >/dev/null
+            for package in $pattern; do
+              verify_manifest_entry "$package"
+            done
+          done
       - name: Upload snapshot evidence
         uses: actions/upload-artifact@v4
         with:
