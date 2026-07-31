@@ -84,7 +84,11 @@ func (u *OrchestratorUpdater) Check(ctx context.Context) (*OrchestratorRelease, 
 	latestVersion := strings.TrimPrefix(release.TagName, "v")
 	currentVersion := strings.TrimPrefix(u.currentVersion, "v")
 
-	if latestVersion == currentVersion || latestVersion <= currentVersion {
+	comparison, err := compareSemanticVersions(latestVersion, currentVersion)
+	if err != nil {
+		return nil, fmt.Errorf("compare release versions: %w", err)
+	}
+	if comparison <= 0 {
 		return nil, nil
 	}
 
@@ -114,9 +118,12 @@ func (u *OrchestratorUpdater) Check(ctx context.Context) (*OrchestratorRelease, 
 		return nil, fmt.Errorf("no binary found for %s/%s", runtime.GOOS, runtime.GOARCH)
 	}
 
-	checksum := ""
-	if checksumURL != "" {
-		checksum = u.fetchChecksum(ctx, checksumURL, filepath.Base(downloadURL))
+	if checksumURL == "" {
+		return nil, fmt.Errorf("release is missing checksums.txt")
+	}
+	checksum := u.fetchChecksum(ctx, checksumURL, filepath.Base(downloadURL))
+	if checksum == "" {
+		return nil, fmt.Errorf("release checksum for %s is missing or invalid", filepath.Base(downloadURL))
 	}
 
 	return &OrchestratorRelease{
@@ -148,6 +155,9 @@ func (u *OrchestratorUpdater) fetchChecksum(ctx context.Context, checksumURL, fi
 }
 
 func (u *OrchestratorUpdater) Download(ctx context.Context, release *OrchestratorRelease) (string, error) {
+	if release == nil || release.Checksum == "" {
+		return "", fmt.Errorf("verified release checksum is required")
+	}
 	updateDir := filepath.Join(u.dataDir, "updates")
 	os.MkdirAll(updateDir, 0700)
 
