@@ -425,7 +425,11 @@ func LoadOrchestratorConfig() (*OrchestratorConfig, error) {
 		cfg.RuntimeMode = ModeDevelopment
 	}
 
-	cfg.DB.DSN = resolveDSN()
+	if dsn, err := resolveDSN(); err != nil {
+		errs = append(errs, fmt.Sprintf("database DSN: %v", err))
+	} else {
+		cfg.DB.DSN = dsn
+	}
 	cfg.NATS.URL = envStr("NATS_URL", cfg.NATS.URL)
 	if raw := strings.TrimSpace(os.Getenv("NATS_ADVERTISE_URLS")); raw != "" {
 		for _, candidate := range strings.Split(raw, ",") {
@@ -434,7 +438,11 @@ func LoadOrchestratorConfig() (*OrchestratorConfig, error) {
 			}
 		}
 	}
-	cfg.NATS.Token = os.Getenv("NATS_TOKEN")
+	if value, err := secretEnv("NATS_TOKEN"); err != nil {
+		errs = append(errs, fmt.Sprintf("NATS_TOKEN: %v", err))
+	} else {
+		cfg.NATS.Token = value
+	}
 
 	if v, err := envBoolStrict("NATS_TLS_ENABLED"); err != nil {
 		errs = append(errs, fmt.Sprintf("NATS_TLS_ENABLED: %v", err))
@@ -488,8 +496,16 @@ func LoadOrchestratorConfig() (*OrchestratorConfig, error) {
 	}
 	cfg.Storage.KMSKeyID = os.Getenv("STORAGE_KMS_KEY_ID")
 
-	cfg.JWT.Secret = os.Getenv("JWT_SECRET")
-	cfg.Observability.MetricsToken = os.Getenv("STRATA_METRICS_TOKEN")
+	if value, err := secretEnv("JWT_SECRET"); err != nil {
+		errs = append(errs, fmt.Sprintf("JWT_SECRET: %v", err))
+	} else {
+		cfg.JWT.Secret = value
+	}
+	if value, err := secretEnv("STRATA_METRICS_TOKEN"); err != nil {
+		errs = append(errs, fmt.Sprintf("STRATA_METRICS_TOKEN: %v", err))
+	} else {
+		cfg.Observability.MetricsToken = value
+	}
 
 	if v := envStr("STRATA_API_ADDR", ""); v != "" {
 		cfg.HTTP.APIAddr = v
@@ -574,17 +590,47 @@ func LoadOrchestratorConfig() (*OrchestratorConfig, error) {
 	return cfg, nil
 }
 
-func resolveDSN() string {
-	if v := os.Getenv("TIMESCALE_DSN"); v != "" {
-		return v
+func resolveDSN() (string, error) {
+	for _, key := range []string{"TIMESCALE_DSN", "STRATA_DB_DSN", "DATABASE_URL"} {
+		value, err := secretEnv(key)
+		if err != nil {
+			return "", err
+		}
+		if value != "" {
+			return value, nil
+		}
 	}
-	if v := os.Getenv("STRATA_DB_DSN"); v != "" {
-		return v
+	return "postgres://localhost:5432/strata_rmm?sslmode=disable", nil
+}
+
+func secretEnv(key string) (string, error) {
+	direct := os.Getenv(key)
+	filePath := strings.TrimSpace(os.Getenv(key + "_FILE"))
+	if direct != "" && filePath != "" {
+		return "", fmt.Errorf("%s and %s_FILE are mutually exclusive", key, key)
 	}
-	if v := os.Getenv("DATABASE_URL"); v != "" {
-		return v
+	if filePath == "" {
+		return direct, nil
 	}
-	return "postgres://localhost:5432/strata_rmm?sslmode=disable"
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return "", fmt.Errorf("read secret file: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("secret file must be a regular file")
+	}
+	if info.Size() > 16<<10 {
+		return "", fmt.Errorf("secret file exceeds 16 KiB")
+	}
+	contents, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", fmt.Errorf("read secret file: %w", err)
+	}
+	value := strings.TrimSuffix(strings.TrimSuffix(string(contents), "\n"), "\r")
+	if value == "" {
+		return "", fmt.Errorf("secret file is empty")
+	}
+	return value, nil
 }
 
 func envStr(key, def string) string {
