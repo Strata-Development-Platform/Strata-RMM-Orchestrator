@@ -562,3 +562,33 @@ func setenv(t *testing.T, key, value string) {
 		}
 	})
 }
+
+func TestSecretEnvReadsFileWithoutLoggingValue(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(path, []byte("file-secret-value\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TEST_SECRET", "")
+	t.Setenv("TEST_SECRET_FILE", path)
+
+	got, err := secretEnv("TEST_SECRET")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "file-secret-value" {
+		t.Fatal("secret file value was not loaded")
+	}
+}
+
+func TestSecretEnvRejectsAmbiguousSources(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(path, []byte("file-secret-value"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TEST_SECRET", "environment-secret")
+	t.Setenv("TEST_SECRET_FILE", path)
+
+	if _, err := secretEnv("TEST_SECRET"); err == nil {
+		t.Fatal("expected direct and file secret sources to be rejected")
+	}
+}
