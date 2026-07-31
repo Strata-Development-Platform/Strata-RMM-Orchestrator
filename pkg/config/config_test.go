@@ -594,7 +594,6 @@ func TestSecretEnvRejectsAmbiguousSources(t *testing.T) {
 	}
 }
 
-
 func TestSecretEnvRejectsRelativeAndNonCanonicalPaths(t *testing.T) {
 	tests := []string{
 		"relative/secret",
