@@ -12,6 +12,7 @@ import (
 	"github.com/nats-io/nats.go"
 
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/agent/core"
+	"github.com/strata-rmm/strata-rmm-orchestrator/internal/reconnect"
 )
 
 type Client struct {
@@ -35,7 +36,9 @@ func NewClient(cfg *core.NATSConfig, ident *core.Identity, logger core.Logger) *
 func (c *Client) Connect(ctx context.Context) error {
 	opts := []nats.Option{
 		nats.Name(fmt.Sprintf("StrataRMM-Agent-%s", c.ident.AgentID)),
-		nats.ReconnectWait(c.cfg.ReconnectWait),
+		nats.CustomReconnectDelay(func(attempts int) time.Duration {
+			return reconnect.Delay(c.cfg.ReconnectWait, 2*time.Minute, attempts, nil)
+		}),
 		nats.MaxReconnects(c.cfg.MaxReconnects),
 		nats.RetryOnFailedConnect(true),
 		nats.DisconnectErrHandler(func(nc *nats.Conn, err error) {

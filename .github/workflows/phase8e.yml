@@ -1,0 +1,84 @@
+name: Phase 8E — Resilience Validation
+
+on:
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase8e-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static-validation:
+    name: Static Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Formatting
+        run: |
+          test -z "$(gofmt -l internal/resilience internal/reconnect cmd/resilience main.go internal/agent/comms/nats.go cmd/orchestrator/orchestrator.go)"
+      - name: Vet and build
+        run: |
+          go vet ./internal/resilience ./internal/reconnect ./cmd/resilience
+          go build ./...
+
+  threshold-contract:
+    name: Load Threshold Contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Verify pass, failure, percentile, and URL safety behavior
+        run: go test ./internal/resilience ./cmd/resilience -count=1 -race -v
+
+  reconnect-dispersion:
+    name: Reconnect Dispersion
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Verify capped exponential full-jitter reconnect delay
+        run: go test ./internal/reconnect ./internal/agent/comms -count=1 -race -v
+      - name: Verify reconnect policy is wired into both clients
+        run: |
+          grep -q 'CustomReconnectDelay' internal/agent/comms/nats.go
+          grep -q 'CustomReconnectDelay' cmd/orchestrator/orchestrator.go
+
+  degraded-readiness:
+    name: Degraded Readiness Contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Verify dependency degradation and recovery contracts
+        run: |
+          go test ./internal/platform -count=1 -race -v \
+            -run 'TestHealth|TestReadiness|Test.*Storage.*Health|Test.*Dispatcher.*Health'
+
+  evidence-safety:
+    name: Evidence and Secret Safety
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Verify machine-readable output excludes credentials
+        run: |
+          go test ./internal/resilience -count=1 -race -v \
+            -run 'TestLoadRunnerPassesBoundedThresholdsWithoutLeakingToken|TestLoadRunnerRejectsUnsafeConfiguration'
+          ! grep -R -E 'Bearer [A-Za-z0-9._-]{20,}|password[=:][^[:space:]]+' \
+            docs/PHASE_8E_EVIDENCE.md docs/RESILIENCE_TESTING.md

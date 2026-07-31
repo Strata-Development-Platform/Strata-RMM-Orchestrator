@@ -14,6 +14,7 @@ import (
 	"github.com/strata-rmm/strata-rmm-orchestrator/cmd/agent"
 	"github.com/strata-rmm/strata-rmm-orchestrator/cmd/orchestrator"
 	"github.com/strata-rmm/strata-rmm-orchestrator/cmd/probe"
+	resiliencecmd "github.com/strata-rmm/strata-rmm-orchestrator/cmd/resilience"
 	syntheticcmd "github.com/strata-rmm/strata-rmm-orchestrator/cmd/synthetic"
 )
 
@@ -68,6 +69,7 @@ Components:
 		agent.NewCommand(ctx, logger),
 		orchestrator.NewCommand(ctx, version, commit, logger),
 		probe.NewCommand(ctx, logger),
+		resiliencecmd.NewCommand(ctx),
 		syntheticcmd.NewCommand(ctx),
 	)
 
