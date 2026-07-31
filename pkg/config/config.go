@@ -2,9 +2,11 @@ package config
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -612,9 +614,21 @@ func secretEnv(key string) (string, error) {
 	if filePath == "" {
 		return direct, nil
 	}
-	info, err := os.Stat(filePath)
+	if !filepath.IsAbs(filePath) || filepath.Clean(filePath) != filePath {
+		return "", fmt.Errorf("secret file path must be absolute and canonical")
+	}
+
+	// The operator explicitly supplies this absolute configuration path. The
+	// validation above rejects relative and non-canonical traversal forms.
+	file, err := os.Open(filePath) // #nosec G703 -- validated operator configuration path
 	if err != nil {
 		return "", fmt.Errorf("read secret file: %w", err)
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil {
+		return "", fmt.Errorf("stat secret file: %w", err)
 	}
 	if !info.Mode().IsRegular() {
 		return "", fmt.Errorf("secret file must be a regular file")
@@ -622,9 +636,12 @@ func secretEnv(key string) (string, error) {
 	if info.Size() > 16<<10 {
 		return "", fmt.Errorf("secret file exceeds 16 KiB")
 	}
-	contents, err := os.ReadFile(filePath)
+	contents, err := io.ReadAll(io.LimitReader(file, (16<<10)+1))
 	if err != nil {
 		return "", fmt.Errorf("read secret file: %w", err)
+	}
+	if len(contents) > 16<<10 {
+		return "", fmt.Errorf("secret file exceeds 16 KiB")
 	}
 	value := strings.TrimSuffix(strings.TrimSuffix(string(contents), "\n"), "\r")
 	if value == "" {
