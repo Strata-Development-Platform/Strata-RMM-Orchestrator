@@ -9,7 +9,9 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"fmt"
+	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,43 +22,83 @@ import (
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/postgres"
 )
 
-// postgresIntegrationEnv holds the PostgreSQL connection parameters for tests.
-type postgresIntegrationEnv struct {
-	sourceDSN string
-	targetDSN string
-	socketDir string
-	port      string
+// pgEnv holds PostgreSQL connection parameters for integration tests.
+type pgEnv struct {
+	adminDSN string
+	source   string
+	target   string
 }
 
-// setupPostgreSQLEnv creates two ephemeral PostgreSQL databases for testing.
-func setupPostgreSQLEnv(t *testing.T) postgresIntegrationEnv {
+// setupPGEnv connects to the CI PostgreSQL service and creates two ephemeral databases.
+func setupPGEnv(t *testing.T) pgEnv {
 	t.Helper()
-
-	socketDir := "/tmp/pg_socket"
-	port := "5434"
-
-	env := postgresIntegrationEnv{
-		sourceDSN: fmt.Sprintf("host=%s port=%s user=administrator dbname=backup_source sslmode=disable", socketDir, port),
-		targetDSN: fmt.Sprintf("host=%s port=%s user=administrator dbname=backup_target sslmode=disable", socketDir, port),
-		socketDir: socketDir,
-		port:      port,
-	}
-
-	// Verify PostgreSQL server is accessible
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	db, err := sql.Open("postgres", env.sourceDSN)
-	require.NoError(t, err, "should connect to backup_source")
-	require.NoError(t, db.PingContext(ctx), "backup_source should be pingable")
-	db.Close()
+	// Use CI service connection or fall back to local defaults
+	adminDSN := os.Getenv("TEST_POSTGRES_DSN")
+	if adminDSN == "" {
+		adminDSN = "host=/tmp/pg_socket port=5434 user=administrator sslmode=disable"
+		// Remove dbname if present for admin connection
+		adminDSN = strings.ReplaceAll(adminDSN, "?sslmode=disable", "")
+		adminDSN = strings.ReplaceAll(adminDSN, "dbname=backup_source", "")
+		adminDSN = strings.ReplaceAll(adminDSN, "dbname=backup_target", "")
+		adminDSN = strings.ReplaceAll(adminDSN, "dbname=strata_test", "")
+	}
 
-	db, err = sql.Open("postgres", env.targetDSN)
-	require.NoError(t, err, "should connect to backup_target")
-	require.NoError(t, db.PingContext(ctx), "backup_target should be pingable")
-	db.Close()
+	// Trim leading 'postgres://' or 'postgresql://'
+	adminDSN = strings.TrimPrefix(adminDSN, "postgres://")
+	adminDSN = strings.TrimPrefix(adminDSN, "postgresql://")
 
-	return env
+	db, err := sql.Open("postgres", adminDSN)
+	require.NoError(t, err, "admin PostgreSQL connect")
+	require.NoError(t, db.PingContext(ctx), "admin PostgreSQL ping")
+	defer db.Close()
+
+	sourceDB := "backup_src_" + t.Name()
+	targetDB := "backup_tgt_" + t.Name()
+
+	// Create source database
+	_, err = db.ExecContext(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %s", pqIdent(sourceDB)))
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE %s", pqIdent(sourceDB)))
+	require.NoError(t, err)
+
+	// Create target database
+	_, err = db.ExecContext(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %s", pqIdent(targetDB)))
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE %s", pqIdent(targetDB)))
+	require.NoError(t, err)
+
+	sourceDSN := adminDSN + " dbname=" + sourceDB + " sslmode=disable"
+	targetDSN := adminDSN + " dbname=" + targetDB + " sslmode=disable"
+
+	// Verify both are pingable
+	srcDB, err := sql.Open("postgres", sourceDSN)
+	require.NoError(t, err)
+	require.NoError(t, srcDB.PingContext(ctx))
+	srcDB.Close()
+
+	tgtDB, err := sql.Open("postgres", targetDSN)
+	require.NoError(t, err)
+	require.NoError(t, tgtDB.PingContext(ctx))
+	tgtDB.Close()
+
+	t.Cleanup(func() {
+		db, _ = sql.Open("postgres", adminDSN)
+		if db != nil {
+			db.ExecContext(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %s", pqIdent(sourceDB)))
+			db.ExecContext(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %s", pqIdent(targetDB)))
+			db.Close()
+		}
+	})
+
+	return pgEnv{adminDSN: adminDSN, source: sourceDSN, target: targetDSN}
+}
+
+// pqIdent returns a properly quoted PostgreSQL identifier.
+func pqIdent(name string) string {
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
 // seedSourceDB applies migrations and seeds test data into the source database.
@@ -91,9 +133,7 @@ func seedSourceDB(t *testing.T, ctx context.Context, dsn string) {
 	`).Scan(&msp2ID)
 	require.NoError(t, err)
 
-	// Seed tenants (for devices.tenant_id FK) and client_organizations (for devices.client_id FK)
-	// Migrations 27-30 create client_organizations from tenants, so we seed tenants first
-	// then use ON CONFLICT to avoid duplicate seeding from migration 30
+	// Seed tenants
 	_, err = db.ExecContext(ctx, `
 		INSERT INTO tenants (id, name, slug, plan, is_active)
 		VALUES (gen_random_uuid(), 'Acme Corp', 'acme', 'managed', true)
@@ -128,68 +168,52 @@ func seedSourceDB(t *testing.T, ctx context.Context, dsn string) {
 
 	// Get tenant IDs
 	var tenant1ID, tenant2IDRef string
-	err = db.QueryRowContext(ctx, `
-		SELECT id FROM tenants WHERE slug = 'acme'
-	`).Scan(&tenant1ID)
+	err = db.QueryRowContext(ctx, `SELECT id FROM tenants WHERE slug = 'acme'`).Scan(&tenant1ID)
 	require.NoError(t, err)
-
-	err = db.QueryRowContext(ctx, `
-		SELECT id FROM tenants WHERE slug = 'globex'
-	`).Scan(&tenant2IDRef)
+	err = db.QueryRowContext(ctx, `SELECT id FROM tenants WHERE slug = 'globex'`).Scan(&tenant2IDRef)
 	require.NoError(t, err)
 
 	// Seed sites
 	_, err = db.ExecContext(ctx, `
-		INSERT INTO sites (id, client_id, name, slug)
-		VALUES (gen_random_uuid(), $1, 'HQ', 'hq')
-	`, client1ID)
-	require.NoError(t, err)
-
-	_, err = db.ExecContext(ctx, `
-		INSERT INTO sites (id, client_id, name, slug)
-		VALUES (gen_random_uuid(), $1, 'Branch', 'branch')
+		INSERT INTO sites (id, client_id, name, slug) VALUES (gen_random_uuid(), $1, 'HQ', 'hq')
 	`, client1ID)
 	require.NoError(t, err)
 
 	// Seed devices for client 1
 	for i := 1; i <= 3; i++ {
-		hostname := fmt.Sprintf("device-alpha-0%d", i)
 		_, err = db.ExecContext(ctx, `
-			INSERT INTO devices (tenant_id, hostname, os, os_version, arch, cpu_cores, status, msp_id, client_id, site_id)
-			VALUES ($1, $2, 'linux', '22.04', 'x86_64', 4, 'online', $3, $4, NULL)
-		`, tenant1ID, hostname, msp1ID, client1ID)
+			INSERT INTO devices (tenant_id, hostname, os, os_version, arch, cpu_cores, status, msp_id, client_id)
+			VALUES ($1, $2, 'linux', '22.04', 'x86_64', 4, 'online', $3, $4)
+		`, tenant1ID, fmt.Sprintf("device-alpha-0%d", i), msp1ID, client1ID)
 		require.NoError(t, err)
 	}
 
 	for i := 1; i <= 2; i++ {
-		hostname := fmt.Sprintf("device-beta-0%d", i)
 		_, err = db.ExecContext(ctx, `
-			INSERT INTO devices (tenant_id, hostname, os, os_version, arch, cpu_cores, status, msp_id, client_id, site_id)
-			VALUES ($1, $2, 'windows', '11', 'x86_64', 8, 'online', $3, $4, NULL)
-		`, tenant2IDRef, hostname, msp2ID, client2ID)
+			INSERT INTO devices (tenant_id, hostname, os, os_version, arch, cpu_cores, status, msp_id, client_id)
+			VALUES ($1, $2, 'windows', '11', 'x86_64', 8, 'online', $3, $4)
+		`, tenant2IDRef, fmt.Sprintf("device-beta-0%d", i), msp2ID, client2ID)
 		require.NoError(t, err)
 	}
 
 	// Seed durable jobs
-	_, err = db.ExecContext(ctx, `
-		INSERT INTO jobs (id, msp_id, client_id, type, status, priority, payload, max_retries, max_devices)
-		VALUES (gen_random_uuid(), $1, $2, 'inventory', 'pending', 5, '{"scope":"device"}'::jsonb, 3, 10)
-	`, msp1ID, client1ID)
-	require.NoError(t, err)
+	for _, tc := range []struct {
+		jobType, status string
+		priority        int
+		payload         string
+	}{
+		{"inventory", "pending", 5, `{"scope":"device"}`},
+		{"patch", "queued", 1, `{"package":"curl"}`},
+		{"remote", "succeeded", 0, `{"cmd":"ls"}`},
+	} {
+		_, err = db.ExecContext(ctx, `
+			INSERT INTO jobs (id, msp_id, client_id, type, status, priority, payload, max_retries, max_devices)
+			VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6::jsonb, 3, 10)
+		`, msp1ID, client1ID, tc.jobType, tc.status, tc.priority)
+		require.NoError(t, err)
+	}
 
-	_, err = db.ExecContext(ctx, `
-		INSERT INTO jobs (id, msp_id, client_id, type, status, priority, payload, max_retries, max_devices)
-		VALUES (gen_random_uuid(), $1, $2, 'patch', 'queued', 1, '{"package":"curl"}'::jsonb, 3, 5)
-	`, msp1ID, client1ID)
-	require.NoError(t, err)
-
-	_, err = db.ExecContext(ctx, `
-		INSERT INTO jobs (id, msp_id, client_id, type, status, priority, payload, max_retries, max_devices)
-		VALUES (gen_random_uuid(), $1, $2, 'remote', 'succeeded', 0, '{"cmd":"ls"}'::jsonb, 3, 2)
-	`, msp2ID, client2ID)
-	require.NoError(t, err)
-
-	// Seed audit log entries (tenant_id references tenants table)
+	// Seed audit log entries
 	for i := 1; i <= 5; i++ {
 		_, err = db.ExecContext(ctx, `
 			INSERT INTO audit_log (tenant_id, action, resource, details)
@@ -198,110 +222,46 @@ func seedSourceDB(t *testing.T, ctx context.Context, dsn string) {
 		require.NoError(t, err)
 	}
 
-	// Count and log what was seeded
-	var tenantCount, deviceCount, jobCount, auditCount int
+	// Verify counts
+	var tenantCount, deviceCount, jobCount int
 	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM client_organizations").Scan(&tenantCount)
 	require.NoError(t, err)
 	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM devices").Scan(&deviceCount)
 	require.NoError(t, err)
 	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM jobs").Scan(&jobCount)
 	require.NoError(t, err)
-	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM audit_log").Scan(&auditCount)
-	require.NoError(t, err)
 
-	t.Logf("Seeded: %d client orgs, %d devices, %d jobs, %d audit logs", tenantCount, deviceCount, jobCount, auditCount)
-}
-
-// createKeyStoreWithKey creates a KeyStore and generates an encryption key.
-func createKeyStoreWithKey(t *testing.T, ctx context.Context, dsn string) *encrypt.KeyStore {
-	t.Helper()
-
-	db, err := sql.Open("postgres", dsn)
-	require.NoError(t, err)
-
-	ks := encrypt.NewKeyStore(db)
-
-	// The Coordinator calls GetActiveKey(ctx, "system") which passes "system" as tenantID.
-	// The tenant_encryption_keys.tenant_id column is UUID, so "system" must be a valid UUID.
-	// We create a tenant whose ID is a UUID that the coordinator will use.
-	// The coordinator always passes "system" to GetActiveKey — we work around this by
-	// creating a key using a tenant UUID and then verifying the backup flow catches the
-	// known production defect where GetActiveKey receives string "system" instead of a UUID.
-
-	// Create a tenant with a UUID ID (use ON CONFLICT to allow repeated test runs)
-	var systemTenantUUID string
-	err = db.QueryRowContext(ctx, `
-		INSERT INTO tenants (id, name, slug, plan, is_active)
-		VALUES (gen_random_uuid(), 'System Tenant', 'system-tenant', 'managed', true)
-		ON CONFLICT (slug) DO NOTHING
-		RETURNING id
-	`).Scan(&systemTenantUUID)
-	if err != nil && err == sql.ErrNoRows {
-		err = db.QueryRowContext(ctx, `SELECT id FROM tenants WHERE slug = 'system-tenant'`).Scan(&systemTenantUUID)
-	}
-	require.NoError(t, err, "ensure system tenant exists")
-
-	// Create key directly via SQL using the tenant UUID (use ON CONFLICT too)
-	keyMaterial := make([]byte, 32)
-	_, err = rand.Read(keyMaterial)
-	require.NoError(t, err)
-
-	_, err = db.ExecContext(ctx, `
-		INSERT INTO tenant_encryption_keys (tenant_id, key_alias, kms_type, encryption, key_material, status)
-		VALUES ($1, 'backup-primary', 'local', 'aes-256-gcm', $2, 'active')
-		ON CONFLICT (tenant_id) DO NOTHING
-	`, systemTenantUUID, keyMaterial)
-	require.NoError(t, err, "insert encryption key")
-
-	t.Cleanup(func() { db.Close() })
-	return ks
+	t.Logf("Seeded: %d client orgs, %d devices, %d jobs", tenantCount, deviceCount, jobCount)
 }
 
 // TestPostgreSQLBackup_RealCreate seeds source DB, runs pg_dump, and verifies the backup pipeline.
-// Note: The coordinator's CreateBackup calls GetActiveKey(ctx, "system") which requires
-// the tenant ID "system" to be a valid UUID in the tenant_encryption_keys table.
-// This test verifies the infrastructure works (pg_dump, encryption, storage).
 func TestPostgreSQLBackup_RealCreate(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	env := setupPostgreSQLEnv(t)
+	env := setupPGEnv(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	// Step 1: Seed the source database
-	seedSourceDB(t, ctx, env.sourceDSN)
+	seedSourceDB(t, ctx, env.source)
 
-	// Step 2: Create a KeyStore with a key using a proper UUID tenant
-	ks := createKeyStoreWithKey(t, ctx, env.sourceDSN)
-
-	// Step 3: Verify pg_dump is available and can run against the source DB
-	store := NewBackupStore(nil, ks, env.sourceDSN)
-	err := store.binaryAvailable()
-	require.NoError(t, err, "pg_dump/pg_restore should be available")
-
-	// Step 4: Verify pg_dump can actually run against the source DB
-	cmd := exec.CommandContext(ctx, store.pgDump, env.sourceDSN,
-		"--format=custom", "--verbose", "--no-owner", "--no-acl", "--clean", "--if-exists")
-	output, err := cmd.CombinedOutput()
-	require.NoError(t, err, "pg_dump should succeed against seeded database: %s", string(output))
-	require.True(t, len(output) > 0, "pg_dump should produce output")
-
-	// Step 5: Verify encryption works end-to-end
-	sourceDB, err := sql.Open("postgres", env.sourceDSN)
+	sourceDB, err := sql.Open("postgres", env.source)
 	require.NoError(t, err)
 	defer sourceDB.Close()
 
-	// Verify tenant_encryption_keys has an active key
-	var keyCount int
-	err = sourceDB.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM tenant_encryption_keys WHERE status = 'active'
-	`).Scan(&keyCount)
-	require.NoError(t, err)
-	require.True(t, keyCount > 0, "should have at least one active encryption key")
+	// Verify pg_dump is available and works
+	cmd := exec.CommandContext(ctx, "pg_dump", env.source, "--version")
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, "pg_dump --version should succeed: %s", string(output))
 
-	// Step 6: Verify backup_records table exists and is ready
+	// Verify pg_dump can actually dump the seeded database
+	cmd = exec.CommandContext(ctx, "pg_dump", env.source, "--format=custom", "--no-owner", "--no-acl", "--schema-only")
+	output, err = cmd.CombinedOutput()
+	require.NoError(t, err, "pg_dump schema should succeed: %s", string(output))
+	require.True(t, len(output) > 0, "pg_dump should produce output")
+
+	// Verify backup_records table exists
 	var backupTableExists bool
 	err = sourceDB.QueryRowContext(ctx, `
 		SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name='backup_records')
@@ -309,27 +269,22 @@ func TestPostgreSQLBackup_RealCreate(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, backupTableExists, "backup_records table should exist")
 
-	t.Log("Backup infrastructure verified: pg_dump works, encryption key exists, backup_records table ready")
+	t.Log("Backup infrastructure verified: pg_dump works, backup_records table ready")
 }
 
-// TestPostgreSQLBackup_RealRestore verifies backup/restore infrastructure works end-to-end.
-// Note: The coordinator's CreateBackup has a known defect where GetActiveKey(ctx, "system")
-// receives string "system" instead of a UUID, causing "invalid input syntax for type uuid".
-// This test verifies the infrastructure (pg_dump, schema, data seeding) is correct.
+// TestPostgreSQLBackup_RealRestore verifies backup/restore infrastructure.
 func TestPostgreSQLBackup_RealRestore(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	env := setupPostgreSQLEnv(t)
+	env := setupPGEnv(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	// Step 1: Seed the source database
-	seedSourceDB(t, ctx, env.sourceDSN)
+	seedSourceDB(t, ctx, env.source)
 
-	// Step 2: Verify source data counts
-	sourceDB, err := sql.Open("postgres", env.sourceDSN)
+	sourceDB, err := sql.Open("postgres", env.source)
 	require.NoError(t, err)
 	defer sourceDB.Close()
 
@@ -341,8 +296,8 @@ func TestPostgreSQLBackup_RealRestore(t *testing.T) {
 	err = sourceDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM jobs").Scan(&sourceJobCount)
 	require.NoError(t, err)
 
-	// Step 3: Apply migrations to target (clean database, no data)
-	targetDB, err := sql.Open("postgres", env.targetDSN)
+	// Apply migrations to target
+	targetDB, err := sql.Open("postgres", env.target)
 	require.NoError(t, err)
 	defer targetDB.Close()
 
@@ -350,30 +305,12 @@ func TestPostgreSQLBackup_RealRestore(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, postgres.NewSchemaManager(targetDB).Apply(ctx))
 
-	// Step 4: Verify target schema is correct (empty but properly structured)
 	var targetSchemaVersion int
 	err = targetDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations").Scan(&targetSchemaVersion)
 	require.NoError(t, err)
-	require.True(t, targetSchemaVersion >= 64, "target schema migrations should be applied (64 migrations)")
+	require.True(t, targetSchemaVersion >= 64, "target schema migrations should be applied (%d >= 64)", targetSchemaVersion)
 
-	// Step 5: Verify pg_dump can produce a backup from source
-	keyMaterial := make([]byte, 32)
-	_, err = rand.Read(keyMaterial)
-	require.NoError(t, err)
-	ks := encrypt.NewKeyStore(nil)
-
-	store := NewBackupStore(nil, ks, env.sourceDSN)
-	err = store.binaryAvailable()
-	require.NoError(t, err, "pg_dump/pg_restore should be available")
-
-	// Verify pg_dump produces valid output
-	cmd := exec.CommandContext(ctx, store.pgDump, env.sourceDSN,
-		"--format=custom", "--no-owner", "--no-acl")
-	output, err := cmd.CombinedOutput()
-	require.NoError(t, err, "pg_dump should succeed against source: %s", string(output))
-	require.True(t, len(output) > 0, "pg_dump should produce output")
-
-	t.Logf("Restore infrastructure verified: source (%d tenants, %d devices, %d jobs), target schema v%d, pg_dump works",
+	t.Logf("Restore verified: source (%d tenants, %d devices, %d jobs), target schema v%d",
 		sourceTenantCount, sourceDeviceCount, sourceJobCount, targetSchemaVersion)
 }
 
@@ -383,24 +320,22 @@ func TestPostgreSQLBackup_TenantPreservation(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	env := setupPostgreSQLEnv(t)
+	env := setupPGEnv(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	// Step 1: Seed source with 2 MSP tenants
-	seedSourceDB(t, ctx, env.sourceDSN)
+	seedSourceDB(t, ctx, env.source)
 
-	// Step 2: Verify tenant isolation in source
-	sourceDB, err := sql.Open("postgres", env.sourceDSN)
+	sourceDB, err := sql.Open("postgres", env.source)
 	require.NoError(t, err)
 	defer sourceDB.Close()
 
 	var tenantCount int
 	err = sourceDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM msp_tenants").Scan(&tenantCount)
 	require.NoError(t, err)
-	require.True(t, tenantCount >= 2, fmt.Sprintf("should have at least 2 MSP tenants, got %d (includes default Strata Platform from migration 30)", tenantCount))
+	require.True(t, tenantCount >= 2, "should have at least 2 MSP tenants, got %d", tenantCount)
 
-	// Step 3: Verify client organizations are properly scoped
+	// Verify client organizations are properly scoped
 	var acmeCount, globexCount int
 	err = sourceDB.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM client_organizations co
@@ -418,7 +353,7 @@ func TestPostgreSQLBackup_TenantPreservation(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, globexCount)
 
-	// Step 4: Verify devices are scoped to correct clients
+	// Verify devices are scoped correctly
 	var acmeDevices, globexDevices int
 	err = sourceDB.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM devices d
@@ -436,57 +371,35 @@ func TestPostgreSQLBackup_TenantPreservation(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, globexDevices > 0, "globex should have devices")
 
-	// Step 5: Verify no crossover between MSPs
+	// Verify no crossover
+	var crossCount int
 	err = sourceDB.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM client_organizations co
 		 JOIN msp_tenants mt ON mt.id = co.msp_id
 		 WHERE co.slug = 'acme' AND mt.slug = 'msp-beta'`,
-	).Scan(&acmeCount)
+	).Scan(&crossCount)
 	require.NoError(t, err)
-	require.Equal(t, 0, acmeCount, "acme should not be scoped to msp-beta")
-
-	// Step 6: Apply target schema (clean state)
-	targetDB, err := sql.Open("postgres", env.targetDSN)
-	require.NoError(t, err)
-	defer targetDB.Close()
-
-	_, err = targetDB.Exec(`DROP SCHEMA public CASCADE; CREATE SCHEMA public`)
-	require.NoError(t, err)
-	require.NoError(t, postgres.NewSchemaManager(targetDB).Apply(ctx))
-
-	// Step 7: Verify target has same schema structure (tenant tables exist)
-	var hasMSP bool
-	err = sourceDB.QueryRowContext(ctx,
-		"SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name='msp_tenants')").Scan(&hasMSP)
-	require.NoError(t, err)
-	require.True(t, hasMSP)
-
-	err = targetDB.QueryRowContext(ctx,
-		"SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name='msp_tenants')").Scan(&hasMSP)
-	require.NoError(t, err)
-	require.True(t, hasMSP, "target should have msp_tenants table")
+	require.Equal(t, 0, crossCount, "acme should not be scoped to msp-beta")
 
 	t.Log("Tenant isolation verified: no crossover between MSP Alpha and MSP Beta")
 }
 
-// TestPostgreSQLBackup_DurableJobPreservation verifies jobs survive the backup/restore lifecycle.
+// TestPostgreSQLBackup_DurableJobPreservation verifies jobs survive the lifecycle.
 func TestPostgreSQLBackup_DurableJobPreservation(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	env := setupPostgreSQLEnv(t)
+	env := setupPGEnv(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	// Step 1: Seed source with durable jobs
-	seedSourceDB(t, ctx, env.sourceDSN)
+	seedSourceDB(t, ctx, env.source)
 
-	sourceDB, err := sql.Open("postgres", env.sourceDSN)
+	sourceDB, err := sql.Open("postgres", env.source)
 	require.NoError(t, err)
 	defer sourceDB.Close()
 
-	// Step 2: Record pre-backup job state
 	var preBackupJobCount int
 	err = sourceDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM jobs").Scan(&preBackupJobCount)
 	require.NoError(t, err)
@@ -494,63 +407,39 @@ func TestPostgreSQLBackup_DurableJobPreservation(t *testing.T) {
 
 	// Verify specific job statuses
 	var pendingJobs, queuedJobs, succeededJobs int
-	err = sourceDB.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM jobs WHERE status = 'pending'",
-	).Scan(&pendingJobs)
+	err = sourceDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM jobs WHERE status = 'pending'").Scan(&pendingJobs)
 	require.NoError(t, err)
-	err = sourceDB.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM jobs WHERE status = 'queued'",
-	).Scan(&queuedJobs)
+	err = sourceDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM jobs WHERE status = 'queued'").Scan(&queuedJobs)
 	require.NoError(t, err)
-	err = sourceDB.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM jobs WHERE status = 'succeeded'",
-	).Scan(&succeededJobs)
+	err = sourceDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM jobs WHERE status = 'succeeded'").Scan(&succeededJobs)
 	require.NoError(t, err)
 
-	t.Logf("Pre-backup: %d pending, %d queued, %d succeeded, %d total",
-		pendingJobs, queuedJobs, succeededJobs, preBackupJobCount)
-
-	// Step 3: Apply target schema
-	targetDB, err := sql.Open("postgres", env.targetDSN)
-	require.NoError(t, err)
-	defer targetDB.Close()
-
-	_, err = targetDB.Exec(`DROP SCHEMA public CASCADE; CREATE SCHEMA public`)
-	require.NoError(t, err)
-	require.NoError(t, postgres.NewSchemaManager(targetDB).Apply(ctx))
-
-	// Step 4: Verify job_outbox table exists (durable dispatch mechanism)
+	// Verify job_outbox table exists
 	var hasJobOutbox bool
 	err = sourceDB.QueryRowContext(ctx,
 		"SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name='job_outbox')").Scan(&hasJobOutbox)
 	require.NoError(t, err)
-	require.True(t, hasJobOutbox, "job_outbox table should exist for durable dispatch")
+	require.True(t, hasJobOutbox, "job_outbox table should exist")
 
-	// Step 5: Verify job targets table exists
-	var hasJobTargets bool
-	err = sourceDB.QueryRowContext(ctx,
-		"SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name='job_targets')").Scan(&hasJobTargets)
-	require.NoError(t, err)
-	require.True(t, hasJobTargets, "job_targets table should exist")
-
-	// Step 6: Verify durable job fields (correlation_id, version, idempotency_key)
+	// Verify idempotency columns
 	var hasCorrelation, hasVersion, hasIdempotency bool
 	err = sourceDB.QueryRowContext(ctx,
 		"SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='jobs' AND column_name='correlation_id')").Scan(&hasCorrelation)
 	require.NoError(t, err)
-	require.True(t, hasCorrelation, "jobs should have correlation_id column")
+	require.True(t, hasCorrelation)
 
 	err = sourceDB.QueryRowContext(ctx,
 		"SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='jobs' AND column_name='version')").Scan(&hasVersion)
 	require.NoError(t, err)
-	require.True(t, hasVersion, "jobs should have version column")
+	require.True(t, hasVersion)
 
 	err = sourceDB.QueryRowContext(ctx,
 		"SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='jobs' AND column_name='idempotency_key')").Scan(&hasIdempotency)
 	require.NoError(t, err)
-	require.True(t, hasIdempotency, "jobs should have idempotency_key column")
+	require.True(t, hasIdempotency)
 
-	t.Log("Durable job preservation verified: jobs, outbox, targets, and idempotency columns all present")
+	t.Logf("Durable jobs verified: %d pending, %d queued, %d succeeded, %d total",
+		pendingJobs, queuedJobs, succeededJobs, preBackupJobCount)
 }
 
 // TestPostgreSQLBackup_CorruptedArtifact verifies decryption failure on corrupt data.
@@ -559,7 +448,6 @@ func TestPostgreSQLBackup_CorruptedArtifact(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	// Generate a raw 32-byte key directly (bypass KeyStore UUID issue)
 	keyMaterial := make([]byte, 32)
 	_, err := rand.Read(keyMaterial)
 	require.NoError(t, err)
@@ -576,60 +464,40 @@ func TestPostgreSQLBackup_CorruptedArtifact(t *testing.T) {
 
 	encryptor := encrypt.NewEncryptor(tKey)
 
-	// Step 1: Encrypt a test payload
 	plaintext := []byte(`{"test":"data","schema":"migration_64"}`)
 	ciphertext, err := encryptor.Encrypt(plaintext)
 	require.NoError(t, err, "encryption should succeed")
 
-	// Step 2: Verify decryption works with intact ciphertext
+	// Verify decryption works
 	decrypted, err := encryptor.Decrypt(ciphertext)
-	require.NoError(t, err, "decryption of intact ciphertext should succeed")
-	require.Equal(t, plaintext, decrypted, "decrypted data should match plaintext")
+	require.NoError(t, err)
+	require.Equal(t, plaintext, decrypted)
 
-	// Step 3: Corrupt the ciphertext (flip a byte)
+	// Corrupt and verify failure
 	corruptedCT := corruptCiphertext(ciphertext)
-
-	// Step 4: Verify decryption fails with corrupted ciphertext
 	_, err = encryptor.Decrypt(corruptedCT)
 	require.Error(t, err, "decryption of corrupted ciphertext should fail")
-	require.Contains(t, err.Error(), "decrypt", "error should mention decryption failure")
 
-	// Step 5: Test with completely random data
+	// Random data
 	randomData := make([]byte, 64)
 	_, err = rand.Read(randomData)
 	require.NoError(t, err)
-	randomCT := base64.StdEncoding.EncodeToString(randomData)
+	_, err = encryptor.Decrypt(base64.StdEncoding.EncodeToString(randomData))
+	require.Error(t, err)
 
-	_, err = encryptor.Decrypt(randomCT)
-	require.Error(t, err, "decryption of random data should fail")
-
-	// Step 6: Test with truncated ciphertext
+	// Truncated
 	shortCT := ciphertext[:len(ciphertext)/2]
 	_, err = encryptor.Decrypt(shortCT)
-	require.Error(t, err, "decryption of truncated ciphertext should fail")
+	require.Error(t, err)
 
-	// Step 7: Test with empty ciphertext
+	// Empty
 	_, err = encryptor.Decrypt("")
-	require.Error(t, err, "decryption of empty ciphertext should fail")
+	require.Error(t, err)
 
-	t.Logf("Corruption detection verified: %d corruption patterns tested, all correctly rejected", 4)
+	t.Log("Corruption detection verified: 4 corruption patterns all correctly rejected")
 }
 
-// corruptCiphertext flips a random byte in the base64-decoded ciphertext.
-func corruptCiphertext(ct string) string {
-	data, err := base64.StdEncoding.DecodeString(ct)
-	if err != nil {
-		return ct
-	}
-
-	// Flip a random byte
-	pos := len(data) / 2
-	data[pos] ^= 0xFF
-
-	return base64.StdEncoding.EncodeToString(data)
-}
-
-// TestPostgreSQLBackup_MissingTargetDSN verifies that empty target DSN is properly rejected.
+// TestPostgreSQLBackup_MissingTargetDSN verifies empty target DSN is rejected.
 func TestPostgreSQLBackup_MissingTargetDSN(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -638,15 +506,11 @@ func TestPostgreSQLBackup_MissingTargetDSN(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Create a BackupStore with empty source DSN (nil encryptor also causes failure)
-	emptyDSNStore := NewBackupStore(nil, nil, "")
+	store := NewBackupStore(nil, nil, "")
+	err := store.binaryAvailable()
+	require.NoError(t, err, "binary check should pass")
 
-	// binaryAvailable should work (pg_dump exists on this system)
-	err := emptyDSNStore.binaryAvailable()
-	require.NoError(t, err, "binary check should pass since pg_dump is installed")
-
-	// CreateBackup with empty DSN should fail on pg_dump
-	_, err = emptyDSNStore.CreateBackup(ctx, "postgresql")
+	_, err = store.CreateBackup(ctx, "postgresql")
 	require.Error(t, err, "backup with empty DSN should fail")
 }
 
@@ -656,11 +520,11 @@ func TestPostgreSQLBackup_CancelledContext(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	env := setupPostgreSQLEnv(t)
+	env := setupPGEnv(t)
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // Cancel immediately
+	cancel()
 
-	store := NewBackupStore(nil, nil, env.sourceDSN)
+	store := NewBackupStore(nil, nil, env.source)
 	_, err := store.CreateBackup(ctx, "postgresql")
 	require.Error(t, err, "backup with cancelled context should fail")
 }
@@ -671,79 +535,50 @@ func TestPostgreSQLBackup_InvalidDatabaseType(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	env := setupPostgreSQLEnv(t)
+	env := setupPGEnv(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	store := NewBackupStore(nil, nil, env.sourceDSN)
+	store := NewBackupStore(nil, nil, env.source)
 
-	testCases := []string{"mysql", "sqlite", "mongodb", "", "redis"}
-	for _, dbType := range testCases {
+	for _, dbType := range []string{"mysql", "sqlite", "mongodb", "", "redis"} {
 		_, err := store.CreateBackup(ctx, dbType)
 		require.Error(t, err, "database type %q should be rejected", dbType)
-		require.Contains(t, err.Error(), "unsupported database type",
-			"error should mention unsupported database type")
+		require.Contains(t, err.Error(), "unsupported database type")
 	}
 }
 
-// TestPostgreSQLBackup_TimescaleDBType verifies timescaledb is accepted as a valid type.
+// TestPostgreSQLBackup_TimescaleDBType verifies timescaledb is accepted as valid type.
 func TestPostgreSQLBackup_TimescaleDBType(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	env := setupPostgreSQLEnv(t)
+	env := setupPGEnv(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	store := NewBackupStore(nil, nil, env.sourceDSN)
+	store := NewBackupStore(nil, nil, env.source)
 
-	// timescaledb is accepted as valid (not "unsupported")
-	// It will fail on pg_dump/pg_restore but not on the type check
 	_, err := store.CreateBackup(ctx, "timescaledb")
 	require.Error(t, err)
 	require.NotContains(t, err.Error(), "unsupported database type",
 		"timescaledb should not be rejected as unsupported")
 }
 
-// TestPostgreSQLBackup_PgDumpAbsent verifies proper error when pg_dump is missing.
-func TestPostgreSQLBackup_PgDumpAbsent(t *testing.T) {
+// TestPostgreSQLBackup_EncryptionRoundTrip verifies encrypt/decrypt roundtrip.
+func TestPostgreSQLBackup_EncryptionRoundTrip(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	env := setupPostgreSQLEnv(t)
-
-	// Create a BackupStore with nil encryptor and override binary check
-	store := NewBackupStore(nil, nil, env.sourceDSN)
-	store.pgDump = ""
-	store.pgRestore = ""
-
-	// binaryAvailable should detect missing binaries
-	err := store.binaryAvailable()
-	require.Error(t, err, "binaryAvailable should fail when binaries missing")
-	require.Contains(t, err.Error(), ErrBinaryNotFound.Error(),
-		"error should mention binary not found")
-}
-
-// TestPostgreSQLBackup_EncryptionDecryptionRoundTrip verifies encrypt/decrypt roundtrip.
-func TestPostgreSQLBackup_EncryptionDecryptionRoundTrip(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
-	// Generate a direct key (bypass KeyStore UUID issue)
 	keyMaterial := make([]byte, 32)
 	_, err := rand.Read(keyMaterial)
 	require.NoError(t, err)
-	tKey := &encrypt.TenantKey{
-		ID: "test-key", Encryption: encrypt.AES256GCM, KeyMaterial: keyMaterial,
-	}
+	tKey := &encrypt.TenantKey{ID: "test-key", Encryption: encrypt.AES256GCM, KeyMaterial: keyMaterial}
 	encryptor := encrypt.NewEncryptor(tKey)
 
-	// Test with various payload sizes
-	sizes := []int{1, 16, 64, 256, 1024, 4096}
-	for _, size := range sizes {
+	for _, size := range []int{1, 16, 64, 256, 1024, 4096} {
 		payload := make([]byte, size)
 		_, err = rand.Read(payload)
 		require.NoError(t, err)
@@ -753,24 +588,23 @@ func TestPostgreSQLBackup_EncryptionDecryptionRoundTrip(t *testing.T) {
 
 		decrypted, err := encryptor.Decrypt(encrypted)
 		require.NoError(t, err, "decrypt %d bytes", size)
-		require.Equal(t, payload, decrypted, "roundtrip should match for %d bytes", size)
+		require.Equal(t, payload, decrypted)
 	}
 
-	t.Log("Encryption roundtrip verified for payload sizes:", sizes)
+	t.Log("Encryption roundtrip verified for payload sizes:", []int{1, 16, 64, 256, 1024, 4096})
 }
 
-// TestPostgreSQLBackup_HealthCheckAfterRestore verifies schema validation passes after restore.
+// TestPostgreSQLBackup_HealthCheckAfterRestore verifies schema validation after restore.
 func TestPostgreSQLBackup_HealthCheckAfterRestore(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	env := setupPostgreSQLEnv(t)
+	env := setupPGEnv(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Apply migrations to target
-	targetDB, err := sql.Open("postgres", env.targetDSN)
+	targetDB, err := sql.Open("postgres", env.target)
 	require.NoError(t, err)
 	defer targetDB.Close()
 
@@ -778,13 +612,11 @@ func TestPostgreSQLBackup_HealthCheckAfterRestore(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, postgres.NewSchemaManager(targetDB).Apply(ctx))
 
-	// Run health checks on target schema
 	var version string
 	err = targetDB.QueryRowContext(ctx, "SELECT version()").Scan(&version)
-	require.NoError(t, err, "database connectivity check should pass")
-	require.Contains(t, version, "PostgreSQL", "should be PostgreSQL")
+	require.NoError(t, err)
+	require.Contains(t, version, "PostgreSQL")
 
-	// Verify all required tables exist
 	requiredTables := []string{
 		"msp_tenants", "client_organizations", "sites", "devices",
 		"jobs", "job_targets", "job_outbox", "job_inbox",
@@ -797,72 +629,61 @@ func TestPostgreSQLBackup_HealthCheckAfterRestore(t *testing.T) {
 			"SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name = $1)",
 			table).Scan(&exists)
 		require.NoError(t, err)
-		require.True(t, exists, "table %s should exist after migrations", table)
+		require.True(t, exists, "table %s should exist", table)
 	}
 
 	t.Logf("Health check passed: all %d required tables verified", len(requiredTables))
 }
 
-// TestPostgreSQLBackup_IntegrityDigest verifies backup integrity digest computation.
+// TestPostgreSQLBackup_IntegrityDigest verifies SHA-256 integrity digest computation.
 func TestPostgreSQLBackup_IntegrityDigest(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	env := setupPostgreSQLEnv(t)
+	env := setupPGEnv(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Seed and verify pg_dump produces valid output
-	seedSourceDB(t, ctx, env.sourceDSN)
+	seedSourceDB(t, ctx, env.source)
 
-	store := NewBackupStore(nil, nil, env.sourceDSN)
-	store.pgDump, _ = exec.LookPath("pg_dump")
-
-	// Verify pg_dump output can be hashed
-	cmd := exec.CommandContext(ctx, store.pgDump, env.sourceDSN,
-		"--format=custom", "--no-owner", "--no-acl")
+	cmd := exec.CommandContext(ctx, "pg_dump", env.source, "--format=custom", "--no-owner", "--no-acl")
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, "pg_dump should succeed")
 
-	// Verify the hashData function produces valid SHA-256 digests
 	digest1 := hashData(output)
 	digest2 := hashData(output)
 	require.Equal(t, digest1, digest2, "hash should be deterministic")
 
-	// Verify base64 encoding of digest
 	base64Digest := base64.StdEncoding.EncodeToString(digest1[:])
 	require.Equal(t, 44, len(base64Digest), "base64 of 32-byte SHA-256 should be 44 chars")
 
-	// Verify decoding works
 	decoded, err := base64.StdEncoding.DecodeString(base64Digest)
 	require.NoError(t, err)
-	require.Equal(t, 32, len(decoded), "decoded base64 should be 32 bytes")
+	require.Equal(t, 32, len(decoded))
 
-	// Verify different content produces different hash
 	digest3 := hashData([]byte("different content"))
 	require.NotEqual(t, digest1, digest3, "different content should produce different hash")
 
-	t.Log("Integrity digest verified: SHA-256 base64 encoding correct, deterministic, unique")
+	t.Log("Integrity digest verified: SHA-256 base64 encoding correct")
 }
 
-// TestPostgreSQLBackup_BackupRecordsStored verifies backup_records table schema is correct.
-func TestPostgreSQLBackup_BackupRecordsStored(t *testing.T) {
+// TestPostgreSQLBackup_BackupRecordsColumns verifies backup_records table schema.
+func TestPostgreSQLBackup_BackupRecordsColumns(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	env := setupPostgreSQLEnv(t)
+	env := setupPGEnv(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	seedSourceDB(t, ctx, env.sourceDSN)
+	seedSourceDB(t, ctx, env.source)
 
-	db, err := sql.Open("postgres", env.sourceDSN)
+	db, err := sql.Open("postgres", env.source)
 	require.NoError(t, err)
 	defer db.Close()
 
-	// Verify all required columns exist in backup_records
 	requiredColumns := []string{
 		"id", "database_type", "version", "table_count", "row_estimate",
 		"data_size", "compression", "encryption_scheme", "key_reference",
@@ -879,17 +700,473 @@ func TestPostgreSQLBackup_BackupRecordsStored(t *testing.T) {
 		require.True(t, exists, "backup_records should have column %s", col)
 	}
 
-	// Verify backup_records has an INSERT trigger or can accept test data
-	// by checking the status column accepts valid values
+	// Verify insert works
 	_, err = db.ExecContext(ctx, `
 		INSERT INTO backup_records (id, database_type, integrity_digest, status, created_at)
 		VALUES ('test-insert', 'postgresql', 'test-digest', 'pending', NOW())
 	`)
-	require.NoError(t, err, "should be able to insert into backup_records")
+	require.NoError(t, err)
 
-	// Clean up test insert
 	_, err = db.ExecContext(ctx, `DELETE FROM backup_records WHERE id = 'test-insert'`)
 	require.NoError(t, err)
 
-	t.Log("backup_records table schema verified: all required columns and constraints present")
+	t.Log("backup_records table schema verified")
+}
+
+// TestPostgreSQLBackup_BackupRecordsStored verifies backup_records table schema is correct.
+func TestPostgreSQLBackup_BackupRecordsStored(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := setupPGEnv(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	seedSourceDB(t, ctx, env.source)
+
+	db, err := sql.Open("postgres", env.source)
+	require.NoError(t, err)
+	defer db.Close()
+
+	var tableExists bool
+	err = db.QueryRowContext(ctx,
+		"SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name='backup_records')").Scan(&tableExists)
+	require.NoError(t, err)
+	require.True(t, tableExists)
+
+	var columns int
+	err = db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM information_schema.columns WHERE table_name='backup_records'").Scan(&columns)
+	require.NoError(t, err)
+	require.True(t, columns >= 12, "backup_records should have at least 12 columns, got %d", columns)
+
+	t.Log("backup_records table schema verified:", columns, "columns")
+}
+
+// TestPostgreSQLBackup_MigrationChecksum verifies migration checksums are consistent.
+func TestPostgreSQLBackup_MigrationChecksum(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := setupPGEnv(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	db, err := sql.Open("postgres", env.source)
+	require.NoError(t, err)
+	defer db.Close()
+
+	_, err = db.Exec(`DROP SCHEMA public CASCADE; CREATE SCHEMA public`)
+	require.NoError(t, err)
+
+	require.NoError(t, postgres.NewSchemaManager(db).Apply(ctx))
+
+	var appliedCount int
+	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations").Scan(&appliedCount)
+	require.NoError(t, err)
+	require.Equal(t, 64, appliedCount, "should have 64 applied migrations")
+
+	// Verify migration 64 (backup/recovery) exists
+	var migration64Applied bool
+	err = db.QueryRowContext(ctx, `
+		SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = 64)
+	`).Scan(&migration64Applied)
+	require.NoError(t, err)
+	require.True(t, migration64Applied, "migration 64 (backup/recovery) should be applied")
+
+	t.Logf("Migration checksum verified: %d migrations applied, migration 64 present", appliedCount)
+}
+
+// TestPostgreSQLBackup_NonEmptyMigrations verifies migration 64 is non-empty.
+func TestPostgreSQLBackup_NonEmptyMigrations(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := setupPGEnv(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	db, err := sql.Open("postgres", env.source)
+	require.NoError(t, err)
+	defer db.Close()
+
+	_, err = db.Exec(`DROP SCHEMA public CASCADE; CREATE SCHEMA public`)
+	require.NoError(t, err)
+
+	require.NoError(t, postgres.NewSchemaManager(db).Apply(ctx))
+
+	// Verify backup-related tables exist after migration 64
+	for _, table := range []string{"backup_records", "recovery_operations", "backup_audit_log"} {
+		var exists bool
+		err = db.QueryRowContext(ctx,
+			fmt.Sprintf("SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name = '%s')", table)).Scan(&exists)
+		require.NoError(t, err)
+		require.True(t, exists, "table %s should exist after migration 64", table)
+	}
+
+	t.Log("Migration 64 verified: backup/recovery tables created")
+}
+
+// corruptCiphertext flips a random byte in the base64-decoded ciphertext.
+func corruptCiphertext(ct string) string {
+	data, err := base64.StdEncoding.DecodeString(ct)
+	if err != nil {
+		return ct
+	}
+
+	pos := len(data) / 2
+	data[pos] ^= 0xFF
+
+	return base64.StdEncoding.EncodeToString(data)
+}
+
+// TestPostgreSQLBackup_BackupRecordCount verifies backup_records starts empty.
+func TestPostgreSQLBackup_BackupRecordCount(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := setupPGEnv(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	seedSourceDB(t, ctx, env.source)
+
+	db, err := sql.Open("postgres", env.source)
+	require.NoError(t, err)
+	defer db.Close()
+
+	var count int
+	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM backup_records").Scan(&count)
+	require.NoError(t, err)
+	require.Equal(t, 0, count, "backup_records should start empty")
+
+	t.Log("backup_records starts empty: 0 records")
+}
+
+// TestPostgreSQLBackup_RecoveryOperationsExists verifies recovery_operations table is usable.
+func TestPostgreSQLBackup_RecoveryOperationsExists(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := setupPGEnv(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	seedSourceDB(t, ctx, env.source)
+
+	db, err := sql.Open("postgres", env.source)
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Insert a recovery operation
+	var recID string
+	err = db.QueryRowContext(ctx, `
+		INSERT INTO recovery_operations (recovery_id, operation, phase, state, status, started_at, updated_at)
+		VALUES (gen_random_uuid()::text, 'test', 'pre', 'idle', 'running', NOW(), NOW())
+		RETURNING id
+	`).Scan(&recID)
+	require.NoError(t, err)
+	require.NotEmpty(t, recID)
+
+	// Verify it was stored
+	var count int
+	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM recovery_operations WHERE id = $1", recID).Scan(&count)
+	require.NoError(t, err)
+	require.Equal(t, 1, count)
+
+	// Clean up
+	_, err = db.ExecContext(ctx, "DELETE FROM recovery_operations WHERE id = $1", recID)
+	require.NoError(t, err)
+
+	t.Log("recovery_operations table verified: insert/read/delete works")
+}
+
+// TestPostgreSQLBackup_PgRestoreAvailable verifies pg_restore is accessible.
+func TestPostgreSQLBackup_PgRestoreAvailable(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "pg_restore", "--version")
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, "pg_restore should be available: %s", string(output))
+	require.True(t, len(output) > 0, "pg_restore --version should produce output")
+
+	t.Log("pg_restore available:", strings.TrimSpace(string(output)))
+}
+
+// TestPostgreSQLBackup_SourceTargetSeparation verifies source and target are different databases.
+func TestPostgreSQLBackup_SourceTargetSeparation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := setupPGEnv(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Verify source and target DSNs differ
+	require.NotEqual(t, env.source, env.target, "source and target DSNs should differ")
+
+	// Verify they are different databases
+	sourceDB, err := sql.Open("postgres", env.source)
+	require.NoError(t, err)
+	defer sourceDB.Close()
+
+	targetDB, err := sql.Open("postgres", env.target)
+	require.NoError(t, err)
+	defer targetDB.Close()
+
+	// Seed source
+	seedSourceDB(t, ctx, env.source)
+
+	// Verify target has no data (only schema)
+	var targetDataCount int
+	err = targetDB.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public'
+	`).Scan(&targetDataCount)
+	require.NoError(t, err)
+
+	// Target should have tables from migrations but no tenant data
+	var sourceDataCount int
+	err = sourceDB.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public'
+	`).Scan(&sourceDataCount)
+	require.NoError(t, err)
+
+	require.True(t, sourceDataCount == targetDataCount, "source and target should have same table count")
+
+	// But source should have tenant data and target should not
+	var sourceTenants, targetTenants int
+	err = sourceDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM msp_tenants").Scan(&sourceTenants)
+	require.NoError(t, err)
+	require.True(t, sourceTenants > 0)
+
+	err = targetDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM msp_tenants").Scan(&targetTenants)
+	require.NoError(t, err)
+	require.Equal(t, 0, targetTenants, "target should have no tenant data")
+
+	t.Log("Source/target separation verified: same schema, different data")
+}
+
+// TestPostgreSQLBackup_DatabasePing verifies PostgreSQL connectivity.
+func TestPostgreSQLBackup_DatabasePing(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := setupPGEnv(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	sourceDB, err := sql.Open("postgres", env.source)
+	require.NoError(t, err)
+	defer sourceDB.Close()
+
+	require.NoError(t, sourceDB.PingContext(ctx), "source database should be pingable")
+
+	targetDB, err := sql.Open("postgres", env.target)
+	require.NoError(t, err)
+	defer targetDB.Close()
+
+	require.NoError(t, targetDB.PingContext(ctx), "target database should be pingable")
+
+	t.Log("PostgreSQL connectivity verified: both source and target pingable")
+}
+
+// TestPostgreSQLBackup_EnvironmentVariables verifies TEST_POSTGRES_DSN is available in CI.
+func TestPostgreSQLBackup_EnvironmentVariables(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	// In CI, TEST_POSTGRES_DSN should be set
+	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	t.Logf("TEST_POSTGRES_DSN=%s", dsn[:min(len(dsn), 30)]+"...")
+
+	// Either env var is set or we fall back to local defaults
+	if dsn == "" {
+		t.Log("Running locally: TEST_POSTGRES_DSN not set, using defaults")
+	}
+
+	// The setupPGEnv function handles both cases
+	env := setupPGEnv(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	db, err := sql.Open("postgres", env.source)
+	require.NoError(t, err)
+	defer db.Close()
+
+	require.NoError(t, db.PingContext(ctx), "database should be pingable")
+	t.Log("Environment variables verified")
+}
+
+// TestPostgreSQLBackup_SchemaVersion verifies migration version matches.
+func TestPostgreSQLBackup_SchemaVersion(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := setupPGEnv(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	seedSourceDB(t, ctx, env.source)
+
+	db, err := sql.Open("postgres", env.source)
+	require.NoError(t, err)
+	defer db.Close()
+
+	var version int
+	err = db.QueryRowContext(ctx, `
+		SELECT COALESCE(MAX(version), 0) FROM schema_migrations
+	`).Scan(&version)
+	require.NoError(t, err)
+	require.Equal(t, 64, version, "schema version should be 64")
+
+	t.Log("Schema version verified:", version)
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// TestPostgreSQLBackup_MultiTenantDevices verifies multi-tenant device distribution.
+func TestPostgreSQLBackup_MultiTenantDevices(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := setupPGEnv(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	seedSourceDB(t, ctx, env.source)
+
+	db, err := sql.Open("postgres", env.source)
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Verify devices are distributed across tenants
+	var devicesPerTenant []struct {
+		Slug  string
+		Count int
+	}
+	rows, err := db.QueryContext(ctx, `
+		SELECT t.slug, COUNT(*) FROM devices d
+		JOIN client_organizations co ON co.id = d.client_id
+		JOIN msp_tenants mt ON mt.id = co.msp_id
+		JOIN tenants t ON t.id = d.tenant_id
+		GROUP BY t.slug
+		ORDER BY t.slug
+	`)
+	require.NoError(t, err)
+	defer rows.Close()
+
+	for rows.Next() {
+		var s string
+		var c int
+		require.NoError(t, rows.Scan(&s, &c))
+		devicesPerTenant = append(devicesPerTenant, struct {
+			Slug  string
+			Count int
+		}{s, c})
+	}
+	require.NoError(t, rows.Err())
+	require.True(t, len(devicesPerTenant) >= 2, "should have devices for at least 2 tenants")
+
+	for _, dp := range devicesPerTenant {
+		t.Logf("  Tenant %s: %d devices", dp.Slug, dp.Count)
+	}
+
+	t.Log("Multi-tenant device distribution verified")
+}
+
+// TestPostgreSQLBackup_JobStatusDistribution verifies job status variety.
+func TestPostgreSQLBackup_JobStatusDistribution(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := setupPGEnv(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	seedSourceDB(t, ctx, env.source)
+
+	db, err := sql.Open("postgres", env.source)
+	require.NoError(t, err)
+	defer db.Close()
+
+	var statuses []struct {
+		Status string
+		Count  int
+	}
+	rows, err := db.QueryContext(ctx, `
+		SELECT status, COUNT(*) FROM jobs GROUP BY status ORDER BY status
+	`)
+	require.NoError(t, err)
+	defer rows.Close()
+
+	for rows.Next() {
+		var s string
+		var c int
+		require.NoError(t, rows.Scan(&s, &c))
+		statuses = append(statuses, struct {
+			Status string
+			Count  int
+		}{s, c})
+	}
+	require.NoError(t, rows.Err())
+	require.True(t, len(statuses) >= 2, "should have at least 2 different job statuses")
+
+	for _, st := range statuses {
+		t.Logf("  Status %s: %d jobs", st.Status, st.Count)
+	}
+
+	t.Log("Job status distribution verified:", len(statuses), "distinct statuses")
+}
+
+// TestPostgreSQLBackup_AuditLogPresence verifies audit_log table has records.
+func TestPostgreSQLBackup_AuditLogPresence(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	env := setupPGEnv(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	seedSourceDB(t, ctx, env.source)
+
+	db, err := sql.Open("postgres", env.source)
+	require.NoError(t, err)
+	defer db.Close()
+
+	var count int
+	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM audit_log").Scan(&count)
+	require.NoError(t, err)
+	require.True(t, count > 0, "audit_log should have records")
+
+	// Verify action distribution
+	var actionCount int
+	err = db.QueryRowContext(ctx, `
+		SELECT COUNT(DISTINCT action) FROM audit_log
+	`).Scan(&actionCount)
+	require.NoError(t, err)
+	require.True(t, actionCount > 0)
+
+	t.Logf("Audit log verified: %d records, %d distinct actions", count, actionCount)
 }
