@@ -12,7 +12,11 @@ func TestStoreQueueCapacityIncludesMetricsAndEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("closing store: %v", err)
+		}
+	})
 	now := time.Unix(1700000000, 0)
 	if err := store.QueueMetric(StoredMetric{Name: "cpu", Timestamp: now}); err != nil {
 		t.Fatal(err)
@@ -33,7 +37,11 @@ func TestQueuedMetricsRemainUntilAcknowledged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("closing store: %v", err)
+		}
+	})
 
 	metric := StoredMetric{Name: "cpu.percent", Value: 42, Timestamp: time.Now().UTC()}
 	if err := store.QueueMetric(metric); err != nil {
@@ -67,7 +75,11 @@ func TestQueuedEventsRemainUntilAcknowledged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("closing store: %v", err)
+		}
+	})
 
 	event := StoredEvent{Type: "service.changed", Message: "stopped", Timestamp: time.Now().UTC()}
 	if err := store.QueueEvent(event); err != nil {
