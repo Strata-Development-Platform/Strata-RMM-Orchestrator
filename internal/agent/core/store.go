@@ -26,6 +26,16 @@ type StoredEvent struct {
 	Timestamp time.Time         `json:"timestamp"`
 }
 
+type QueuedMetric struct {
+	Key    string
+	Metric StoredMetric
+}
+
+type QueuedEvent struct {
+	Key   string
+	Event StoredEvent
+}
+
 func NewStore(path string) (*Store, error) {
 	db, err := bbolt.Open(path, 0600, &bbolt.Options{Timeout: 5 * time.Second})
 	if err != nil {
@@ -119,6 +129,60 @@ func (s *Store) PopEvents(limit int) ([]StoredEvent, error) {
 		return nil
 	})
 	return result, err
+}
+
+// PeekMetrics reads queued metrics without deleting them. Call AckMetrics only
+// after the corresponding publish has completed successfully.
+func (s *Store) PeekMetrics(limit int) ([]QueuedMetric, error) {
+	var result []QueuedMetric
+	err := s.db.View(func(tx *bbolt.Tx) error {
+		cursor := tx.Bucket([]byte("metrics")).Cursor()
+		for key, value := cursor.First(); key != nil && len(result) < limit; key, value = cursor.Next() {
+			var metric StoredMetric
+			if err := json.Unmarshal(value, &metric); err != nil {
+				return fmt.Errorf("decode queued metric %q: %w", key, err)
+			}
+			result = append(result, QueuedMetric{Key: string(key), Metric: metric})
+		}
+		return nil
+	})
+	return result, err
+}
+
+func (s *Store) AckMetrics(keys []string) error {
+	return s.ack("metrics", keys)
+}
+
+func (s *Store) PeekEvents(limit int) ([]QueuedEvent, error) {
+	var result []QueuedEvent
+	err := s.db.View(func(tx *bbolt.Tx) error {
+		cursor := tx.Bucket([]byte("events")).Cursor()
+		for key, value := cursor.First(); key != nil && len(result) < limit; key, value = cursor.Next() {
+			var event StoredEvent
+			if err := json.Unmarshal(value, &event); err != nil {
+				return fmt.Errorf("decode queued event %q: %w", key, err)
+			}
+			result = append(result, QueuedEvent{Key: string(key), Event: event})
+		}
+		return nil
+	})
+	return result, err
+}
+
+func (s *Store) AckEvents(keys []string) error {
+	return s.ack("events", keys)
+}
+
+func (s *Store) ack(bucket string, keys []string) error {
+	return s.db.Update(func(tx *bbolt.Tx) error {
+		b := tx.Bucket([]byte(bucket))
+		for _, key := range keys {
+			if err := b.Delete([]byte(key)); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func (s *Store) PutState(key string, value []byte) error {
