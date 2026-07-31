@@ -1,0 +1,72 @@
+name: Release Packaging
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - ".goreleaser.yml"
+      - ".github/workflows/release-packaging.yml"
+      - "deploy/*.service"
+      - "internal/update/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  updater-contract:
+    name: Updater Contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Test semantic version and checksum policy
+        run: go test -count=1 -race ./internal/update
+
+  snapshot-packages:
+    name: Snapshot Packages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Validate GoReleaser configuration
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: check
+      - name: Build unsigned snapshot packages
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --snapshot --clean --skip=publish,sign,sbom
+      - name: Verify immutable release artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s dist/checksums.txt
+          find dist -maxdepth 1 -type f -name 'strata-rmm-orchestrator-*-linux-amd64' -print -quit | grep -q .
+          find dist -maxdepth 1 -type f -name 'strata-rmm-orchestrator-*.deb' -print -quit | grep -q .
+          find dist -maxdepth 1 -type f -name 'strata-rmm-orchestrator-*.rpm' -print -quit | grep -q .
+          find dist -maxdepth 1 -type f -name 'strata-rmm-agent-*.deb' -print -quit | grep -q .
+          find dist -maxdepth 1 -type f -name 'strata-rmm-agent-*.rpm' -print -quit | grep -q .
+          sha256sum --check dist/checksums.txt
+      - name: Upload snapshot evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: versioned-snapshot-packages
+          path: |
+            dist/*.deb
+            dist/*.rpm
+            dist/checksums.txt
+          if-no-files-found: error
+          retention-days: 7
