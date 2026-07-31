@@ -1,0 +1,97 @@
+name: Secure Installer
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - "scripts/install-platform.sh"
+      - "deploy/docker/docker-compose.install.yml"
+      - "deploy/docker/init-postgres-tls.sh"
+      - "ui/Dockerfile"
+      - "ui/Caddyfile"
+      - "cmd/orchestrator/bootstrap_admin*"
+      - "pkg/config/**"
+      - "pkg/postgres/bootstrap*"
+      - ".github/workflows/secure-installer.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  static-validation:
+    name: Installer Static Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate shell syntax and policy
+        run: |
+          bash -n scripts/install-platform.sh
+          sh -n deploy/docker/init-postgres-tls.sh
+          ! grep -Eq 'VERSION=.*latest|releases/latest|ExecutionPolicy Bypass|SkipCertificateCheck|reboot($|[[:space:]])' scripts/install-platform.sh
+          grep -q 'STRATA_BOOTSTRAP_PASSWORD_FILE' scripts/install-platform.sh
+          grep -q -- '--prepare-only' scripts/install-platform.sh
+      - name: Run ShellCheck
+        uses: ludeeus/action-shellcheck@master
+        with:
+          scandir: ./scripts
+          severity: error
+
+  bootstrap-unit:
+    name: Bootstrap and Secret Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - run: go test -count=1 -race ./cmd/orchestrator ./pkg/config ./pkg/postgres
+
+  bootstrap-integration:
+    name: One-Time Administrator Integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: strata_test
+          POSTGRES_PASSWORD: strata_test
+          POSTGRES_DB: strata_test
+          POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U strata_test -d strata_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      TEST_POSTGRES_DSN: postgres://strata_test:strata_test@localhost:5432/strata_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Prove bootstrap succeeds once and audits creation
+        run: go test -tags=dbintegration -count=1 -race ./pkg/postgres -run TestBootstrapInitialAdminExactlyOnce -v
+
+  compose-preparation:
+    name: Secure Compose Preparation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate protected installation material and render Compose
+        run: |
+          printf '%s' 'correct horse battery staple' > /tmp/bootstrap-password
+          chmod 600 /tmp/bootstrap-password
+          sudo env STRATA_BOOTSTRAP_PASSWORD_FILE=/tmp/bootstrap-password             ./scripts/install-platform.sh             --mode docker             --domain rmm.example.test             --admin-email owner@example.test             --prepare-only
+          sudo test "$(stat -c '%a' deploy/docker/secrets/postgres_password)" = 600
+          sudo test "$(stat -c '%a' deploy/docker/secrets/jwt_secret)" = 600
+          sudo test -s deploy/docker/secrets/platform_ca.crt
+          sudo test -s deploy/docker/secrets/nats_server.crt
+          sudo test -s deploy/docker/secrets/postgres_server.crt
+      - name: Build orchestrator and web-console images
+        run: |
+          sudo docker compose             --env-file deploy/docker/.install.env             -f deploy/docker/docker-compose.install.yml             build orchestrator web
