@@ -26,7 +26,7 @@ type OrchestratorUpdater struct {
 }
 
 type GitHubRelease struct {
-	TagName string      `json:"tag_name"`
+	TagName string        `json:"tag_name"`
 	Assets  []GitHubAsset `json:"assets"`
 	Body    string      `json:"body"`
 }
@@ -38,9 +38,9 @@ type GitHubAsset struct {
 }
 
 type OrchestratorRelease struct {
-	Version  string `json:"version"`
-	URL      string `json:"url"`
-	Checksum string `json:"checksum"`
+	Version   string `json:"version"`
+	URL       string `json:"url"`
+	Checksum  string `json:"checksum"`
 	Changelog string `json:"changelog"`
 }
 
@@ -92,11 +92,11 @@ func (u *OrchestratorUpdater) Check(ctx context.Context) (*OrchestratorRelease, 
 		return nil, nil
 	}
 
-	platformKey := fmt.Sprintf("strata-orchestrator-%s-%s", runtime.GOOS, runtime.GOARCH)
+	artifactName := fmt.Sprintf("strata-rmm-orchestrator-%s-%s-%s", latestVersion, runtime.GOOS, runtime.GOARCH)
 	var downloadURL, checksumURL string
 
 	for _, asset := range release.Assets {
-		if asset.Name == platformKey || asset.Name == platformKey+".tar.gz" {
+		if asset.Name == artifactName {
 			downloadURL = asset.BrowserDownloadURL
 		}
 		if asset.Name == "checksums.txt" {
@@ -105,17 +105,7 @@ func (u *OrchestratorUpdater) Check(ctx context.Context) (*OrchestratorRelease, 
 	}
 
 	if downloadURL == "" {
-		altKey := fmt.Sprintf("strata-orchestrator_%s_%s", runtime.GOOS, runtime.GOARCH)
-		for _, asset := range release.Assets {
-			if strings.Contains(asset.Name, altKey) {
-				downloadURL = asset.BrowserDownloadURL
-				break
-			}
-		}
-	}
-
-	if downloadURL == "" {
-		return nil, fmt.Errorf("no binary found for %s/%s", runtime.GOOS, runtime.GOARCH)
+		return nil, fmt.Errorf("release is missing immutable artifact %s", artifactName)
 	}
 
 	if checksumURL == "" {
@@ -147,7 +137,7 @@ func (u *OrchestratorUpdater) fetchChecksum(ctx context.Context, checksumURL, fi
 	body, _ := io.ReadAll(resp.Body)
 	for _, line := range strings.Split(string(body), "\n") {
 		parts := strings.Fields(line)
-		if len(parts) >= 2 && strings.Contains(parts[1], strings.TrimSuffix(filename, ".tar.gz")) {
+		if len(parts) == 2 && strings.TrimPrefix(parts[1], "*") == filename {
 			return parts[0]
 		}
 	}
@@ -198,12 +188,10 @@ func (u *OrchestratorUpdater) Download(ctx context.Context, release *Orchestrato
 		return "", fmt.Errorf("chmod: %w", err)
 	}
 
-	if release.Checksum != "" {
-		actualChecksum := hex.EncodeToString(hasher.Sum(nil))
-		if actualChecksum != release.Checksum {
-			os.Remove(binaryPath)
-			return "", fmt.Errorf("checksum mismatch: expected %s, got %s", release.Checksum, actualChecksum)
-		}
+	actualChecksum := hex.EncodeToString(hasher.Sum(nil))
+	if !strings.EqualFold(actualChecksum, release.Checksum) {
+		os.Remove(binaryPath)
+		return "", fmt.Errorf("checksum mismatch for downloaded release artifact")
 	}
 
 	return binaryPath, nil
