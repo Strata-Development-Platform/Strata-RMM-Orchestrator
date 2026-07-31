@@ -624,7 +624,7 @@ func secretEnv(key string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("read secret file: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	info, err := file.Stat()
 	if err != nil {
