@@ -229,7 +229,7 @@ func ensureDistinctPostgresTargets(ctx context.Context, sourceDSN, targetDSN str
 	if err != nil {
 		return fmt.Errorf("open recovery target database: %w", err)
 	}
-	defer target.Close()
+	defer func() { _ = target.Close() }()
 	type identity struct {
 		database string
 		address  string
@@ -257,7 +257,7 @@ func ensureDistinctPostgresTargets(ctx context.Context, sourceDSN, targetDSN str
 	}
 	source, err := sql.Open("postgres", sourceDSN)
 	if err == nil {
-		defer source.Close()
+		defer func() { _ = source.Close() }()
 		sourceIdentity, sourceErr := readIdentity(source)
 		if sourceErr == nil && sourceIdentity == targetIdentity {
 			return errors.New("recovery target resolves to the source database; in-place restore is forbidden")

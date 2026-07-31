@@ -70,6 +70,7 @@ func TestS3RepositoryRoundTrip(t *testing.T) {
 			ID:               "postgresql.enc",
 			Type:             ComponentDatabase,
 			ArtifactLoc:      "postgresql.enc",
+			PlaintextDigest:  DigestBase64([]byte("plain")),
 			CiphertextDigest: cipherDigest,
 			Encryption:       "aes-256-gcm",
 			KeyID:            "key-test",

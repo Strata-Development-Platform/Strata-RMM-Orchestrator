@@ -854,7 +854,7 @@ func TestPostgreSQLBackup_MigrationChecksum(t *testing.T) {
 	var appliedCount int
 	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations").Scan(&appliedCount)
 	require.NoError(t, err)
-	require.Equal(t, 64, appliedCount, "should have 64 applied migrations")
+	require.Equal(t, 65, appliedCount, "should have 65 applied migrations")
 
 	// Verify migration 64 (backup/recovery) exists
 	var migration64Applied bool
@@ -1122,7 +1122,7 @@ func TestPostgreSQLBackup_SchemaVersion(t *testing.T) {
 		SELECT COALESCE(MAX(id), 0) FROM schema_migrations
 	`).Scan(&version)
 	require.NoError(t, err)
-	require.Equal(t, 64, version, "schema version should be 64")
+	require.Equal(t, 65, version, "schema version should be 65")
 
 	t.Log("Schema version verified:", version)
 }

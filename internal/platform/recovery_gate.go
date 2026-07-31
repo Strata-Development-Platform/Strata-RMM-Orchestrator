@@ -23,7 +23,7 @@ func (s *APIServer) withRecoveryGate(next http.Handler) http.Handler {
 			writeRecoveryUnavailable(w)
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		acquired, err := trySharedRecoveryLock(r.Context(), conn)
 		if err != nil || !acquired {
 			writeRecoveryUnavailable(w)

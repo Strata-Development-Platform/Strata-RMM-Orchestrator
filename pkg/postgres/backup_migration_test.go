@@ -136,7 +136,7 @@ func TestApplyMigrations(t *testing.T) {
 	var appliedCount int
 	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations").Scan(&appliedCount)
 	require.NoError(t, err)
-	require.Equal(t, 64, appliedCount, "should have 64 applied migrations")
+	require.Equal(t, len(migrations), appliedCount, "should have all migrations applied")
 }
 
 // TestMigrationsCreateRequiredTables verifies all expected tables are created.
@@ -300,7 +300,7 @@ func TestMigrationsFromMaster(t *testing.T) {
 	var finalCount int
 	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations").Scan(&finalCount)
 	require.NoError(t, err)
-	require.Equal(t, 64, finalCount, "should have 64 migrations applied")
+	require.Equal(t, len(migrations), finalCount, "should have all migrations applied")
 
 	migrationTables := []string{
 		"endpoint_approval_policies", "endpoint_approval_requests",
@@ -564,7 +564,7 @@ func TestPostgreSQLBackup_Migration64Exists(t *testing.T) {
 	var maxVersion int
 	err = db.QueryRowContext(ctx, `	SELECT COALESCE(MAX(id), 0) FROM schema_migrations`).Scan(&maxVersion)
 	require.NoError(t, err)
-	require.Equal(t, 64, maxVersion, "max migration version should be 64")
+	require.Equal(t, len(migrations), maxVersion, "max migration version should match the migration inventory")
 
 	t.Log("Migration 64 verified in schema_migrations")
 }
@@ -612,7 +612,7 @@ func TestPostgreSQLBackup_MigrationChecksum(t *testing.T) {
 	var appliedCount int
 	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations").Scan(&appliedCount)
 	require.NoError(t, err)
-	require.Equal(t, 64, appliedCount, "should have 64 applied migrations")
+	require.Equal(t, len(migrations), appliedCount, "should have all migrations applied")
 
 	t.Log("Migration checksum verified: 64 migrations applied")
 }

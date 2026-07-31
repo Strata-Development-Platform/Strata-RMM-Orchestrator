@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -57,7 +58,11 @@ func (r *PostgreSQLRecovery) Backup(ctx context.Context, w io.Writer) (Component
 	counting := &countingWriter{writer: io.MultiWriter(w, hasher)}
 	stderr := &boundedBuffer{limit: 4096}
 	cmd := exec.CommandContext(ctx, "pg_dump", "--format=custom", "--no-owner", "--no-acl")
-	cmd.Env = append(os.Environ(), "PGDATABASE="+r.sourceDSN)
+	commandEnv, err := postgresCommandEnv(r.sourceDSN)
+	if err != nil {
+		return ComponentManifest{}, fmt.Errorf("prepare pg_dump connection: %w", err)
+	}
+	cmd.Env = commandEnv
 	cmd.Stdout = counting
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
@@ -84,7 +89,11 @@ func (r *PostgreSQLRecovery) Restore(ctx context.Context, source io.Reader) erro
 	}
 	stderr := &boundedBuffer{limit: 4096}
 	cmd := exec.CommandContext(ctx, "pg_restore", "--no-owner", "--no-acl", "--exit-on-error")
-	cmd.Env = append(os.Environ(), "PGDATABASE="+r.targetDSN)
+	commandEnv, err := postgresCommandEnv(r.targetDSN)
+	if err != nil {
+		return fmt.Errorf("prepare pg_restore connection: %w", err)
+	}
+	cmd.Env = commandEnv
 	cmd.Stdin = source
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
@@ -94,7 +103,7 @@ func (r *PostgreSQLRecovery) Restore(ctx context.Context, source io.Reader) erro
 	if err != nil {
 		return fmt.Errorf("open restored PostgreSQL target for gate reset: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	if _, err := db.ExecContext(ctx, `
 		UPDATE recovery_mutation_gate
 		SET quiesced = FALSE, operation_id = NULL, updated_at = NOW()
@@ -117,7 +126,7 @@ func (r *PostgreSQLRecovery) Verify(ctx context.Context, manifest ComponentManif
 	if err != nil {
 		return fmt.Errorf("open restored PostgreSQL target: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	if err := db.PingContext(ctx); err != nil {
 		return fmt.Errorf("query restored PostgreSQL target: %w", err)
 	}
@@ -131,6 +140,39 @@ func (r *PostgreSQLRecovery) Verify(ctx context.Context, manifest ComponentManif
 		return errors.New("restored recovery mutation gate remains closed")
 	}
 	return nil
+}
+
+func postgresCommandEnv(dsn string) ([]string, error) {
+	parsed, err := url.Parse(dsn)
+	if err != nil || (parsed.Scheme != "postgres" && parsed.Scheme != "postgresql") {
+		return nil, errors.New("PostgreSQL backup DSN must use postgres:// or postgresql:// URI form")
+	}
+	password, _ := parsed.User.Password()
+	values := map[string]string{
+		"PGHOST":     parsed.Hostname(),
+		"PGPORT":     parsed.Port(),
+		"PGUSER":     parsed.User.Username(),
+		"PGPASSWORD": password,
+		"PGDATABASE": strings.TrimPrefix(parsed.Path, "/"),
+	}
+	queryNames := map[string]string{
+		"sslmode": "PGSSLMODE", "sslcert": "PGSSLCERT", "sslkey": "PGSSLKEY",
+		"sslrootcert": "PGSSLROOTCERT", "connect_timeout": "PGCONNECT_TIMEOUT",
+		"application_name": "PGAPPNAME",
+	}
+	for queryName, environmentName := range queryNames {
+		values[environmentName] = parsed.Query().Get(queryName)
+	}
+	if values["PGHOST"] == "" || values["PGDATABASE"] == "" {
+		return nil, errors.New("PostgreSQL backup DSN requires host and database")
+	}
+	environment := os.Environ()
+	for key, value := range values {
+		if value != "" {
+			environment = append(environment, key+"="+value)
+		}
+	}
+	return environment, nil
 }
 
 type boundedBuffer struct {

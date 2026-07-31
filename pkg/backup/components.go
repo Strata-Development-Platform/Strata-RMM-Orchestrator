@@ -243,18 +243,19 @@ func (r *JetStreamRecovery) Verify(ctx context.Context, manifest ComponentManife
 	if manifest.Type != string(repositoryComponentJetStream) {
 		return fmt.Errorf("unexpected component type %q", manifest.Type)
 	}
-	streamCount, messageCount := 0, 0
+	streamCount := 0
+	var messageCount uint64
 	for info := range r.js.StreamsInfo(nats.Context(ctx)) {
 		if info == nil {
 			return errors.New("JetStream verification returned nil stream")
 		}
 		streamCount++
-		messageCount += int(info.State.Msgs)
+		messageCount += info.State.Msgs
 	}
 	if want, err := strconv.Atoi(manifest.Metadata["streams"]); err != nil || want != streamCount {
 		return fmt.Errorf("JetStream stream count mismatch: got %d, want %s", streamCount, manifest.Metadata["streams"])
 	}
-	if messageCount != manifest.Count {
+	if manifest.Count < 0 || messageCount != uint64(manifest.Count) {
 		return fmt.Errorf("JetStream message count mismatch: got %d, want %d", messageCount, manifest.Count)
 	}
 	return nil
@@ -300,6 +301,9 @@ func (r *ObjectStorageRecovery) Backup(ctx context.Context, w io.Writer) (Compon
 	sort.Slice(objects, func(i, j int) bool { return objects[i].Key < objects[j].Key })
 	manifest := ComponentManifest{Type: string(repositoryComponentObjects)}
 	for _, object := range objects {
+		if strings.HasSuffix(object.Key, "/") && object.Size == 0 {
+			continue
+		}
 		if object.Key == "" || strings.Contains(object.Key, "\x00") {
 			return ComponentManifest{}, fmt.Errorf("unsafe object key %q", object.Key)
 		}
@@ -323,7 +327,7 @@ func (r *ObjectStorageRecovery) Backup(ctx context.Context, w io.Writer) (Compon
 			header.PAXRecords["strata.meta."+key] = value
 		}
 		if err := tw.WriteHeader(header); err != nil {
-			reader.Close()
+			_ = reader.Close()
 			return ComponentManifest{}, fmt.Errorf("write object header %s: %w", object.Key, err)
 		}
 		written, copyErr := io.Copy(io.MultiWriter(tw, objectHasher), reader)

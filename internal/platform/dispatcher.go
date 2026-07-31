@@ -120,7 +120,7 @@ func (d *Dispatcher) withRecoveryReadLock(work func()) {
 		d.logger.Error("reserve dispatcher recovery-gate connection", zap.Error(err))
 		return
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	var acquired bool
 	if err := conn.QueryRowContext(ctx,
 		`SELECT pg_try_advisory_lock_shared($1)`, postgres.GetRecoveryLockID()).Scan(&acquired); err != nil {

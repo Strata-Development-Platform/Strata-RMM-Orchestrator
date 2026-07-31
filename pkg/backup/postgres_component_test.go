@@ -2,6 +2,7 @@ package backup
 
 import (
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -18,6 +19,21 @@ func TestSecretPostgreSQLCommandRedaction(t *testing.T) {
 		require.NotContains(t, err.Error(), "super-secret")
 		require.NotContains(t, strings.ToLower(err.Error()), "password=super-secret")
 	}
+}
+
+func TestPostgresCommandEnvKeepsCredentialsOutOfArguments(t *testing.T) {
+	environment, err := postgresCommandEnv("postgres://operator:super-secret@db.internal:5433/strata?sslmode=verify-full")
+	require.NoError(t, err)
+	joined := strings.Join(environment, "\n")
+	require.Contains(t, joined, "PGHOST=db.internal")
+	require.Contains(t, joined, "PGPORT=5433")
+	require.Contains(t, joined, "PGDATABASE=strata")
+	require.Contains(t, joined, "PGPASSWORD=super-secret")
+	require.Contains(t, joined, "PGSSLMODE=verify-full")
+	require.NotContains(t, strings.Join(os.Args, " "), "super-secret")
+
+	_, err = postgresCommandEnv("host=db.internal password=secret")
+	require.ErrorContains(t, err, "URI form")
 }
 
 func TestPostgreSQLRecoveryRejectsSameTarget(t *testing.T) {
