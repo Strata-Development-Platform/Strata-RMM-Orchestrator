@@ -1,12 +1,11 @@
 import { useState, useEffect } from 'react';
 import { api } from '@/api/client';
 import { useToast } from '@/components/shared/Toast';
-import { Skeleton } from '@/components/shared/Skeleton';
 import { EmptyState } from '@/components/shared/EmptyState';
+import { UserRound } from 'lucide-react';
 import type { User, TenantInfo } from '@/api/types';
 
 export default function UserManagementPage() {
-  const { showToast } = useToast();
   const [users, setUsers] = useState<User[]>([]);
   const [customers, setCustomers] = useState<TenantInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -56,7 +55,7 @@ export default function UserManagementPage() {
           </thead>
           <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
             {users.length === 0 ? (
-              <tr><td colSpan={6} className="px-4 py-8"><EmptyState icon="👤" title="No users" description="Create your first user to get started" action={{ label: '+ Create User', onClick: () => setShowCreate(true) }} /></td></tr>
+              <tr><td colSpan={6} className="px-4 py-8"><EmptyState icon={UserRound} title="No users" description="Create your first user to get started" action={{ label: 'Create user', onClick: () => setShowCreate(true) }} /></td></tr>
             ) : users.map(u => (
               <tr key={u.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
                 <td className="px-4 py-3 font-medium">{u.email}</td>

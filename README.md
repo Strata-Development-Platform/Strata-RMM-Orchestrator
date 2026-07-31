@@ -1,5 +1,10 @@
 # Strata RMM
 
+Strata RMM Community Edition is open-source under
+[AGPL-3.0-or-later](LICENSE). Commercial white-label deployments are available
+only under a separately executed Enterprise License. See
+[LICENSING.md](LICENSING.md) and [TRADEMARKS.md](TRADEMARKS.md).
+
 A horizontally-scalable, multi-tenant Remote Monitoring & Management platform with cross-platform agents (Go), supporting both SaaS and self-hosted deployments. Built to match the capabilities of Kaseya VSA, Datto RMM, and NinjaRMM.
 
 ## Quick Start

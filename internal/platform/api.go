@@ -327,6 +327,10 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /api/v2/platform/msps/{mspID}", s.handleGetMSP)
 	mux.HandleFunc("POST /api/v2/platform/msps/{mspID}/suspend", s.handleSuspendMSP)
 	mux.HandleFunc("POST /api/v2/platform/msps/{mspID}/activate", s.handleActivateMSP)
+	mux.HandleFunc("POST /api/v2/platform/msps/{mspID}/offboarding", s.handleOffboardMSP)
+	mux.HandleFunc("GET /api/v2/platform/msps/{mspID}/offboarding", s.handleGetOffboarding)
+	mux.HandleFunc("POST /api/v2/platform/msps/{mspID}/offboarding/approve-deletion", s.handleApproveMSPDeletion)
+	mux.HandleFunc("GET /api/v2/platform/msps/{mspID}/export", s.handleExportMSP)
 
 	// v2 API — Client management
 	mux.HandleFunc("GET /api/v2/msps/{mspID}/clients", s.handleListClients)
