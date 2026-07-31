@@ -20,6 +20,11 @@ func AllMigrations() []Migration {
 			Name:    "alerts_and_probes_schema",
 			SQL:     Migration002,
 		},
+		{
+			Version: 3,
+			Name:    "backup_and_recovery_schema",
+			SQL:     Migration003,
+		},
 	}
 }
 
@@ -291,4 +296,61 @@ CREATE INDEX IF NOT EXISTS idx_flow_records_lookup
     ON flow_records (tenant_id, time DESC);
 CREATE INDEX IF NOT EXISTS idx_flow_records_conversation
     ON flow_records (tenant_id, src_ip, dst_ip, time DESC);
+`
+
+const Migration003 = `
+-- Backup and Recovery schema for Phase 8C
+
+CREATE TYPE recovery_state_enum AS ENUM (
+    'idle', 'discovery', 'preflight', 'quiesce',
+    'backup_database', 'backup_jetstream', 'backup_object_storage',
+    'verify_integrity', 'pre_restore_validation',
+    'restore_database', 'restore_jetstream', 'restore_object_storage',
+    'post_restore_validation', 'health_check', 'verification',
+    'rpo_validation', 'rto_validation', 'rollback', 'cleanup', 'completed'
+);
+
+CREATE TABLE IF NOT EXISTS backup_records (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    backup_id TEXT NOT NULL,
+    environment_id TEXT NOT NULL,
+    state recovery_state_enum NOT NULL DEFAULT 'idle',
+    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    completed_at TIMESTAMPTZ,
+    error_message TEXT,
+    metadata JSONB DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS recovery_operations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    recovery_id TEXT NOT NULL UNIQUE,
+    backup_id TEXT NOT NULL,
+    environment_id TEXT NOT NULL,
+    state recovery_state_enum NOT NULL DEFAULT 'idle',
+    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    completed_at TIMESTAMPTZ,
+    error_message TEXT,
+    rpo_minutes INT,
+    rto_minutes INT,
+    metadata JSONB DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS backup_audit_log (
+    id BIGSERIAL PRIMARY KEY,
+    backup_id TEXT NOT NULL,
+    action TEXT NOT NULL,
+    details JSONB DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_backup_records_state
+    ON backup_records (state, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_recovery_operations_recovery_id
+    ON recovery_operations (recovery_id);
+
+CREATE INDEX IF NOT EXISTS idx_backup_audit_log_backup_id
+    ON backup_audit_log (backup_id, created_at DESC);
 `

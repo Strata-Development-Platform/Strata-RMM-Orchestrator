@@ -10,6 +10,7 @@ import (
 )
 
 const DefaultLockID = int64(0x535452415441524D) // "STRATARM" as safe positive int64
+const DefaultRecoveryLockID = DefaultLockID + 1
 
 func GetLockID() int64 {
 	if env := os.Getenv("STRATA_MIGRATION_LOCK_ID"); env != "" {
@@ -20,6 +21,10 @@ func GetLockID() int64 {
 		}
 	}
 	return DefaultLockID
+}
+
+func GetRecoveryLockID() int64 {
+	return DefaultRecoveryLockID
 }
 
 type Migration struct {
@@ -2141,11 +2146,167 @@ func Migrations() []Migration {
 					CHECK (status IN ('pending','queued','dispatched','acknowledged','running','succeeded','failed','cancelled','expired'));
 			`,
 		},
+		{
+			ID:   63,
+			Name: "add_backup_recovery_tables",
+			Up: `
+				CREATE TABLE IF NOT EXISTS backup_records (
+					id                  TEXT PRIMARY KEY,
+					database_type       TEXT NOT NULL DEFAULT 'postgresql',
+					version             TEXT NOT NULL DEFAULT '1.0.0',
+					table_count         INT DEFAULT 0,
+					row_estimate        BIGINT DEFAULT 0,
+					data_size           BIGINT NOT NULL DEFAULT 0,
+					compression         TEXT NOT NULL DEFAULT 'gzip',
+					encryption_scheme   TEXT NOT NULL DEFAULT 'aes-256-gcm',
+					key_reference       TEXT,
+					integrity_digest    TEXT NOT NULL,
+					status              TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'completed', 'failed', 'corrupted')),
+					error_message       TEXT,
+					created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					completed_at        TIMESTAMPTZ,
+					restored_at         TIMESTAMPTZ
+				);
+				CREATE INDEX IF NOT EXISTS idx_backup_records_status ON backup_records(status);
+				CREATE INDEX IF NOT EXISTS idx_backup_records_created ON backup_records(created_at DESC);
+				CREATE INDEX IF NOT EXISTS idx_backup_records_digest ON backup_records(integrity_digest);
+
+				CREATE TABLE IF NOT EXISTS recovery_operations (
+					id              BIGSERIAL PRIMARY KEY,
+					recovery_id     TEXT NOT NULL UNIQUE,
+					operation       TEXT NOT NULL,
+					phase           TEXT NOT NULL DEFAULT 'unknown',
+					state           TEXT NOT NULL DEFAULT 'idle',
+					status          TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running', 'completed', 'failed', 'released')),
+					started_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					completed_at    TIMESTAMPTZ,
+					error_message   TEXT
+				);
+				CREATE INDEX IF NOT EXISTS idx_recovery_ops_recovery_id ON recovery_operations(recovery_id);
+				CREATE INDEX IF NOT EXISTS idx_recovery_ops_operation ON recovery_operations(operation);
+				CREATE INDEX IF NOT EXISTS idx_recovery_ops_status ON recovery_operations(status);
+
+				CREATE TABLE IF NOT EXISTS backup_audit_log (
+					id              BIGSERIAL PRIMARY KEY,
+					backup_id       TEXT,
+					recovery_id     TEXT,
+					action          TEXT NOT NULL CHECK (action IN ('backup_created', 'backup_verified', 'backup_deleted', 'restore_started', 'restore_completed', 'restore_failed', 'rollback_executed')),
+					details         JSONB DEFAULT '{}',
+					performed_by    TEXT,
+					timestamp       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+				CREATE INDEX IF NOT EXISTS idx_backup_audit_backup_id ON backup_audit_log(backup_id);
+				CREATE INDEX IF NOT EXISTS idx_backup_audit_recovery_id ON backup_audit_log(recovery_id);
+				CREATE INDEX IF NOT EXISTS idx_backup_audit_timestamp ON backup_audit_log(timestamp DESC);
+			`,
+			Down: `
+				DROP TABLE IF EXISTS backup_audit_log;
+				DROP TABLE IF EXISTS recovery_operations;
+				DROP TABLE IF EXISTS backup_records;
+			`,
+		},
+		{
+			ID:   64,
+			Name: "add_recovery_state_enum",
+			Up: `
+				-- Create enum type with idempotent check using pg_type catalog
+				DO $$ BEGIN
+				    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'recovery_state_enum') THEN
+				        CREATE TYPE recovery_state_enum AS ENUM (
+				            'idle', 'discovery', 'preflight', 'quiesce',
+				            'backup_database', 'backup_jetstream', 'backup_object_storage', 'verify_integrity',
+				            'pre_restore_validation', 'restore_database', 'restore_jetstream', 'restore_object_storage',
+				            'post_restore_validation', 'health_check', 'verification',
+				            'rpo_validation', 'rto_validation',
+				            'rollback', 'cleanup', 'completed'
+				        );
+				    END IF;
+				END $$;
+
+				ALTER TABLE recovery_operations ADD COLUMN IF NOT EXISTS recovery_state recovery_state_enum DEFAULT 'idle'::recovery_state_enum;
+				CREATE INDEX IF NOT EXISTS idx_recovery_ops_state ON recovery_operations(recovery_state);
+
+				-- FK references primary key (id), not recovery_id
+				ALTER TABLE backup_records ADD COLUMN IF NOT EXISTS recovery_id BIGINT REFERENCES recovery_operations(id) ON DELETE SET NULL;
+				CREATE INDEX IF NOT EXISTS idx_backup_records_recovery_id ON backup_records(recovery_id);
+			`,
+			Down: `
+				ALTER TABLE backup_records DROP COLUMN IF EXISTS recovery_id;
+				ALTER TABLE recovery_operations DROP COLUMN IF EXISTS recovery_state;
+				DROP TYPE IF EXISTS recovery_state_enum;
+			`,
+		},
+		{
+			ID:   65,
+			Name: "add_recovery_mutation_gate",
+			Up: `
+				CREATE TABLE IF NOT EXISTS recovery_mutation_gate (
+					singleton     BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+					quiesced      BOOLEAN NOT NULL DEFAULT FALSE,
+					operation_id  TEXT,
+					updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+				INSERT INTO recovery_mutation_gate (singleton, quiesced)
+				VALUES (TRUE, FALSE)
+				ON CONFLICT (singleton) DO NOTHING;
+
+				CREATE OR REPLACE FUNCTION enforce_recovery_mutation_gate()
+				RETURNS trigger
+				LANGUAGE plpgsql
+				AS $$
+				DECLARE
+					is_quiesced BOOLEAN;
+				BEGIN
+					IF NOT pg_try_advisory_xact_lock_shared(6004514643731632718) THEN
+						RAISE EXCEPTION 'mutations are unavailable during a recovery operation'
+							USING ERRCODE = '55006';
+					END IF;
+					SELECT quiesced INTO is_quiesced
+					FROM recovery_mutation_gate
+					WHERE singleton = TRUE;
+					IF COALESCE(is_quiesced, TRUE) THEN
+						RAISE EXCEPTION 'mutations are unavailable during a recovery operation'
+							USING ERRCODE = '55006';
+					END IF;
+					RETURN NULL;
+				END;
+				$$;
+
+				DO $$
+				DECLARE
+					table_record RECORD;
+				BEGIN
+					FOR table_record IN
+						SELECT tablename
+						FROM pg_tables
+						WHERE schemaname = 'public'
+						  AND tablename NOT IN ('recovery_mutation_gate', 'schema_migrations')
+					LOOP
+						EXECUTE format(
+							'DROP TRIGGER IF EXISTS recovery_mutation_gate_trigger ON %I',
+							table_record.tablename
+						);
+						EXECUTE format(
+							'CREATE TRIGGER recovery_mutation_gate_trigger
+							 BEFORE INSERT OR UPDATE OR DELETE ON %I
+							 FOR EACH STATEMENT EXECUTE FUNCTION enforce_recovery_mutation_gate()',
+							table_record.tablename
+						);
+					END LOOP;
+				END
+				$$;
+			`,
+			Down: `
+				DROP FUNCTION IF EXISTS enforce_recovery_mutation_gate() CASCADE;
+				DROP TABLE IF EXISTS recovery_mutation_gate;
+			`,
+		},
 	}
 }
 
 type SchemaManager struct {
-	db      *sql.DB
+	db       *sql.DB
 	lockConn *sql.Conn
 }
 
@@ -2162,7 +2323,6 @@ var (
 )
 
 var migrationLockID = GetLockID() // int64, safe for pg_try_advisory_lock
-
 
 func logLockAttempt(schemaVersion int) {
 	fmt.Fprintf(os.Stderr, "[INFO] attempting to acquire migration lock for schema version %d\n", schemaVersion)

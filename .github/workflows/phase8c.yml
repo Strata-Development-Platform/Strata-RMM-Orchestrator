@@ -1,0 +1,439 @@
+name: Phase 8C — Backup, Restore, and Disaster Recovery
+
+on:
+  push:
+    branches: [master, develop, agent/phase-8c*]
+  pull_request:
+    branches: [master]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  phase8c-static-validation:
+    name: Static Validation (gofmt, vet, build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: gofmt check
+        run: |
+          diffs=$(gofmt -l \
+            pkg/recovery/ pkg/repository/ pkg/backup/ \
+            pkg/config/config.go pkg/postgres/schema.go \
+            internal/platform/api.go internal/platform/dispatcher.go internal/platform/recovery_gate.go \
+            cmd/orchestrator/orchestrator.go cmd/orchestrator/recovery.go \
+            cmd/orchestrator/recovery_runtime.go cmd/orchestrator/recovery_test.go)
+          if [ -n "$diffs" ]; then
+            echo "FAIL: files not gofmt-formatted:"
+            echo "$diffs"
+            exit 1
+          fi
+          echo "OK: all files formatted"
+      - name: go vet
+        run: go vet ./pkg/recovery/... ./pkg/repository/... ./pkg/backup/... ./cmd/orchestrator/...
+      - name: go build
+        run: go build ./...
+
+  phase8c-unit-tests:
+    name: Unit Tests (race detection)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Run all unit tests with race detector
+        run: go test ./pkg/recovery/... ./pkg/repository/... ./pkg/backup/... -count=1 -v -race
+
+  phase8c-encryption-adversarial:
+    name: Encryption Adversarial Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Run encryption adversarial suite
+        run: |
+          go test ./pkg/recovery/... -count=1 -v -race \
+            -run "TestEncryptDecrypt|TestUniqueNonce|TestCiphertextModification|TestNonceModification|TestMetadataModification|TestWrongKey|TestTruncation|TestEmptyArtifact|TestUnsupportedEnvelopeVersion|TestKeySizeValidation|TestMarshalUnmarshal|TestEncodeDecode|TestDeterministic|TestMetadataAuth|TestHexEncode|TestCiphertextModificationWithMetadata"
+
+  phase8c-key-provider:
+    name: Key Provider Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Run key provider suite
+        run: |
+          go test ./pkg/recovery/... -count=1 -v -race \
+            -run "TestFileKeyProvider"
+
+  phase8c-repository:
+    name: Artifact Repository Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Run repository suite
+        run: |
+          go test ./pkg/repository/... -count=1 -v -race \
+            -run "TestFilesystem"
+
+  phase8c-migration-integration:
+    name: Migration Integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: strata_test
+          POSTGRES_PASSWORD: strata_test
+          POSTGRES_DB: strata_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U strata_test -d strata_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_POSTGRES_DSN: postgres://strata_test:strata_test@localhost:5432/strata_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Apply migrations and run checksum tests
+        run: go test ./pkg/postgres/... -count=1 -v -race -tags=dbintegration -run "TestApplyMigrations|TestMigration"
+      - name: Verify backup tables created by migrations
+        run: |
+          PGPASSWORD=strata_test psql -h localhost -U strata_test -d strata_test -c \
+            "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('backup_records', 'recovery_operations', 'backup_audit_log') ORDER BY table_name;"
+      - name: Verify UNIQUE constraint on recovery_id
+        run: |
+          PGPASSWORD=strata_test psql -h localhost -U strata_test -d strata_test -c \
+            "SELECT conname, contype FROM pg_constraint WHERE conrelid='recovery_operations'::regclass AND conname='recovery_operations_recovery_id_key';"
+      - name: Verify enum type exists
+        run: |
+          PGPASSWORD=strata_test psql -h localhost -U strata_test -d strata_test -c \
+            "SELECT typname FROM pg_type WHERE typname='recovery_state_enum';"
+      - name: Verify recovery mutation gate exists
+        run: |
+          PGPASSWORD=strata_test psql -h localhost -U strata_test -d strata_test -c \
+            "SELECT quiesced, operation_id FROM recovery_mutation_gate WHERE singleton = TRUE;"
+
+  phase8c-cli-validation:
+    name: CLI Command Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Build binary
+        run: go build -o /tmp/strata-rmm -ldflags="-X main.version=8c-test -X main.commit=test -X main.date=2026-01-01" .
+      - name: Verify recovery command exists
+        run: /tmp/strata-rmm orchestrator --help | grep -q "recovery"
+      - name: Verify backup command exists
+        run: /tmp/strata-rmm orchestrator --help | grep -q "backup"
+      - name: Verify recovery subcommands
+        run: |
+          /tmp/strata-rmm orchestrator recovery --help 2>&1 | grep -q "preflight"
+          /tmp/strata-rmm orchestrator recovery --help 2>&1 | grep -q "restore"
+          /tmp/strata-rmm orchestrator recovery --help 2>&1 | grep -q "verify"
+      - name: Verify --force flag is absent
+        run: "! /tmp/strata-rmm orchestrator recovery --help | grep -q '\\-\\-force'"
+
+  phase8c-config-validation:
+    name: Configuration Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Test config validation rejects CBC
+        run: |
+          go test ./pkg/config/... -count=1 -v -race -run "TestConfig"
+      - name: Test strict integer parsing
+        run: |
+          go test ./pkg/config/... -count=1 -v -race -run "TestEnvIntStrict"
+
+  phase8c-postgres-integration:
+    name: PostgreSQL Backup/Restore Integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: strata_test
+          POSTGRES_PASSWORD: strata_test
+          POSTGRES_DB: strata_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U strata_test -d strata_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_POSTGRES_DSN: postgres://strata_test:strata_test@localhost:5432/strata_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Run PostgreSQL integration tests
+        run: go test ./pkg/backup/... -count=1 -v -race -tags=integration -run "TestPostgreSQL"
+      - name: Verify pg_dump/pg_restore available
+        run: |
+          which pg_dump && pg_dump --version
+          which pg_restore && pg_restore --version
+
+  phase8c-jetstream-integration:
+    name: JetStream Backup/Restore Integration
+    runs-on: ubuntu-latest
+    env:
+      TEST_NATS_URL: nats://localhost:4222
+      TEST_NATS_NO_JS_URL: nats://localhost:4223
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Start pinned NATS targets
+        run: |
+          docker run --detach --name phase8c-nats-js --publish 4222:4222 nats:2.10.26-alpine -js
+          docker run --detach --name phase8c-nats-no-js --publish 4223:4222 nats:2.10.26-alpine
+      - name: Wait for NATS to be ready
+        run: |
+          for port in 4222 4223; do
+            ready=false
+            for i in $(seq 1 20); do
+              if nc -z localhost "$port"; then ready=true; break; fi
+              sleep 2
+            done
+            test "$ready" = true
+          done
+      - name: Run JetStream integration tests
+        run: go test ./pkg/backup/... -count=1 -v -race -tags=integration -run "TestJetStream"
+
+  phase8c-s3-integration:
+    name: S3 Backup/Restore Integration
+    runs-on: ubuntu-latest
+    env:
+      TEST_MINIO_ENDPOINT: localhost:9000
+      TEST_MINIO_ACCESS_KEY: minioadmin
+      TEST_MINIO_SECRET_KEY: minioadmin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Start pinned MinIO target
+        run: |
+          docker run --detach --name phase8c-minio \
+            --publish 9000:9000 \
+            --env MINIO_ROOT_USER=minioadmin \
+            --env MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio:RELEASE.2025-04-22T22-12-26Z server /data
+      - name: Wait for MinIO to be ready
+        run: for i in $(seq 1 20); do curl -f http://localhost:9000/minio/health/live && break || sleep 2; done
+      - name: Run S3 integration tests
+        run: go test ./pkg/backup/... ./pkg/repository/... -count=1 -v -race -tags=integration -run "TestObjectStorage|TestS3Repository"
+
+  phase8c-concurrent-recovery:
+    name: Concurrent Recovery Exclusion
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: strata_test
+          POSTGRES_PASSWORD: strata_test
+          POSTGRES_DB: strata_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U strata_test -d strata_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_POSTGRES_DSN: postgres://strata_test:strata_test@localhost:5432/strata_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Run concurrent recovery tests
+        run: go test ./pkg/backup/... -count=1 -v -race -tags=integration -run "TestConcurrent"
+
+  phase8c-quiescing:
+    name: Quiescing Behavior Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: strata_test
+          POSTGRES_PASSWORD: strata_test
+          POSTGRES_DB: strata_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U strata_test -d strata_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_POSTGRES_DSN: postgres://strata_test:strata_test@localhost:5432/strata_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Run quiescing tests
+        run: go test ./pkg/backup/... -count=1 -v -race -tags=integration -run "TestQuiescing"
+
+  phase8c-failure-injection:
+    name: Failure Injection Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Run failure injection tests
+        run: go test ./pkg/backup/... -count=1 -v -race -run "TestEngineAlwaysResumesAndUnlocksAfterFailure|TestEngineRejectsTamperingBeforeMutation"
+
+  phase8c-tenant-preservation:
+    name: Tenant Preservation Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: strata_test
+          POSTGRES_PASSWORD: strata_test
+          POSTGRES_DB: strata_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U strata_test -d strata_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_POSTGRES_DSN: postgres://strata_test:strata_test@localhost:5432/strata_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Run tenant preservation tests
+        run: go test ./pkg/backup/... -count=1 -v -race -tags=integration -run "^TestPostgreSQLBackup_TenantPreservation$"
+
+  phase8c-durable-job-preservation:
+    name: Durable Job Preservation Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: strata_test
+          POSTGRES_PASSWORD: strata_test
+          POSTGRES_DB: strata_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U strata_test -d strata_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_POSTGRES_DSN: postgres://strata_test:strata_test@localhost:5432/strata_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Run durable job preservation tests
+        run: go test ./pkg/backup/... -count=1 -v -race -tags=integration -run "^TestPostgreSQLBackup_DurableJobPreservation$"
+
+  phase8c-secret-redaction:
+    name: Secret Redaction Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Run secret redaction tests
+        run: go test ./pkg/backup/... ./pkg/config/... -count=1 -v -race -run "TestSecret|TestRedact"
+
+  phase8c-rpo-rto:
+    name: RPO/RTO Model Unit Tests (Drill Required)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Run RPO/RTO measurement tests
+        run: go test ./pkg/backup/... -count=1 -v -race -tags=integration -run "TestRPO|TestRTO"
+
+  phase8c-end-to-end:
+    name: End-to-End Recovery Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Run end-to-end recovery tests
+        run: go test ./pkg/backup/... -count=1 -v -race -run "TestEngineBackupRestoreRoundTrip"
+
+  phase8c-full-suite:
+    name: Full Test Suite (race detection)
+    runs-on: ubuntu-latest
+    needs: [phase8c-static-validation]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Run all tests
+        run: go test ./... -count=1 -race -short
