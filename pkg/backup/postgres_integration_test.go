@@ -130,21 +130,18 @@ func pqIdent(name string) string {
 	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
-// makeDSN builds a PostgreSQL DSN from components.
+// makeDSN builds a PostgreSQL DSN from components using libpq key-value format.
 func makeDSN(host, user, password, dbname string, useSSL bool) string {
-	dsn := ""
+	dsn := "sslmode=disable"
 	if host == "/tmp/pg_socket" {
-		// Local development: use Unix socket
 		dsn = "host=" + host + " user=" + user + " dbname=" + dbname + " sslmode=disable"
 		if password != "" {
 			dsn = "host=" + host + " user=" + user + " password=" + password + " dbname=" + dbname + " sslmode=disable"
 		}
 	} else {
-		// CI: use TCP connection format user:pass@host:port/dbname?sslmode=disable
+		dsn = "host=" + host + " user=" + user + " dbname=" + dbname + " sslmode=disable"
 		if password != "" {
-			dsn = user + ":" + password + "@" + host + "/" + dbname + "?sslmode=disable"
-		} else {
-			dsn = user + "@" + host + "/" + dbname + "?sslmode=disable"
+			dsn = "host=" + host + " user=" + user + " password=" + password + " dbname=" + dbname + " sslmode=disable"
 		}
 	}
 	return dsn

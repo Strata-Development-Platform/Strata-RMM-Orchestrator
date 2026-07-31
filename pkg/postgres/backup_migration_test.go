@@ -92,23 +92,18 @@ func pqIdent(name string) string {
 	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
-// makeMigrationDSN builds a PostgreSQL DSN from components.
+// makeMigrationDSN builds a PostgreSQL DSN from components using libpq key-value format.
 func makeMigrationDSN(host, user, password, dbname string) string {
-	dsn := ""
 	if host == "/tmp/pg_socket" {
 		if password != "" {
-			dsn = "host=" + host + " user=" + user + " password=" + password + " dbname=" + dbname + " sslmode=disable"
-		} else {
-			dsn = "host=" + host + " user=" + user + " dbname=" + dbname + " sslmode=disable"
+			return "host=" + host + " user=" + user + " password=" + password + " dbname=" + dbname + " sslmode=disable"
 		}
-	} else {
-		if password != "" {
-			dsn = user + ":" + password + "@" + host + "/" + dbname + "?sslmode=disable"
-		} else {
-			dsn = user + "@" + host + "/" + dbname + "?sslmode=disable"
-		}
+		return "host=" + host + " user=" + user + " dbname=" + dbname + " sslmode=disable"
 	}
-	return dsn
+	if password != "" {
+		return "host=" + host + " user=" + user + " password=" + password + " dbname=" + dbname + " sslmode=disable"
+	}
+	return "host=" + host + " user=" + user + " dbname=" + dbname + " sslmode=disable"
 }
 
 // TestApplyMigrations verifies migrations can be applied to a clean database.
