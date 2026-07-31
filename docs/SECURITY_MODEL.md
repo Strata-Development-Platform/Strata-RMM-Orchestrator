@@ -16,18 +16,34 @@ The original prototype findings below drove Phases 1–7. The following controls
 
 This is a verified engineering baseline, not a declaration of unrestricted production readiness.
 
-## Phase 8 security work
+## Phase 8G security review
 
-The following remain mandatory before a hosted production beta can be approved:
+Phase 8G adds the following internal-alpha controls:
 
-1. complete an updated threat model and data-flow inventory;
-2. migrate signing/session design to an approved asymmetric and refresh-token rotation model, or document and approve a compensating design;
-3. centralize production secret storage, access auditing, rotation, escrow, and recovery;
-4. audit every privileged route and background worker against an explicit authorization matrix;
-5. harden remote access, recordings, public endpoints, custom-domain routing, and abuse controls;
-6. enforce dependency, container, secret, SBOM, static-analysis, and browser security gates;
-7. perform incident-response/tabletop exercises and define external penetration-test scope;
-8. close every launch-blocking item in the [Phase 8 risk register](PHASE_8_RISK_REGISTER.md) and [acceptance matrix](PHASE_8_ACCEPTANCE_MATRIX.md).
+1. the [threat model](THREAT_MODEL.md) inventories trust boundaries and data flows;
+2. privileged route namespaces fail closed, with a table-driven role contract;
+3. login, enrollment, remote, privileged-mutation, download, probe, and general
+   traffic use isolated abuse-control buckets based on the direct peer address;
+4. HMAC signing supports one bounded previous-secret overlap for rotation; newly
+   issued tokens always use the current secret;
+5. exact-head CI gates authorization/race tests, dependency and static analysis,
+   container scanning, an SPDX SBOM, secret scanning, frontend checks, and the
+   existing browser suite;
+6. [incident response](INCIDENT_RESPONSE.md) and an external
+   [penetration-test scope](PENETRATION_TEST_SCOPE.md) are defined.
+
+The current access-token design remains symmetric HS256 without refresh-token
+rotation. Its internal-alpha compensating controls are a minimum 256-bit secret,
+strict issuer/audience/purpose/lifetime validation, active membership lookup,
+bounded two-key rotation overlap, TLS, and secret-store-only deployment. An
+approved asymmetric/session design—or explicit signed risk acceptance—remains a
+production-beta requirement.
+
+Production beta also still requires centralized secret-store access evidence,
+a signed tabletop, external penetration-test remediation/re-test, hosted security
+exercises, and closure of every launch-blocking item in the
+[risk register](PHASE_8_RISK_REGISTER.md) and
+[acceptance matrix](PHASE_8_ACCEPTANCE_MATRIX.md).
 
 ## Authentication flow
 
@@ -58,7 +74,7 @@ Agent enrollment establishes a persistent, scoped agent identity. Subsequent age
 
 The following findings describe the starting prototype and are retained for traceability:
 
-1. a hardcoded `strata-rmm-dev-secret` appeared in multiple locations;
+1. a hardcoded development JWT fallback appeared in multiple locations;
 2. seed data contained a placeholder password hash;
 3. enrollment tokens were kept only in memory;
 4. HS256 signing had no public-key verification or rotation;
@@ -67,4 +83,7 @@ The following findings describe the starting prototype and are retained for trac
 7. client-supplied tenant identifiers could be trusted too early;
 8. RLS coverage was incomplete and owner connections could bypass it.
 
-Items 1–3 and the route/RLS containment portions of 6–8 were remediated in completed phases. Items 4–5 and the full production audit remain Phase 8 gates.
+Items 1–3 and the route/RLS containment portions of 6–8 were remediated in
+completed phases. Phase 8G adds bounded symmetric-key rotation for item 4, but
+asymmetric verification remains deferred. Item 5 and the external production
+audit remain launch gates.

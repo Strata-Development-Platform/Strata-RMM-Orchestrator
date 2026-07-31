@@ -1,0 +1,117 @@
+name: Phase 8G Security Gate
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master, "agent/phase-8g-security-alpha-gate"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase8g-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  authorization-contracts:
+    name: Authorization and abuse-control contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Run focused security contracts with race detection
+        run: |
+          go test -race -count=1 ./pkg/auth
+          go test -race -count=1 ./internal/platform -run 'Test(AdminRoutesRejectNonAdmin|PrivilegedNamespacesFailClosed|ProtectedRoutesRejectMissingCredentials|PublicRoutesAccessibleWithoutAuth|TokenPurposeSeparation|JWTConfigValidation)'
+
+  go-security:
+    name: Go vulnerability and static analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Run govulncheck
+        uses: golang/govulncheck-action@v1
+        with:
+          go-version-input: "1.25"
+          go-package: ./...
+      - name: Run high-severity gosec
+        uses: securego/gosec@master
+        with:
+          args: -severity high -confidence medium ./...
+
+  frontend-security:
+    name: Frontend dependency and build gate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: npm ci
+      - name: Reject high or critical production dependency findings
+        run: npm audit --omit=dev --audit-level=high
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run build
+
+  image-and-sbom:
+    name: Container scan and SBOM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build immutable test image
+        run: docker build --label org.opencontainers.image.revision=${GITHUB_SHA} -t strata-rmm:${GITHUB_SHA} .
+      - name: Scan image for high and critical vulnerabilities
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: strata-rmm:${{ github.sha }}
+          format: table
+          exit-code: 1
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+      - name: Generate SPDX SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: strata-rmm:${{ github.sha }}
+          format: spdx-json
+          output-file: strata-rmm-${{ github.sha }}.spdx.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: phase8g-sbom-${{ github.sha }}
+          path: strata-rmm-${{ github.sha }}.spdx.json
+          retention-days: 30
+
+  secret-and-evidence:
+    name: Secret regression and evidence contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scan repository history for verified and unknown secrets
+        uses: trufflesecurity/trufflehog@main
+        with:
+          extra_args: --results=verified,unknown
+      - name: Validate wrapper and evidence documents
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n start.sh
+          ! grep -Eq '^export JWT_SECRET=|postgres://[^[:space:]]+:[^[:space:]@]+@' start.sh
+          for file in docs/THREAT_MODEL.md docs/INCIDENT_RESPONSE.md docs/PENETRATION_TEST_SCOPE.md docs/PHASE_8G_EVIDENCE.md docs/BETA_OPERATIONS.md docs/BETA_GO_NO_GO.md; do
+            test -s "$file"
+          done
+          grep -q 'Not accepted' docs/PHASE_8G_EVIDENCE.md

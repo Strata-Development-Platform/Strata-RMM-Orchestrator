@@ -20,6 +20,8 @@
 | R8-16 | Billing/usage drift creates incorrect limits or charges | High | Medium | Immutable usage events, reconciliation, correction workflow, customer-visible totals | Billing | Yes |
 | R8-17 | Operator error causes broad tenant impact | High | Medium | Least privilege, confirmations, dry runs, change windows, audit, tested rollback | Platform Ops | Yes |
 | R8-18 | Beta scope expands faster than operational capacity | Medium | High | Cohort limits, explicit quotas, admission criteria and pause conditions | Product/Ops | No |
+| R8-19 | Symmetric access tokens lack refresh-session revocation and asymmetric verifier separation | High | Medium | Short bounded lifetime, active membership validation, two-key rotation overlap, secret-store access control; approve asymmetric/session design or signed compensating risk before beta | Security | Yes |
+| R8-20 | React Router 6 has moderate advisories with no non-high advisory-free upgrade line | Medium | Low | Pin latest 6.x; SPA does not use SSR/RSC hydration and navigation targets are fixed same-origin paths; reject high/critical production dependency findings; reassess when an advisory-free release exists | UI/Security | No |
 
 ## Maintenance
 

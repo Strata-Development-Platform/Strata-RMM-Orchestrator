@@ -13,7 +13,7 @@ services:
     environment:
       POSTGRES_DB: strata_rmm
       POSTGRES_USER: strata
-      POSTGRES_PASSWORD: strata_dev
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set a local PostgreSQL password}
     ports:
       - "5432:5432"
     volumes:
@@ -30,8 +30,8 @@ services:
       - "9000:9000"
       - "9001:9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-strata-local}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set a local object-storage password}
     command: ["server", "/data", "--console-address", ":9001"]
     volumes:
       - minio_data:/data
@@ -52,17 +52,18 @@ services:
         condition: service_started
     environment:
       STRATA_RMM_NATS_URL: nats://nats:4222
-      STRATA_RMM_TIMESCALE_DSN: postgres://strata:strata_dev@postgres:5432/strata_rmm?sslmode=disable
+      STRATA_RMM_TIMESCALE_DSN: postgres://strata:${POSTGRES_PASSWORD}@postgres:5432/strata_rmm?sslmode=disable
       STRATA_RMM_API_ADDR: :8080
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET to at least 32 characters}
+      JWT_SECRET_PREVIOUS: ${JWT_SECRET_PREVIOUS:-}
       STRATA_METRICS_TOKEN: ${STRATA_METRICS_TOKEN:?set a dedicated metrics bearer token of at least 32 characters}
       STORAGE_BACKEND: minio
       STORAGE_BUCKET: strata-recordings
       STORAGE_ENDPOINT: minio:9000
-      STORAGE_ACCESS_KEY: minioadmin
-      STORAGE_SECRET_KEY: minioadmin
+      STORAGE_ACCESS_KEY: ${MINIO_ROOT_USER:-strata-local}
+      STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
       STORAGE_USE_SSL: "false"
-    command: ["orchestrator", "--nats-url", "nats://nats:4222", "--timescale-dsn", "postgres://strata:strata_dev@postgres:5432/strata_rmm?sslmode=disable", "--api-addr", ":8080", "--storage-backend", "minio", "--storage-bucket", "strata-recordings", "--storage-endpoint", "minio:9000"]
+    command: ["orchestrator", "--nats-url", "nats://nats:4222", "--timescale-dsn", "postgres://strata:${POSTGRES_PASSWORD}@postgres:5432/strata_rmm?sslmode=disable", "--api-addr", ":8080", "--storage-backend", "minio", "--storage-bucket", "strata-recordings", "--storage-endpoint", "minio:9000"]
 
   agent:
     build: .
@@ -70,7 +71,7 @@ services:
       - nats
     environment:
       STRATA_RMM_NATS_URL: nats://nats:4222
-    command: ["agent", "--tenant-id", "dev-tenant", "--enrollment-token", "dev-token", "--nats-url", "nats://nats:4222"]
+    command: ["agent", "--tenant-id", "dev-tenant", "--enrollment-token", "${AGENT_ENROLLMENT_TOKEN:-}", "--nats-url", "nats://nats:4222"]
     profiles:
       - agent
 
@@ -84,7 +85,7 @@ services:
       - prometheus
     environment:
       GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set a local Grafana password}
     volumes:
       - grafana_data:/var/lib/grafana
       - ../grafana/datasources:/etc/grafana/provisioning/datasources

@@ -82,6 +82,7 @@ Populate this table during implementation.
 | 8B-C01…8B-C07 | [CI run 30474346350](https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30474346350) | `9ce0a607447bfb4ea811a09c16dc785b5085c2cc` | 2026-07-29 | Coordinator | 36/36 passed; merged PR #8 |
 | A8-06…A8-08 / Phase 8C | [Phase 8C run 30602575852](https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30602575852) and [CI run 30602575803](https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30602575803) | `4e2a3bc00172adb7363b880c03077b61589eafcd` | 2026-07-31 | Coordinator | 20/20 Phase 8C and 30/30 repository CI passed |
 | A8-09 | Timestamped isolated recovery drill | Pending | Pending | Operations | Not accepted |
+| A8-18…A8-21 / Phase 8F | [Phase 8F run 30608673091](https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30608673091) and [CI run 30608673085](https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30608673085) | `a0dd106ccb95d32487f5cd9193469708cba6eeb0` | 2026-07-31 | Coordinator | 3/3 Phase 8F and 30/30 repository CI passed; hosted lifecycle exercise still required |
 
 ## Phase 8C — Backup and Disaster Recovery
 
@@ -126,3 +127,24 @@ environment exercises.
 
 Detailed procedure and evidence: [Resilience testing](RESILIENCE_TESTING.md) and
 [Phase 8E evidence](PHASE_8E_EVIDENCE.md).
+
+## Phase 8F — MSP Lifecycle and Unified Dashboard
+
+| ID | Acceptance criterion | Current status |
+|---|---|---|
+| A8-18 | Provision, brand, enroll, and operate an MSP without direct database edits | CI/API/browser contracts verified; hosted exercise pending |
+| A8-19 | Entitlements, quotas, grace, suspension, reactivation, and expiry are centrally enforced | CI and PostgreSQL integration verified |
+| A8-20 | Platform, subdomain, and verified custom-domain routing are tenant-correct and fail closed | CI host-routing contracts verified; provider exercise pending |
+| A8-21 | Bounded export, credential revocation, retention, and deletion approval are authorized and auditable | CI/PostgreSQL verified; hosted offboarding exercise pending |
+
+## Phase 8G — Security and Alpha Gate
+
+Implementation evidence is maintained in [Phase 8G evidence](PHASE_8G_EVIDENCE.md).
+
+| ID | Acceptance criterion | Current status |
+|---|---|---|
+| A8-22 | Every privileged route has role and cross-scope negative proof | CI verified at `ebeee2de6f3ddb354ebb41fef2959ceeefaf5082`; hosted adversarial review remains recommended |
+| A8-23 | Dependency, image, secret, SBOM, static-analysis, frontend, and browser gates pass | 69/69 exact-head jobs passed; see Phase 8G evidence |
+| A8-24 | Four-scenario incident-response tabletop is signed | Not accepted; procedure/template only |
+| A8-25 | Alert/runbook owners and escalation paths are exercised | Partial; hosted delivery audit pending |
+| A8-26 | Mandatory evidence and residual risks receive signed go/no-go | Not accepted |

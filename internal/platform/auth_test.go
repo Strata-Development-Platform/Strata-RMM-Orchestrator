@@ -73,6 +73,8 @@ func TestPublicRoutesAccessibleWithoutAuth(t *testing.T) {
 		path   string
 	}{
 		{"GET", "/health"},
+		{"GET", "/health/live"},
+		{"GET", "/health/ready"},
 		{"GET", "/"},
 		{"POST", "/api/v1/auth/login"},
 		{"GET", "/install.sh"},
@@ -152,29 +154,56 @@ func TestInvalidSignatureRejected(t *testing.T) {
 }
 
 func TestAdminRoutesRejectNonAdmin(t *testing.T) {
-	t.Setenv("JWT_SECRET", "test-secret-that-is-long-enough-for-testing")
-	gen := auth.NewTokenGenerator("test-secret-that-is-long-enough-for-testing")
-	token, err := gen.GenerateUserToken("test-user-id", "t1", "", "", "", []string{"viewer"}, time.Hour)
+	const secret = "test-secret-that-is-long-enough-for-testing"
+	t.Setenv("JWT_SECRET", secret)
+	gen := auth.NewTokenGenerator(secret)
+	viewerToken, err := gen.GenerateUserToken("viewer-user", "t1", "", "", "", []string{"viewer"}, time.Hour)
 	if err != nil {
-		t.Fatalf("generate: %v", err)
+		t.Fatalf("generate viewer token: %v", err)
+	}
+	adminToken, err := gen.GenerateUserToken("admin-user", "t1", "", "", "", []string{"platform_admin"}, time.Hour)
+	if err != nil {
+		t.Fatalf("generate admin token: %v", err)
 	}
 
-	adminPaths := []string{
-		"/api/v1/admin/users",
-	}
-	for _, path := range adminPaths {
-		t.Run(path, func(t *testing.T) {
-			req := httptest.NewRequest("GET", path, nil)
-			req.Header.Set("Authorization", "Bearer "+token)
-			w := httptest.NewRecorder()
-			s := &APIServer{tokenGen: gen, allowClaimPrincipal: true}
-			s.withAccessControl(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(http.StatusOK)
-			})).ServeHTTP(w, req)
-			if w.Code != http.StatusForbidden {
-				t.Errorf("%s: expected 403 for viewer role, got %d", path, w.Code)
-			}
+	s := &APIServer{tokenGen: gen, allowClaimPrincipal: true}
+	for _, route := range s.adminRoutes() {
+		path := strings.NewReplacer(
+			"{mspID}", "msp-1",
+			"{domainID}", "domain-1",
+			"{grantID}", "grant-1",
+			"{userID}", "user-1",
+		).Replace(route.Path)
+		t.Run(route.Method+" "+route.Path, func(t *testing.T) {
+			assertAccessStatus(t, s, route.Method, path, viewerToken, http.StatusForbidden)
+			assertAccessStatus(t, s, route.Method, path, adminToken, http.StatusOK)
 		})
+	}
+}
+
+func TestPrivilegedNamespacesFailClosed(t *testing.T) {
+	s := &APIServer{}
+	for _, path := range []string{
+		"/api/v1/admin/future-operation",
+		"/api/v2/platform/future-operation",
+		"/api/v2/deployment/future-operation",
+	} {
+		if got := s.classifyRoute(http.MethodPost, path); got != AccessAdmin {
+			t.Errorf("POST %s classified as %v, want AccessAdmin", path, got)
+		}
+	}
+}
+
+func assertAccessStatus(t *testing.T, s *APIServer, method, path, token string, want int) {
+	t.Helper()
+	req := httptest.NewRequest(method, path, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	s.withAccessControl(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})).ServeHTTP(w, req)
+	if w.Code != want {
+		t.Errorf("%s %s: status = %d, want %d", method, path, w.Code, want)
 	}
 }
 

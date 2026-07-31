@@ -33,6 +33,13 @@ func ValidateJWTConfig() error {
 	if len(secret) < minSecretLen {
 		return fmt.Errorf("JWT_SECRET must be at least %d characters", minSecretLen)
 	}
+	previous := os.Getenv("JWT_SECRET_PREVIOUS")
+	if previous != "" && len(previous) < minSecretLen {
+		return fmt.Errorf("JWT_SECRET_PREVIOUS must be empty or at least %d characters", minSecretLen)
+	}
+	if previous != "" && subtle.ConstantTimeCompare([]byte(secret), []byte(previous)) == 1 {
+		return fmt.Errorf("JWT_SECRET_PREVIOUS must differ from JWT_SECRET")
+	}
 	return nil
 }
 
@@ -63,11 +70,12 @@ func generateTokenID() (string, error) {
 }
 
 type TokenGenerator struct {
-	secret []byte
+	secret        []byte
+	verifySecrets [][]byte
 }
 
 func NewTokenGenerator(secret string) *TokenGenerator {
-	return &TokenGenerator{secret: []byte(secret)}
+	return &TokenGenerator{secret: []byte(secret), verifySecrets: [][]byte{[]byte(secret)}}
 }
 
 func NewTokenGeneratorOrFail(secret string) (*TokenGenerator, error) {
@@ -80,7 +88,17 @@ func NewTokenGeneratorOrFail(secret string) (*TokenGenerator, error) {
 	if len(secret) < minSecretLen {
 		return nil, fmt.Errorf("JWT_SECRET must be at least %d characters", minSecretLen)
 	}
-	return &TokenGenerator{secret: []byte(secret)}, nil
+	verifySecrets := [][]byte{[]byte(secret)}
+	if previous := os.Getenv("JWT_SECRET_PREVIOUS"); previous != "" {
+		if len(previous) < minSecretLen {
+			return nil, fmt.Errorf("JWT_SECRET_PREVIOUS must be empty or at least %d characters", minSecretLen)
+		}
+		if subtle.ConstantTimeCompare([]byte(secret), []byte(previous)) == 1 {
+			return nil, fmt.Errorf("JWT_SECRET_PREVIOUS must differ from JWT_SECRET")
+		}
+		verifySecrets = append(verifySecrets, []byte(previous))
+	}
+	return &TokenGenerator{secret: []byte(secret), verifySecrets: verifySecrets}, nil
 }
 
 func (g *TokenGenerator) GenerateAgentToken(tenantID, agentID string, ttl time.Duration) (string, error) {
@@ -173,8 +191,12 @@ func (g *TokenGenerator) Validate(token string) (*Claims, error) {
 		return nil, fmt.Errorf("unsupported token type: %s", header.Typ)
 	}
 
-	expectedSig := g.sign(parts[0] + "." + parts[1])
-	if subtle.ConstantTimeCompare([]byte(expectedSig), []byte(parts[2])) == 0 {
+	validSignature := 0
+	for _, secret := range g.verificationKeys() {
+		expectedSig := signWithSecret(secret, parts[0]+"."+parts[1])
+		validSignature |= subtle.ConstantTimeCompare([]byte(expectedSig), []byte(parts[2]))
+	}
+	if validSignature == 0 {
 		return nil, fmt.Errorf("invalid signature")
 	}
 
@@ -272,9 +294,20 @@ func (g *TokenGenerator) encode(claims Claims) (string, error) {
 }
 
 func (g *TokenGenerator) sign(data string) string {
-	mac := hmac.New(sha256.New, g.secret)
+	return signWithSecret(g.secret, data)
+}
+
+func signWithSecret(secret []byte, data string) string {
+	mac := hmac.New(sha256.New, secret)
 	mac.Write([]byte(data))
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func (g *TokenGenerator) verificationKeys() [][]byte {
+	if len(g.verifySecrets) == 0 {
+		return [][]byte{g.secret}
+	}
+	return g.verifySecrets
 }
 
 func (g *TokenGenerator) validateSecret() error {

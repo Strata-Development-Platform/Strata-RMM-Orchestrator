@@ -13,11 +13,12 @@ type RateLimiter struct {
 	visitors map[string]*visitor
 	rate     int
 	burst    int
+	cleanup  sync.Once
 }
 
 type visitor struct {
-	tokens    int
-	lastSeen  time.Time
+	tokens   int
+	lastSeen time.Time
 }
 
 func NewRateLimiter(rate, burst int) *RateLimiter {
@@ -29,7 +30,7 @@ func NewRateLimiter(rate, burst int) *RateLimiter {
 }
 
 func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
-	go rl.cleanup()
+	rl.cleanup.Do(func() { go rl.cleanupVisitors() })
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ip, _, err := net.SplitHostPort(r.RemoteAddr)
@@ -37,22 +38,14 @@ func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 			ip = r.RemoteAddr
 		}
 
-		rate, burst := rl.rate, rl.burst
-		if strings.HasPrefix(r.URL.Path, "/health") {
-			rate, burst = 100, 200
-		} else if strings.HasPrefix(r.URL.Path, "/api/v1/enroll") {
-			rate, burst = 5, 10
-		} else if strings.HasPrefix(r.URL.Path, "/api/v1/mfa") {
-			rate, burst = 10, 20
-		} else if strings.HasPrefix(r.URL.Path, "/api/v1/recordings") {
-			rate, burst = 20, 40
-		}
+		class, rate, burst := rl.policy(r.Method, r.URL.Path)
+		key := class + ":" + ip
 
 		rl.mu.Lock()
-		v, exists := rl.visitors[ip]
+		v, exists := rl.visitors[key]
 		if !exists {
-			v = &visitor{tokens: burst}
-			rl.visitors[ip] = v
+			v = &visitor{tokens: burst, lastSeen: time.Now()}
+			rl.visitors[key] = v
 		}
 
 		elapsed := time.Since(v.lastSeen)
@@ -64,6 +57,7 @@ func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 
 		if v.tokens <= 0 {
 			rl.mu.Unlock()
+			w.Header().Set("Retry-After", "1")
 			http.Error(w, "429 too many requests", http.StatusTooManyRequests)
 			return
 		}
@@ -79,7 +73,29 @@ func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 	})
 }
 
-func (rl *RateLimiter) cleanup() {
+// policy returns an isolated bucket class and its refill/burst limits. Sensitive
+// operations cannot borrow capacity from the general API bucket. RemoteAddr is
+// intentionally used as the network identity: forwarded headers are untrusted.
+func (rl *RateLimiter) policy(method, path string) (string, int, int) {
+	switch {
+	case path == "/api/v1/auth/login":
+		return "login", 1, 5
+	case path == "/api/v1/enroll" || path == "/api/v1/agent/register" || strings.HasPrefix(path, "/api/v1/enrollment/"):
+		return "enrollment", 2, 10
+	case strings.HasPrefix(path, "/api/v1/remote/") || strings.HasPrefix(path, "/api/v1/recordings"):
+		return "remote", 5, 10
+	case method != http.MethodGet && (strings.HasPrefix(path, "/api/v1/jobs") || strings.HasPrefix(path, "/api/v2/approvals")):
+		return "privileged-mutation", 10, 20
+	case path == "/health" || path == "/metrics":
+		return "probe", 100, 200
+	case path == "/install.sh" || strings.HasPrefix(path, "/releases/"):
+		return "public-download", 10, 20
+	default:
+		return "general", rl.rate, rl.burst
+	}
+}
+
+func (rl *RateLimiter) cleanupVisitors() {
 	ticker := time.NewTicker(10 * time.Minute)
 	defer ticker.Stop()
 
