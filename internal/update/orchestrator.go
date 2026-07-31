@@ -134,12 +134,27 @@ func (u *OrchestratorUpdater) fetchChecksum(ctx context.Context, checksumURL, fi
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
-	for _, line := range strings.Split(string(body), "\n") {
+	body, err := io.ReadAll(resp.Body)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	return checksumForFile(string(body), filename)
+}
+
+func checksumForFile(manifest, filename string) string {
+	for _, line := range strings.Split(manifest, "\n") {
 		parts := strings.Fields(line)
-		if len(parts) == 2 && strings.TrimPrefix(parts[1], "*") == filename {
-			return parts[0]
+		if len(parts) != 2 || strings.TrimPrefix(parts[1], "*") != filename {
+			continue
 		}
+		checksum := strings.ToLower(parts[0])
+		if len(checksum) != sha256.Size*2 {
+			return ""
+		}
+		if _, err := hex.DecodeString(checksum); err != nil {
+			return ""
+		}
+		return checksum
 	}
 	return ""
 }
@@ -149,7 +164,9 @@ func (u *OrchestratorUpdater) Download(ctx context.Context, release *Orchestrato
 		return "", fmt.Errorf("verified release checksum is required")
 	}
 	updateDir := filepath.Join(u.dataDir, "updates")
-	os.MkdirAll(updateDir, 0700)
+	if err := os.MkdirAll(updateDir, 0700); err != nil {
+		return "", fmt.Errorf("create update directory: %w", err)
+	}
 
 	binaryPath := filepath.Join(updateDir, fmt.Sprintf("strata-rmm-%s", release.Version))
 
