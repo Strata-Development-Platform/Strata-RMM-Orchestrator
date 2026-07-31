@@ -71,7 +71,6 @@ services:
       - platform_ca
       - jwt_secret
       - metrics_token
-      - bootstrap_admin_password
     depends_on:
       postgres:
         condition: service_healthy
@@ -128,8 +127,6 @@ secrets:
     file: ./secrets/jwt_secret
   metrics_token:
     file: ./secrets/metrics_token
-  bootstrap_admin_password:
-    file: ./secrets/bootstrap_admin_password
 
 networks:
   frontend:
