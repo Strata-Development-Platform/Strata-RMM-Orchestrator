@@ -3,8 +3,7 @@ name: Internal Alpha Agent
 on:
   pull_request:
     branches: [master]
-  push:
-    branches: ["codex/internal-alpha-agent-foundation"]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -40,6 +39,25 @@ jobs:
       - name: Validate collector, queue, wire, and ingestion identity
         run: |
           go test -race -count=1 ./cmd/agent ./internal/agent/comms ./internal/monitoring
+
+  nats-replay-integration:
+    name: NATS outage queue and replay integration
+    runs-on: ubuntu-latest
+    services:
+      nats:
+        image: nats:2.10-alpine
+        ports:
+          - 4222:4222
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Replay queued telemetry through a live NATS server
+        env:
+          NATS_INTEGRATION_URL: nats://127.0.0.1:4222
+        run: go test -race -count=1 ./internal/agent/comms -run '^TestReplayQueuedTelemetryAgainstNATS$'
 
   installer-and-release:
     name: Installer and release packaging
