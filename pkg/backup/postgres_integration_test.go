@@ -985,10 +985,8 @@ func TestPostgreSQLBackup_SourceTargetSeparation(t *testing.T) {
 	seedSourceDB(t, ctx, env.source)
 
 	// Apply migrations to target so it has the same schema
-	var targetMgr *postgres.MigrationManager
-	targetMgr, err = postgres.NewMigrationManager(targetDB, nil)
-	require.NoError(t, err)
-	_, err = targetMgr.ApplyMigrations(ctx)
+	targetMgr := postgres.NewSchemaManager(targetDB)
+	err = targetMgr.Apply(ctx)
 	require.NoError(t, err)
 
 	// Verify both databases have the same schema (same table count)
