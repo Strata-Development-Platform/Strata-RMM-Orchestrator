@@ -593,3 +593,20 @@ func TestSecretEnvRejectsAmbiguousSources(t *testing.T) {
 		t.Fatal("expected direct and file secret sources to be rejected")
 	}
 }
+
+
+func TestSecretEnvRejectsRelativeAndNonCanonicalPaths(t *testing.T) {
+	tests := []string{
+		"relative/secret",
+		filepath.Join(t.TempDir(), "..", "secret"),
+	}
+	for _, path := range tests {
+		t.Run(path, func(t *testing.T) {
+			t.Setenv("TEST_SECRET", "")
+			t.Setenv("TEST_SECRET_FILE", path)
+			if _, err := secretEnv("TEST_SECRET"); err == nil || !strings.Contains(err.Error(), "absolute and canonical") {
+				t.Fatalf("secretEnv() error = %v, want path validation failure", err)
+			}
+		})
+	}
+}
