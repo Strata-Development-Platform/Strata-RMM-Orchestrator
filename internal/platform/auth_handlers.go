@@ -132,7 +132,6 @@ func (s *APIServer) handleMe(w http.ResponseWriter, r *http.Request) {
 	accessibleTenants, _ := s.getAccessibleTenants(r, userID, role, tenantID)
 
 	writeJSON(w, http.StatusOK, loginResponse{
-		Token:             r.Header.Get("Authorization"),
 		UserID:            userID,
 		Email:             email,
 		Role:              role,

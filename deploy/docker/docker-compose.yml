@@ -55,6 +55,7 @@ services:
       STRATA_RMM_TIMESCALE_DSN: postgres://strata:strata_dev@postgres:5432/strata_rmm?sslmode=disable
       STRATA_RMM_API_ADDR: :8080
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET to at least 32 characters}
+      STRATA_METRICS_TOKEN: ${STRATA_METRICS_TOKEN:?set a dedicated metrics bearer token of at least 32 characters}
       STORAGE_BACKEND: minio
       STORAGE_BUCKET: strata-recordings
       STORAGE_ENDPOINT: minio:9000
@@ -80,6 +81,7 @@ services:
     depends_on:
       - postgres
       - orchestrator
+      - prometheus
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: admin
@@ -88,7 +90,23 @@ services:
       - ../grafana/datasources:/etc/grafana/provisioning/datasources
       - ../grafana/dashboards:/etc/grafana/provisioning/dashboards
 
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    ports:
+      - "9090:9090"
+    depends_on:
+      - orchestrator
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+    volumes:
+      - prometheus_data:/prometheus
+      - ../prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - ${STRATA_METRICS_TOKEN_FILE:?set STRATA_METRICS_TOKEN_FILE to a protected token file}:/run/secrets/strata_metrics_token:ro
+
 volumes:
   pgdata:
   grafana_data:
   minio_data:
+  prometheus_data:

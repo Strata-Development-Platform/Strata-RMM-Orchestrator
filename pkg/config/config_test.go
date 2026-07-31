@@ -1,7 +1,9 @@
 package config
 
 import (
+	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -93,6 +95,66 @@ func TestLoaderFromEnv(t *testing.T) {
 	}
 	if cfg.HTTP.APIAddr != ":9090" {
 		t.Errorf("API addr = %q", cfg.HTTP.APIAddr)
+	}
+}
+
+func TestMetricsTokenValidationAndRedaction(t *testing.T) {
+	cfg := &OrchestratorConfig{
+		RuntimeMode: ModeTest,
+		NATS: NATSConfig{
+			URL:           "nats://localhost:4222",
+			ReconnectWait: time.Second,
+		},
+		DB: DatabaseConfig{
+			DSN:             "postgres://localhost/test?sslmode=disable",
+			MaxOpenConns:    2,
+			MaxIdleConns:    1,
+			ConnMaxLifetime: time.Minute,
+		},
+		JWT: JWTConfig{Secret: "0123456789abcdef0123456789abcdef"},
+		HTTP: HTTPConfig{
+			APIAddr:          ":8080",
+			ReadTimeout:      time.Second,
+			WriteTimeout:     time.Second,
+			MaxBodySizeBytes: 1024,
+		},
+	}
+	cfg.Observability.MetricsToken = "short"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "MetricsToken") {
+		t.Fatalf("expected short metrics token rejection, got %v", err)
+	}
+
+	cfg.Observability.MetricsToken = "0123456789abcdef0123456789abcdef"
+	summary := cfg.RedactedSummary()
+	if summary["metrics_token_configured"] != true {
+		t.Fatal("redacted summary should report metrics token presence")
+	}
+	if strings.Contains(fmt.Sprint(summary), cfg.Observability.MetricsToken) {
+		t.Fatal("metrics token leaked in redacted summary")
+	}
+}
+
+func TestLoadMetricsTokenFromEnvironment(t *testing.T) {
+	const token = "abcdef0123456789abcdef0123456789"
+	setenv(t, "STRATA_METRICS_TOKEN", token)
+	cfg, err := LoadOrchestratorConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Observability.MetricsToken != token {
+		t.Fatal("metrics token did not reach observability configuration")
+	}
+}
+
+func TestProductionRequiresMetricsToken(t *testing.T) {
+	cfg := productionConfig(NATSConfig{
+		URL: "tls://nats.example.com:4222", Token: "validtok", TLSEnabled: true,
+		TLSCAFile: "ca.pem", ReconnectWait: 5, MaxReconnects: -1,
+	})
+	cfg.Observability.MetricsToken = ""
+	err := cfg.ProductionValidate()
+	if err == nil || !strings.Contains(err.Error(), "MetricsToken") {
+		t.Fatalf("expected missing metrics token rejection, got %v", err)
 	}
 }
 
@@ -371,11 +433,12 @@ func TestValidateRejectsSeedDevInProduction(t *testing.T) {
 
 func productionConfig(natsCfg NATSConfig) *OrchestratorConfig {
 	return &OrchestratorConfig{
-		RuntimeMode: ModeProduction,
-		JWT:         JWTConfig{Secret: "abcdefghijklmnopqrstuvwxyz123456"},
-		DB:          DatabaseConfig{DSN: "postgres://user:strong-secret@db:5432/strata?sslmode=require", MaxOpenConns: 5, MaxIdleConns: 2, ConnMaxLifetime: 10},
-		NATS:        natsCfg,
-		HTTP:        HTTPConfig{APIAddr: ":8080", PublicURL: "https://rmm.example.com", ReadTimeout: 5, WriteTimeout: 5, MaxBodySizeBytes: 1000},
+		RuntimeMode:   ModeProduction,
+		JWT:           JWTConfig{Secret: "abcdefghijklmnopqrstuvwxyz123456"},
+		DB:            DatabaseConfig{DSN: "postgres://user:strong-secret@db:5432/strata?sslmode=require", MaxOpenConns: 5, MaxIdleConns: 2, ConnMaxLifetime: 10},
+		NATS:          natsCfg,
+		HTTP:          HTTPConfig{APIAddr: ":8080", PublicURL: "https://rmm.example.com", ReadTimeout: 5, WriteTimeout: 5, MaxBodySizeBytes: 1000},
+		Observability: ObservabilityConfig{MetricsToken: "0123456789abcdef0123456789abcdef"},
 	}
 }
 

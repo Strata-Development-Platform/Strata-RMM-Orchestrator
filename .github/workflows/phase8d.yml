@@ -1,0 +1,121 @@
+name: Phase 8D — Observability and Synthetics
+
+on:
+  push:
+    branches: [master, develop, agent/phase-8d*]
+  pull_request:
+    branches: [master]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  phase8d-static:
+    name: Static Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Formatting
+        run: test -z "$(gofmt -l internal/observability internal/synthetic internal/platform cmd/synthetic pkg/config)"
+      - name: Vet and build
+        run: |
+          go vet ./internal/observability/... ./internal/synthetic/... ./internal/platform/... ./cmd/synthetic/... ./pkg/config/...
+          go build ./...
+
+  phase8d-metrics:
+    name: Metrics and Log Safety
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - run: go test ./internal/observability/... ./internal/platform/... ./pkg/config/... -count=1 -race -v
+
+  phase8d-synthetics:
+    name: Synthetic Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - run: go test ./internal/synthetic/... ./cmd/synthetic/... -count=1 -race -v
+      - name: Verify CLI registration
+        run: |
+          go build -o /tmp/strata-rmm .
+          /tmp/strata-rmm synthetic --help | grep -q "independent production-path"
+
+  phase8d-job-integration:
+    name: Durable Job Metrics (PostgreSQL)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: strata_test
+          POSTGRES_PASSWORD: strata_test
+          POSTGRES_DB: strata_observability
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U strata_test -d strata_observability"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_POSTGRES_DSN: postgres://strata_test:strata_test@localhost:5432/strata_observability?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - run: go test ./internal/observability/... -tags=dbintegration -run TestJobMetricsAgainstPostgreSQL -count=1 -race -v
+
+  phase8d-deployment:
+    name: Prometheus and Grafana Deployment
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Parse rules and dashboard; verify runbook links
+        run: go test ./internal/observability/... -count=1 -run "TestObservabilityDeployment|TestEveryAlert"
+      - name: Render Docker Compose
+        env:
+          JWT_SECRET: 0123456789abcdef0123456789abcdef
+          STRATA_METRICS_TOKEN: abcdef0123456789abcdef0123456789
+          STRATA_METRICS_TOKEN_FILE: /tmp/strata-metrics-token
+        run: |
+          printf '%s' "$STRATA_METRICS_TOKEN" > "$STRATA_METRICS_TOKEN_FILE"
+          docker compose -f deploy/docker/docker-compose.yml config >/tmp/compose-rendered.yml
+      - name: Validate synthetic systemd units
+        run: systemd-analyze verify deploy/strata-rmm-synthetic.service deploy/strata-rmm-synthetic.timer
+
+  phase8d-secret-safety:
+    name: Secret and Cardinality Safety
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Run focused negative tests
+        run: |
+          go test ./internal/observability/... ./internal/platform/... ./internal/synthetic/... ./pkg/config/... \
+            -count=1 -race -v \
+            -run "TestHTTPRegistryUsesMatchedPattern|TestMetricsRequireDedicatedBearerToken|TestMetricsAreDisabled|TestRequestLoggingUsesRoutePattern|TestRunnerExercisesAllPathsWithoutLeakingSecrets|TestRunnerRejectsRemotePlaintextURL|TestMetricsTokenValidationAndRedaction"

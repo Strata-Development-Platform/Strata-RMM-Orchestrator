@@ -14,6 +14,7 @@ import (
 	"github.com/strata-rmm/strata-rmm-orchestrator/cmd/agent"
 	"github.com/strata-rmm/strata-rmm-orchestrator/cmd/orchestrator"
 	"github.com/strata-rmm/strata-rmm-orchestrator/cmd/probe"
+	syntheticcmd "github.com/strata-rmm/strata-rmm-orchestrator/cmd/synthetic"
 )
 
 var (
@@ -67,6 +68,7 @@ Components:
 		agent.NewCommand(ctx, logger),
 		orchestrator.NewCommand(ctx, version, commit, logger),
 		probe.NewCommand(ctx, logger),
+		syntheticcmd.NewCommand(ctx),
 	)
 
 	if err := rootCmd.ExecuteContext(ctx); err != nil {

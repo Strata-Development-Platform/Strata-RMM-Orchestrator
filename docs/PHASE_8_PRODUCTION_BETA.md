@@ -198,3 +198,12 @@ Exit gate: every mandatory acceptance criterion passes, residual risks are expli
 7. Phase 8G — Security gate, beta operations, and final launch review.
 
 Do not combine workstreams merely to reduce PR count when doing so weakens reviewability, rollback, or exact-head evidence.
+
+### Phase 8D implementation boundary
+
+Phase 8D adds a dedicated authenticated Prometheus endpoint, an operator
+dashboard, durable-job telemetry, actionable alert rules, independent
+production-path synthetics, and route-safe logging. CI proves configuration and
+negative behavior. Final acceptance still requires an environment-level alert
+delivery exercise; code presence alone is not proof that paging reaches the
+responsible operator.

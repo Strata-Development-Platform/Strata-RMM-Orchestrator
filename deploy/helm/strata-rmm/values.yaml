@@ -27,6 +27,10 @@ orchestrator:
   env:
     STRATA_RMM_API_ADDR: ":8080"
     STRATA_RMM_LOG_LEVEL: "info"
+  observability:
+    metrics:
+      existingSecret: "strata-rmm-observability"
+      secretKey: "metrics-token"
   nats:
     url: "nats://nats:4222"
   timescale:

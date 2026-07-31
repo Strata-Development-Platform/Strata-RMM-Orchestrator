@@ -96,3 +96,17 @@ Populate this table during implementation.
 | 8C-C07 | CLI uses the real runtime path and has no validation bypass | Verified |
 | 8C-C08 | Recovery documentation matches runtime behavior and limitations | Verified |
 | 8C-C09 | Beta RPO/RTO is proven by a timestamped isolated drill | Not accepted; operational drill required |
+
+## Phase 8D — Observability, Synthetics, and Operator Response
+
+Implementation evidence is maintained in `docs/PHASE_8D_EVIDENCE.md`. These
+rows remain partial until exact-head CI and the environment-level delivery
+exercise are recorded.
+
+| ID | Acceptance criterion | Current status |
+|---|---|---|
+| A8-10 | API traffic, errors, latency, and saturation are observable and alertable | Implemented; exact-head CI pending |
+| A8-11 | Durable-job state, retries, age, failures, and telemetry failure are observable | Implemented; exact-head CI pending |
+| A8-12 | Independent public, login, authenticated API, agent, and storage synthetics | Implemented; environment exercise pending |
+| A8-13 | Metrics, synthetic output, and request logs exclude credentials and raw resource identifiers | Implemented; exact-head CI pending |
+| A8-25 | Phase 8D alerts have owners, severities, and tested runbook links | Implemented; paging delivery exercise pending |

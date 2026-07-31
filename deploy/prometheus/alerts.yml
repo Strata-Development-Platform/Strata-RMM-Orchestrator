@@ -1,0 +1,67 @@
+groups:
+  - name: strata-api
+    rules:
+      - alert: StrataAPIDown
+        expr: up{job="strata-orchestrator"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          owner: platform-operations
+        annotations:
+          summary: Strata orchestrator metrics endpoint is unreachable
+          runbook_url: docs/RUNBOOK.md#strata-api-down
+      - alert: StrataAPIHighErrorRate
+        expr: |
+          sum(rate(strata_http_requests_total{status=~"5.."}[5m]))
+          /
+          clamp_min(sum(rate(strata_http_requests_total[5m])), 0.001)
+          > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          owner: platform-operations
+        annotations:
+          summary: Strata API 5xx ratio exceeds 5 percent
+          runbook_url: docs/RUNBOOK.md#strata-api-high-error-rate
+      - alert: StrataAPIHighP95Latency
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(strata_http_request_duration_seconds_bucket[5m]))
+          ) > 1
+        for: 10m
+        labels:
+          severity: warning
+          owner: platform-operations
+        annotations:
+          summary: Strata API p95 latency exceeds one second
+          runbook_url: docs/RUNBOOK.md#strata-api-high-p95-latency
+  - name: strata-jobs
+    rules:
+      - alert: StrataJobMetricsCollectionFailed
+        expr: strata_job_metrics_collection_success == 0
+        for: 2m
+        labels:
+          severity: critical
+          owner: platform-operations
+        annotations:
+          summary: Durable-job observability cannot query PostgreSQL
+          runbook_url: docs/RUNBOOK.md#strata-job-metrics-collection-failed
+      - alert: StrataOldestJobStalled
+        expr: strata_job_oldest_active_seconds > 900
+        for: 5m
+        labels:
+          severity: critical
+          owner: job-platform
+        annotations:
+          summary: Oldest active durable job exceeds 15 minutes
+          runbook_url: docs/RUNBOOK.md#strata-oldest-job-stalled
+      - alert: StrataJobFailures
+        expr: strata_job_targets{status=~"failed|expired"} > 0
+        for: 5m
+        labels:
+          severity: warning
+          owner: job-platform
+        annotations:
+          summary: Failed or expired durable job targets require triage
+          runbook_url: docs/RUNBOOK.md#strata-job-failures

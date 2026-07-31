@@ -507,3 +507,61 @@ SELECT pid, query, state, wait_event FROM pg_stat_activity WHERE state != 'idle'
 SELECT query, calls, mean_exec_time FROM pg_stat_statements
 ORDER BY mean_exec_time DESC LIMIT 10;
 ```
+
+## Phase 8D Platform Alerts
+
+Every alert below includes an owner and this runbook anchor. Silence an alert
+only with an incident/change reference and an expiry.
+
+### Strata API down
+
+1. Confirm the independent `/health/live` and `/health/ready` probes.
+2. Check orchestrator process/container state and the last termination reason.
+3. Verify Prometheus can reach the orchestrator network endpoint and that its
+   token file matches `STRATA_METRICS_TOKEN`; never print either value.
+4. If readiness is failing, use the named component in its response to select
+   the PostgreSQL, NATS/JetStream, storage, migration, or dispatcher procedure.
+5. Escalate to platform operations after five minutes or immediately when all
+   public paths are unavailable.
+
+### Strata API high error rate
+
+1. Identify affected matched route patterns and status codes in the Phase 8D
+   dashboard. Metric labels intentionally never contain tenant/resource IDs.
+2. Correlate the onset with deployments and dependency alerts.
+3. Inspect sanitized structured logs using the deployment/correlation ID.
+4. Roll back only under `docs/ROLLBACK.md`; never weaken production validation.
+
+### Strata API high p95 latency
+
+1. Compare request rate, in-flight requests, and p95 latency.
+2. Check PostgreSQL pool saturation/slow queries, NATS state, storage latency,
+   CPU, memory, and pod/container throttling.
+3. Identify the matched route family; do not introduce raw-path labels.
+4. Scale or roll back using the documented deployment workflow, then verify the
+   synthetic login and authenticated API checks.
+
+### Strata job metrics collection failed
+
+1. Check `/health/ready` database status.
+2. Verify the metrics collector has database connectivity and migration state.
+3. Treat missing job telemetry as loss of operational visibility, not as an
+   empty queue.
+4. Restore collection before closing the incident.
+
+### Strata oldest job stalled
+
+1. Check dispatcher readiness, NATS/JetStream account access, queue depth, and
+   active recovery/quiesce state.
+2. Inspect jobs and targets by correlation ID through authorized APIs.
+3. Do not manually mark jobs successful or delete durable outbox records.
+4. Recover the dependency or dispatcher and verify the age gauge returns to
+   steady state without duplicate destructive execution.
+
+### Strata job failures
+
+1. Separate failed from expired targets and inspect sanitized error categories.
+2. Verify retry counts, next retry time, agent reconnect state, approval state,
+   and job expiry.
+3. Retry only through the authorized idempotent job API.
+4. Escalate repeated destructive-operation failures to the job-platform owner.

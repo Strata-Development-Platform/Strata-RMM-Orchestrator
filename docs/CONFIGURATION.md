@@ -1,4 +1,4 @@
-# Configuration Reference (Phase 8B)
+# Production Configuration Reference
 
 ## Runtime Mode
 
@@ -54,6 +54,8 @@ Production mode rejects:
 | `HTTP_WRITE_TIMEOUT` | — | — | duration | `10s` | no | no | no | must be positive | HTTP server | env > default | no | — |
 | `HTTP_IDLE_TIMEOUT` | — | — | duration | `60s` | no | no | no | must be positive | HTTP server | env > default | no | — |
 | `HTTP_MAX_BODY_SIZE` | — | — | int64 | `10485760` (10 MB) | no | no | no | must be positive | HTTP server | env > default | no | — |
+| `STRATA_METRICS_TOKEN` | — | — | string | — | no | yes | yes | minimum 32 characters; endpoint disabled when absent | `/metrics` bearer authentication | env | no | — |
+| `STRATA_METRICS_TOKEN_FILE` | — | — | path | — | compose | compose | sensitive location | readable file containing the same token | Prometheus scrape authentication | compose interpolation | container restart | — |
 | `STRATA_SEED_DEV` | — | — | bool | `false` | no | no (must be false) | no | must be false in production | dev seeding | env > default | no | — |
 | `STRATA_DEV_ADMIN_EMAIL` | — | — | string | — | no | no | no | — | dev seeding | env | no | — |
 | `STRATA_DEV_ADMIN_PASSWORD_HASH` | — | — | string | — | no | no | yes | — | dev seeding | env | no | — |

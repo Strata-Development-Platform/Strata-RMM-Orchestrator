@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/alerting"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/inventory"
+	"github.com/strata-rmm/strata-rmm-orchestrator/internal/observability"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/remote"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/auth"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/encrypt"
@@ -64,6 +66,8 @@ type APIServer struct {
 	allowClaimPrincipal bool
 
 	deploymentController *DeploymentController
+	httpMetrics          *observability.HTTPRegistry
+	metricsToken         string
 }
 
 func NewAPIServer(addr string, db *timescale.Client, nc *nats.Conn, logger *zap.Logger, tokenGen *auth.TokenGenerator) (*APIServer, error) {
@@ -78,10 +82,12 @@ func NewAPIServer(addr string, db *timescale.Client, nc *nats.Conn, logger *zap.
 		logger:         logger,
 		tokenGen:       tokenGen,
 		healthRegistry: NewHealthRegistry(),
+		httpMetrics:    observability.NewHTTPRegistry(),
 	}
 	if db != nil {
 		s.mfaStore = auth.NewMFAStore(db.DB())
 		s.keyStore = encrypt.NewKeyStore(db.DB())
+		s.httpMetrics.WithJobDatabase(db.DB())
 	}
 	return s, nil
 }
@@ -146,6 +152,11 @@ func (s *APIServer) WithDeploymentController(dc *DeploymentController) *APIServe
 	return s
 }
 
+func (s *APIServer) WithMetricsToken(token string) *APIServer {
+	s.metricsToken = token
+	return s
+}
+
 func (s *APIServer) SetDispatcherHealthy(healthy bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -177,6 +188,7 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("GET /health/live", s.handleHealthLive)
 	mux.HandleFunc("GET /health/ready", s.handleHealthReady)
+	mux.HandleFunc("GET /metrics", s.handleMetrics)
 	mux.HandleFunc("POST /api/v1/enroll", s.handleEnroll)
 	mux.HandleFunc("POST /api/v1/agent/register", s.handleAgentRegister)
 	mux.HandleFunc("POST /api/v1/agent/config", s.handleAgentConfig)
@@ -380,15 +392,17 @@ func (s *APIServer) Start(ctx context.Context) error {
 
 	handler := rateLimiter.Middleware(
 		auth.SecurityHeaders(
-			withLogging(
-				s.withBranding(
-					s.withAccessControl(
-						s.withTenantTransaction(
-							s.withRecoveryGate(mux),
+			s.httpMetrics.Middleware(
+				withLogging(
+					s.withBranding(
+						s.withAccessControl(
+							s.withTenantTransaction(
+								s.withRecoveryGate(mux),
+							),
 						),
 					),
+					s.logger,
 				),
-				s.logger,
 			),
 		),
 	)
@@ -452,6 +466,22 @@ func (s *APIServer) Start(ctx context.Context) error {
 	s.logger.Info("API server ready")
 
 	return nil
+}
+
+func (s *APIServer) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	if s.metricsToken == "" {
+		http.NotFound(w, r)
+		return
+	}
+	const prefix = "Bearer "
+	header := r.Header.Get("Authorization")
+	if len(header) <= len(prefix) || header[:len(prefix)] != prefix ||
+		subtle.ConstantTimeCompare([]byte(header[len(prefix):]), []byte(s.metricsToken)) != 1 {
+		w.Header().Set("WWW-Authenticate", "Bearer")
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	s.httpMetrics.ServeHTTP(w, r)
 }
 
 func (s *APIServer) Stop(ctx context.Context) error {
@@ -799,9 +829,13 @@ func withLogging(next http.Handler, logger *zap.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		next.ServeHTTP(w, r)
+		route := r.Pattern
+		if route == "" {
+			route = "unmatched"
+		}
 		logger.Info("api request",
 			zap.String("method", r.Method),
-			zap.String("path", r.URL.Path),
+			zap.String("route", route),
 			zap.String("remote", r.RemoteAddr),
 			zap.Duration("duration", time.Since(start)),
 		)
