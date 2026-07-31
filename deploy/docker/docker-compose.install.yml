@@ -14,16 +14,16 @@ services:
       - -c
       - ssl=on
       - -c
-      - ssl_cert_file=/var/lib/postgresql/data/server.crt
+      - ssl_cert_file=/run/postgres-tls/server.crt
       - -c
-      - ssl_key_file=/var/lib/postgresql/data/server.key
+      - ssl_key_file=/run/postgres-tls/server.key
     secrets:
       - postgres_password
       - postgres_tls_cert
       - postgres_tls_key
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./init-postgres-tls.sh:/docker-entrypoint-initdb.d/10-postgres-tls.sh:ro
+      - ./init-postgres-tls.sh:/usr/local/bin/strata-postgres-entrypoint:ro
     healthcheck:
       test: [CMD-SHELL, "pg_isready -U strata -d strata_rmm"]
       interval: 5s
