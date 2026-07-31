@@ -19,13 +19,9 @@ builds:
       - -X main.date={{ .Date }}
     env:
       - CGO_ENABLED=0
-    goos:
-      - linux
-      - windows
-      - darwin
-    goarch:
-      - amd64
-      - arm64
+    goos: [linux, windows, darwin]
+    goarch: [amd64, arm64]
+
   - id: orchestrator
     binary: strata-orchestrator
     main: .
@@ -38,11 +34,8 @@ builds:
       - -X main.date={{ .Date }}
     env:
       - CGO_ENABLED=0
-    goos:
-      - linux
-    goarch:
-      - amd64
-      - arm64
+    goos: [linux]
+    goarch: [amd64, arm64]
 
   - id: probe
     binary: strata-probe
@@ -56,38 +49,59 @@ builds:
       - -X main.date={{ .Date }}
     env:
       - CGO_ENABLED=0
-    goos:
-      - linux
-    goarch:
-      - amd64
+    goos: [linux]
+    goarch: [amd64]
 
 archives:
   - id: agent
     builds: [agent]
-    name_template: "{{ .ProjectName }}-agent-{{ .Os }}-{{ .Arch }}"
+    name_template: "{{ .ProjectName }}-agent-{{ .Version }}-{{ .Os }}-{{ .Arch }}"
     formats: [tar.gz]
-    files:
-      - LICENSE
-      - README.md
+    files: [LICENSE, README.md]
 
+  # The in-app/CLI updater consumes this raw, checksum-verified executable.
   - id: orchestrator
     builds: [orchestrator]
     name_template: "{{ .ProjectName }}-orchestrator-{{ .Version }}-{{ .Os }}-{{ .Arch }}"
-    formats: [tar.gz]
-    files:
-      - LICENSE
-      - README.md
+    formats: [binary]
 
   - id: probe
     builds: [probe]
     name_template: "{{ .ProjectName }}-probe-{{ .Version }}-{{ .Os }}-{{ .Arch }}"
     formats: [tar.gz]
-    files:
-      - LICENSE
-      - README.md
+    files: [LICENSE, README.md]
+
+nfpms:
+  - id: orchestrator-packages
+    package_name: strata-rmm-orchestrator
+    builds: [orchestrator]
+    vendor: Strata Development Platform
+    homepage: https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator
+    maintainer: Strata Development Platform
+    description: Strata RMM orchestration and management server
+    license: Apache-2.0
+    formats: [deb, rpm]
+    bindir: /usr/local/bin
+    contents:
+      - src: deploy/strata-rmm.service
+        dst: /usr/lib/systemd/system/strata-rmm.service
+
+  - id: agent-packages
+    package_name: strata-rmm-agent
+    builds: [agent]
+    vendor: Strata Development Platform
+    homepage: https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator
+    maintainer: Strata Development Platform
+    description: Strata RMM endpoint monitoring agent
+    license: Apache-2.0
+    formats: [deb, rpm]
+    bindir: /usr/local/bin
+    contents:
+      - src: deploy/strata-rmm-agent-package.service
+        dst: /usr/lib/systemd/system/strata-rmm-agent.service
 
 checksum:
-  name_template: "checksums.txt"
+  name_template: checksums.txt
   algorithm: sha256
 
 snapshot:
@@ -96,10 +110,7 @@ snapshot:
 changelog:
   sort: asc
   filters:
-    exclude:
-      - "^docs:"
-      - "^test:"
-      - "^ci:"
+    exclude: ["^docs:", "^test:", "^ci:"]
 
 signs:
   - artifacts: all
