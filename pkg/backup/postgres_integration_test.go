@@ -981,24 +981,28 @@ func TestPostgreSQLBackup_SourceTargetSeparation(t *testing.T) {
 	require.NoError(t, err)
 	defer targetDB.Close()
 
-	// Seed source
+	// Seed source with migrations and data
 	seedSourceDB(t, ctx, env.source)
 
-	// Verify target has no data (only schema)
-	var targetDataCount int
+	// Apply migrations to target so it has the same schema
+	var targetMgr *postgres.MigrationManager
+	targetMgr, err = postgres.NewMigrationManager(targetDB, nil)
+	require.NoError(t, err)
+	_, err = targetMgr.ApplyMigrations(ctx)
+	require.NoError(t, err)
+
+	// Verify both databases have the same schema (same table count)
+	var targetTableCount, sourceTableCount int
 	err = targetDB.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public'
-	`).Scan(&targetDataCount)
+	`).Scan(&targetTableCount)
 	require.NoError(t, err)
-
-	// Target should have tables from migrations but no tenant data
-	var sourceDataCount int
 	err = sourceDB.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public'
-	`).Scan(&sourceDataCount)
+	`).Scan(&sourceTableCount)
 	require.NoError(t, err)
 
-	require.True(t, sourceDataCount == targetDataCount, "source and target should have same table count")
+	require.True(t, sourceTableCount == targetTableCount, "source (%d tables) and target (%d tables) should have same table count", sourceTableCount, targetTableCount)
 
 	// But source should have tenant data and target should not
 	var sourceTenants, targetTenants int
