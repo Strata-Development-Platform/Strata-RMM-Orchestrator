@@ -35,12 +35,19 @@ func (c *SystemCollector) Stop() error { return nil }
 func (c *SystemCollector) Collect(ctx context.Context) ([]core.MetricSample, error) {
 	var samples []core.MetricSample
 	now := time.Now()
+	hostTags := map[string]string{"os": runtime.GOOS, "arch": runtime.GOARCH}
 
 	hostInfo, err := host.Info()
 	if err == nil {
+		hostTags["hostname"] = hostInfo.Hostname
+		hostTags["platform"] = hostInfo.Platform
+		hostTags["platform_version"] = hostInfo.PlatformVersion
 		samples = append(samples,
 			core.MetricSample{Name: "system.uptime", Value: float64(hostInfo.Uptime), Timestamp: now},
 		)
+	}
+	if diskIOSamples, err := c.collectDiskIO(ctx); err == nil {
+		samples = append(samples, diskIOSamples...)
 	}
 
 	cpuPercent, err := cpu.PercentWithContext(ctx, 0, false)
@@ -111,13 +118,8 @@ func (c *SystemCollector) Collect(ctx context.Context) ([]core.MetricSample, err
 		}
 	}
 
-	goarch := runtime.GOARCH
-	goos := runtime.GOOS
 	samples = append(samples,
-		core.MetricSample{Name: "system.info", Value: 1, Tags: map[string]string{
-			"os": goos, "arch": goarch, "hostname": hostInfo.Hostname,
-			"platform": hostInfo.Platform, "platform_version": hostInfo.PlatformVersion,
-		}, Timestamp: now},
+		core.MetricSample{Name: "system.info", Value: 1, Tags: hostTags, Timestamp: now},
 	)
 
 	return samples, nil

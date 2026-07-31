@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -9,8 +10,11 @@ import (
 )
 
 type Store struct {
-	db *bbolt.DB
+	db       *bbolt.DB
+	maxItems int
 }
+
+var ErrQueueFull = errors.New("offline queue capacity exhausted")
 
 type StoredMetric struct {
 	Name      string            `json:"name"`
@@ -26,13 +30,30 @@ type StoredEvent struct {
 	Timestamp time.Time         `json:"timestamp"`
 }
 
+type QueuedMetric struct {
+	Key    string
+	Metric StoredMetric
+}
+
+type QueuedEvent struct {
+	Key   string
+	Event StoredEvent
+}
+
 func NewStore(path string) (*Store, error) {
+	return NewStoreWithLimit(path, 10000)
+}
+
+func NewStoreWithLimit(path string, maxItems int) (*Store, error) {
+	if maxItems <= 0 {
+		return nil, fmt.Errorf("queue limit must be greater than zero")
+	}
 	db, err := bbolt.Open(path, 0600, &bbolt.Options{Timeout: 5 * time.Second})
 	if err != nil {
 		return nil, fmt.Errorf("opening store: %w", err)
 	}
 
-	s := &Store{db: db}
+	s := &Store{db: db, maxItems: maxItems}
 	if err := s.init(); err != nil {
 		db.Close()
 		return nil, err
@@ -56,11 +77,18 @@ func (s *Store) init() error {
 func (s *Store) QueueMetric(m StoredMetric) error {
 	return s.db.Update(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte("metrics"))
+		if s.queueSize(tx) >= s.maxItems {
+			return ErrQueueFull
+		}
 		data, err := json.Marshal(m)
 		if err != nil {
 			return err
 		}
-		key := fmt.Sprintf("%s:%d", m.Name, m.Timestamp.UnixNano())
+		sequence, err := b.NextSequence()
+		if err != nil {
+			return err
+		}
+		key := fmt.Sprintf("%020d:%s:%d", sequence, m.Name, m.Timestamp.UnixNano())
 		return b.Put([]byte(key), data)
 	})
 }
@@ -68,13 +96,24 @@ func (s *Store) QueueMetric(m StoredMetric) error {
 func (s *Store) QueueEvent(e StoredEvent) error {
 	return s.db.Update(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte("events"))
+		if s.queueSize(tx) >= s.maxItems {
+			return ErrQueueFull
+		}
 		data, err := json.Marshal(e)
 		if err != nil {
 			return err
 		}
-		key := fmt.Sprintf("%s:%d", e.Type, e.Timestamp.UnixNano())
+		sequence, err := b.NextSequence()
+		if err != nil {
+			return err
+		}
+		key := fmt.Sprintf("%020d:%s:%d", sequence, e.Type, e.Timestamp.UnixNano())
 		return b.Put([]byte(key), data)
 	})
+}
+
+func (s *Store) queueSize(tx *bbolt.Tx) int {
+	return tx.Bucket([]byte("metrics")).Stats().KeyN + tx.Bucket([]byte("events")).Stats().KeyN
 }
 
 func (s *Store) PopMetrics(limit int) ([]StoredMetric, error) {
@@ -121,6 +160,60 @@ func (s *Store) PopEvents(limit int) ([]StoredEvent, error) {
 	return result, err
 }
 
+// PeekMetrics reads queued metrics without deleting them. Call AckMetrics only
+// after the corresponding publish has completed successfully.
+func (s *Store) PeekMetrics(limit int) ([]QueuedMetric, error) {
+	var result []QueuedMetric
+	err := s.db.View(func(tx *bbolt.Tx) error {
+		cursor := tx.Bucket([]byte("metrics")).Cursor()
+		for key, value := cursor.First(); key != nil && len(result) < limit; key, value = cursor.Next() {
+			var metric StoredMetric
+			if err := json.Unmarshal(value, &metric); err != nil {
+				return fmt.Errorf("decode queued metric %q: %w", key, err)
+			}
+			result = append(result, QueuedMetric{Key: string(key), Metric: metric})
+		}
+		return nil
+	})
+	return result, err
+}
+
+func (s *Store) AckMetrics(keys []string) error {
+	return s.ack("metrics", keys)
+}
+
+func (s *Store) PeekEvents(limit int) ([]QueuedEvent, error) {
+	var result []QueuedEvent
+	err := s.db.View(func(tx *bbolt.Tx) error {
+		cursor := tx.Bucket([]byte("events")).Cursor()
+		for key, value := cursor.First(); key != nil && len(result) < limit; key, value = cursor.Next() {
+			var event StoredEvent
+			if err := json.Unmarshal(value, &event); err != nil {
+				return fmt.Errorf("decode queued event %q: %w", key, err)
+			}
+			result = append(result, QueuedEvent{Key: string(key), Event: event})
+		}
+		return nil
+	})
+	return result, err
+}
+
+func (s *Store) AckEvents(keys []string) error {
+	return s.ack("events", keys)
+}
+
+func (s *Store) ack(bucket string, keys []string) error {
+	return s.db.Update(func(tx *bbolt.Tx) error {
+		b := tx.Bucket([]byte(bucket))
+		for _, key := range keys {
+			if err := b.Delete([]byte(key)); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 func (s *Store) PutState(key string, value []byte) error {
 	return s.db.Update(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte("state"))
@@ -141,8 +234,7 @@ func (s *Store) GetState(key string) ([]byte, error) {
 func (s *Store) QueueSize() (int, error) {
 	var count int
 	err := s.db.View(func(tx *bbolt.Tx) error {
-		b := tx.Bucket([]byte("metrics"))
-		count = b.Stats().KeyN
+		count = s.queueSize(tx)
 		return nil
 	})
 	return count, err

@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"time"
 
@@ -59,7 +60,17 @@ func (c *Client) Connect(ctx context.Context) error {
 		opts = append(opts, nats.Token(c.cfg.Token))
 	}
 
-	if c.cfg.CertFile != "" && c.cfg.KeyFile != "" {
+	if (c.cfg.CertFile == "") != (c.cfg.KeyFile == "") {
+		return fmt.Errorf("tls config: cert_file and key_file must be configured together")
+	}
+	tlsRequired := c.cfg.CAFile != "" || c.cfg.CertFile != ""
+	for _, rawURL := range c.cfg.URLs {
+		u, err := url.Parse(rawURL)
+		if err == nil && (u.Scheme == "tls" || u.Scheme == "nats+tls") {
+			tlsRequired = true
+		}
+	}
+	if tlsRequired {
 		tlsConfig, err := c.tlsConfig()
 		if err != nil {
 			return fmt.Errorf("tls config: %w", err)
@@ -83,14 +94,15 @@ func (c *Client) Connect(ctx context.Context) error {
 }
 
 func (c *Client) tlsConfig() (*tls.Config, error) {
-	cert, err := tls.LoadX509KeyPair(c.cfg.CertFile, c.cfg.KeyFile)
-	if err != nil {
-		return nil, err
-	}
-
 	tlsCfg := &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		MinVersion:   tls.VersionTLS12,
+		MinVersion: tls.VersionTLS12,
+	}
+	if c.cfg.CertFile != "" {
+		cert, err := tls.LoadX509KeyPair(c.cfg.CertFile, c.cfg.KeyFile)
+		if err != nil {
+			return nil, err
+		}
+		tlsCfg.Certificates = []tls.Certificate{cert}
 	}
 
 	if c.cfg.CAFile != "" {
@@ -225,7 +237,9 @@ func NewCommsHandler(client *Client, store *core.Store, logger core.Logger) *Com
 
 func (h *CommsHandler) Start(ctx context.Context) error {
 	h.replayQueued(ctx)
+	h.sendHeartbeat(ctx)
 	go h.heartbeatLoop(ctx)
+	go h.replayLoop(ctx)
 	return nil
 }
 
@@ -286,39 +300,77 @@ func (h *CommsHandler) queueEvent(ctx context.Context, event core.Event) {
 }
 
 func (h *CommsHandler) replayQueued(ctx context.Context) {
-	metrics, err := h.store.PopMetrics(1000)
+	if !h.client.IsConnected() {
+		return
+	}
+	metrics, err := h.store.PeekMetrics(1000)
 	if err != nil {
 		h.logger.Error("reading queued metrics", "error", err)
 		return
 	}
-	events, err := h.store.PopEvents(1000)
+	events, err := h.store.PeekEvents(1000)
 	if err != nil {
 		h.logger.Error("reading queued events", "error", err)
 		return
 	}
 
-	for _, m := range metrics {
+	metricsReplayed := 0
+	eventsReplayed := 0
+	for _, queued := range metrics {
+		m := queued.Metric
 		sample := core.MetricSample{
 			Name: m.Name, Value: m.Value,
 			Tags: m.Tags, Timestamp: m.Timestamp,
 		}
 		payload := encodeMetrics([]core.MetricSample{sample})
-		h.client.Publish(ctx, h.subjects.AgentMetrics(), payload)
+		if err := h.client.Publish(ctx, h.subjects.AgentMetrics(), payload); err != nil {
+			h.logger.Warn("replaying queued metric", "error", err)
+			break
+		}
+		if err := h.store.AckMetrics([]string{queued.Key}); err != nil {
+			h.logger.Error("acknowledging queued metric", "error", err)
+			break
+		}
+		metricsReplayed++
 	}
-	for _, e := range events {
+	for _, queued := range events {
+		e := queued.Event
 		event := core.Event{
 			Type: e.Type, Message: e.Message,
 			Tags: e.Tags, Timestamp: e.Timestamp,
 		}
 		payload := encodeEvent(event)
-		h.client.Publish(ctx, h.subjects.AgentEvents(), payload)
+		if err := h.client.Publish(ctx, h.subjects.AgentEvents(), payload); err != nil {
+			h.logger.Warn("replaying queued event", "error", err)
+			break
+		}
+		if err := h.store.AckEvents([]string{queued.Key}); err != nil {
+			h.logger.Error("acknowledging queued event", "error", err)
+			break
+		}
+		eventsReplayed++
 	}
 
-	if len(metrics) > 0 || len(events) > 0 {
+	if metricsReplayed > 0 || eventsReplayed > 0 {
 		h.logger.Info("replayed queued data",
-			"metrics", len(metrics),
-			"events", len(events),
+			"metrics", metricsReplayed,
+			"events", eventsReplayed,
 		)
+	}
+}
+
+func (h *CommsHandler) replayLoop(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-h.stopCh:
+			return
+		case <-ticker.C:
+			h.replayQueued(ctx)
+		}
 	}
 }
 
@@ -347,8 +399,21 @@ func (h *CommsHandler) sendHeartbeat(ctx context.Context) {
 }
 
 func encodeMetrics(samples []core.MetricSample) []byte {
+	type wireMetric struct {
+		Name      string            `json:"name"`
+		Value     float64           `json:"value"`
+		Tags      map[string]string `json:"tags,omitempty"`
+		Timestamp int64             `json:"timestamp"`
+	}
+	wireSamples := make([]wireMetric, 0, len(samples))
+	for _, sample := range samples {
+		wireSamples = append(wireSamples, wireMetric{
+			Name: sample.Name, Value: sample.Value, Tags: sample.Tags,
+			Timestamp: sample.Timestamp.Unix(),
+		})
+	}
 	return mustJSON(map[string]interface{}{
-		"samples": samples,
+		"samples": wireSamples,
 	})
 }
 

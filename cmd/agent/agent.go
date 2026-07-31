@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -46,6 +47,9 @@ func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 					return fmt.Errorf("loading config: %w", err)
 				}
 			}
+			if err := cfg.ValidateBootstrap(); err != nil {
+				return fmt.Errorf("validating bootstrap config: %w", err)
+			}
 
 			cl := &zapLogger{logger: logger}
 
@@ -61,7 +65,22 @@ func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 				}
 				cfg.Agent.TenantID = ident.TenantID
 				cfg.Agent.AgentID = ident.AgentID
+				cfg.NATS.Token = ident.Token
+				cfg.NATS.URLs = append([]string(nil), ident.NATSURLs...)
+				if len(ident.CAPEM) > 0 {
+					cfg.NATS.CAFile = filepath.Join(cfg.Agent.DataDir, "identity", "ca.crt")
+				}
+				cfg.Agent.EnrollmentToken = ""
+				cfg.Agent.DeploymentID = ""
+				if configPath != "" {
+					if err := cfg.SaveRuntime(configPath); err != nil {
+						return fmt.Errorf("persisting enrolled runtime config: %w", err)
+					}
+				}
 				logger.Info("registered agent", zap.String("tenant_id", ident.TenantID), zap.String("agent_id", ident.AgentID))
+			}
+			if err := cfg.Validate(); err != nil {
+				return fmt.Errorf("validating enrolled config: %w", err)
 			}
 
 			agent := core.New(cfg, cl)
@@ -197,9 +216,18 @@ func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 				}()
 			}
 
-			sysCollector := collectors.NewSystemCollector(cfg.Collect.Interval)
-			sysCollector.Start(ctx)
-			defer sysCollector.Stop()
+			if cfg.Collect.EnableSystem {
+				sysCollector := collectors.NewSystemCollector(cfg.Collect.Interval)
+				if err := sysCollector.Start(ctx); err != nil {
+					return fmt.Errorf("starting system collector: %w", err)
+				}
+				defer func() {
+					if err := sysCollector.Stop(); err != nil {
+						logger.Warn("stopping system collector", zap.Error(err))
+					}
+				}()
+				go collectAndPublish(ctx, sysCollector, commsHandler, logger)
+			}
 
 			logger.Info("agent running",
 				zap.String("agent_id", agent.Identity().AgentID),
@@ -223,6 +251,42 @@ func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 	cmd.Flags().Bool("uninstall-service", false, "Uninstall system service")
 
 	return cmd
+}
+
+type metricCollector interface {
+	Interval() time.Duration
+	Collect(context.Context) ([]core.MetricSample, error)
+}
+
+type metricPublisher interface {
+	PublishMetrics(context.Context, []core.MetricSample)
+}
+
+func collectAndPublish(ctx context.Context, collector metricCollector, publisher metricPublisher, logger *zap.Logger) {
+	collect := func() {
+		collectCtx, cancel := context.WithTimeout(ctx, collector.Interval())
+		defer cancel()
+		samples, err := collector.Collect(collectCtx)
+		if err != nil {
+			logger.Warn("collecting system metrics", zap.Error(err))
+			return
+		}
+		if len(samples) > 0 {
+			publisher.PublishMetrics(ctx, samples)
+		}
+	}
+
+	collect()
+	ticker := time.NewTicker(collector.Interval())
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			collect()
+		}
+	}
 }
 
 type zapLogger struct {

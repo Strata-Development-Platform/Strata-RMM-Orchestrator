@@ -26,6 +26,7 @@ Production mode rejects:
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | `STRATA_RUNTIME_MODE` | — | — | string | `development` | no | yes | no | must be dev/test/prod | startup | env > default | no | — |
 | `NATS_URL` | — | `--nats-url` | string | `nats://localhost:4222` | no | yes | no | URL scheme nats/nats+tls/tls | nats connection | flag > env > default | no | — |
+| `NATS_ADVERTISE_URLS` | — | — | comma-separated URLs | — | no | yes | no | production requires agent-reachable `tls://` or `nats+tls://` URLs | agent registration response | env | no | — |
 | `NATS_TOKEN` | — | — | string | — | no | conditional | yes | — | nats auth | env | no | — |
 | `NATS_TLS_ENABLED` | — | — | bool | `false` | no | no | no | strict boolean | nats tls | env > default | no | — |
 | `NATS_TLS_CERT` | — | — | string | — | no | conditional | no | required if TLS enabled | nats tls | env | no | — |
@@ -48,7 +49,7 @@ Production mode rejects:
 | `JWT_SECRET` | — | — | string | — | yes | yes | yes | min 32 chars; prod rejects dev-/test- prefix | JWT auth | env | no (SIGUSR1 planned) | — |
 | `JWT_SECRET_PREVIOUS` | — | — | string | — | no | rotation only | yes | empty or min 32 chars; must differ from current secret | JWT verification during a bounded rotation overlap | env | process restart | remove after the maximum token lifetime |
 | `STRATA_API_ADDR` | `API_ADDR` | `--api-addr` | string | `:8080` | no | no | no | — | API server | flag > env (STRATA_API_ADDR > API_ADDR) > default | no | `API_ADDR` is legacy |
-| `STRATA_TUNNEL_ADDR` | `TUNNEL_ADDR` | `--tunnel-addr` | string | — | no | no | no | — | tunnel server | flag > env (STRATA_TUNNEL_ADDR > TUNNEL_ADDR) | no | `TUNNEL_ADDR` is legacy |
+| `STRATA_TUNNEL_ADDR` | `TUNNEL_ADDR` | `--tunnel-addr` | string | — | no | **prohibited** | no | production rejects the unauthenticated raw TCP gateway | development-only tunnel server | flag > env (STRATA_TUNNEL_ADDR > TUNNEL_ADDR) | no | `TUNNEL_ADDR` is legacy; authenticated TLS replacement required |
 | `STRATA_PUBLIC_URL` | — | — | string | — | no | yes | no | must be https, no credentials, host required | CORS / public access | env | no | — |
 | `CORS_ORIGINS` | — | — | comma-separated | — | no | yes | no | prod rejects wildcard `*` | CORS middleware | env | no | — |
 | `HTTP_READ_TIMEOUT` | — | — | duration | `10s` | no | no | no | must be positive | HTTP server | env > default | no | — |
@@ -133,6 +134,7 @@ The agent reads `agent.yaml` (default path: `~/.strata-rmm/agent.yaml` or `STRAT
 | `collect.enable_services` | — | — | bool | `true` | no | no | no | — | agent collector | config-file > default | no | — |
 | `store.type` | — | — | string | `bbolt` | no | no | no | — | agent local store | config-file > default | no | — |
 | `store.path` | — | — | string | `~/.strata-rmm/agent.db` | no | no | no | writable path | agent local store | config-file > default | no | — |
+| `store.queue_max_items` | — | — | integer | `10000` | no | no | no | greater than zero | combined offline metric/event queue limit | config-file > default | no | new samples are rejected when full |
 | `update.enabled` | — | — | bool | `true` | no | no | no | — | agent auto-update | config-file > default | no | — |
 | `update.check_interval` | — | — | duration | `24h` | no | no | no | — | agent auto-update | config-file > default | no | — |
 | `update.channel` | — | — | string | `stable` | no | no | no | — | agent auto-update | config-file > default | no | — |
