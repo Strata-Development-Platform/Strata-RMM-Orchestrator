@@ -356,6 +356,7 @@ func NewCommand(ctx context.Context, version, commit string, logger *zap.Logger)
 	cmd.Flags().StringVar(&storageEndpoint, "storage-endpoint", "", "Storage endpoint (overrides STORAGE_ENDPOINT env)")
 
 	cmd.AddCommand(NewUpdateCommand(ctx, version, logger))
+	cmd.AddCommand(newBootstrapAdminCommand(ctx, logger))
 	cmd.AddCommand(newPreflightCommand(logger))
 	cmd.AddCommand(newUpgradeCommand(ctx, logger))
 	cmd.AddCommand(newRollbackCommand(ctx, logger))
