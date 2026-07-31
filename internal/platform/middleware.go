@@ -469,6 +469,7 @@ func (s *APIServer) adminRoutes() []Route {
 		{Method: "POST", Path: "/api/v2/platform/msps/{mspID}/offboarding", Access: AccessAdmin},
 		{Method: "GET", Path: "/api/v2/platform/msps/{mspID}/offboarding", Access: AccessAdmin},
 		{Method: "POST", Path: "/api/v2/platform/msps/{mspID}/offboarding/approve-deletion", Access: AccessAdmin},
+		{Method: "GET", Path: "/api/v2/platform/msps/{mspID}/export", Access: AccessAdmin},
 		{Method: "PATCH", Path: "/api/v2/platform/msps/{mspID}/entitlement", Access: AccessAdmin},
 		{Method: "PATCH", Path: "/api/v2/platform/domains/{domainID}/certificate", Access: AccessAdmin},
 		{Method: "POST", Path: "/api/v2/platform/support-grants", Access: AccessAdmin},

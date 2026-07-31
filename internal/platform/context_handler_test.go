@@ -55,6 +55,9 @@ func TestContextRouteClassification(t *testing.T) {
 	if got := server.classifyRoute("POST", "/api/v2/platform/msps/msp-id/offboarding/approve-deletion"); got != AccessAdmin {
 		t.Fatalf("deletion approval route access = %v, want AccessAdmin", got)
 	}
+	if got := server.classifyRoute("GET", "/api/v2/platform/msps/msp-id/export"); got != AccessAdmin {
+		t.Fatalf("MSP export route access = %v, want AccessAdmin", got)
+	}
 	if got := server.classifyRoute("POST", "/api/v2/context/switch"); got != AccessUser {
 		t.Fatalf("context switch route access = %v, want AccessUser", got)
 	}

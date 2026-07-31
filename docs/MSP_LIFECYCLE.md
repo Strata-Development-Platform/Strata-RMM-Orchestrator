@@ -56,7 +56,12 @@ delete tenant data.
 
 ## Current limits
 
-- A complete, bounded customer export is not yet implemented.
+- `GET /api/v2/platform/msps/{mspID}/export` produces a platform-authorized,
+  audited JSON export. The response excludes settings, tokens, credentials,
+  public keys, IP addresses, and customer payloads. A single total record limit
+  defaults to 1000 and cannot exceed 5000; `truncated` and `total_records`
+  identify when another bounded request or a future asynchronous export is
+  required. `sha256` covers the serialized `data` object.
 - Physical deletion requires a separately reviewed executor and recovery
   procedure; approval alone never deletes data.
 - Environment acceptance must demonstrate credential rejection, retained-data
