@@ -556,13 +556,13 @@ func TestPostgreSQLBackup_Migration64Exists(t *testing.T) {
 
 	var migration64Applied bool
 	err = db.QueryRowContext(ctx, `
-		SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = 64)
+		SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE id = 64)
 	`).Scan(&migration64Applied)
 	require.NoError(t, err)
 	require.True(t, migration64Applied, "migration 64 should be recorded")
 
 	var maxVersion int
-	err = db.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&maxVersion)
+	err = db.QueryRowContext(ctx, `	SELECT COALESCE(MAX(id), 0) FROM schema_migrations`).Scan(&maxVersion)
 	require.NoError(t, err)
 	require.Equal(t, 64, maxVersion, "max migration version should be 64")
 
@@ -586,7 +586,7 @@ func TestPostgreSQLBackup_Migration63Exists(t *testing.T) {
 
 	var migration63Applied bool
 	err = db.QueryRowContext(ctx, `
-		SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = 63)
+		SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE id = 63)
 	`).Scan(&migration63Applied)
 	require.NoError(t, err)
 	require.True(t, migration63Applied, "migration 63 should be recorded")

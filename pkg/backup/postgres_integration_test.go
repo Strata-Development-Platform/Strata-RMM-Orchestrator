@@ -307,12 +307,12 @@ func TestPostgreSQLBackup_RealCreate(t *testing.T) {
 	defer sourceDB.Close()
 
 	// Verify pg_dump is available and works
-	cmd := exec.CommandContext(ctx, "pg_dump", env.source, "--version")
+	cmd := exec.CommandContext(ctx, "pg_dump", "--version")
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, "pg_dump --version should succeed: %s", string(output))
 
 	// Verify pg_dump can actually dump the seeded database
-	cmd = exec.CommandContext(ctx, "pg_dump", env.source, "--format=custom", "--no-owner", "--no-acl", "--schema-only")
+	cmd = exec.CommandContext(ctx, "pg_dump", "--dbname="+env.source, "--format=custom", "--no-owner", "--no-acl", "--schema-only")
 	output, err = cmd.CombinedOutput()
 	require.NoError(t, err, "pg_dump schema should succeed: %s", string(output))
 	require.True(t, len(output) > 0, "pg_dump should produce output")
@@ -827,7 +827,7 @@ func TestPostgreSQLBackup_MigrationChecksum(t *testing.T) {
 	// Verify migration 64 (backup/recovery) exists
 	var migration64Applied bool
 	err = db.QueryRowContext(ctx, `
-		SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = 64)
+		SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE id = 64)
 	`).Scan(&migration64Applied)
 	require.NoError(t, err)
 	require.True(t, migration64Applied, "migration 64 (backup/recovery) should be applied")
@@ -1084,7 +1084,7 @@ func TestPostgreSQLBackup_SchemaVersion(t *testing.T) {
 
 	var version int
 	err = db.QueryRowContext(ctx, `
-		SELECT COALESCE(MAX(version), 0) FROM schema_migrations
+		SELECT COALESCE(MAX(id), 0) FROM schema_migrations
 	`).Scan(&version)
 	require.NoError(t, err)
 	require.Equal(t, 64, version, "schema version should be 64")
