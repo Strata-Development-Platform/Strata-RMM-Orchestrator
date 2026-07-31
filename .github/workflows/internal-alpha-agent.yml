@@ -1,0 +1,98 @@
+name: Internal Alpha Agent
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: ["codex/internal-alpha-agent-foundation"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: internal-alpha-agent-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  enrollment-and-policy:
+    name: Enrollment and broker policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Enrollment, identity, and scoped authorization
+        run: |
+          go test -race -count=1 ./internal/agent/core
+          go test -race -count=1 ./internal/platform -run 'Test(DecodeAgentPublicKey|BuildAgentNATSPermissions|AuthorizeAgentNATSCredential|Release)'
+
+  telemetry-contract:
+    name: Telemetry wire and replay contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Validate collector, queue, wire, and ingestion identity
+        run: |
+          go test -race -count=1 ./cmd/agent ./internal/agent/comms ./internal/monitoring
+
+  installer-and-release:
+    name: Installer and release packaging
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Validate installer safety contract
+        run: |
+          sh -n internal/platform/agent_install_linux.sh
+          grep -q -- '--proto "$CURL_PROTO"' internal/platform/agent_install_linux.sh
+          grep -q 'sha256sum --check' internal/platform/agent_install_linux.sh
+          ! grep -Eq 'systemctl start .*\|\| true|reboot($|[[:space:]])' internal/platform/agent_install_linux.sh
+          pwsh -NoProfile -Command '$null = [scriptblock]::Create((Get-Content -Raw internal/platform/agent_install_windows.ps1))'
+          grep -q 'Get-FileHash -Algorithm SHA256' internal/platform/agent_install_windows.ps1
+          grep -q '?checksum=sha256' internal/platform/agent_install_linux.sh
+          grep -q '?checksum=sha256' internal/platform/agent_install_windows.ps1
+          ! grep -Eq 'ExecutionPolicy Bypass|SkipCertificateCheck' internal/platform/agent_install_windows.ps1
+      - name: Build Linux release candidates
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o dist/strata-agent-linux-amd64 .
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o dist/strata-agent-linux-arm64 .
+          test -s dist/strata-agent-linux-amd64
+          test -s dist/strata-agent-linux-arm64
+
+  cross-platform-agent:
+    name: Agent build (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: windows
+            goarch: amd64
+          - goos: windows
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Build agent command
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: go build -trimpath -o /tmp/strata-agent .
