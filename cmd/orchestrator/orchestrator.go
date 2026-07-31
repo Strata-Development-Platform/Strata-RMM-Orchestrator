@@ -228,6 +228,18 @@ func NewCommand(ctx context.Context, version, commit string, logger *zap.Logger)
 					cfg.HTTP.ReadTimeout, cfg.HTTP.WriteTimeout, cfg.HTTP.IdleTimeout,
 					cfg.HTTP.MaxBodySizeBytes, cfg.HTTP.CORSOrigins,
 				)
+			var agentNATSCA []byte
+			if cfg.NATS.TLSCAFile != "" {
+				agentNATSCA, err = os.ReadFile(cfg.NATS.TLSCAFile)
+				if err != nil {
+					return fmt.Errorf("stage %d: reading agent NATS trust root: %w", atomic.LoadInt32(&startupStage), err)
+				}
+			}
+			agentNATSURLs := append([]string(nil), cfg.NATS.AdvertiseURLs...)
+			if len(agentNATSURLs) == 0 && cfg.RuntimeMode != config.ModeProduction {
+				agentNATSURLs = []string{cfg.NATS.URL}
+			}
+			api.WithAgentMessagingConfig(agentNATSURLs, agentNATSCA)
 			deploymentCtrl := platform.NewDeploymentController()
 
 			api.WithReleaseServer(releaseServer).
