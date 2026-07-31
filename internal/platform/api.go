@@ -68,6 +68,8 @@ type APIServer struct {
 	deploymentController *DeploymentController
 	httpMetrics          *observability.HTTPRegistry
 	metricsToken         string
+	agentNATSURLs        []string
+	agentNATSCA          []byte
 }
 
 func NewAPIServer(addr string, db *timescale.Client, nc *nats.Conn, logger *zap.Logger, tokenGen *auth.TokenGenerator) (*APIServer, error) {
@@ -157,6 +159,12 @@ func (s *APIServer) WithMetricsToken(token string) *APIServer {
 	return s
 }
 
+func (s *APIServer) WithAgentMessagingConfig(urls []string, caPEM []byte) *APIServer {
+	s.agentNATSURLs = append([]string(nil), urls...)
+	s.agentNATSCA = append([]byte(nil), caPEM...)
+	return s
+}
+
 func (s *APIServer) SetDispatcherHealthy(healthy bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -195,6 +203,7 @@ func (s *APIServer) Start(ctx context.Context) error {
 
 	mux.HandleFunc("GET /install.sh", s.handleInstallScript)
 	mux.HandleFunc("GET /releases/latest/agent/{os}/{arch}", s.handleReleaseBinary)
+	mux.HandleFunc("GET /releases/latest/agent/{os}/{arch}/sha256", s.handleReleaseChecksum)
 
 	mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
 	mux.HandleFunc("GET /api/v1/auth/me", s.handleMe)
