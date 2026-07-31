@@ -32,8 +32,11 @@ func TestPostgresCommandEnvKeepsCredentialsOutOfArguments(t *testing.T) {
 	require.Contains(t, joined, "PGSSLMODE=verify-full")
 	require.NotContains(t, strings.Join(os.Args, " "), "super-secret")
 
-	_, err = postgresCommandEnv("host=db.internal password=secret")
-	require.ErrorContains(t, err, "URI form")
+	environment, err = postgresCommandEnv("host=db.internal port=5432 user=operator password='space secret' dbname=strata sslmode=require")
+	require.NoError(t, err)
+	joined = strings.Join(environment, "\n")
+	require.Contains(t, joined, "PGPASSWORD=space secret")
+	require.Contains(t, joined, "PGDATABASE=strata")
 }
 
 func TestPostgreSQLRecoveryRejectsSameTarget(t *testing.T) {

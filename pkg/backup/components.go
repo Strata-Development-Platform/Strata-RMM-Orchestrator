@@ -380,9 +380,10 @@ func (r *ObjectStorageRecovery) Restore(ctx context.Context, source io.Reader) e
 			}
 		}
 		if _, err := r.target.Upload(ctx, header.Name, io.LimitReader(tr, header.Size), storage.UploadOptions{
-			ContentType:   contentType,
-			Metadata:      metadata,
-			ContentLength: header.Size,
+			ContentType:      contentType,
+			Metadata:         metadata,
+			ContentLength:    header.Size,
+			ContentLengthSet: true,
 		}); err != nil {
 			return fmt.Errorf("restore object %s: %w", header.Name, err)
 		}

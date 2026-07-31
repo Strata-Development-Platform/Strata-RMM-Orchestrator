@@ -47,8 +47,9 @@ func TestObjectStorageRecovery_RoundTrip(t *testing.T) {
 	}
 	for _, object := range objects {
 		_, err := source.Upload(ctx, object.key, bytes.NewReader(object.data), storage.UploadOptions{
-			ContentType:   object.contentType,
-			ContentLength: int64(len(object.data)),
+			ContentType:      object.contentType,
+			ContentLength:    int64(len(object.data)),
+			ContentLengthSet: true,
 			Metadata: map[string]string{
 				"tenant-id": object.tenant,
 				"purpose":   "phase8c-integration",

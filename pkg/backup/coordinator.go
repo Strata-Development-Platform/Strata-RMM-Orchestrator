@@ -638,7 +638,7 @@ func (c *RecoveryCoordinator) Recover(ctx context.Context) (*RecoveryResult, err
 	return nil, errors.New("legacy RecoveryCoordinator is disabled; use backup.Engine")
 }
 
-//nolint:unused -- disabled legacy coordinator implementation retained for source compatibility.
+//nolint:unused // Disabled legacy coordinator implementation retained for source compatibility.
 func (c *RecoveryCoordinator) executeBackup(ctx context.Context) error {
 	c.transition(StateQuiesce)
 	c.logEvent(StateQuiesce, "Quiescing services", nil)
@@ -689,7 +689,7 @@ func (c *RecoveryCoordinator) executeBackup(ctx context.Context) error {
 	return nil
 }
 
-//nolint:unused -- disabled legacy coordinator implementation retained for source compatibility.
+//nolint:unused // Disabled legacy coordinator implementation retained for source compatibility.
 func (c *RecoveryCoordinator) performDatabaseBackup(ctx context.Context) (*BackupMetadata, error) {
 	if c.repository == nil {
 		return nil, ErrRepositoryRequired
@@ -707,7 +707,7 @@ func (c *RecoveryCoordinator) performDatabaseBackup(ctx context.Context) (*Backu
 	return metadata, nil
 }
 
-//nolint:unused -- disabled legacy coordinator implementation retained for source compatibility.
+//nolint:unused // Disabled legacy coordinator implementation retained for source compatibility.
 func (c *RecoveryCoordinator) performJetStreamBackup(ctx context.Context) (*BackupResult, error) {
 	if c.repository == nil {
 		return nil, ErrRepositoryRequired
@@ -721,7 +721,7 @@ func (c *RecoveryCoordinator) performJetStreamBackup(ctx context.Context) (*Back
 	}, nil
 }
 
-//nolint:unused -- disabled legacy coordinator implementation retained for source compatibility.
+//nolint:unused // Disabled legacy coordinator implementation retained for source compatibility.
 func (c *RecoveryCoordinator) performObjectStorageBackup(ctx context.Context) (*BackupResult, error) {
 	if c.repository == nil {
 		return nil, ErrRepositoryRequired
@@ -734,7 +734,7 @@ func (c *RecoveryCoordinator) performObjectStorageBackup(ctx context.Context) (*
 	}, nil
 }
 
-//nolint:unused -- disabled legacy coordinator implementation retained for source compatibility.
+//nolint:unused // Disabled legacy coordinator implementation retained for source compatibility.
 func (c *RecoveryCoordinator) executeRestore(ctx context.Context) error {
 	c.transition(StatePreRestoreValidation)
 	c.logEvent(StatePreRestoreValidation, "Pre-restore validation started", nil)
@@ -789,7 +789,7 @@ func (c *RecoveryCoordinator) executeRestore(ctx context.Context) error {
 	return nil
 }
 
-//nolint:unused -- disabled legacy coordinator implementation retained for source compatibility.
+//nolint:unused // Disabled legacy coordinator implementation retained for source compatibility.
 func (c *RecoveryCoordinator) performDatabaseRestore(ctx context.Context) error {
 	if c.db == nil {
 		return errors.New("no target database configured")
@@ -808,7 +808,7 @@ func (c *RecoveryCoordinator) performDatabaseRestore(ctx context.Context) error 
 	return nil
 }
 
-//nolint:unused -- disabled legacy coordinator implementation retained for source compatibility.
+//nolint:unused // Disabled legacy coordinator implementation retained for source compatibility.
 func (c *RecoveryCoordinator) performJetStreamRestore(ctx context.Context) error {
 	if c.repository == nil {
 		return ErrRepositoryRequired
@@ -817,7 +817,7 @@ func (c *RecoveryCoordinator) performJetStreamRestore(ctx context.Context) error
 	return nil
 }
 
-//nolint:unused -- disabled legacy coordinator implementation retained for source compatibility.
+//nolint:unused // Disabled legacy coordinator implementation retained for source compatibility.
 func (c *RecoveryCoordinator) performObjectStorageRestore(ctx context.Context) error {
 	if c.repository == nil {
 		return ErrRepositoryRequired
@@ -826,7 +826,7 @@ func (c *RecoveryCoordinator) performObjectStorageRestore(ctx context.Context) e
 	return nil
 }
 
-//nolint:unused -- disabled legacy coordinator implementation retained for source compatibility.
+//nolint:unused // Disabled legacy coordinator implementation retained for source compatibility.
 func (c *RecoveryCoordinator) quiesce(ctx context.Context) error {
 	if c.quiescer != nil {
 		if err := c.quiescer.Quiesce(ctx); err != nil {
@@ -854,7 +854,7 @@ func (c *RecoveryCoordinator) ResumeServices(ctx context.Context) error {
 	return nil
 }
 
-//nolint:unused -- disabled legacy coordinator implementation retained for source compatibility.
+//nolint:unused // Disabled legacy coordinator implementation retained for source compatibility.
 func (c *RecoveryCoordinator) validateBackupExists(ctx context.Context) error {
 	if c.backupID == "" {
 		return errors.New("no backup ID specified")
@@ -875,7 +875,7 @@ func (c *RecoveryCoordinator) validateBackupExists(ctx context.Context) error {
 	return nil
 }
 
-//nolint:unused -- disabled legacy coordinator implementation retained for source compatibility.
+//nolint:unused // Disabled legacy coordinator implementation retained for source compatibility.
 func (c *RecoveryCoordinator) acquireLock(ctx context.Context, recoveryID string) (bool, error) {
 	var locked bool
 	err := c.db.QueryRowContext(ctx, `SELECT pg_try_advisory_xact_lock($1)`, postgres.GetLockID()).Scan(&locked)
@@ -892,7 +892,7 @@ func (c *RecoveryCoordinator) acquireLock(ctx context.Context, recoveryID string
 	return locked, err
 }
 
-//nolint:unused -- disabled legacy coordinator implementation retained for source compatibility.
+//nolint:unused // Disabled legacy coordinator implementation retained for source compatibility.
 func (c *RecoveryCoordinator) releaseLock(ctx context.Context, recoveryID string) {
 	_, _ = c.db.ExecContext(ctx, `
 		UPDATE recovery_operations SET status = 'released', updated_at = NOW()
@@ -900,7 +900,7 @@ func (c *RecoveryCoordinator) releaseLock(ctx context.Context, recoveryID string
 	`, recoveryID)
 }
 
-//nolint:unused -- disabled legacy coordinator implementation retained for source compatibility.
+//nolint:unused // Disabled legacy coordinator implementation retained for source compatibility.
 func (c *RecoveryCoordinator) executeRollback(ctx context.Context, recoveryID string, startTime time.Time) (*RecoveryResult, error) {
 	c.transition(StateRollback)
 	c.logEvent(StateRollback, "Rollback initiated due to failure", nil)
@@ -929,7 +929,7 @@ func (c *RecoveryCoordinator) executeRollback(ctx context.Context, recoveryID st
 	}, nil
 }
 
-//nolint:unused -- disabled legacy coordinator implementation retained for source compatibility.
+//nolint:unused // Disabled legacy coordinator implementation retained for source compatibility.
 func (c *RecoveryCoordinator) transition(newState RecoveryState) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -955,7 +955,7 @@ func isValidTransition(from, to RecoveryState) bool {
 	return false
 }
 
-//nolint:unused -- disabled legacy coordinator implementation retained for source compatibility.
+//nolint:unused // Disabled legacy coordinator implementation retained for source compatibility.
 func (c *RecoveryCoordinator) runPreFlight(ctx context.Context) error {
 	var dbVersion string
 	if err := c.db.QueryRowContext(ctx, "SELECT version()").Scan(&dbVersion); err != nil {
@@ -964,7 +964,7 @@ func (c *RecoveryCoordinator) runPreFlight(ctx context.Context) error {
 	return nil
 }
 
-//nolint:unused -- disabled legacy coordinator implementation retained for source compatibility.
+//nolint:unused // Disabled legacy coordinator implementation retained for source compatibility.
 func (c *RecoveryCoordinator) logEvent(state RecoveryState, message string, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -977,7 +977,7 @@ func (c *RecoveryCoordinator) logEvent(state RecoveryState, message string, err 
 	})
 }
 
-//nolint:unused -- disabled legacy coordinator implementation retained for source compatibility.
+//nolint:unused // Disabled legacy coordinator implementation retained for source compatibility.
 func (c *RecoveryCoordinator) finalize(recoveryID, backupID string, state RecoveryState, err error) *RecoveryResult {
 	return &RecoveryResult{
 		RecoveryID: recoveryID,

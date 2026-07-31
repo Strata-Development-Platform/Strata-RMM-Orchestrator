@@ -26,13 +26,14 @@ type Backend interface {
 }
 
 type UploadOptions struct {
-	ContentType     string
-	ContentEncoding string
-	Metadata        map[string]string
-	Encryption      EncryptionConfig
-	PartSize        int64
-	Checksum        *string
-	ContentLength   int64
+	ContentType      string
+	ContentEncoding  string
+	Metadata         map[string]string
+	Encryption       EncryptionConfig
+	PartSize         int64
+	Checksum         *string
+	ContentLength    int64
+	ContentLengthSet bool
 }
 
 type PresignedOptions struct {

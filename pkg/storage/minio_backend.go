@@ -107,7 +107,11 @@ func (b *MinIOBackend) Upload(ctx context.Context, key string, r io.Reader, opts
 		}
 	}
 
-	_, err := b.client.PutObject(ctx, b.bucket, key, r, -1, po)
+	size := int64(-1)
+	if opts.ContentLengthSet {
+		size = opts.ContentLength
+	}
+	_, err := b.client.PutObject(ctx, b.bucket, key, r, size, po)
 	if err != nil {
 		return "", fmt.Errorf("put object: %w", err)
 	}
@@ -208,8 +212,9 @@ func (b *MinIOBackend) List(ctx context.Context, prefix string, opts ListOptions
 
 	var result []ObjectInfo
 	lo := minio.ListObjectsOptions{
-		Prefix:  prefix,
-		MaxKeys: maxKeys,
+		Prefix:    prefix,
+		MaxKeys:   maxKeys,
+		Recursive: true,
 	}
 
 	for obj := range b.client.ListObjects(ctx, b.bucket, lo) {

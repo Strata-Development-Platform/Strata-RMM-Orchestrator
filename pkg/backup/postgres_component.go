@@ -144,24 +144,36 @@ func (r *PostgreSQLRecovery) Verify(ctx context.Context, manifest ComponentManif
 
 func postgresCommandEnv(dsn string) ([]string, error) {
 	parsed, err := url.Parse(dsn)
-	if err != nil || (parsed.Scheme != "postgres" && parsed.Scheme != "postgresql") {
-		return nil, errors.New("PostgreSQL backup DSN must use postgres:// or postgresql:// URI form")
-	}
-	password, _ := parsed.User.Password()
-	values := map[string]string{
-		"PGHOST":     parsed.Hostname(),
-		"PGPORT":     parsed.Port(),
-		"PGUSER":     parsed.User.Username(),
-		"PGPASSWORD": password,
-		"PGDATABASE": strings.TrimPrefix(parsed.Path, "/"),
-	}
+	values := map[string]string{}
 	queryNames := map[string]string{
 		"sslmode": "PGSSLMODE", "sslcert": "PGSSLCERT", "sslkey": "PGSSLKEY",
 		"sslrootcert": "PGSSLROOTCERT", "connect_timeout": "PGCONNECT_TIMEOUT",
 		"application_name": "PGAPPNAME",
 	}
-	for queryName, environmentName := range queryNames {
-		values[environmentName] = parsed.Query().Get(queryName)
+	if err == nil && (parsed.Scheme == "postgres" || parsed.Scheme == "postgresql") {
+		password, _ := parsed.User.Password()
+		values["PGHOST"] = parsed.Hostname()
+		values["PGPORT"] = parsed.Port()
+		values["PGUSER"] = parsed.User.Username()
+		values["PGPASSWORD"] = password
+		values["PGDATABASE"] = strings.TrimPrefix(parsed.Path, "/")
+		for queryName, environmentName := range queryNames {
+			values[environmentName] = parsed.Query().Get(queryName)
+		}
+	} else {
+		keywords, parseErr := parseKeywordDSN(dsn)
+		if parseErr != nil {
+			return nil, errors.New("invalid PostgreSQL keyword DSN")
+		}
+		names := map[string]string{
+			"host": "PGHOST", "port": "PGPORT", "user": "PGUSER", "password": "PGPASSWORD",
+			"dbname": "PGDATABASE", "sslmode": "PGSSLMODE", "sslcert": "PGSSLCERT",
+			"sslkey": "PGSSLKEY", "sslrootcert": "PGSSLROOTCERT",
+			"connect_timeout": "PGCONNECT_TIMEOUT", "application_name": "PGAPPNAME",
+		}
+		for keyword, environmentName := range names {
+			values[environmentName] = keywords[keyword]
+		}
 	}
 	if values["PGHOST"] == "" || values["PGDATABASE"] == "" {
 		return nil, errors.New("PostgreSQL backup DSN requires host and database")
@@ -173,6 +185,54 @@ func postgresCommandEnv(dsn string) ([]string, error) {
 		}
 	}
 	return environment, nil
+}
+
+func parseKeywordDSN(dsn string) (map[string]string, error) {
+	result := map[string]string{}
+	for position := 0; position < len(dsn); {
+		for position < len(dsn) && (dsn[position] == ' ' || dsn[position] == '\t' || dsn[position] == '\n') {
+			position++
+		}
+		if position == len(dsn) {
+			break
+		}
+		keyStart := position
+		for position < len(dsn) && dsn[position] != '=' && dsn[position] != ' ' && dsn[position] != '\t' {
+			position++
+		}
+		if position == keyStart || position == len(dsn) || dsn[position] != '=' {
+			return nil, errors.New("invalid keyword")
+		}
+		key := strings.ToLower(dsn[keyStart:position])
+		position++
+		var value strings.Builder
+		quoted := position < len(dsn) && dsn[position] == '\''
+		if quoted {
+			position++
+		}
+		for position < len(dsn) {
+			if quoted && dsn[position] == '\'' {
+				position++
+				break
+			}
+			if !quoted && (dsn[position] == ' ' || dsn[position] == '\t' || dsn[position] == '\n') {
+				break
+			}
+			if dsn[position] == '\\' {
+				position++
+				if position == len(dsn) {
+					return nil, errors.New("trailing escape")
+				}
+			}
+			value.WriteByte(dsn[position])
+			position++
+		}
+		if quoted && (position == 0 || dsn[position-1] != '\'') {
+			return nil, errors.New("unterminated quote")
+		}
+		result[key] = value.String()
+	}
+	return result, nil
 }
 
 type boundedBuffer struct {
