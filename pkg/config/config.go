@@ -39,6 +39,7 @@ func ParseRuntimeMode(s string) (RuntimeMode, error) {
 
 type NATSConfig struct {
 	URL           string
+	AdvertiseURLs []string
 	Token         string
 	TLSEnabled    bool
 	TLSCertFile   string
@@ -328,6 +329,9 @@ func (c *OrchestratorConfig) ProductionValidate() error {
 			errs = append(errs, "HTTP.CORSOrigins: wildcard not allowed in production")
 		}
 	}
+	if c.HTTP.TunnelAddr != "" {
+		errs = append(errs, "HTTP.TunnelAddr: raw tunnel gateway is not production-safe; authenticated TLS transport is required")
+	}
 	if c.Observability.MetricsToken == "" {
 		errs = append(errs, "Observability.MetricsToken: required in production")
 	}
@@ -346,6 +350,16 @@ func (c *OrchestratorConfig) ProductionValidate() error {
 	}
 	if c.NATS.Token == "" && c.NATS.TLSCertFile == "" {
 		errs = append(errs, "NATS: token authentication or an mTLS client certificate is required in production")
+	}
+	if len(c.NATS.AdvertiseURLs) == 0 {
+		errs = append(errs, "NATS.AdvertiseURLs: at least one agent-reachable URL is required in production")
+	}
+	for _, raw := range c.NATS.AdvertiseURLs {
+		u, err := url.Parse(raw)
+		if err != nil || u.Host == "" || (u.Scheme != "tls" && u.Scheme != "nats+tls") {
+			errs = append(errs, "NATS.AdvertiseURLs: production agent URLs must use tls or nats+tls")
+			break
+		}
 	}
 	if strings.Contains(c.DB.DSN, "sslmode=disable") {
 		errs = append(errs, "DB.DSN: sslmode=disable not allowed in production")
@@ -407,6 +421,13 @@ func LoadOrchestratorConfig() (*OrchestratorConfig, error) {
 
 	cfg.DB.DSN = resolveDSN()
 	cfg.NATS.URL = envStr("NATS_URL", cfg.NATS.URL)
+	if raw := strings.TrimSpace(os.Getenv("NATS_ADVERTISE_URLS")); raw != "" {
+		for _, candidate := range strings.Split(raw, ",") {
+			if candidate = strings.TrimSpace(candidate); candidate != "" {
+				cfg.NATS.AdvertiseURLs = append(cfg.NATS.AdvertiseURLs, candidate)
+			}
+		}
+	}
 	cfg.NATS.Token = os.Getenv("NATS_TOKEN")
 
 	if v, err := envBoolStrict("NATS_TLS_ENABLED"); err != nil {
