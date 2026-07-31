@@ -31,7 +31,7 @@ The native installer does not silently create insecure plaintext dependencies.
 From a verified release checkout:
 
 ```bash
-sudo ./scripts/install-platform.sh \
+sudo bash ./scripts/install-platform.sh \
   --mode docker \
   --domain rmm.example.com \
   --admin-email owner@example.com
@@ -44,7 +44,7 @@ For an approved unattended deployment, place only the initial administrator pass
 ```bash
 sudo install -m 600 /secure/input/admin-password /run/strata-bootstrap-password
 sudo env STRATA_BOOTSTRAP_PASSWORD_FILE=/run/strata-bootstrap-password \
-  ./scripts/install-platform.sh \
+  bash ./scripts/install-platform.sh \
   --mode docker \
   --domain rmm.example.com \
   --admin-email owner@example.com
@@ -75,7 +75,7 @@ After success, visit `https://rmm.example.com` and sign in with the administrato
 The native mode never downloads a mutable package. Provide the locally verified release artifact and protected dependency files:
 
 ```bash
-sudo ./scripts/install-platform.sh \
+sudo bash ./scripts/install-platform.sh \
   --mode native \
   --domain rmm.example.com \
   --admin-email owner@example.com \
@@ -119,7 +119,7 @@ Operators and CI can generate and render the Docker configuration without starti
 
 ```bash
 sudo env STRATA_BOOTSTRAP_PASSWORD_FILE=/protected/admin-password \
-  ./scripts/install-platform.sh \
+  bash ./scripts/install-platform.sh \
   --mode docker \
   --domain rmm.example.com \
   --admin-email owner@example.com \
