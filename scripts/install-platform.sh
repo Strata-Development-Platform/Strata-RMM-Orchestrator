@@ -13,6 +13,7 @@ NATS_URL=""
 NATS_ADVERTISE_URL=""
 NATS_TOKEN_FILE=""
 NATS_CA_FILE=""
+PREPARE_ONLY="false"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 COMPOSE_DIR="$REPO_DIR/deploy/docker"
@@ -30,8 +31,7 @@ Usage:
     --nats-token-file /secure/nats-token --nats-ca-file /secure/nats-ca.crt
 
 The administrator password is prompted without echo. For unattended installation,
-set STRATA_BOOTSTRAP_PASSWORD_FILE to a protected regular file instead.
-USAGE
+set STRATA_BOOTSTRAP_PASSWORD_FILE to a protected regular file instead.\nUse --prepare-only to generate and validate Docker configuration without starting services.\nUSAGE
 }
 
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
@@ -206,7 +206,7 @@ while (( $# > 0 )); do
     --nats-url) NATS_URL="${2:-}"; shift 2 ;;
     --nats-advertise-url) NATS_ADVERTISE_URL="${2:-}"; shift 2 ;;
     --nats-token-file) NATS_TOKEN_FILE="${2:-}"; shift 2 ;;
-    --nats-ca-file) NATS_CA_FILE="${2:-}"; shift 2 ;;
+    --nats-ca-file) NATS_CA_FILE="${2:-}"; shift 2 ;;\n    --prepare-only) PREPARE_ONLY="true"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
