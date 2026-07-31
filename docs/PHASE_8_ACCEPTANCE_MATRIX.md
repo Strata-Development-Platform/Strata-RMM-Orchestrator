@@ -80,19 +80,19 @@ Populate this table during implementation.
 |---|---|---|---|---|---|
 | 8A-C01…8A-C10 | [CI run 30381729001](https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30381729001) | `342bf9e114ec5547333449e33a5e7df3a834d466` | 2026-07-28 | Coordinator | 21/21 passed; merged PR #7 |
 | 8B-C01…8B-C07 | [CI run 30474346350](https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30474346350) | `9ce0a607447bfb4ea811a09c16dc785b5085c2cc` | 2026-07-29 | Coordinator | 36/36 passed; merged PR #8 |
-| A8-06…A8-08 / Phase 8C | Pending exact-head run for PR #9 | Pending | Pending | Coordinator | CI pending |
+| A8-06…A8-08 / Phase 8C | [Phase 8C run 30602575852](https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30602575852) and [CI run 30602575803](https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30602575803) | `4e2a3bc00172adb7363b880c03077b61589eafcd` | 2026-07-31 | Coordinator | 20/20 Phase 8C and 30/30 repository CI passed |
 | A8-09 | Timestamped isolated recovery drill | Pending | Pending | Operations | Not accepted |
 
 ## Phase 8C — Backup and Disaster Recovery
 
 | ID | Acceptance criterion | Current status |
 |---|---|---|
-| 8C-C01 | Independent key provider and external repository survive source loss | Implemented; exact-head CI pending |
-| 8C-C02 | PostgreSQL backup restores schema, tenant data, durable jobs, and audit evidence into a distinct target | Real integration test added; exact-head CI pending |
-| 8C-C03 | JetStream streams, consumer progress, headers, subjects, and messages restore into a distinct target | Real integration test added; exact-head CI pending |
-| 8C-C04 | Object bytes, content type, metadata, and digests restore into a distinct target | Real integration test added; exact-head CI pending |
-| 8C-C05 | Backup quiescing blocks database mutations and concurrent recovery | Migration 65 and PostgreSQL integration tests added; exact-head CI pending |
-| 8C-C06 | Restore verifies every artifact before target mutation and always performs bounded cleanup | Engine failure/tamper tests pass locally; exact-head CI pending |
-| 8C-C07 | CLI uses the real runtime path and has no validation bypass | Implemented; exact-head CI pending |
-| 8C-C08 | Recovery documentation matches runtime behavior and limitations | Updated; review pending |
+| 8C-C01 | Independent key provider and external repository survive source loss | Verified |
+| 8C-C02 | PostgreSQL backup restores schema, tenant data, durable jobs, and audit evidence into a distinct target | Verified |
+| 8C-C03 | JetStream streams, consumer progress, headers, subjects, and messages restore into a distinct target | Verified |
+| 8C-C04 | Object bytes, content type, metadata, and digests restore into a distinct target | Verified |
+| 8C-C05 | Backup quiescing blocks database mutations and concurrent recovery | Verified |
+| 8C-C06 | Restore verifies every artifact before target mutation and always performs bounded cleanup | Verified |
+| 8C-C07 | CLI uses the real runtime path and has no validation bypass | Verified |
+| 8C-C08 | Recovery documentation matches runtime behavior and limitations | Verified |
 | 8C-C09 | Beta RPO/RTO is proven by a timestamped isolated drill | Not accepted; operational drill required |
