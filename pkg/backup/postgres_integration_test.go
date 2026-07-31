@@ -36,28 +36,52 @@ func setupPGEnv(t *testing.T) pgEnv {
 	defer cancel()
 
 	// Use CI service connection or fall back to local defaults
-	adminDSN := os.Getenv("TEST_POSTGRES_DSN")
-	if adminDSN == "" {
-		adminDSN = "host=/tmp/pg_socket port=5434 user=administrator dbname=postgres sslmode=disable"
+	rawDSN := os.Getenv("TEST_POSTGRES_DSN")
+	var host, user, password string
+
+	if rawDSN == "" {
+		// Local development: connect via socket
+		host = "/tmp/pg_socket"
+		user = "administrator"
+		password = ""
 	} else {
-		// For CI: connect to 'postgres' database for admin operations (creating/dropping test DBs)
-		// Strip any dbname query param and add dbname=postgres
-		adminDSN = strings.Split(adminDSN, "?")[0]
-		if !strings.Contains(adminDSN, "dbname=") {
-			adminDSN += " dbname=postgres"
-		} else {
-			adminDSN = strings.ReplaceAll(adminDSN, "dbname=strata_test", "dbname=postgres")
+		// CI: Parse postgres://user:pass@host:port/dbname?params
+		connStr := strings.TrimPrefix(strings.TrimPrefix(rawDSN, "postgres://"), "postgresql://")
+		// Split off query params
+		parts := strings.SplitN(connStr, "?", 2)
+		connStr = parts[0]
+
+		// connStr is: user:password@host:port/dbname
+		atIdx := strings.LastIndex(connStr, "@")
+		if atIdx == -1 {
+			require.Fail(t, "invalid admin DSN: missing @ separator", "dsn="+rawDSN)
 		}
-		adminDSN += "?sslmode=disable"
+
+		creds := connStr[:atIdx]
+		hostPart := connStr[atIdx+1:]
+
+		dbIdx := strings.Index(hostPart, "/")
+		if dbIdx == -1 {
+			host = hostPart
+		} else {
+			host = hostPart[:dbIdx]
+		}
+
+		// Split credentials
+		colonIdx := strings.Index(creds, ":")
+		if colonIdx == -1 {
+			require.Fail(t, "invalid admin DSN: missing : in credentials", "dsn="+rawDSN)
+		}
+		user = creds[:colonIdx]
+		password = creds[colonIdx+1:]
 	}
 
-	// Trim leading 'postgres://' or 'postgresql://'
-	adminDSN = strings.TrimPrefix(adminDSN, "postgres://")
-	adminDSN = strings.TrimPrefix(adminDSN, "postgresql://")
+	// Admin DSN: connect to 'postgres' database to create/drop test databases
+	adminDSN := makeDSN(host, user, password, "postgres", true)
 
 	db, err := sql.Open("postgres", adminDSN)
 	require.NoError(t, err, "admin PostgreSQL connect")
-	require.NoError(t, db.PingContext(ctx), "admin PostgreSQL ping: dsn="+adminDSN)
+	require.NoError(t, db.PingContext(ctx), "admin PostgreSQL ping")
 	defer db.Close()
 
 	sourceDB := "backup_src_" + t.Name()
@@ -75,8 +99,8 @@ func setupPGEnv(t *testing.T) pgEnv {
 	_, err = db.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE %s", pqIdent(targetDB)))
 	require.NoError(t, err)
 
-	sourceDSN := adminDSN + " dbname=" + sourceDB + " sslmode=disable"
-	targetDSN := adminDSN + " dbname=" + targetDB + " sslmode=disable"
+	sourceDSN := makeDSN(host, user, password, sourceDB, true)
+	targetDSN := makeDSN(host, user, password, targetDB, true)
 
 	// Verify both are pingable
 	srcDB, err := sql.Open("postgres", sourceDSN)
@@ -104,6 +128,28 @@ func setupPGEnv(t *testing.T) pgEnv {
 // pqIdent returns a properly quoted PostgreSQL identifier.
 func pqIdent(name string) string {
 	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
+}
+
+// makeDSN builds a PostgreSQL DSN from components.
+func makeDSN(host, user, password, dbname string, useSSL bool) string {
+	dsn := ""
+	if host == "/tmp/pg_socket" {
+		// Local development: use Unix socket
+		dsn = "host=" + host + " user=" + user
+		if password != "" {
+			dsn += " password=" + password
+		}
+		dsn += " dbname=" + dbname + " sslmode=disable"
+	} else {
+		// CI: use TCP connection
+		if password != "" {
+			dsn = user + ":" + password + "@" + host
+		} else {
+			dsn = user + "@" + host
+		}
+		dsn += " dbname=" + dbname + " sslmode=disable"
+	}
+	return dsn
 }
 
 // seedSourceDB applies migrations and seeds test data into the source database.

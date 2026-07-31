@@ -25,25 +25,44 @@ func testDBName(t *testing.T) string {
 func setupTestDB(t *testing.T, ctx context.Context) (*sql.DB, string) {
 	t.Helper()
 
-	// Use CI service connection or fall back to local defaults
-	dsn := os.Getenv("TEST_POSTGRES_DSN")
-	if dsn == "" {
-		dsn = "host=/tmp/pg_socket port=5434 user=administrator dbname=postgres sslmode=disable"
+	rawDSN := os.Getenv("TEST_POSTGRES_DSN")
+	var host, user, password string
+
+	if rawDSN == "" {
+		host = "/tmp/pg_socket"
+		user = "administrator"
+		password = ""
 	} else {
-		// For CI: connect to 'postgres' database for admin operations (creating/dropping test DBs)
-		dsn = strings.Split(dsn, "?")[0]
-		if !strings.Contains(dsn, "dbname=") {
-			dsn += " dbname=postgres"
-		} else {
-			dsn = strings.ReplaceAll(dsn, "dbname=strata_test", "dbname=postgres")
+		connStr := strings.TrimPrefix(strings.TrimPrefix(rawDSN, "postgres://"), "postgresql://")
+		parts := strings.SplitN(connStr, "?", 2)
+		connStr = parts[0]
+
+		atIdx := strings.LastIndex(connStr, "@")
+		if atIdx == -1 {
+			require.Fail(t, "invalid admin DSN: missing @ separator", "dsn="+rawDSN)
 		}
-		dsn += "?sslmode=disable"
+
+		creds := connStr[:atIdx]
+		hostPart := connStr[atIdx+1:]
+
+		dbIdx := strings.Index(hostPart, "/")
+		if dbIdx == -1 {
+			host = hostPart
+		} else {
+			host = hostPart[:dbIdx]
+		}
+
+		colonIdx := strings.Index(creds, ":")
+		if colonIdx == -1 {
+			require.Fail(t, "invalid admin DSN: missing : in credentials", "dsn="+rawDSN)
+		}
+		user = creds[:colonIdx]
+		password = creds[colonIdx+1:]
 	}
 
-	dsn = strings.TrimPrefix(dsn, "postgres://")
-	dsn = strings.TrimPrefix(dsn, "postgresql://")
+	adminDSN := makeMigrationDSN(host, user, password, "postgres")
 
-	adminDB, err := sql.Open("postgres", dsn)
+	adminDB, err := sql.Open("postgres", adminDSN)
 	require.NoError(t, err)
 	require.NoError(t, adminDB.PingContext(ctx))
 
@@ -54,7 +73,7 @@ func setupTestDB(t *testing.T, ctx context.Context) (*sql.DB, string) {
 	_, err := adminDB.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE %s", pqIdent(dbName)))
 	require.NoError(t, err)
 
-	testDSN := dsn + " dbname=" + dbName + " sslmode=disable"
+	testDSN := makeMigrationDSN(host, user, password, dbName)
 
 	db, err := sql.Open("postgres", testDSN)
 	require.NoError(t, err)
@@ -71,6 +90,26 @@ func setupTestDB(t *testing.T, ctx context.Context) (*sql.DB, string) {
 // pqIdent returns a properly quoted PostgreSQL identifier.
 func pqIdent(name string) string {
 	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
+}
+
+// makeMigrationDSN builds a PostgreSQL DSN from components.
+func makeMigrationDSN(host, user, password, dbname string) string {
+	dsn := ""
+	if host == "/tmp/pg_socket" {
+		dsn = "host=" + host + " user=" + user
+		if password != "" {
+			dsn += " password=" + password
+		}
+		dsn += " dbname=" + dbname + " sslmode=disable"
+	} else {
+		if password != "" {
+			dsn = user + ":" + password + "@" + host
+		} else {
+			dsn = user + "@" + host
+		}
+		dsn += " dbname=" + dbname + " sslmode=disable"
+	}
+	return dsn
 }
 
 // TestApplyMigrations verifies migrations can be applied to a clean database.
