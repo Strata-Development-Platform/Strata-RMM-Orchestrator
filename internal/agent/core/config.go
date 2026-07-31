@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"time"
@@ -20,8 +21,8 @@ type Config struct {
 type AgentConfig struct {
 	TenantID        string `yaml:"tenant_id"`
 	AgentID         string `yaml:"agent_id"`
-	DeploymentID    string `yaml:"deployment_id"`
-	EnrollmentToken string `yaml:"enrollment_token"`
+	DeploymentID    string `yaml:"deployment_id,omitempty"`
+	EnrollmentToken string `yaml:"enrollment_token,omitempty"`
 	RegisterURL     string `yaml:"register_url"`
 	LogLevel        string `yaml:"log_level"`
 	DataDir         string `yaml:"data_dir"`
@@ -110,6 +111,50 @@ func (c *Config) Validate() error {
 	if len(c.NATS.URLs) == 0 {
 		return fmt.Errorf("nats.urls is required")
 	}
+	for _, raw := range c.NATS.URLs {
+		u, err := url.Parse(raw)
+		if err != nil || u.Host == "" {
+			return fmt.Errorf("nats.urls contains an invalid URL")
+		}
+		if u.Scheme == "nats" && u.Hostname() != "localhost" && u.Hostname() != "127.0.0.1" {
+			return fmt.Errorf("nats.urls must use encrypted transport outside local development")
+		}
+		if u.Scheme != "nats" && u.Scheme != "tls" && u.Scheme != "nats+tls" {
+			return fmt.Errorf("nats.urls contains an unsupported scheme")
+		}
+	}
+	if c.NATS.Token == "" && c.NATS.CertFile == "" {
+		return fmt.Errorf("nats token or client certificate is required")
+	}
+	if (c.NATS.CertFile == "") != (c.NATS.KeyFile == "") {
+		return fmt.Errorf("nats client certificate and key must be configured together")
+	}
+	if c.Collect.Interval < time.Second {
+		return fmt.Errorf("collect.interval must be at least 1s")
+	}
+	return nil
+}
+
+// ValidateBootstrap accepts either an already-enrolled runtime configuration or
+// a one-time enrollment configuration. Runtime validation remains strict and is
+// performed after registration has populated the tenant and messaging identity.
+func (c *Config) ValidateBootstrap() error {
+	if c.Agent.TenantID != "" {
+		return c.Validate()
+	}
+	if c.Agent.EnrollmentToken == "" && c.Agent.DeploymentID == "" {
+		return fmt.Errorf("agent.enrollment_token is required before enrollment")
+	}
+	if c.Agent.RegisterURL == "" {
+		return fmt.Errorf("agent.register_url is required before enrollment")
+	}
+	u, err := url.Parse(c.Agent.RegisterURL)
+	if err != nil || u.Host == "" {
+		return fmt.Errorf("agent.register_url must be an absolute URL")
+	}
+	if u.Scheme != "https" && u.Hostname() != "localhost" && u.Hostname() != "127.0.0.1" {
+		return fmt.Errorf("agent.register_url must use HTTPS outside local development")
+	}
 	if c.Collect.Interval < time.Second {
 		return fmt.Errorf("collect.interval must be at least 1s")
 	}
@@ -124,5 +169,29 @@ func (c *Config) Load(path string) error {
 	if err := yaml.Unmarshal(data, c); err != nil {
 		return fmt.Errorf("parsing config: %w", err)
 	}
-	return c.Validate()
+	return c.ValidateBootstrap()
+}
+
+// SaveRuntime atomically replaces a bootstrap configuration with the enrolled
+// runtime configuration. One-time enrollment material is deliberately omitted.
+func (c *Config) SaveRuntime(path string) error {
+	if err := c.Validate(); err != nil {
+		return err
+	}
+	runtimeConfig := *c
+	runtimeConfig.Agent.EnrollmentToken = ""
+	runtimeConfig.Agent.DeploymentID = ""
+	data, err := yaml.Marshal(&runtimeConfig)
+	if err != nil {
+		return fmt.Errorf("encoding runtime config: %w", err)
+	}
+	tempPath := path + ".tmp"
+	if err := os.WriteFile(tempPath, data, 0600); err != nil {
+		return fmt.Errorf("writing runtime config: %w", err)
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		_ = os.Remove(tempPath)
+		return fmt.Errorf("replacing bootstrap config: %w", err)
+	}
+	return nil
 }
