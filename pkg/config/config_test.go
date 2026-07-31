@@ -598,7 +598,7 @@ func TestSecretEnvRejectsAmbiguousSources(t *testing.T) {
 func TestSecretEnvRejectsRelativeAndNonCanonicalPaths(t *testing.T) {
 	tests := []string{
 		"relative/secret",
-		filepath.Join(t.TempDir(), "..", "secret"),
+		t.TempDir() + string(os.PathSeparator) + ".." + string(os.PathSeparator) + "secret",
 	}
 	for _, path := range tests {
 		t.Run(path, func(t *testing.T) {
