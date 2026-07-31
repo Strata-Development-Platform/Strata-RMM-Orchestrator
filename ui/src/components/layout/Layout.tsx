@@ -3,6 +3,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { ThemeToggle } from '@/components/shared/ThemeToggle';
 import { useState } from 'react';
 import { useWorkspace } from '@/hooks/useWorkspace';
+import { ProductAttribution } from '@/components/layout/ProductAttribution';
 import {
   LayoutDashboard, Users, Building2, Terminal, Package,
   FileText, Settings, LogOut, ChevronLeft, ChevronRight,
@@ -11,17 +12,17 @@ import {
 
 const navItems = [
   { path: '/', label: 'Overview', icon: LayoutDashboard },
-  { path: '/customers', label: 'Customers', icon: Building2 },
-  { path: '/msp', label: 'MSP Workspace', icon: Globe },
+  { path: '/customers', label: 'Customers', icon: Building2, permissions: ['client:read', 'client:manage', 'msp:manage', 'platform:manage'] },
+  { path: '/msp', label: 'MSP Workspace', icon: Globe, permissions: ['msp:manage', 'client:read', 'client:manage'] },
   { path: '/platform/msps', label: 'MSP Tenants', icon: Globe, platformOnly: true },
-  { path: '/admin/users', label: 'Users', icon: Users },
-  { path: '/scripts', label: 'Scripts', icon: Terminal },
-  { path: '/software', label: 'Software', icon: Package },
-  { path: '/thirdparty', label: 'Patch Mgmt', icon: RefreshCw },
-  { path: '/jobs', label: 'Jobs', icon: ListChecks },
-  { path: '/jobs/health', label: 'Job Health', icon: Activity },
-  { path: '/reports', label: 'Reports', icon: FileText },
-  { path: '/admin/settings', label: 'Settings', icon: Settings },
+  { path: '/admin/users', label: 'Users', icon: Users, platformOnly: true },
+  { path: '/scripts', label: 'Scripts', icon: Terminal, permissions: ['device:manage', 'job:manage'] },
+  { path: '/software', label: 'Software', icon: Package, permissions: ['device:read', 'device:manage'] },
+  { path: '/thirdparty', label: 'Patch Mgmt', icon: RefreshCw, permissions: ['device:manage', 'job:manage'] },
+  { path: '/jobs', label: 'Jobs', icon: ListChecks, permissions: ['job:read', 'job:manage'] },
+  { path: '/jobs/health', label: 'Job Health', icon: Activity, permissions: ['job:read', 'job:manage', 'platform:manage'] },
+  { path: '/reports', label: 'Reports', icon: FileText, permissions: ['device:read', 'device:manage', 'platform:manage'] },
+  { path: '/admin/settings', label: 'Settings', icon: Settings, permissions: ['msp:manage', 'platform:manage'] },
 ];
 
 const bottomNav = [
@@ -42,7 +43,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   if (!user) return <>{children}</>;
   const platformRole = ['platform_owner', 'platform_admin'].includes(user.role);
-  const visibleNavItems = navItems.filter(item => !item.platformOnly || platformRole);
+  const permissions = new Set(workspace?.permissions ?? []);
+  const visibleNavItems = navItems.filter(item => {
+    if (item.platformOnly && !platformRole) return false;
+    if (!item.permissions || item.permissions.length === 0 || platformRole) return true;
+    return item.permissions.some(permission => permissions.has(permission));
+  });
   const branding = workspace?.branding;
   const displayName = typeof branding?.display_name === 'string' ? branding.display_name : 'Strata RMM';
   const sidebarBackground = typeof branding?.sidebar_bg === 'string' ? branding.sidebar_bg : undefined;
@@ -122,6 +128,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             );
           })}
         </div>
+
+        <ProductAttribution collapsed={collapsed} />
 
         <div className="p-3 border-t border-slate-700">
           <div className={`flex items-center gap-2 ${collapsed ? 'justify-center' : ''}`}>

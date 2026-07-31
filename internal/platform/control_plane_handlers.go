@@ -172,24 +172,25 @@ func (s *APIServer) handleGetEntitlement(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var response struct {
-		PlanSlug    string          `json:"plan_slug"`
-		Status      string          `json:"status"`
-		MaxDevices  int             `json:"max_devices"`
-		MaxUsers    int             `json:"max_users"`
-		DeviceCount int             `json:"device_count"`
-		UserCount   int             `json:"user_count"`
-		Features    json.RawMessage `json:"features"`
+		PlanSlug        string          `json:"plan_slug"`
+		Status          string          `json:"status"`
+		GracePeriodEnds *time.Time      `json:"grace_period_ends_at,omitempty"`
+		MaxDevices      int             `json:"max_devices"`
+		MaxUsers        int             `json:"max_users"`
+		DeviceCount     int             `json:"device_count"`
+		UserCount       int             `json:"user_count"`
+		Features        json.RawMessage `json:"features"`
 	}
 	var features []byte
 	err := s.requestDB(r).QueryRowContext(r.Context(), `
-		SELECT p.slug, pe.status, p.max_devices, p.max_users,
+		SELECT p.slug, pe.status, pe.grace_period_ends_at, p.max_devices, p.max_users,
 		       (SELECT COUNT(*) FROM devices d WHERE d.msp_id = pe.msp_id),
 		       (SELECT COUNT(DISTINCT mb.user_id) FROM memberships mb
 		        WHERE mb.scope_type = 'msp' AND mb.scope_id = pe.msp_id::text AND mb.status = 'active'),
 		       p.features
 		FROM plan_entitlements pe JOIN plans p ON p.id = pe.plan_id
 		WHERE pe.msp_id = $1
-	`, mspID).Scan(&response.PlanSlug, &response.Status, &response.MaxDevices,
+	`, mspID).Scan(&response.PlanSlug, &response.Status, &response.GracePeriodEnds, &response.MaxDevices,
 		&response.MaxUsers, &response.DeviceCount, &response.UserCount, &features)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "entitlement not found"})
@@ -202,8 +203,9 @@ func (s *APIServer) handleGetEntitlement(w http.ResponseWriter, r *http.Request)
 func (s *APIServer) handleUpdateEntitlement(w http.ResponseWriter, r *http.Request) {
 	mspID := r.PathValue("mspID")
 	var req struct {
-		PlanSlug string `json:"plan_slug"`
-		Status   string `json:"status"`
+		PlanSlug        string `json:"plan_slug"`
+		Status          string `json:"status"`
+		GracePeriodDays int    `json:"grace_period_days,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
@@ -214,13 +216,28 @@ func (s *APIServer) handleUpdateEntitlement(w http.ResponseWriter, r *http.Reque
 	if req.Status == "" {
 		req.Status = "active"
 	}
+	if req.Status == "past_due" {
+		if req.GracePeriodDays < 1 || req.GracePeriodDays > 90 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "past_due requires grace_period_days from 1 to 90"})
+			return
+		}
+	} else if req.GracePeriodDays != 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "grace_period_days is only valid for past_due"})
+		return
+	}
 	result, err := s.requestDB(r).ExecContext(r.Context(), `
 		UPDATE plan_entitlements pe
-		SET plan_id = p.id, status = $3, updated_at = NOW()
+		SET plan_id = p.id,
+		    status = $3,
+		    grace_period_ends_at = CASE
+		      WHEN $3 = 'past_due' THEN NOW() + make_interval(days => $4)
+		      ELSE NULL
+		    END,
+		    updated_at = NOW()
 		FROM plans p
 		WHERE pe.msp_id = $1 AND p.slug = $2 AND p.is_active = true
 		  AND $3 IN ('active','past_due','suspended','cancelled')
-	`, mspID, req.PlanSlug, req.Status)
+	`, mspID, req.PlanSlug, req.Status, req.GracePeriodDays)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "entitlement update failed"})
 		return
@@ -232,7 +249,7 @@ func (s *APIServer) handleUpdateEntitlement(w http.ResponseWriter, r *http.Reque
 	}
 	_, _ = s.requestDB(r).ExecContext(r.Context(), `UPDATE msp_tenants SET plan = $2 WHERE id = $1`, mspID, req.PlanSlug)
 	s.auditControlPlane(r, mspID, "entitlement.updated", "plan_entitlement", mspID,
-		map[string]string{"plan": req.PlanSlug, "status": req.Status})
+		map[string]interface{}{"plan": req.PlanSlug, "status": req.Status, "grace_period_days": req.GracePeriodDays})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 

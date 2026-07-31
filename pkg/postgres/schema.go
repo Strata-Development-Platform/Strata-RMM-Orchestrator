@@ -2302,6 +2302,52 @@ func Migrations() []Migration {
 				DROP TABLE IF EXISTS recovery_mutation_gate;
 			`,
 		},
+		{
+			ID:   66,
+			Name: "add_msp_lifecycle_controls",
+			Up: `
+				ALTER TABLE plan_entitlements
+					ADD COLUMN IF NOT EXISTS grace_period_ends_at TIMESTAMPTZ;
+
+				CREATE TABLE IF NOT EXISTS msp_offboarding (
+					id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					msp_id                UUID NOT NULL UNIQUE REFERENCES msp_tenants(id) ON DELETE RESTRICT,
+					state                 TEXT NOT NULL DEFAULT 'requested'
+						CHECK (state IN ('requested', 'access_revoked', 'retained', 'deletion_approved')),
+					reason                TEXT NOT NULL,
+					requested_by          TEXT NOT NULL,
+					requested_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					access_revoked_at     TIMESTAMPTZ,
+					retention_until       TIMESTAMPTZ NOT NULL,
+					deletion_approved_by  TEXT,
+					deletion_approved_at  TIMESTAMPTZ,
+					updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					CHECK (retention_until >= requested_at),
+					CHECK (
+						(state <> 'deletion_approved')
+						OR (deletion_approved_by IS NOT NULL AND deletion_approved_at IS NOT NULL)
+					)
+				);
+				CREATE INDEX IF NOT EXISTS idx_msp_offboarding_state_retention
+					ON msp_offboarding(state, retention_until);
+
+				ALTER TABLE msp_offboarding ENABLE ROW LEVEL SECURITY;
+				DROP POLICY IF EXISTS platform_only ON msp_offboarding;
+				CREATE POLICY platform_only ON msp_offboarding
+					USING (app_is_platform_admin())
+					WITH CHECK (app_is_platform_admin());
+				ALTER TABLE msp_offboarding FORCE ROW LEVEL SECURITY;
+
+				DROP TRIGGER IF EXISTS recovery_mutation_gate_trigger ON msp_offboarding;
+				CREATE TRIGGER recovery_mutation_gate_trigger
+					BEFORE INSERT OR UPDATE OR DELETE ON msp_offboarding
+					FOR EACH STATEMENT EXECUTE FUNCTION enforce_recovery_mutation_gate();
+			`,
+			Down: `
+				DROP TABLE IF EXISTS msp_offboarding;
+				ALTER TABLE plan_entitlements DROP COLUMN IF EXISTS grace_period_ends_at;
+			`,
+		},
 	}
 }
 
