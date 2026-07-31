@@ -1,152 +1,78 @@
-# Restore Procedures
+# Restore Operations
 
-## Overview
+Restore is deliberately target-oriented. It does not require the failed source services to be reachable, and it refuses in-place database, NATS, or object-storage targets.
 
-Restore operations reverse the backup process, recovering PostgreSQL/TimescaleDB, NATS JetStream, and object storage from encrypted backup data.
+## Required recovery targets
 
-## Prerequisites
+Set the normal backup repository and key-provider variables described in `docs/BACKUP.md`, plus:
 
-Before restoring:
+| Variable / flag | Purpose |
+|---|---|
+| `--backup-id` | Finalized backup set to restore |
+| `--target-dsn` | Existing, empty PostgreSQL database distinct from the source |
+| `--confirm` | Explicit destructive-operation acknowledgement |
+| `STRATA_RECOVERY_NATS_URL` | Empty JetStream-enabled NATS target distinct from the source URL |
+| `STRATA_RECOVERY_NATS_TOKEN` | Target NATS token when used |
+| `STRATA_RECOVERY_NATS_TLS_CA` | Target NATS trusted CA |
+| `STRATA_RECOVERY_NATS_TLS_CERT` | Optional target mTLS certificate |
+| `STRATA_RECOVERY_NATS_TLS_KEY` | Optional target mTLS key |
+| `STRATA_RECOVERY_STORAGE_BACKEND` | Recovery storage backend type |
+| `STRATA_RECOVERY_STORAGE_BUCKET` | Empty target bucket/path distinct from the source |
+| `STRATA_RECOVERY_STORAGE_REGION` | Target region |
+| `STRATA_RECOVERY_STORAGE_ENDPOINT` | Target endpoint |
+| `STRATA_RECOVERY_STORAGE_ACCESS_KEY` | Target access key |
+| `STRATA_RECOVERY_STORAGE_SECRET_KEY` | Target secret key |
+| `STRATA_RECOVERY_STORAGE_USE_SSL` | Target transport setting |
 
-1. **Identify the backup ID** from `backup_records`:
-   ```sql
-   SELECT id, database_type, created_at, status, integrity_digest
-   FROM backup_records
-   WHERE status = 'completed'
-   ORDER BY created_at DESC
-   LIMIT 10;
-   ```
+If source object storage is disabled, recovery object-storage variables are not required. Production NATS TLS and authentication validation still applies to the recovery target.
 
-2. **Verify backup integrity** using the stored SHA-256 digest:
+## Procedure
+
+1. List and verify the backup without contacting source services:
+
    ```bash
-   strata-rmm orchestrator recovery <backup-id> --dry-run
+   strata-rmm orchestrator recovery status
+   strata-rmm orchestrator recovery verify --backup-id <backup-id>
    ```
 
-3. **Ensure target DSN** is available if restoring to a different instance:
+2. Provision isolated PostgreSQL, JetStream, and object-storage targets.
+
+3. Run a non-mutating restore preflight:
+
    ```bash
-   export STRATA_BACKUP_TARGET_DSN="postgres://user:pass@target-host:5432/strata_rmm"
+   strata-rmm orchestrator recovery restore \
+     --backup-id <backup-id> \
+     --target-dsn "$RECOVERY_DATABASE_DSN" \
+     --dry-run
    ```
 
-## Restore Workflow
+4. Execute the restore:
 
-### Step 1: Pre-Restore Validation
+   ```bash
+   strata-rmm orchestrator recovery restore \
+     --backup-id <backup-id> \
+     --target-dsn "$RECOVERY_DATABASE_DSN" \
+     --confirm \
+     --timeout 4h
+   ```
 
-The coordinator checks:
-- Backup ID exists in `backup_records`
-- Backup status is `completed`
-- Advisory lock can be acquired
-- Target database is reachable
+The command verifies and decrypts every required artifact before acquiring the target lock or mutating a target. It restores PostgreSQL first, then JetStream, then object storage, verifying each component before continuing. Replaying the same JetStream or object artifact reconciles identical state without appending duplicate messages or objects; divergent non-empty JetStream state is rejected.
 
-### Step 2: Quiesce
+The PostgreSQL restore resets the copied mutation gate before post-restore verification. Do not route traffic to the target until application readiness and the manual smoke checks below pass.
 
-All services are quiesced to prevent new work during restore:
-- Job workers stop processing
-- NATS consumers pause
-- API endpoints return maintenance status
+## Required post-restore checks
 
-### Step 3: Database Restore
+- start the candidate orchestrator against the recovery targets;
+- verify `/health/live` and `/health/ready`;
+- authenticate as a platform operator;
+- query representative MSP, client, device, durable-job, approval, and audit records;
+- verify tenant-scoped requests cannot cross MSP/client boundaries;
+- inspect JetStream stream, consumer, and message counts;
+- download and hash representative reports and recordings;
+- record the backup ID, release, schema version, start/end times, and operators.
 
-1. Decrypt backup data using AES-256-GCM
-2. Run `pg_restore` to the target database
-3. Verify schema version matches expected
-4. Validate row counts and data integrity
+## Failure handling
 
-### Step 4: JetStream Restore
+The command returns nonzero on any integrity, decryption, restore, or verification failure and always attempts bounded lock/gate cleanup. It does not claim automatic transactional rollback across PostgreSQL, JetStream, and object storage. On failure, discard the isolated targets, create new empty targets, correct the cause, and rerun from the immutable backup set.
 
-1. Recreate stream definitions from backup metadata
-2. Recreate consumer configurations
-3. Replay messages from backup data
-4. Verify message counts match
-
-### Step 5: Object Storage Restore
-
-1. Restore object inventory metadata
-2. Verify ETag checksums match
-3. Restore object content from backup
-4. Verify content-length matches
-
-### Step 6: Post-Restore Validation
-
-1. Run database health checks
-2. Verify NATS connectivity
-3. Test API endpoints
-4. Validate tenant data isolation
-
-## Restore Commands
-
-### Full Restore
-
-```bash
-strata-rmm orchestrator recovery <backup-id>
-```
-
-### Dry-Run Validation
-
-```bash
-strata-rmm orchestrator recovery <backup-id> --dry-run --timeout 1h
-```
-
-### Force Restore (bypass some validations)
-
-```bash
-strata-rmm orchestrator recovery <backup-id> --force
-```
-
-### Restore with Custom Timeout
-
-```bash
-strata-rmm orchestrator recovery <backup-id> --timeout 3h
-```
-
-## Rollback
-
-If restore fails at any phase, the system automatically rolls back:
-
-```
-Rollback → Cleanup → Completed (failure)
-```
-
-Rollback reverses:
-1. Object storage changes
-2. JetStream changes
-3. Database changes
-
-## Verification
-
-After restore completes, verify:
-
-### Database
-```sql
-SELECT COUNT(*) FROM tenants;
-SELECT COUNT(*) FROM devices;
-SELECT version FROM schema_migrations ORDER BY id DESC LIMIT 1;
-```
-
-### JetStream
-```bash
-nats --server=nats://localhost:4222 stream info STRATA_JOURNALS
-nats --server=nats://localhost:4222 consumer info STRATA_JOURNALS default
-```
-
-### API
-```bash
-curl -s http://localhost:8080/health | jq .
-```
-
-### Audit Log
-```sql
-SELECT * FROM backup_audit_log
-WHERE action IN ('restore_started', 'restore_completed')
-ORDER BY timestamp DESC;
-```
-
-## RPO/RTO Reporting
-
-The recovery coordinator reports RPO and RTO metrics:
-
-```
-Recovery ID: <uuid>
-Final State: Completed
-RPO Data Loss Window: 5m23s (within 15m target)
-RTO Total Recovery Time: 1h42m (within 4h target)
-```
+There is no `--force` bypass.

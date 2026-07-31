@@ -2,8 +2,8 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -12,11 +12,10 @@ import (
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/backup"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/config"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/recovery"
-	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/repository"
 )
 
 // newBackupCommand creates the backup subcommand.
-func newBackupCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
+func newBackupCommand(ctx context.Context, logger *zap.Logger, version, commit string) *cobra.Command {
 	var (
 		databaseType string
 		dryRun       bool
@@ -45,10 +44,12 @@ HOST-LEVEL: This command requires direct host access (no network authentication)
 Run on the orchestrator host or via secure shell.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, err := config.LoadOrchestratorConfig()
+			cfg, err := config.LoadOrchestratorConfig()
 			if err != nil {
 				return fmt.Errorf("load config: %w", err)
 			}
+			cfg.Version = version
+			cfg.Commit = commit
 
 			if databaseType == "" {
 				databaseType = "timescaledb"
@@ -63,18 +64,29 @@ Run on the orchestrator host or via secure shell.`,
 				return fmt.Errorf("invalid timeout: %w", err)
 			}
 
+			runtime, err := buildRecoveryRuntime(cmd.Context(), cfg, "")
+			if err != nil {
+				return fmt.Errorf("backup preflight failed: %w", err)
+			}
+			defer runtime.close()
+
 			logger.Info("starting backup",
 				zap.String("database_type", databaseType),
 				zap.Bool("dry_run", dryRun),
 				zap.String("timeout", timeout),
 			)
 
-			fmt.Println("Backup command: full backup implementation pending integration")
-			fmt.Printf("  Database type: %s\n", databaseType)
-			fmt.Printf("  Dry run: %v\n", dryRun)
-			fmt.Printf("  Timeout: %s\n", timeout)
-
-			return nil
+			if dryRun {
+				fmt.Println("Backup preflight passed; no backup was created")
+				return nil
+			}
+			operationCtx, cancel := context.WithTimeout(cmd.Context(), mustDuration(timeout))
+			defer cancel()
+			manifest, err := runtime.engine.Backup(operationCtx)
+			if err != nil {
+				return fmt.Errorf("backup failed: %w", err)
+			}
+			return json.NewEncoder(cmd.OutOrStdout()).Encode(manifest)
 		},
 	}
 
@@ -86,7 +98,7 @@ Run on the orchestrator host or via secure shell.`,
 }
 
 // newRecoveryCommand creates the recovery subcommand.
-func newRecoveryCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
+func newRecoveryCommand(ctx context.Context, logger *zap.Logger, version, commit string) *cobra.Command {
 	var (
 		backupID  string
 		targetDSN string
@@ -105,6 +117,7 @@ func newRecoveryCommand(ctx context.Context, logger *zap.Logger) *cobra.Command 
   restore    - Restore from a backup set into a target database
   status     - Show current recovery state and available backup sets
   verify     - Verify integrity of an existing backup set
+  key-init   - Create the first active recovery key in the configured provider
 
 REQUIREMENTS FOR RESTORE:
   - --backup-id: Required. Specifies the backup set to restore from.
@@ -127,6 +140,8 @@ Run on the orchestrator host or via secure shell.`,
 			if err != nil {
 				return fmt.Errorf("load config: %w", err)
 			}
+			cfg.Version = version
+			cfg.Commit = commit
 
 			if len(args) > 0 {
 				operation = args[0]
@@ -151,8 +166,10 @@ Run on the orchestrator host or via secure shell.`,
 				return runStatus(cfg, dryRun, logger)
 			case "verify":
 				return runVerify(cfg, backupID, dryRun, logger)
+			case "key-init":
+				return runKeyInit(cfg, logger)
 			default:
-				return fmt.Errorf("unknown operation: %s (valid: preflight, restore, status, verify)", operation)
+				return fmt.Errorf("unknown operation: %s (valid: preflight, restore, status, verify, key-init)", operation)
 			}
 		},
 	}
@@ -165,7 +182,7 @@ Run on the orchestrator host or via secure shell.`,
 
 	// Restore operation requires --backup-id and --target-dsn
 	_ = cmd.RegisterFlagCompletionFunc("operation", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		return []string{"preflight", "restore", "status", "verify"}, cobra.ShellCompDirectiveNoFileComp
+		return []string{"preflight", "restore", "status", "verify", "key-init"}, cobra.ShellCompDirectiveNoFileComp
 	})
 
 	return cmd
@@ -173,26 +190,16 @@ Run on the orchestrator host or via secure shell.`,
 
 func runPreflight(cfg *config.OrchestratorConfig, dryRun bool, timeout time.Duration, logger *zap.Logger) error {
 	logger.Info("running preflight checks", zap.Bool("dry_run", dryRun))
-
-	// Check external repository configuration
-	if cfg.Backup.ExternalBucket == "" {
-		fmt.Println("WARN: No external backup repository configured")
-	} else {
-		fmt.Printf("External repository: %s (bucket: %s)\n", cfg.Backup.RepositoryType, cfg.Backup.ExternalBucket)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	runtime, err := buildRecoveryRuntime(ctx, cfg, "")
+	if err != nil {
+		return fmt.Errorf("preflight failed: %w", err)
 	}
-
-	// Check key provider configuration
-	if cfg.Backup.KeyProviderPath == "" {
-		fmt.Println("WARN: No key provider path configured")
-	} else {
-		fmt.Printf("Key provider: file (%s)\n", cfg.Backup.KeyProviderPath)
+	defer runtime.close()
+	if _, err := runtime.repo.ListBackupSets(ctx); err != nil {
+		return fmt.Errorf("preflight repository access failed: %w", err)
 	}
-
-	if dryRun {
-		fmt.Println("Preflight validation completed (dry-run)")
-		return nil
-	}
-
 	fmt.Println("Preflight validation passed")
 	return nil
 }
@@ -227,66 +234,54 @@ func runRestore(cfg *config.OrchestratorConfig, backupID, targetDSN string, dryR
 	fmt.Printf("  Timeout: %s\n", timeout)
 	fmt.Printf("  Confirmed: %v\n", confirm)
 
-	// Initialize key provider if configured
-	var kp recovery.KeyProvider
-	if cfg.Backup.KeyProviderPath != "" {
-		fp, err := recovery.NewFileKeyProvider(cfg.Backup.KeyProviderPath)
-		if err != nil {
-			return fmt.Errorf("initialize key provider: %w", err)
-		}
-		kp = fp
-		logger.Info("key provider initialized", zap.String("provider", fp.ProviderName()))
-	} else {
-		logger.Warn("no key provider configured; encryption operations will use in-memory keys")
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	runtime, err := buildRecoveryRuntime(ctx, cfg, targetDSN)
+	if err != nil {
+		return fmt.Errorf("restore preflight failed: %w", err)
 	}
-
-	// Initialize repository if configured
-	var repo repository.Repository
-	if cfg.Backup.ExternalBucket != "" {
-		switch cfg.Backup.RepositoryType {
-		case "s3":
-			// In production: create S3 repository with credentials from config
-			logger.Warn("S3 repository: credentials must be configured via environment")
-			// repo = repository.NewS3Repository(...) // Placeholder
-		case "filesystem":
-			// In production: create filesystem repository
-			logger.Warn("filesystem repository: path must be configured")
-			// repo = repository.NewFilesystemRepository(...) // Placeholder
-		default:
-			logger.Warn("unknown repository type; using placeholder")
-		}
+	defer runtime.close()
+	if err := runtime.engine.Verify(ctx, backupID); err != nil {
+		return fmt.Errorf("restore preflight integrity verification failed: %w", err)
 	}
-
-	// Create coordinator with dependencies
-	coordinator := backup.NewRecoveryCoordinatorWithDeps(nil, nil, kp, repo, nil)
-	coordinator.SetBackupID(backupID)
-	coordinator.SetDryRun(dryRun)
-	coordinator.SetTimeout(timeout)
-
-	fmt.Printf("Coordinator initialized with key provider: %v, repository: %v\n",
-		kp != nil, repo != nil)
-
+	if dryRun {
+		fmt.Println("Restore preflight passed; no target was mutated")
+		return nil
+	}
+	if err := runtime.engine.Restore(ctx, backupID); err != nil {
+		return fmt.Errorf("restore failed: %w", err)
+	}
+	fmt.Println("Restore completed and target components verified")
 	return nil
 }
 
 func runStatus(cfg *config.OrchestratorConfig, dryRun bool, logger *zap.Logger) error {
 	logger.Info("checking recovery status", zap.Bool("dry_run", dryRun))
 
-	// Try to list backup sets from external repository
-	if cfg.Backup.ExternalBucket == "" {
-		fmt.Println("No external repository configured. Cannot list backups.")
-		return nil
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	repo, err := buildArtifactRepository(ctx, cfg)
+	if err != nil {
+		return fmt.Errorf("status preflight failed: %w", err)
 	}
-
-	fmt.Printf("Repository type: %s\n", cfg.Backup.RepositoryType)
-	fmt.Printf("Bucket: %s\n", cfg.Backup.ExternalBucket)
-	fmt.Println("Backup listing: requires repository client initialization")
+	sets, err := repo.ListBackupSets(ctx)
+	if err != nil {
+		return fmt.Errorf("list backup sets: %w", err)
+	}
+	data, err := json.MarshalIndent(sets, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode backup sets: %w", err)
+	}
+	fmt.Println(string(data))
 	return nil
 }
 
 func runVerify(cfg *config.OrchestratorConfig, backupID string, dryRun bool, logger *zap.Logger) error {
 	if backupID == "" {
 		return fmt.Errorf("--backup-id is required for verify")
+	}
+	if cfg.Backup.KeyProviderPath == "" {
+		return fmt.Errorf("STRATA_BACKUP_KEY_PROVIDER_PATH is required")
 	}
 
 	logger.Info("verifying backup integrity",
@@ -296,6 +291,45 @@ func runVerify(cfg *config.OrchestratorConfig, backupID string, dryRun bool, log
 
 	fmt.Printf("Verify operation: backup set %s\n", backupID)
 	fmt.Printf("  Dry run: %v\n", dryRun)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	repo, err := buildArtifactRepository(ctx, cfg)
+	if err != nil {
+		return fmt.Errorf("verify preflight failed: %w", err)
+	}
+	keys, err := recovery.NewFileKeyProvider(cfg.Backup.KeyProviderPath)
+	if err != nil {
+		return fmt.Errorf("verify key provider failed: %w", err)
+	}
+	if err := backup.VerifyBackupSet(ctx, repo, keys, backupID); err != nil {
+		return fmt.Errorf("backup verification failed: %w", err)
+	}
+	fmt.Println("Backup verification passed")
+	return nil
+}
+
+func runKeyInit(cfg *config.OrchestratorConfig, logger *zap.Logger) error {
+	if cfg.Backup.KeyProviderPath == "" {
+		return fmt.Errorf("STRATA_BACKUP_KEY_PROVIDER_PATH is required")
+	}
+	if cfg.Backup.EnvironmentID == "" {
+		return fmt.Errorf("STRATA_BACKUP_ENVIRONMENT_ID is required")
+	}
+	provider, err := recovery.NewFileKeyProvider(cfg.Backup.KeyProviderPath)
+	if err != nil {
+		return fmt.Errorf("initialize recovery key provider: %w", err)
+	}
+	if current, err := provider.CurrentKey(context.Background()); err == nil {
+		return fmt.Errorf("an active recovery key already exists: %s", current.ID)
+	} else if !recovery.IsKeyNotFound(err) {
+		return fmt.Errorf("inspect recovery key provider: %w", err)
+	}
+	key, err := provider.RotateKey(context.Background(), cfg.Backup.EnvironmentID+"-recovery")
+	if err != nil {
+		return fmt.Errorf("create recovery key: %w", err)
+	}
+	logger.Info("recovery key initialized", zap.String("key_id", key.ID), zap.String("provider", provider.ProviderName()))
+	fmt.Printf("Recovery key initialized: %s\n", key.ID)
 	return nil
 }
 
@@ -304,19 +338,10 @@ func redactDSN(dsn string) string {
 	if dsn == "" {
 		return ""
 	}
-	// Simple redaction: replace everything after "password=" or "?password="
-	// This is a best-effort; real production should use structured logging.
-	for _, prefix := range []string{"password=", "Password=", "PASSWORD="} {
-		if idx := len(dsn) - len(prefix); idx > 0 && dsn[idx:] == prefix {
-			return dsn[:idx] + "password=***REDACTED***?"
-		}
-	}
-	return dsn
+	return config.RedactDSN(dsn)
 }
 
-// Ensure we use the recovery package to avoid unused import errors.
-var _ = recovery.ErrKeyNotFound
-var _ = repository.ManifestVersion
-
-// Ensure context is unused for build compatibility.
-var _ = os.Getenv
+func mustDuration(value string) time.Duration {
+	duration, _ := time.ParseDuration(value)
+	return duration
+}

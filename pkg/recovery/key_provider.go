@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -42,6 +43,8 @@ type RecoveryKey struct {
 	Active      bool      `json:"active"`
 	Provider    string    `json:"provider"`
 }
+
+var recoveryKeyIDPattern = regexp.MustCompile(`^rk-[a-f0-9]{32}$`)
 
 // Key errors.
 var (
@@ -91,8 +94,11 @@ func (p *FileKeyProvider) ProviderName() string { return "file" }
 
 // ResolveKey implements KeyProvider.
 func (p *FileKeyProvider) ResolveKey(_ context.Context, keyID string) (*RecoveryKey, error) {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
+	if !recoveryKeyIDPattern.MatchString(keyID) {
+		return nil, ErrInvalidKeyID
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
 
 	k, ok := p.keys[keyID]
 	if !ok {
@@ -134,12 +140,16 @@ func (p *FileKeyProvider) ResolveKey(_ context.Context, keyID string) (*Recovery
 // CurrentKey implements KeyProvider.
 func (p *FileKeyProvider) CurrentKey(ctx context.Context) (*RecoveryKey, error) {
 	p.mu.RLock()
-	defer p.mu.RUnlock()
-
+	var currentID string
 	for _, k := range p.keys {
 		if k.Active {
-			return p.ResolveKey(ctx, k.ID)
+			currentID = k.ID
+			break
 		}
+	}
+	p.mu.RUnlock()
+	if currentID != "" {
+		return p.ResolveKey(ctx, currentID)
 	}
 	return nil, ErrKeyNotFound
 }
@@ -161,39 +171,57 @@ func (p *FileKeyProvider) RotateKey(ctx context.Context, alias string) (*Recover
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	// Deactivate current active key
-	for _, k := range p.keys {
-		if k.Active {
-			k.Active = false
-			if err := p.persistKeyMeta(k); err != nil {
-				return nil, fmt.Errorf("deactivate previous key: %w", err)
-			}
-		}
-	}
-
-	// Generate new key
 	material := make([]byte, 32)
 	if _, err := rand.Read(material); err != nil {
 		return nil, fmt.Errorf("generate key material: %w", err)
 	}
 
-	keyID := newKeyID()
+	keyID, err := newKeyID()
+	if err != nil {
+		return nil, err
+	}
 	k := &RecoveryKey{
 		ID:          keyID,
 		Alias:       alias,
 		KeyMaterial: material,
 		CreatedAt:   time.Now().UTC(),
-		Active:      true,
+		Active:      false,
 		Provider:    "file",
 	}
-	p.keys[keyID] = k
 
-	if err := p.persistKeyMeta(k); err != nil {
-		return nil, fmt.Errorf("persist new key metadata: %w", err)
-	}
 	if err := p.persistKeyMaterial(k); err != nil {
 		return nil, fmt.Errorf("persist new key material: %w", err)
 	}
+	if err := p.persistKeyMeta(k); err != nil {
+		_ = os.Remove(keyMaterialFile(p.dir, keyID))
+		return nil, fmt.Errorf("persist new key metadata: %w", err)
+	}
+
+	var previous []*RecoveryKey
+	for _, existing := range p.keys {
+		if existing.Active {
+			previous = append(previous, existing)
+			existing.Active = false
+			if err := p.persistKeyMeta(existing); err != nil {
+				for _, prior := range previous {
+					prior.Active = true
+					_ = p.persistKeyMeta(prior)
+				}
+				removeKeyFiles(p.dir, keyID)
+				return nil, fmt.Errorf("deactivate previous key: %w", err)
+			}
+		}
+	}
+	k.Active = true
+	if err := p.persistKeyMeta(k); err != nil {
+		for _, existing := range previous {
+			existing.Active = true
+			_ = p.persistKeyMeta(existing)
+		}
+		removeKeyFiles(p.dir, keyID)
+		return nil, fmt.Errorf("activate new key: %w", err)
+	}
+	p.keys[keyID] = k
 
 	return k, nil
 }
@@ -210,7 +238,10 @@ func (p *FileKeyProvider) CreateKey(ctx context.Context, alias string, material 
 		}
 	}
 
-	keyID := newKeyID()
+	keyID, err := newKeyID()
+	if err != nil {
+		return nil, err
+	}
 	k := &RecoveryKey{
 		ID:          keyID,
 		Alias:       alias,
@@ -219,14 +250,14 @@ func (p *FileKeyProvider) CreateKey(ctx context.Context, alias string, material 
 		Active:      false,
 		Provider:    "file",
 	}
-	p.keys[keyID] = k
-
-	if err := p.persistKeyMeta(k); err != nil {
-		return nil, fmt.Errorf("persist key metadata: %w", err)
-	}
 	if err := p.persistKeyMaterial(k); err != nil {
 		return nil, fmt.Errorf("persist key material: %w", err)
 	}
+	if err := p.persistKeyMeta(k); err != nil {
+		_ = os.Remove(keyMaterialFile(p.dir, keyID))
+		return nil, fmt.Errorf("persist key metadata: %w", err)
+	}
+	p.keys[keyID] = k
 
 	return k, nil
 }
@@ -256,6 +287,10 @@ func (p *FileKeyProvider) loadKeys() error {
 		}
 		var meta keyMeta
 		if err := json.Unmarshal(data, &meta); err != nil {
+			continue
+		}
+		expectedID := strings.TrimSuffix(entry.Name(), ".meta.json")
+		if meta.ID != expectedID || !recoveryKeyIDPattern.MatchString(meta.ID) {
 			continue
 		}
 		k := &RecoveryKey{
@@ -325,10 +360,17 @@ func keyMaterialFile(dir, keyID string) string {
 	return filepath.Join(dir, keyID+".key")
 }
 
+func removeKeyFiles(dir, keyID string) {
+	_ = os.Remove(keyFile(dir, keyID))
+	_ = os.Remove(keyMaterialFile(dir, keyID))
+}
+
 // --- Shared helpers ---
 
-func newKeyID() string {
+func newKeyID() (string, error) {
 	b := make([]byte, 16)
-	rand.Read(b)
-	return fmt.Sprintf("rk-%x", b)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("generate key ID: %w", err)
+	}
+	return fmt.Sprintf("rk-%x", b), nil
 }

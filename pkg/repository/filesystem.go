@@ -2,6 +2,8 @@ package repository
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -45,6 +47,9 @@ func (r *FilesystemRepository) manifestPath(backupSetID string) string {
 }
 
 func (r *FilesystemRepository) CreateBackupSet(_ context.Context, set BackupSet) error {
+	if err := ValidateIdentifier(set.ID); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -59,6 +64,9 @@ func (r *FilesystemRepository) CreateBackupSet(_ context.Context, set BackupSet)
 }
 
 func (r *FilesystemRepository) WriteComponent(_ context.Context, backupSetID, componentID string, reader io.Reader) error {
+	if err := validateComponentIdentifiers(backupSetID, componentID); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -91,6 +99,9 @@ func (r *FilesystemRepository) WriteComponent(_ context.Context, backupSetID, co
 }
 
 func (r *FilesystemRepository) FinalizeComponent(_ context.Context, backupSetID, componentID, plaintextDigest, ciphertextDigest string, encryptedSize, originalSize int64) error {
+	if err := validateComponentIdentifiers(backupSetID, componentID); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -169,7 +180,18 @@ func (r *FilesystemRepository) ListBackupSets(_ context.Context) ([]BackupSet, e
 }
 
 func (r *FilesystemRepository) ReadManifest(_ context.Context, backupSetID string) (*Manifest, error) {
-	data, err := os.ReadFile(r.manifestPath(backupSetID))
+	if err := ValidateIdentifier(backupSetID); err != nil {
+		return nil, err
+	}
+	path := r.manifestPath(backupSetID)
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("read manifest: %w", err)
+	}
+	if info.Size() > manifestMaxBytes {
+		return nil, fmt.Errorf("read manifest: size exceeds %d bytes", manifestMaxBytes)
+	}
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read manifest: %w", err)
 	}
@@ -177,10 +199,16 @@ func (r *FilesystemRepository) ReadManifest(_ context.Context, backupSetID strin
 	if err := json.Unmarshal(data, &m); err != nil {
 		return nil, fmt.Errorf("unmarshal manifest: %w", err)
 	}
+	if err := m.VerifyManifest(); err != nil {
+		return nil, fmt.Errorf("verify manifest: %w", err)
+	}
 	return &m, nil
 }
 
 func (r *FilesystemRepository) ReadComponent(_ context.Context, backupSetID, componentID string) (io.ReadCloser, error) {
+	if err := validateComponentIdentifiers(backupSetID, componentID); err != nil {
+		return nil, err
+	}
 	path := r.componentPath(backupSetID, componentID)
 	f, err := os.Open(path)
 	if err != nil {
@@ -190,6 +218,9 @@ func (r *FilesystemRepository) ReadComponent(_ context.Context, backupSetID, com
 }
 
 func (r *FilesystemRepository) VerifyIntegrity(_ context.Context, backupSetID, componentID, expectedDigest string) error {
+	if err := validateComponentIdentifiers(backupSetID, componentID); err != nil {
+		return err
+	}
 	statusFile := filepath.Join(r.basePath(backupSetID), "components", componentID+".status.json")
 	data, err := os.ReadFile(statusFile)
 	if err != nil {
@@ -204,11 +235,16 @@ func (r *FilesystemRepository) VerifyIntegrity(_ context.Context, backupSetID, c
 
 	// Also verify the actual file
 	path := r.componentPath(backupSetID, componentID)
-	fileData, err := os.ReadFile(path)
+	file, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("read component file: %w", err)
 	}
-	actualDigest := DigestBase64(fileData)
+	defer file.Close() //nolint:errcheck
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, file); err != nil {
+		return fmt.Errorf("hash component file: %w", err)
+	}
+	actualDigest := base64.StdEncoding.EncodeToString(hasher.Sum(nil))
 	if actualDigest != expectedDigest {
 		return fmt.Errorf("integrity mismatch: expected %s, got %s", expectedDigest, actualDigest)
 	}
@@ -216,6 +252,9 @@ func (r *FilesystemRepository) VerifyIntegrity(_ context.Context, backupSetID, c
 }
 
 func (r *FilesystemRepository) MarkRetention(_ context.Context, backupSetID, policy string) error {
+	if err := ValidateIdentifier(backupSetID); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -228,6 +267,9 @@ func (r *FilesystemRepository) MarkRetention(_ context.Context, backupSetID, pol
 }
 
 func (r *FilesystemRepository) DeleteBackupSet(_ context.Context, backupSetID, policy string) error {
+	if err := ValidateIdentifier(backupSetID); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 

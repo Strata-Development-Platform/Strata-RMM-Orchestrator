@@ -10,6 +10,7 @@ import (
 )
 
 const DefaultLockID = int64(0x535452415441524D) // "STRATARM" as safe positive int64
+const DefaultRecoveryLockID = DefaultLockID + 1
 
 func GetLockID() int64 {
 	if env := os.Getenv("STRATA_MIGRATION_LOCK_ID"); env != "" {
@@ -20,6 +21,10 @@ func GetLockID() int64 {
 		}
 	}
 	return DefaultLockID
+}
+
+func GetRecoveryLockID() int64 {
+	return DefaultRecoveryLockID
 }
 
 type Migration struct {
@@ -2230,6 +2235,71 @@ func Migrations() []Migration {
 				ALTER TABLE backup_records DROP COLUMN IF EXISTS recovery_id;
 				ALTER TABLE recovery_operations DROP COLUMN IF EXISTS recovery_state;
 				DROP TYPE IF EXISTS recovery_state_enum;
+			`,
+		},
+		{
+			ID:   65,
+			Name: "add_recovery_mutation_gate",
+			Up: `
+				CREATE TABLE IF NOT EXISTS recovery_mutation_gate (
+					singleton     BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+					quiesced      BOOLEAN NOT NULL DEFAULT FALSE,
+					operation_id  TEXT,
+					updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+				INSERT INTO recovery_mutation_gate (singleton, quiesced)
+				VALUES (TRUE, FALSE)
+				ON CONFLICT (singleton) DO NOTHING;
+
+				CREATE OR REPLACE FUNCTION enforce_recovery_mutation_gate()
+				RETURNS trigger
+				LANGUAGE plpgsql
+				AS $$
+				DECLARE
+					is_quiesced BOOLEAN;
+				BEGIN
+					IF NOT pg_try_advisory_xact_lock_shared(6004514643731632718) THEN
+						RAISE EXCEPTION 'mutations are unavailable during a recovery operation'
+							USING ERRCODE = '55006';
+					END IF;
+					SELECT quiesced INTO is_quiesced
+					FROM recovery_mutation_gate
+					WHERE singleton = TRUE;
+					IF COALESCE(is_quiesced, TRUE) THEN
+						RAISE EXCEPTION 'mutations are unavailable during a recovery operation'
+							USING ERRCODE = '55006';
+					END IF;
+					RETURN NULL;
+				END;
+				$$;
+
+				DO $$
+				DECLARE
+					table_record RECORD;
+				BEGIN
+					FOR table_record IN
+						SELECT tablename
+						FROM pg_tables
+						WHERE schemaname = 'public'
+						  AND tablename NOT IN ('recovery_mutation_gate', 'schema_migrations')
+					LOOP
+						EXECUTE format(
+							'DROP TRIGGER IF EXISTS recovery_mutation_gate_trigger ON %I',
+							table_record.tablename
+						);
+						EXECUTE format(
+							'CREATE TRIGGER recovery_mutation_gate_trigger
+							 BEFORE INSERT OR UPDATE OR DELETE ON %I
+							 FOR EACH STATEMENT EXECUTE FUNCTION enforce_recovery_mutation_gate()',
+							table_record.tablename
+						);
+					END LOOP;
+				END
+				$$;
+			`,
+			Down: `
+				DROP FUNCTION IF EXISTS enforce_recovery_mutation_gate() CASCADE;
+				DROP TABLE IF EXISTS recovery_mutation_gate;
 			`,
 		},
 	}

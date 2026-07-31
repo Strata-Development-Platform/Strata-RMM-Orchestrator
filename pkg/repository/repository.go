@@ -7,11 +7,31 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"regexp"
+	"strings"
 	"time"
 )
 
 // ManifestVersion is the current manifest schema version.
 const ManifestVersion = 1
+const manifestMaxBytes = 1 << 20
+
+var identifierPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+
+// ValidateIdentifier rejects path traversal and ambiguous repository keys.
+func ValidateIdentifier(value string) error {
+	if !identifierPattern.MatchString(value) || strings.Contains(value, "..") {
+		return fmt.Errorf("invalid repository identifier")
+	}
+	return nil
+}
+
+func validateComponentIdentifiers(backupSetID, componentID string) error {
+	if err := ValidateIdentifier(backupSetID); err != nil {
+		return err
+	}
+	return ValidateIdentifier(componentID)
+}
 
 // ComponentType identifies the type of a backup component.
 type ComponentType string
@@ -77,6 +97,12 @@ func (m *Manifest) VerifyManifest() error {
 	if m.BackupSetID == "" {
 		return fmt.Errorf("missing backup_set_id")
 	}
+	if err := ValidateIdentifier(m.BackupSetID); err != nil {
+		return fmt.Errorf("invalid backup_set_id: %w", err)
+	}
+	if m.EnvironmentID == "" {
+		return fmt.Errorf("missing environment_id")
+	}
 	if len(m.RequiredComponents) == 0 {
 		return fmt.Errorf("no required components")
 	}
@@ -84,11 +110,25 @@ func (m *Manifest) VerifyManifest() error {
 		if c.ID == "" {
 			return fmt.Errorf("component %d missing id", i)
 		}
+		if err := ValidateIdentifier(c.ID); err != nil {
+			return fmt.Errorf("invalid component ID: %w", err)
+		}
 		if c.Type == "" {
 			return fmt.Errorf("component %s missing type", c.ID)
 		}
+		switch c.Type {
+		case ComponentDatabase, ComponentJetStream, ComponentObjectStore:
+		default:
+			return fmt.Errorf("component %s has unsupported type %q", c.ID, c.Type)
+		}
 		if c.ArtifactLoc == "" {
 			return fmt.Errorf("component %s missing artifact location", c.ID)
+		}
+		if c.PlaintextDigest == "" || c.CiphertextDigest == "" {
+			return fmt.Errorf("component %s missing integrity digest", c.ID)
+		}
+		if c.Encryption != "aes-256-gcm" || c.KeyID == "" || !c.Verified {
+			return fmt.Errorf("component %s is not finalized for authenticated recovery", c.ID)
 		}
 	}
 	return nil

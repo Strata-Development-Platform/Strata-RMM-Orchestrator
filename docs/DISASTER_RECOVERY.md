@@ -1,130 +1,71 @@
-# Disaster Recovery Procedures
+# Disaster-Recovery Runbook
 
-## Overview
+This runbook covers recovery when the source control plane may be unavailable. The backup repository and recovery key provider are intentionally independent of the source database.
 
-The Strata RMM disaster recovery system implements a 20-state recovery workflow with:
+## Declare and contain
 
-- **Environment-scoped advisory locking** (`pg_try_advisory_xact_lock`) to prevent concurrent recoveries
-- **Real service quiescing** before backup/restore operations
-- **Encrypted backup/restore** for all data stores
-- **Integrity verification** at every phase
-- **Automatic rollback** on failure
-- **RPO/RTO measurement** for compliance reporting
+1. Open an incident record and assign incident commander, recovery operator, and security owner.
+2. Stop deployment automation and revoke compromised credentials when applicable.
+3. Preserve source logs and storage snapshots; do not attempt an in-place restore.
+4. Record the last known healthy release and the incident start time.
 
-## Recovery Workflow States
+## Select and verify a recovery point
 
-The 20-state workflow consists of the following phases:
-
-### Backup Phase
-1. **Idle** → **Discovery**: Initialize recovery session
-2. **Discovery** → **PreFlight**: Validate prerequisites (database connectivity, NATS availability)
-3. **PreFlight** → **Quiesce**: Stop accepting new work
-4. **Quiesce** → **BackupDatabase**: Encrypted pg_dump with AES-256-GCM
-5. **BackupDatabase** → **BackupJetStream**: NATS stream/consumer/message backup
-6. **BackupJetStream** → **BackupObjectStorage**: Object storage inventory backup
-7. **BackupObjectStorage** → **VerifyIntegrity**: SHA-256 checksum verification
-8. **VerifyIntegrity** → **PreRestoreValidation**: All backups verified
-
-### Restore Phase
-9. **PreRestoreValidation** → **RestoreDatabase**: Encrypted pg_restore to target
-10. **RestoreDatabase** → **RestoreJetStream**: NATS stream/consumer/message restore
-11. **RestoreJetStream** → **RestoreObjectStorage**: Object storage restore
-12. **RestoreObjectStorage** → **PostRestoreValidation**: Validate restored data integrity
-
-### Verification Phase
-13. **PostRestoreValidation** → **HealthCheck**: Service health verification
-14. **HealthCheck** → **Verification**: Data consistency checks
-15. **Verification** → **RPOValidation**: Verify data loss window within RPO target
-16. **RPOValidation** → **RTOValidation**: Verify total recovery time within RTO target
-
-### Completion Phase
-17. **RTOValidation** → **Cleanup**: Cleanup temporary resources
-18. **Cleanup** → **Completed**: Recovery finished successfully
-
-### Rollback Path
-- Any phase can transition to **Rollback** → **Cleanup** → **Completed** on failure
-- Rollback reverses all changes made during the recovery process
-
-## Advisory Locking
-
-Recovery operations use PostgreSQL advisory locks to ensure exclusive access:
-
-```sql
-SELECT pg_try_advisory_xact_lock(0x535452415441524D);
-```
-
-The lock ID is configurable via `STRATA_BACKUP_ADVISORY_LOCK_ID`. The default is `0x535452415441524D` ("STRATARM").
-
-If the lock cannot be acquired, the recovery fails immediately with `ErrLockNotAcquired`.
-
-## Dry-Run Mode
-
-Run a recovery through all state transitions without executing side effects:
+From a trusted recovery host with repository and key-provider access:
 
 ```bash
-strata-rmm orchestrator recovery --backup-id <id> --dry-run
+strata-rmm orchestrator recovery status
+strata-rmm orchestrator recovery verify --backup-id <backup-id>
 ```
 
-In dry-run mode:
-- Advisory lock is NOT acquired
-- Database dumps/restores are skipped
-- State transitions still execute
-- All events are logged
-- Returns full `RecoveryResult` with event history
+Select only a finalized, verified backup whose source release and schema are compatible with the recovery release. If verification fails, do not mutate targets; investigate repository/key integrity or select an earlier verified backup.
 
-## Executing Recovery
+## Build an isolated target
 
-### Restore from Backup
+Provision new PostgreSQL, JetStream-enabled NATS, and object-storage targets. Use new credentials. The PostgreSQL target must exist but be empty. NATS and object-storage targets must be distinct from source endpoints/buckets.
 
-```bash
-strata-rmm orchestrator recovery <backup-id> --timeout 2h --dry-run=false
-```
+Configure the recovery variables in `docs/RESTORE.md`, run restore preflight, then execute the confirmed restore.
 
-### Backup Only
+## Validate before cutover
 
-```bash
-strata-rmm orchestrator backup --database-type timescaledb
-```
+The restore command proves component-level integrity and target availability. The incident team must additionally prove application behavior:
 
-### Recovery with Custom Timeout
+- orchestrator starts on the restored schema;
+- liveness and readiness are healthy;
+- login and an authenticated platform request succeed;
+- MSP/client/device scoping remains intact;
+- pending and queued durable jobs are present;
+- JetStream consumers resume from preserved acknowledgement progress;
+- representative stored objects match recorded hashes and metadata;
+- audit evidence is present and append-only behavior remains enforced.
 
-```bash
-strata-rmm orchestrator recovery <backup-id> --timeout 1h30m
-```
+Record actual recovery-point age and elapsed recovery duration. The documented beta objectives are PostgreSQL RPO of 15 minutes or better, object-storage RPO of 24 hours or better, and control-plane RTO of four hours or better. Unit tests do not prove those objectives; only a timestamped drill can.
 
-## RPO and RTO Targets
+## Cutover
 
-| Metric | Target | Description |
-|---|---|---|
-| **RPO** | 15 minutes | Maximum acceptable data loss window |
-| **RTO** | 4 hours | Maximum acceptable recovery time |
+1. Pin the verified recovery release and immutable image digest.
+2. Rotate source-era application, NATS, database, storage, signing, and enrollment credentials as required.
+3. Enable routing only after readiness and smoke checks pass.
+4. Monitor authentication failures, queue depth, dispatch age, NATS redelivery, database errors, and storage errors.
+5. Preserve the failed source environment until incident and data-integrity review permits disposal.
 
-These targets are validated in the `RPOValidation` and `RTOValidation` states. Recovery is marked as failed if RPO or RTO targets cannot be met.
+## Failed restore
 
-## Failure Handling
+Cross-service restore is not transactional and does not automatically reverse partial target mutations. Never reuse a partially restored target:
 
-If any phase fails:
+1. keep the immutable backup set;
+2. capture sanitized failure output;
+3. discard the isolated target resources;
+4. correct configuration, capacity, or compatibility;
+5. create fresh empty targets; and
+6. repeat verification and restore.
 
-1. The state transitions to **Rollback**
-2. Rollback reverses object storage changes
-3. Rollback reverses JetStream changes
-4. Rollback reverses database changes
-5. State transitions to **Cleanup**
-6. Cleanup completes and recovery finishes with `Success: false`
+## Evidence and exit
 
-All failure events are recorded in `recovery_operations` and `backup_audit_log`.
+The incident cannot close until the record includes backup ID, manifest identity, key ID, release/schema versions, target identities, operators, timestamps, verification results, tenant-isolation checks, actual RPO/RTO, residual data loss, and follow-up actions.
 
-## Recovery Audit Trail
+## Known limitations
 
-Every recovery operation creates entries in:
-
-- **`recovery_operations`**: State transitions, operations performed, timestamps
-- **`backup_audit_log`**: Backup creation, verification, restore, rollback events
-- **`backup_records`**: Backup metadata and integrity digests
-
-To view the audit trail:
-
-```sql
-SELECT * FROM backup_audit_log ORDER BY timestamp DESC LIMIT 20;
-SELECT * FROM recovery_operations WHERE recovery_id = '<recovery-id>' ORDER BY id;
-```
+- Automatic scheduling, retention enforcement, regional replication, and periodic drill orchestration remain operational responsibilities.
+- The current artifact envelope buffers each component during encryption/decryption and enforces a 512 MiB plaintext-component limit.
+- A successful exact-head CI run validates controlled fixtures, not the production RPO/RTO objective.

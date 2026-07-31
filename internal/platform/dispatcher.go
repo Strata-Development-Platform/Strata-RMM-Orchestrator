@@ -18,13 +18,14 @@ import (
 	"github.com/nats-io/nats.go"
 	"go.uber.org/zap"
 
+	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/postgres"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/timescale"
 )
 
 type Dispatcher struct {
-	db     *timescale.Client
-	nc     *nats.Conn
-	logger *zap.Logger
+	db       *timescale.Client
+	nc       *nats.Conn
+	logger   *zap.Logger
 	stopCh   chan struct{}
 	stopOnce sync.Once
 	wg       sync.WaitGroup
@@ -35,10 +36,10 @@ type Dispatcher struct {
 func NewDispatcher(db *timescale.Client, nc *nats.Conn, logger *zap.Logger) *Dispatcher {
 	host, _ := os.Hostname()
 	return &Dispatcher{
-		db:     db,
-		nc:     nc,
-		logger: logger,
-		stopCh: make(chan struct{}),
+		db:       db,
+		nc:       nc,
+		logger:   logger,
+		stopCh:   make(chan struct{}),
 		workerID: fmt.Sprintf("%s-%s", host, uuid.NewString()),
 	}
 }
@@ -96,14 +97,47 @@ func (d *Dispatcher) outboxPublisher(ctx context.Context) {
 		case <-d.stopCh:
 			return
 		case <-ticker.C:
-			d.ensureQueuedOutbox()
-			d.processOutbox()
-			d.expireJobs()
-			d.expirePendingApprovals()
-			d.handleOfflineReconnect()
-			d.expireOfflineWork()
+			d.withRecoveryReadLock(func() {
+				d.ensureQueuedOutbox()
+				d.processOutbox()
+				d.expireJobs()
+				d.expirePendingApprovals()
+				d.handleOfflineReconnect()
+				d.expireOfflineWork()
+			})
 		}
 	}
+}
+
+func (d *Dispatcher) withRecoveryReadLock(work func()) {
+	if d.db == nil || d.db.DB() == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	conn, err := d.db.DB().Conn(ctx)
+	if err != nil {
+		d.logger.Error("reserve dispatcher recovery-gate connection", zap.Error(err))
+		return
+	}
+	defer conn.Close()
+	var acquired bool
+	if err := conn.QueryRowContext(ctx,
+		`SELECT pg_try_advisory_lock_shared($1)`, postgres.GetRecoveryLockID()).Scan(&acquired); err != nil {
+		d.logger.Error("inspect dispatcher recovery gate", zap.Error(err))
+		return
+	}
+	if !acquired {
+		return
+	}
+	defer func() {
+		var unlocked bool
+		if err := conn.QueryRowContext(context.Background(),
+			`SELECT pg_advisory_unlock_shared($1)`, postgres.GetRecoveryLockID()).Scan(&unlocked); err != nil {
+			d.logger.Error("release dispatcher recovery gate", zap.Error(err))
+		}
+	}()
+	work()
 }
 
 func (d *Dispatcher) ensureQueuedOutbox() {
@@ -269,7 +303,7 @@ func (d *Dispatcher) reconciliationWorker(ctx context.Context) {
 		case <-d.stopCh:
 			return
 		case <-ticker.C:
-			d.reconcile()
+			d.withRecoveryReadLock(d.reconcile)
 		}
 	}
 }
@@ -367,7 +401,9 @@ func (d *Dispatcher) reconcile() {
 func (d *Dispatcher) subscribeResults(ctx context.Context) {
 	defer d.wg.Done()
 	sub, err := d.nc.Subscribe("tenant.*.agent.*.result", func(msg *nats.Msg) {
-		d.handleAgentResult(msg.Subject, msg.Data)
+		d.withRecoveryReadLock(func() {
+			d.handleAgentResult(msg.Subject, msg.Data)
+		})
 	})
 	if err != nil {
 		d.logger.Error("subscribe agent results", zap.Error(err))
@@ -380,7 +416,9 @@ func (d *Dispatcher) subscribeResults(ctx context.Context) {
 	}()
 
 	ackSub, err := d.nc.Subscribe("tenant.*.agent.*.ack", func(msg *nats.Msg) {
-		d.handleAgentAck(msg.Subject, msg.Data)
+		d.withRecoveryReadLock(func() {
+			d.handleAgentAck(msg.Subject, msg.Data)
+		})
 	})
 	if err != nil {
 		d.logger.Error("subscribe agent acknowledgements", zap.Error(err))

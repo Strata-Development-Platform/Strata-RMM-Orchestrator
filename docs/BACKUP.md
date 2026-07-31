@@ -1,109 +1,70 @@
-# Backup Procedures
+# Backup Operations
 
-## Overview
+Phase 8C backs up PostgreSQL, JetStream, and configured object storage into one externally discoverable backup set. Each component contains real data, is encrypted independently with AES-256-GCM, and is finalized only after its plaintext and ciphertext digests are recorded.
 
-Strata RMM provides encrypted backup capabilities for PostgreSQL/TimescaleDB, NATS JetStream, and object storage. All backup data is encrypted using AES-256-GCM with integrity verification via SHA-256 checksums.
+## Required configuration
 
-## Configuration
+| Variable | Purpose | Required |
+|---|---|---|
+| `STRATA_BACKUP_ENVIRONMENT_ID` | Stable identity of the protected environment | yes |
+| `STRATA_BACKUP_KEY_PROVIDER_PATH` | File-key-provider directory on independently protected storage | yes |
+| `STRATA_BACKUP_REPOSITORY_TYPE` | `filesystem` or `s3` | yes; default `filesystem` |
+| `STRATA_BACKUP_DIRECTORY` | Mounted repository root for `filesystem` | for filesystem |
+| `STRATA_BACKUP_EXTERNAL_BUCKET` | Backup bucket | for S3 |
+| `STRATA_BACKUP_EXTERNAL_REGION` | Backup bucket region | for S3 |
+| `STRATA_BACKUP_EXTERNAL_ENDPOINT` | Optional S3-compatible endpoint | optional |
+| `STRATA_BACKUP_EXTERNAL_ACCESS_KEY` | S3 access key | for S3 |
+| `STRATA_BACKUP_EXTERNAL_SECRET_KEY` | S3 secret key | for S3 |
+| `STRATA_BACKUP_ENCRYPTION_SCHEME` | Must be `aes-256-gcm` | yes; default shown |
 
-| Environment Variable | Description | Default | Required |
-|---|---|---|---|
-| `STRATA_BACKUP_ENABLED` | Enable backup functionality | `false` | no |
-| `STRATA_BACKUP_SCHEDULE` | Cron schedule for automated backups | — | no |
-| `STRATA_BACKUP_RETENTION_DAYS` | Number of days to retain backups | `30` | no |
-| `STRATA_BACKUP_ENCRYPTION_KEY_ID` | Encryption key identifier | — | no |
-| `STRATA_BACKUP_DATABASE_TYPE` | Database type: `postgresql` or `timescaledb` | `timescaledb` | no |
-| `STRATA_BACKUP_TARGET_DSN` | Target DSN for restore operations | — | conditional |
-| `STRATA_BACKUP_DIRECTORY` | Local backup storage directory | `/var/lib/strata-rmm/backups` | no |
-| `STRATA_BACKUP_ENCRYPTION_SCHEME` | Encryption scheme: `aes-256-gcm` or `aes-256-cbc` | `aes-256-gcm` | no |
-| `STRATA_BACKUP_RPO` | Recovery Point Objective (target data loss window) | `15m` | no |
-| `STRATA_BACKUP_RTO` | Recovery Time Objective (target recovery duration) | `4h` | no |
-| `STRATA_BACKUP_ADVISORY_LOCK_ID` | PostgreSQL advisory lock ID (hex) | — | no |
-| `STRATA_BACKUP_EXTERNAL_BUCKET` | External S3 bucket for backups | — | no |
-| `STRATA_BACKUP_EXTERNAL_REGION` | External S3 region | — | no |
-| `STRATA_BACKUP_EXTERNAL_ENDPOINT` | External S3 endpoint URL | — | no |
-| `STRATA_BACKUP_EXTERNAL_ACCESS_KEY` | External S3 access key | — | yes (if bucket set) |
-| `STRATA_BACKUP_EXTERNAL_SECRET_KEY` | External S3 secret key | — | yes (if bucket set) |
+The normal database, NATS, and storage variables configure the protected source services. The repository and key-provider storage must survive loss of the source environment. A filesystem repository is only disaster-recoverable when its root is an independently protected mount.
 
-## Creating Backups
+Use an external scheduler to invoke the command, and apply repository lifecycle policy independently. No in-process scheduling or retention variable is claimed in this PR.
 
-### Manual Backup
+## Provision the first key
 
-Use the CLI to create an immediate backup:
+Create one active recovery key before the first backup:
 
 ```bash
-strata-rmm orchestrator backup --database-type timescaledb --dry-run
+strata-rmm orchestrator recovery key-init
 ```
 
-For a real backup (requires encryption key and pg_dump):
+The command refuses to overwrite or silently rotate an existing active key. Protect and replicate both the key-provider directory and backup repository; losing either makes recovery impossible.
+
+## Preflight and backup
 
 ```bash
-strata-rmm orchestrator backup --database-type timescaledb
+strata-rmm orchestrator backup --dry-run
+strata-rmm orchestrator backup --timeout 2h
 ```
 
-### Scheduled Backups
+Preflight fails when the repository, active recovery key, PostgreSQL mutation gate, NATS JetStream account, or required object storage is unavailable. A real backup:
 
-Configure `STRATA_BACKUP_SCHEDULE` with a cron expression:
+1. acquires a pinned, session-level PostgreSQL advisory lock;
+2. closes the database-backed mutation gate;
+3. snapshots PostgreSQL with `pg_dump --format=custom`;
+4. captures JetStream stream configuration, consumer progress, headers, subjects, and message bytes;
+5. streams object bytes and metadata into an archive;
+6. encrypts each component with authenticated manifest identity;
+7. writes and verifies component digests in the external repository;
+8. publishes the final manifest; and
+9. reopens the mutation gate and releases the lock through bounded cleanup.
+
+PostgreSQL credentials are passed to client tools through the process environment, not command arguments. Command errors redact connection credentials.
+
+## Verify and list
+
+These commands require only the independent repository and key provider; source services may be unavailable:
 
 ```bash
-export STRATA_BACKUP_ENABLED=true
-export STRATA_BACKUP_SCHEDULE="0 */6 * * *"  # Every 6 hours
+strata-rmm orchestrator recovery status
+strata-rmm orchestrator recovery verify --backup-id <backup-id>
 ```
 
-### Backup Components
+Verification checks manifest structure, repository identifier safety, ciphertext digest, AES-GCM authentication, authenticated metadata, plaintext digest, and component payload digest. It does not mutate a recovery target.
 
-Each backup includes:
+## Current limitations
 
-1. **Database**: Full PostgreSQL/TimescaleDB dump via `pg_dump --format=custom`, encrypted with AES-256-GCM
-2. **JetStream**: NATS stream definitions, consumer configurations, and message sequences
-3. **Object Storage**: Inventory of all objects with metadata and integrity checksums
-
-### Backup Metadata
-
-Each backup is recorded in the `backup_records` table with:
-
-- Unique backup ID (UUID)
-- Database type and version
-- Table count and row estimate
-- Encrypted data size
-- Encryption scheme and key reference
-- SHA-256 integrity digest
-- Creation timestamp and completion status
-
-## Encryption
-
-All backups are encrypted using AES-256-GCM via the `pkg/encrypt` package. Key material is stored in the `tenant_encryption_keys` table and retrieved via the `KeyStore` using the system tenant ID.
-
-The encryption process:
-1. Generate AES-256-GCM cipher from 32-byte key material
-2. Create random nonce (12 bytes)
-3. Seal plaintext data with nonce
-4. Encode ciphertext as base64
-
-Integrity is verified by computing SHA-256 hash of the encrypted data and storing the digest in the backup record.
-
-## Retention
-
-Backups are retained for `STRATA_BACKUP_RETENTION_DAYS` (default: 30 days). The cleanup process:
-
-1. Queries `backup_records` for records older than retention period
-2. Verifies integrity before deletion
-3. Removes backup data from storage
-4. Removes metadata from `backup_records` table
-5. Records deletion in `backup_audit_log`
-
-## Verification
-
-After each backup, the system:
-
-1. Computes SHA-256 integrity digest
-2. Records the digest in `backup_records.integrity_digest`
-3. Verifies digest matches the encrypted payload
-4. Logs verification in `backup_audit_log`
-
-To verify a specific backup:
-
-```bash
-# Check backup record integrity
-psql -c "SELECT id, status, integrity_digest, created_at FROM backup_records WHERE id = '<backup-id>';"
-```
+- Backup scheduling and retention deletion are operator-managed.
+- Component encryption currently buffers a complete component payload in memory before AES-GCM sealing and enforces a 512 MiB plaintext-component limit; capacity-test and split larger data sets before beta use.
+- A timestamped operational recovery drill is still required before A8-09 can be accepted.

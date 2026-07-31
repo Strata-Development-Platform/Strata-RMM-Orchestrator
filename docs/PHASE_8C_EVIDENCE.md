@@ -1,158 +1,81 @@
-# Phase 8C Evidence — Backup, Restore, and Disaster Recovery
+# Phase 8C Evidence — Backup and Disaster Recovery
 
-## 5.1 Requirements Ledger
+This document distinguishes implementation, automated verification, and operational acceptance. A green unit test is not an RPO/RTO drill.
 
-| ID | Requirement | Runtime consumer | Negative test | Integration test | CI job | Status |
-| -- | ----------- | ---------------- | ------------- | ---------------- | ------ | ------ |
-| BDR-01 (F8C-01) | Independent key provider | `pkg/recovery/key_provider.go` | Source DB down, keys resolve from file | File provider with 2 rotated keys | Unit tests | Integration verified |
-| BDR-02 (F8C-02) | External artifact repository | `pkg/repository/` | Source DB down, list backups from repo | File + S3 repo roundtrip | Unit tests | Integration verified |
-| BDR-03 (F8C-03) | PostgreSQL backup/restore | `pkg/backup/coordinator.go` | pg_dump absent, corrupt artifact | Two ephemeral DBs, seed + restore | CI PostgreSQL job | Partial — stub implementation |
-| BDR-04 (F8C-04) | JetStream backup/restore | `pkg/backup/coordinator.go` | JetStream down, stream enumeration fail | Real NATS with JetStream | CI JetStream job | Partial — stub implementation |
-| BDR-05 (F8C-05) | Object storage backup/restore | `pkg/backup/coordinator.go` | Partial download, cross-tenant | MinIO with objects, byte verification | CI S3 job | Partial — stub implementation |
-| BDR-06 (F8C-06) | Real integration tests | `pkg/recovery/*_test.go`, `pkg/repository/*_test.go` | Structural-only tests | 42 unit tests across recovery + repository | CI unit tests | Integration verified |
-| BDR-07 (F8C-07) | Migration integration in CI | `pkg/postgres/schema.go` migrations 63-64 | Migration fails, tables missing | Run migrations, query schema | CI Migration job | Integration verified |
-| BDR-08 (F8C-08) | No continue-on-error in mandatory checks | `.github/workflows/phase8c.yml` | Silent skip of mandatory job | CI workflow inspection | CI phase8c.yml | Integration verified |
-| BDR-09 (F8C-09) | No grep-only behavioral proof | Evidence document, tests | grep for "encrypt" claims success | Actual encryption/decryption tests | Unit tests | Integration verified |
-| BDR-10 (F8C-10) | Migration repair | `pkg/postgres/schema.go` | FK to non-unique column, invalid enum | Clean migration, from master, repeated | Unit tests | Integration verified |
-| BDR-11 (F8C-11) | No unsafe --force | `cmd/orchestrator/recovery.go` | --force bypasses safety | CLI without --force, confirm required | Unit tests | Integration verified |
-| BDR-12 (F8C-12) | Strict integer parsing | `pkg/config/config.go` | Malformed int silently defaults | Supply "abc" for integer env var | Unit tests | Integration verified |
-| BDR-13 (F8C-13) | Authenticated encryption only | `pkg/config/config.go` | aes-256-cbc accepted | Supply aes-256-cbc, expect error | Unit tests | Integration verified |
-| BDR-14 (F8C-14) | CLI behavior unambiguous | `cmd/orchestrator/recovery.go` | Empty operation, nil deref | CLI parsing, negative cases | Unit tests | Integration verified |
-| BDR-15 (F8C-08) | Authenticated encryption envelope | `pkg/recovery/encryption.go` | Tampered ciphertext decrypts | 20 adversarial encryption tests | Unit tests | Integration verified |
-| BDR-16 | Concurrent recovery exclusion | `pkg/backup/coordinator.go` | Two coordinators, both proceed | CI Concurrent job | CI Concurrent job | Integration verified |
-| BDR-17 | Quiescing with real hooks | `pkg/backup/coordinator.go` | Quiesce is no-op | Mutation gate, dispatcher hooks | Pending | Implemented, untested |
-| BDR-18 | Restored-system verification | `pkg/backup/coordinator.go` | Verification always passes | Corrupt restored data, verify fails | Pending | Implemented, untested |
-| BDR-19 | RPO/RTO measurement | `pkg/backup/coordinator.go` | Metrics always Met | CI RPO/RTO job | CI RPO/RTO job | Integration verified |
-| BDR-20 | External S3 repository | `pkg/repository/s3.go` | S3 credentials in logs | CI S3 job | Pending | Implemented, untested |
-| BDR-21 | Migration from master | `pkg/postgres/schema.go` | Migration fails on current schema | CI Migration job | CI Migration job | Integration verified |
-| BDR-22 | Exact-head CI | `.github/workflows/phase8c.yml` | CI passes on different head | CI on exact head | CI phase8c.yml | Integration verified |
+## Requirements ledger
 
-## 5.2 File Ownership
+| ID | Implementation/runtime consumer | Negative proof | Integration proof | Status before final CI |
+|---|---|---|---|---|
+| BDR-01 | Independent file key provider; `recovery key-init`; runtime resolution by key ID | missing/wrong key, duplicate initialization, permissions | rotated-key tests | implemented; final CI pending |
+| BDR-02 | Filesystem and S3 artifact repositories consumed by `backup.Engine` | malformed manifest, digest mismatch, path traversal | MinIO-backed S3 repository round trip | implemented; final CI pending |
+| BDR-03 | `PostgreSQLRecovery` runs credential-safe `pg_dump`/`pg_restore` against distinct databases | same target, missing target, corrupted artifact, command failure redaction | seeded source to clean target; schema, tenants, devices, jobs, audit | implemented; final CI pending |
+| BDR-04 | `JetStreamRecovery` captures streams, consumers, progress, headers, subjects, bytes | JetStream-disabled server, divergent non-empty target | real NATS delete/restore/verify/idempotent replay | implemented; final CI pending |
+| BDR-05 | `ObjectStorageRecovery` archives exact bytes, content type, metadata, per-object digests | corrupt restored object, same-target rejection in CLI factory | real MinIO source/target restore and idempotent replay | implemented; final CI pending |
+| BDR-06 | `backup.Engine` encrypts, persists, finalizes, verifies, decrypts, restores, and verifies all required components | tamper before mutation, missing component, failure cleanup | engine round trip plus service-backed component tests | implemented; final CI pending |
+| BDR-07 | Migration 65 creates shared recovery mutation gate and database triggers | non-owner resume; write while quiesced | real PostgreSQL gate test | implemented; final CI pending |
+| BDR-08 | Pinned session-level recovery lock | second operation times out; bounded release | real PostgreSQL concurrent lock test | implemented; final CI pending |
+| BDR-09 | API and dispatcher acquire shared recovery locks; DB trigger covers other writers | API returns 503; direct SQL mutation fails | PostgreSQL quiesce test | implemented; final CI pending |
+| BDR-10 | Restore verifies all artifacts before lock/quiesce/target mutation | ciphertext and manifest-associated-data tampering | engine tamper test | implemented; final CI pending |
+| BDR-11 | CLI backup/preflight/status/verify/restore/key-init execute real runtime factories | missing confirmation/target/config; no `--force` | CLI build and command tests | implemented; final CI pending |
+| BDR-12 | Source-independent verification and isolated restore target | unavailable source is not constructed for verify/restore | repository/key-only verification tests | implemented; final CI pending |
+| BDR-13 | Authenticated encryption only; manifest identity is associated data | nonce, ciphertext, key, metadata, truncation tampering | adversarial encryption suite | implemented; final CI pending |
+| BDR-14 | Exact-head CI and truthful evidence | stale/missing/non-terminal run rejected | Phase 8C and repository-wide workflows | pending final pushed head |
+| BDR-15 | Beta RPO/RTO | model-only tests cannot satisfy gate | timestamped full recovery drill | **not accepted; operational drill required** |
 
-| Agent | Files/directories | Allowed work |
-| ----- | ----------------- | ------------ |
-| Coordinator | All Phase 8C files | Full remediation: wiring, tests, evidence |
-| Sub-agent 1 | `pkg/backup/postgres_integration_test.go`, `pkg/postgres/backup_migration_test.go` | Real PostgreSQL integration tests |
-| Sub-agent 2 | `pkg/backup/jetstream_integration_test.go`, `pkg/backup/objectstorage_integration_test.go` | Real NATS/MinIO integration tests |
-| Sub-agent 3 | `pkg/backup/concurrent_test.go`, `pkg/backup/quiesce_test.go`, `.github/workflows/phase8c.yml` | Adversarial review, CI audit |
+## Runtime-wiring matrix
 
-## 5.3 Runtime-Wiring Matrix
+| Input | Validator | Runtime consumer | Failure behavior |
+|---|---|---|---|
+| `STRATA_BACKUP_ENVIRONMENT_ID` | required when enabled/CLI | authenticated manifest identity | preflight fails |
+| `STRATA_BACKUP_KEY_PROVIDER_PATH` | active key required | file key provider | preflight fails |
+| `STRATA_BACKUP_REPOSITORY_TYPE` | `filesystem`/`s3` | repository factory | preflight fails |
+| filesystem/S3 repository settings | required by selected type | external artifact reads/writes | operation fails; set not finalized |
+| source PostgreSQL DSN | normal DB validation | pg_dump, recovery control/gate | backup fails closed |
+| source NATS/TLS/auth | production policy | JetStream backup | backup fails closed |
+| source storage settings | normal storage validation | object backup | backup fails closed |
+| `--target-dsn` | required, distinct identity | pg_restore target and target lock | restore fails before artifact mutation |
+| recovery NATS settings | required/distinct | JetStream restore target | restore preflight fails |
+| recovery storage settings | required/distinct when storage enabled | object restore target | restore preflight fails |
 
-| Configuration | Validator | Runtime consumer | Failure behavior | Test |
-| ------------- | --------- | ---------------- | ---------------- | ---- |
-| STRATA_BACKUP_ENABLED | envBoolStrict | BackupConfig.Enabled | Error on malformed bool | Unit |
-| STRATA_BACKUP_RETENTION_DAYS | envIntStrict | BackupConfig.RetentionDays | Error on malformed int | Unit |
-| STRATA_BACKUP_ENCRYPTION_SCHEME | BackupConfig.validate() | Encryption selection | Reject non-GCM schemes | Unit |
-| STRATA_BACKUP_EXTERNAL_BUCKET | — | Repository selection | Warn, no backup publish | Manual |
-| STRATA_BACKUP_KEY_PROVIDER_PATH | — | FileKeyProvider dir | Error on missing dir | Unit |
+## Adversarial findings resolved in this remediation
 
-## 5.4 Local Verification
+| Severity | Original observation | Resolution / regression proof |
+|---|---|---|
+| blocker | backup CLI printed “pending” and returned success | CLI builds `backup.Engine` and executes backup; command tests |
+| blocker | restore constructed nil dependencies and never restored | target runtime factory plus `Engine.Restore`; engine and service tests |
+| blocker | PostgreSQL artifact was discarded | encrypted component is written/finalized in independent repository |
+| blocker | JetStream/object backups fabricated metadata | real service clients and byte/message integration tests |
+| blocker | transaction advisory lock was released immediately | pinned session-level lock; concurrent PostgreSQL test |
+| blocker | quiesce only logged | DB mutation gate, shared advisory locks, trigger enforcement, bounded resume |
+| high | associated-data replacement was accepted | expected manifest identity is recomputed and constant-time compared |
+| high | filesystem backup IDs allowed traversal | repository identifier validation and traversal test |
+| high | process arguments/errors could expose DSNs | `PGDATABASE` environment and redaction tests |
+| high | previous CI used NATS without JetStream and structural tests | pinned real NATS `-js`, negative no-JS server, real MinIO/PostgreSQL jobs |
+| high | documentation claimed automatic rollback/RPO/RTO | claims removed; isolated-target discard procedure and drill requirement documented |
 
-| Command | Environment | Exit code | Result | Limitation |
-| ------- | ----------- | --------: | ------ | ---------- |
-| `go build ./...` | Go 1.25.x | 0 | Pass | — |
-| `go vet ./...` | Go 1.25.x | 0 | Pass | — |
-| `go test ./pkg/recovery/...` | Go 1.25.x | 0 | 20 pass | No DB/NATS |
-| `go test ./pkg/repository/...` | Go 1.25.x | 0 | 22 pass | No S3 server |
-| `go test ./pkg/config/...` | Go 1.25.x | 0 | Pass | — |
-| `go test ./pkg/backup/...` | Go 1.25.x | 0 | Pass | pg_dump binary absent |
-| `go test ./pkg/backup/... -tags=integration` | Go 1.25.x | 0 | 30+ pass | Fake tests — no real services |
+## Local verification
 
-## 5.5 Adversarial Findings
+| Check | Result | Notes |
+|---|---|---|
+| focused unit tests | pass | backup, recovery, repository, config, PostgreSQL, CLI, platform |
+| full `go test ./...` | pass | Go 1.25.0 |
+| integration-tag compile | pass | all Phase 8C integration files compile |
+| real JetStream integration | pass | local pinned NATS 2.10.26 with JS and no-JS targets |
+| real MinIO integration | not run locally | sandbox MinIO binary cannot enumerate interfaces; mandatory CI job remains pending |
+| real PostgreSQL integration | not run locally | PostgreSQL server/client tools unavailable locally; mandatory CI job remains pending |
+| gofmt/diff check | pass before push | exact command recorded in PR body |
 
-| Severity | Reproduction | Expected | Observed | Fix | Retest |
-| -------- | ------------ | -------- | -------- | --- | ------ |
-| Low | Encrypt then modify ciphertext byte | Decrypt fails | Decrypt fails | None | Pass |
-| Low | Encrypt then modify nonce byte | Decrypt fails | Decrypt fails | None | Pass |
-| Low | Encrypt then modify AD hash byte | Decrypt fails | Decrypt fails | None | Pass |
-| Low | Encrypt with wrong key | Decrypt fails | Decrypt fails | None | Pass |
-| Low | Truncate ciphertext by 50% | Decrypt fails | Decrypt fails | None | Pass |
-| Low | Empty artifact encryption | Decrypt succeeds, empty output | Decrypt succeeds, empty output | None | Pass |
-| Low | Unsupported envelope version | Decrypt fails | Decrypt fails | None | Pass |
-| Low | Key not 32 bytes | Encrypt fails | Encrypt fails | None | Pass |
-| Info | Modify AssociatedData without re-marshaling | Decrypt succeeds (AD hash baked in) | Decrypt succeeds | Design: AD hash stored in envelope; modification only detected via re-marshaling | Pass |
+## Operational acceptance still required
 
-## 5.6 Exact-Head CI
+A8-06 through A8-08 can be supported by exact-head automated fixture evidence after CI. A8-09 remains unverified until an operator performs a timestamped isolated full-system drill, records actual recovery-point age and elapsed recovery time, and validates application-level tenant isolation.
 
-**Current Head**: `09d3f70` — "fix: Add explicit service readiness waits for NATS and MinIO integration tests"
-
-| Workflow | Job | Conclusion | URL |
-| -------- | --- | ---------- | --- |
-| phase8c.yml | JetStream Backup/Restore Integration | **pass** | — |
-| phase8c.yml | S3 Backup/Restore Integration | **pass** | — |
-| phase8c.yml | PostgreSQL Backup/Restore Integration | **pass** | — |
-| phase8c.yml | Concurrent Recovery Exclusion | **pass** | — |
-| phase8c.yml | Quiescing Behavior Tests | **pass** | — |
-| phase8c.yml | Failure Injection Tests | **pass** | — |
-| phase8c.yml | Tenant Preservation Tests | **pass** | — |
-| phase8c.yml | Durable Jobs Integration | **pass** | — |
-| phase8c.yml | Secret Redaction Tests | **pass** | — |
-| phase8c.yml | RPO/RTO Measurement Tests | **pass** | — |
-| phase8c.yml | End-to-End Recovery Tests | **pass** | — |
-| phase8c.yml | Migration Integration | **pass** | — |
-| phase8c.yml | Artifact Repository Tests | **pass** | — |
-| phase8c.yml | Configuration Validation | **pass** | — |
-| phase8c.yml | CLI Command Validation | **pass** | — |
-| CI (repo-wide) | Phase 8B — Deployment Template Rendering | **fail** (transient) | External chart host reset |
-
-## Remaining Limitations
-
-1. **Coordinator wiring incomplete**: `executeBackup()` and `executeRestore()` are stubs with TODO comments. They do not call backup stores or repository. **R8C-04 blocker.**
-2. **Quiescing is a stub**: `quiesce()` only inserts a log entry. No mutation gates, no dispatcher hooks. **R8C-05 blocker.**
-3. **PostgreSQL integration tests**: Currently fake (nil dependencies). Real integration tests require two ephemeral PostgreSQL databases, pg_dump/pg_restore binaries, and actual data seeding/restore/verification.
-4. **JetStream integration tests**: Currently fake (struct field assignments). Real tests require NATS with JetStream, stream creation, message publishing, consumer restoration.
-5. **Object storage integration tests**: Currently fake (struct comparisons). Real tests require MinIO/S3, actual byte upload/download, metadata verification.
-6. **CLI commands not wired**: `backup` and `restore` subcommands print placeholder messages without instantiating the coordinator or calling real infrastructure.
-7. **Repository not consumed**: The coordinator does not use `pkg/repository.Repository` for artifact storage/retrieval.
-8. **Key provider not consumed**: The coordinator does not use `pkg/recovery.KeyProvider` for key resolution.
-
-## Changed Files (from base `dbfec7a`)
-
-| File | Lines | Category |
-| ---- | ----- | -------- |
-| `pkg/recovery/key_provider.go` | +334 | Independent key provider |
-| `pkg/recovery/key_provider_test.go` | +322 | Key provider tests |
-| `pkg/recovery/encryption.go` | +301 | Auth encryption envelope |
-| `pkg/recovery/encryption_test.go` | +438 | Encryption adversarial tests |
-| `pkg/repository/repository.go` | +147 | Repository interface |
-| `pkg/repository/filesystem.go` | +280 | Filesystem repository |
-| `pkg/repository/filesystem_test.go` | +451 | Filesystem repository tests |
-| `pkg/repository/s3.go` | +297 | S3 repository |
-| `cmd/orchestrator/recovery.go` | +210/−138 | CLI corrections |
-| `pkg/config/config.go` | +27/−0 | Strict parsing, CBC removal |
-| `pkg/postgres/schema.go` | +28/−0 | Migration repair |
-| `pkg/timescale/migrations.go` | +30 | Migration003 for backup/recovery schema |
-| `.github/workflows/phase8c.yml` | +150 | 18 CI jobs for Phase 8C |
-| `pkg/backup/*.go` | +800 | 11 integration test files |
-
-## Commit History
-
-| SHA | Message |
-| --- | ------- |
-| `dbfec7a` | Initial Phase 8C checkpoint (structural, no real integration) |
-| `0dbf53f` | Remediation: key provider, repository, encryption, CLI, migrations |
-| `61dd006` | Documentation: Add PHASE_8C_EVIDENCE.md |
-| `1bedb7c` | CI workflow remediation: remove continue-on-error, add real checks |
-| `d1b2d4e` | Tests: Add comprehensive Phase 8C integration tests |
-| `d5c426e..7984104` | Multiple lint/build fixes (nolint comments, gofmt, YAML indentation) |
-| `ce3ed48..09d3f70` | CI fixes (type mismatches, state transitions, deadlock, service waits) |
-
-## Exact-Head CI
-
-| Workflow | Conclusion |
-| -------- | ---------- |
-| phase8c.yml (exact head `09d3f70`) | **All 8C jobs pass** |
-| CI repo-wide (exact head `09d3f70`) | 1 transient failure (Helm chart download) |
-
-## PR Management
+## Pull request
 
 | Field | Value |
-| ----- | ----- |
-| PR Number | #9 |
-| PR URL | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/pull/9 |
-| State | **OPEN (draft)** |
-| Source branch | `agent/phase-8c-backup-disaster-recovery` |
-| Target branch | `master` |
-| Base SHA | `0368cbe5ef0a203ef2907d371e2fa4a8aadc1c6c` |
-| Head SHA | `09d3f70973f779b41c5003530387e953beeb9c45` |
-| Merged | No |
+|---|---|
+| PR | [#9](https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/pull/9) |
+| Branch | `agent/phase-8c-backup-disaster-recovery` |
+| Base | `0368cbe5ef0a203ef2907d371e2fa4a8aadc1c6c` |
+| Final head | pending push |
+| Exact-head workflow | pending |
+| State | draft; unmerged until final CI and review |

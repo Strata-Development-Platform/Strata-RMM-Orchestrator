@@ -4,6 +4,7 @@
 package backup
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"database/sql"
@@ -126,10 +127,12 @@ func setupPGEnv(t *testing.T) pgEnv {
 	tgtDB.Close()
 
 	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cleanupCancel()
 		db, _ = sql.Open("postgres", adminDSN)
 		if db != nil {
-			db.ExecContext(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %s", pqIdent(sourceDB)))
-			db.ExecContext(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %s", pqIdent(targetDB)))
+			db.ExecContext(cleanupCtx, fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE)", pqIdent(sourceDB)))
+			db.ExecContext(cleanupCtx, fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE)", pqIdent(targetDB)))
 			db.Close()
 		}
 	})
@@ -290,6 +293,22 @@ func seedSourceDB(t *testing.T, ctx context.Context, dsn string) {
 	t.Logf("Seeded: %d client orgs, %d devices, %d jobs", tenantCount, deviceCount, jobCount)
 }
 
+// dumpAndRestore exercises the production PostgreSQLRecovery component against
+// two distinct databases.
+func dumpAndRestore(t *testing.T, ctx context.Context, sourceDSN, targetDSN string) {
+	t.Helper()
+
+	component, err := NewPostgreSQLRecovery(sourceDSN, targetDSN)
+	require.NoError(t, err)
+	var artifact bytes.Buffer
+	manifest, err := component.Backup(ctx, &artifact)
+	require.NoError(t, err)
+	require.NotEmpty(t, artifact.Bytes())
+	require.Equal(t, SnapshotDigest(artifact.Bytes()), manifest.Digest)
+	require.NoError(t, component.Restore(ctx, bytes.NewReader(artifact.Bytes())))
+	require.NoError(t, component.Verify(ctx, manifest))
+}
+
 // TestPostgreSQLBackup_RealCreate seeds source DB, runs pg_dump, and verifies the backup pipeline.
 func TestPostgreSQLBackup_RealCreate(t *testing.T) {
 	if testing.Short() {
@@ -328,7 +347,8 @@ func TestPostgreSQLBackup_RealCreate(t *testing.T) {
 	t.Log("Backup infrastructure verified: pg_dump works, backup_records table ready")
 }
 
-// TestPostgreSQLBackup_RealRestore verifies backup/restore infrastructure.
+// TestPostgreSQLBackup_RealRestore verifies a real pg_dump/pg_restore round trip
+// into a separate, initially empty target database.
 func TestPostgreSQLBackup_RealRestore(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -352,22 +372,27 @@ func TestPostgreSQLBackup_RealRestore(t *testing.T) {
 	err = sourceDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM jobs").Scan(&sourceJobCount)
 	require.NoError(t, err)
 
-	// Apply migrations to target
+	dumpAndRestore(t, ctx, env.source, env.target)
+
 	targetDB, err := sql.Open("postgres", env.target)
 	require.NoError(t, err)
 	defer targetDB.Close()
-
-	_, err = targetDB.Exec(`DROP SCHEMA public CASCADE; CREATE SCHEMA public`)
-	require.NoError(t, err)
-	require.NoError(t, postgres.NewSchemaManager(targetDB).Apply(ctx))
 
 	var targetSchemaVersion int
 	err = targetDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations").Scan(&targetSchemaVersion)
 	require.NoError(t, err)
 	require.True(t, targetSchemaVersion >= 64, "target schema migrations should be applied (%d >= 64)", targetSchemaVersion)
 
-	t.Logf("Restore verified: source (%d tenants, %d devices, %d jobs), target schema v%d",
-		sourceTenantCount, sourceDeviceCount, sourceJobCount, targetSchemaVersion)
+	var targetTenantCount, targetDeviceCount, targetJobCount int
+	require.NoError(t, targetDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM client_organizations").Scan(&targetTenantCount))
+	require.NoError(t, targetDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM devices").Scan(&targetDeviceCount))
+	require.NoError(t, targetDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM jobs").Scan(&targetJobCount))
+	require.Equal(t, sourceTenantCount, targetTenantCount)
+	require.Equal(t, sourceDeviceCount, targetDeviceCount)
+	require.Equal(t, sourceJobCount, targetJobCount)
+
+	t.Logf("Real restore verified: %d tenants, %d devices, %d jobs, schema v%d",
+		targetTenantCount, targetDeviceCount, targetJobCount, targetSchemaVersion)
 }
 
 // TestPostgreSQLBackup_TenantPreservation verifies tenant isolation after backup/restore.
@@ -381,8 +406,9 @@ func TestPostgreSQLBackup_TenantPreservation(t *testing.T) {
 	defer cancel()
 
 	seedSourceDB(t, ctx, env.source)
+	dumpAndRestore(t, ctx, env.source, env.target)
 
-	sourceDB, err := sql.Open("postgres", env.source)
+	sourceDB, err := sql.Open("postgres", env.target)
 	require.NoError(t, err)
 	defer sourceDB.Close()
 
@@ -451,8 +477,9 @@ func TestPostgreSQLBackup_DurableJobPreservation(t *testing.T) {
 	defer cancel()
 
 	seedSourceDB(t, ctx, env.source)
+	dumpAndRestore(t, ctx, env.source, env.target)
 
-	sourceDB, err := sql.Open("postgres", env.source)
+	sourceDB, err := sql.Open("postgres", env.target)
 	require.NoError(t, err)
 	defer sourceDB.Close()
 
@@ -493,6 +520,11 @@ func TestPostgreSQLBackup_DurableJobPreservation(t *testing.T) {
 		"SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name='jobs' AND column_name='idempotency_key')").Scan(&hasIdempotency)
 	require.NoError(t, err)
 	require.True(t, hasIdempotency)
+
+	var auditCount int
+	err = sourceDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM audit_log").Scan(&auditCount)
+	require.NoError(t, err)
+	require.Equal(t, 5, auditCount, "audit records must survive restore")
 
 	t.Logf("Durable jobs verified: %d pending, %d queued, %d succeeded, %d total",
 		pendingJobs, queuedJobs, succeededJobs, preBackupJobCount)

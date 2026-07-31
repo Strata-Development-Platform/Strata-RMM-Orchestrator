@@ -132,9 +132,20 @@ func TestFileKeyProviderUnknownKey(t *testing.T) {
 		t.Fatalf("create provider: %v", err)
 	}
 
-	_, err = p.ResolveKey(context.Background(), "nonexistent-key-id")
+	_, err = p.ResolveKey(context.Background(), "rk-00000000000000000000000000000000")
 	if err != ErrKeyNotFound {
 		t.Fatalf("expected ErrKeyNotFound, got: %v", err)
+	}
+}
+
+func TestFileKeyProviderRejectsInvalidKeyID(t *testing.T) {
+	p, err := NewFileKeyProvider(t.TempDir())
+	if err != nil {
+		t.Fatalf("create provider: %v", err)
+	}
+
+	if _, err = p.ResolveKey(context.Background(), "../key"); err != ErrInvalidKeyID {
+		t.Fatalf("expected ErrInvalidKeyID, got: %v", err)
 	}
 }
 

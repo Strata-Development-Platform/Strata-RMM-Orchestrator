@@ -5,6 +5,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
@@ -115,11 +116,18 @@ func Decrypt(key []byte, enc *Envelope) ([]byte, error) {
 		return nil, errors.New("ciphertext too short")
 	}
 
-	// Use stored AD hash if available (from deserialization), otherwise compute
+	// When the caller supplies the expected associated data after
+	// deserialization, prove that it matches the authenticated hash stored in
+	// the envelope. This prevents manifest metadata substitution.
 	adHash := enc.ADHash
-	if len(adHash) == 0 {
+	if enc.AssociatedData != nil {
 		hash := sha256.Sum256(enc.AssociatedData)
+		if len(adHash) != 0 && subtle.ConstantTimeCompare(adHash, hash[:]) != 1 {
+			return nil, errors.New("decrypt: associated data mismatch")
+		}
 		adHash = hash[:]
+	} else if len(adHash) == 0 {
+		return nil, errors.New("associated data hash missing")
 	}
 
 	// Seal already appends the tag; Open expects [ciphertext||tag] as input

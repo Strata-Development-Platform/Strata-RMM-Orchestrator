@@ -122,8 +122,8 @@ func TestFilesystemRepositoryManifest(t *testing.T) {
 		StartedAt:     time.Now(),
 		CompletedAt:   time.Now(),
 		RequiredComponents: []ComponentRef{
-			{ID: "db", Type: ComponentDatabase, ArtifactLoc: "backups/bs-001/components/db", PlaintextDigest: "sha256:test", CiphertextDigest: "sha256:test", EncryptedSize: 1024, OriginalSize: 2048},
-			{ID: "js", Type: ComponentJetStream, ArtifactLoc: "backups/bs-001/components/js", PlaintextDigest: "sha256:test", CiphertextDigest: "sha256:test", EncryptedSize: 512, OriginalSize: 1024},
+			authenticatedTestComponent("db", ComponentDatabase),
+			authenticatedTestComponent("js", ComponentJetStream),
 		},
 	}
 
@@ -163,7 +163,7 @@ func TestFilesystemRepositoryListBackupSets(t *testing.T) {
 			EnvironmentID:      "prod",
 			StartedAt:          time.Now(),
 			CompletedAt:        time.Now(),
-			RequiredComponents: []ComponentRef{{ID: "db", Type: ComponentDatabase, ArtifactLoc: "backups/bs-001/components/db", PlaintextDigest: "sha256:test", CiphertextDigest: "sha256:test", EncryptedSize: 1024, OriginalSize: 2048}},
+			RequiredComponents: []ComponentRef{authenticatedTestComponent("db", ComponentDatabase)},
 		}
 		if err := r.FinalizeBackupSet(context.Background(), m); err != nil {
 			t.Fatalf("finalize %s: %v", id, err)
@@ -345,7 +345,8 @@ func TestManifestVerify(t *testing.T) {
 	m := &Manifest{
 		Version:            ManifestVersion,
 		BackupSetID:        "bs-001",
-		RequiredComponents: []ComponentRef{{ID: "db", Type: ComponentDatabase, ArtifactLoc: "backups/bs-001/components/db", PlaintextDigest: "sha256:test", CiphertextDigest: "sha256:test", EncryptedSize: 1024, OriginalSize: 2048}},
+		EnvironmentID:      "test",
+		RequiredComponents: []ComponentRef{authenticatedTestComponent("db", ComponentDatabase)},
 	}
 	if err := m.VerifyManifest(); err != nil {
 		t.Fatalf("valid manifest failed: %v", err)
@@ -382,6 +383,21 @@ func TestManifestVerify(t *testing.T) {
 	}
 }
 
+func authenticatedTestComponent(id string, componentType ComponentType) ComponentRef {
+	return ComponentRef{
+		ID:               id,
+		Type:             componentType,
+		ArtifactLoc:      id,
+		PlaintextDigest:  "sha256:plain",
+		CiphertextDigest: "sha256:cipher",
+		EncryptedSize:    1024,
+		OriginalSize:     512,
+		Encryption:       "aes-256-gcm",
+		KeyID:            "key-test",
+		Verified:         true,
+	}
+}
+
 // TestDigestBase64 proves deterministic digest computation.
 func TestDigestBase64(t *testing.T) {
 	data := []byte("hello world")
@@ -401,6 +417,25 @@ func TestNewFilesystemRepositoryEmptyRoot(t *testing.T) {
 	}
 	if r.ProviderName() != "filesystem" {
 		t.Errorf("ProviderName = %s, want filesystem", r.ProviderName())
+	}
+}
+
+func TestFilesystemRepositoryRejectsPathTraversal(t *testing.T) {
+	repo, err := NewFilesystemRepository(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	if err := repo.CreateBackupSet(ctx, BackupSet{ID: "../escape"}); err == nil {
+		t.Fatal("expected traversal backup ID to be rejected")
+	}
+	_, err = repo.ReadManifest(ctx, "../../manifest")
+	if err == nil {
+		t.Fatal("expected traversal manifest ID to be rejected")
+	}
+	if err := repo.WriteComponent(ctx, "safe", "../component", strings.NewReader("data")); err == nil {
+		t.Fatal("expected traversal component ID to be rejected")
 	}
 }
 

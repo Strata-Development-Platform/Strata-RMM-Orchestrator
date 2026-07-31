@@ -91,38 +91,60 @@ type SeedingConfig struct {
 }
 
 type BackupConfig struct {
-	Enabled                 bool
-	Schedule                string
-	RetentionDays           int
-	EncryptionKeyID         string
-	DatabaseType            string
-	TargetDSN               string
-	BackupDirectory         string
-	EncryptionScheme        string
-	RPO                     string
-	RTO                     string
-	AdvisoryLockID          string
-	ExternalBackupBucket    string
-	ExternalBackupRegion    string
-	ExternalBackupEndpoint  string
-	ExternalBackupAccessKey string
-	ExternalBackupSecretKey string
-	RepositoryType          string
-	ExternalBucket          string
-	KeyProviderPath         string
-	SourceDSN               string
+	Enabled                  bool
+	EnvironmentID            string
+	DatabaseType             string
+	BackupDirectory          string
+	EncryptionScheme         string
+	ExternalBackupBucket     string
+	ExternalBackupRegion     string
+	ExternalBackupEndpoint   string
+	ExternalBackupAccessKey  string
+	ExternalBackupSecretKey  string
+	RepositoryType           string
+	KeyProviderPath          string
+	RecoveryStorageBackend   string
+	RecoveryStorageBucket    string
+	RecoveryStorageRegion    string
+	RecoveryStorageEndpoint  string
+	RecoveryStorageAccessKey string
+	RecoveryStorageSecretKey string
+	RecoveryStorageUseSSL    bool
+	RecoveryNATSURL          string
+	RecoveryNATSToken        string
+	RecoveryNATSTLSCAFile    string
+	RecoveryNATSTLSCertFile  string
+	RecoveryNATSTLSKeyFile   string
 }
 
 func (b *BackupConfig) validate() error {
-	if b.RetentionDays < 0 {
-		return fmt.Errorf("RetentionDays must be non-negative")
-	}
 	// F8C-13: Only authenticated encryption allowed — AES-256-GCM exclusively.
 	if b.EncryptionScheme != "" && b.EncryptionScheme != "aes-256-gcm" {
 		return fmt.Errorf("unsupported encryption scheme: %s (only aes-256-gcm is allowed)", b.EncryptionScheme)
 	}
 	if b.DatabaseType != "" && b.DatabaseType != "postgresql" && b.DatabaseType != "timescaledb" {
 		return fmt.Errorf("unsupported database type: %s", b.DatabaseType)
+	}
+	if b.Enabled {
+		if b.EnvironmentID == "" {
+			return fmt.Errorf("STRATA_BACKUP_ENVIRONMENT_ID is required when backups are enabled")
+		}
+		if b.KeyProviderPath == "" {
+			return fmt.Errorf("STRATA_BACKUP_KEY_PROVIDER_PATH is required when backups are enabled")
+		}
+		switch b.RepositoryType {
+		case "filesystem":
+			if b.BackupDirectory == "" {
+				return fmt.Errorf("STRATA_BACKUP_DIRECTORY is required for filesystem backup repository")
+			}
+		case "s3":
+			if b.ExternalBackupBucket == "" || b.ExternalBackupRegion == "" ||
+				b.ExternalBackupAccessKey == "" || b.ExternalBackupSecretKey == "" {
+				return fmt.Errorf("S3 backup repository bucket, region, access key, and secret key are required")
+			}
+		default:
+			return fmt.Errorf("unsupported backup repository type: %s", b.RepositoryType)
+		}
 	}
 	return nil
 }
@@ -479,25 +501,33 @@ func LoadOrchestratorConfig() (*OrchestratorConfig, error) {
 	} else {
 		cfg.Backup.Enabled = v
 	}
-	cfg.Backup.Schedule = envStr("STRATA_BACKUP_SCHEDULE", "")
-	if v, err := envInt("STRATA_BACKUP_RETENTION_DAYS", 30); err != nil {
-		errs = append(errs, fmt.Sprintf("STRATA_BACKUP_RETENTION_DAYS: %v", err))
-	} else {
-		cfg.Backup.RetentionDays = v
-	}
-	cfg.Backup.EncryptionKeyID = os.Getenv("STRATA_BACKUP_ENCRYPTION_KEY_ID")
+	cfg.Backup.EnvironmentID = os.Getenv("STRATA_BACKUP_ENVIRONMENT_ID")
 	cfg.Backup.DatabaseType = envStr("STRATA_BACKUP_DATABASE_TYPE", "timescaledb")
-	cfg.Backup.TargetDSN = os.Getenv("STRATA_BACKUP_TARGET_DSN")
-	cfg.Backup.BackupDirectory = envStr("STRATA_BACKUP_DIRECTORY", "/var/lib/strata-rmm/backups")
+	cfg.Backup.BackupDirectory = os.Getenv("STRATA_BACKUP_DIRECTORY")
 	cfg.Backup.EncryptionScheme = envStr("STRATA_BACKUP_ENCRYPTION_SCHEME", "aes-256-gcm")
-	cfg.Backup.RPO = envStr("STRATA_BACKUP_RPO", "15m")
-	cfg.Backup.RTO = envStr("STRATA_BACKUP_RTO", "4h")
-	cfg.Backup.AdvisoryLockID = os.Getenv("STRATA_BACKUP_ADVISORY_LOCK_ID")
 	cfg.Backup.ExternalBackupBucket = os.Getenv("STRATA_BACKUP_EXTERNAL_BUCKET")
 	cfg.Backup.ExternalBackupRegion = os.Getenv("STRATA_BACKUP_EXTERNAL_REGION")
 	cfg.Backup.ExternalBackupEndpoint = os.Getenv("STRATA_BACKUP_EXTERNAL_ENDPOINT")
 	cfg.Backup.ExternalBackupAccessKey = os.Getenv("STRATA_BACKUP_EXTERNAL_ACCESS_KEY")
 	cfg.Backup.ExternalBackupSecretKey = os.Getenv("STRATA_BACKUP_EXTERNAL_SECRET_KEY")
+	cfg.Backup.RepositoryType = envStr("STRATA_BACKUP_REPOSITORY_TYPE", "filesystem")
+	cfg.Backup.KeyProviderPath = os.Getenv("STRATA_BACKUP_KEY_PROVIDER_PATH")
+	cfg.Backup.RecoveryStorageBackend = os.Getenv("STRATA_RECOVERY_STORAGE_BACKEND")
+	cfg.Backup.RecoveryStorageBucket = os.Getenv("STRATA_RECOVERY_STORAGE_BUCKET")
+	cfg.Backup.RecoveryStorageRegion = os.Getenv("STRATA_RECOVERY_STORAGE_REGION")
+	cfg.Backup.RecoveryStorageEndpoint = os.Getenv("STRATA_RECOVERY_STORAGE_ENDPOINT")
+	cfg.Backup.RecoveryStorageAccessKey = os.Getenv("STRATA_RECOVERY_STORAGE_ACCESS_KEY")
+	cfg.Backup.RecoveryStorageSecretKey = os.Getenv("STRATA_RECOVERY_STORAGE_SECRET_KEY")
+	cfg.Backup.RecoveryNATSURL = os.Getenv("STRATA_RECOVERY_NATS_URL")
+	cfg.Backup.RecoveryNATSToken = os.Getenv("STRATA_RECOVERY_NATS_TOKEN")
+	cfg.Backup.RecoveryNATSTLSCAFile = os.Getenv("STRATA_RECOVERY_NATS_TLS_CA")
+	cfg.Backup.RecoveryNATSTLSCertFile = os.Getenv("STRATA_RECOVERY_NATS_TLS_CERT")
+	cfg.Backup.RecoveryNATSTLSKeyFile = os.Getenv("STRATA_RECOVERY_NATS_TLS_KEY")
+	if v, err := envBoolStrict("STRATA_RECOVERY_STORAGE_USE_SSL"); err != nil {
+		errs = append(errs, fmt.Sprintf("STRATA_RECOVERY_STORAGE_USE_SSL: %v", err))
+	} else {
+		cfg.Backup.RecoveryStorageUseSSL = v
+	}
 
 	if len(errs) > 0 {
 		return nil, fmt.Errorf("configuration load errors:\n  - %s", strings.Join(errs, "\n  - "))
@@ -550,13 +580,6 @@ func envIntStrict(key string, def int) (int, error) {
 		return 0, fmt.Errorf("invalid integer %q: %w", v, err)
 	}
 	return n, nil
-}
-
-// envInt returns the integer value of the env var, or def if empty.
-// A supplied but unparseable value returns an error (strict parsing).
-// Deprecated: use envIntStrict for explicit error handling.
-func envInt(key string, def int) (int, error) {
-	return envIntStrict(key, def)
 }
 
 func envInt64Strict(key string, def int64) (int64, error) {
@@ -628,6 +651,20 @@ func redactURL(raw string) string {
 }
 
 func redactDSN(dsn string) string {
+	if !strings.Contains(dsn, "://") {
+		fields := strings.Fields(dsn)
+		for index, field := range fields {
+			key, _, found := strings.Cut(field, "=")
+			if !found {
+				continue
+			}
+			lower := strings.ToLower(key)
+			if strings.Contains(lower, "password") || strings.Contains(lower, "secret") || strings.Contains(lower, "key") {
+				fields[index] = key + "=***"
+			}
+		}
+		return strings.Join(fields, " ")
+	}
 	u, err := url.Parse(dsn)
 	if err != nil {
 		return "<invalid>"
@@ -644,4 +681,10 @@ func redactDSN(dsn string) string {
 	}
 	u.RawQuery = q.Encode()
 	return u.String()
+}
+
+// RedactDSN removes credentials from PostgreSQL connection strings before
+// logging or returning errors.
+func RedactDSN(dsn string) string {
+	return redactDSN(dsn)
 }

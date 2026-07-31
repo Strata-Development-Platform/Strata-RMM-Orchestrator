@@ -630,86 +630,12 @@ func (c *RecoveryCoordinator) Events() []RecoveryEvent {
 	return cp
 }
 
-// Recover executes the recovery workflow.
+// Recover is retained only for source compatibility with pre-Phase-8C callers.
+// Deprecated: construct Engine; the legacy coordinator cannot provide the
+// repository, target-isolation, or integrity guarantees required for recovery.
 func (c *RecoveryCoordinator) Recover(ctx context.Context) (*RecoveryResult, error) {
-	c.mu.Lock()
-	c.state = StateIdle
-	c.events = nil
-	c.mu.Unlock()
-
-	recoveryID := uuid.New().String()
-	startTime := time.Now()
-	c.logEvent(StateDiscovery, "Recovery initiated", nil)
-
-	ctx, cancel := context.WithTimeout(ctx, c.timeout)
-	defer cancel()
-
-	if !c.dryRun {
-		if acquired, err := c.acquireLock(ctx, recoveryID); err != nil || !acquired {
-			c.logEvent(StateIdle, "Failed to acquire lock", err)
-			return c.finalize(recoveryID, "", StateIdle, fmt.Errorf("%w for recovery %s", ErrLockNotAcquired, recoveryID)), nil
-		}
-		defer c.releaseLock(ctx, recoveryID)
-	}
-
-	c.transition(StateDiscovery)
-	c.logEvent(StateDiscovery, "Discovery phase started", nil)
-
-	c.transition(StatePreFlight)
-	c.logEvent(StatePreFlight, "Pre-flight validation started", nil)
-	if err := c.runPreFlight(ctx); err != nil {
-		c.logEvent(StatePreFlight, "Pre-flight failed", err)
-		c.transition(StateRollback)
-		return c.executeRollback(ctx, recoveryID, startTime)
-	}
-	c.logEvent(StatePreFlight, "Pre-flight validation passed", nil)
-
-	if c.backupID == "" {
-		if err := c.executeBackup(ctx); err != nil {
-			c.logEvent(c.state, "Backup failed", err)
-			c.transition(StateRollback)
-			return c.executeRollback(ctx, recoveryID, startTime)
-		}
-	} else {
-		if err := c.executeRestore(ctx); err != nil {
-			c.logEvent(c.state, "Restore failed", err)
-			c.transition(StateRollback)
-			return c.executeRollback(ctx, recoveryID, startTime)
-		}
-	}
-
-	for _, state := range []RecoveryState{
-		StateVerification, StateRPOValidation, StateRTOValidation,
-	} {
-		c.transition(state)
-		if state == StateRPOValidation {
-			c.logEvent(state, "RPO validation: data loss window within acceptable range", nil)
-		}
-		if state == StateRTOValidation {
-			c.logEvent(state, "RTO validation: total recovery time within acceptable range", nil)
-		}
-	}
-
-	c.transition(StateCleanup)
-	c.logEvent(StateCleanup, "Cleanup completed", nil)
-
-	c.transition(StateCompleted)
-	elapsed := time.Since(startTime)
-
-	rto := RTOMetrics{
-		TotalRecoveryTime: elapsed,
-		RecoveryStartTime: startTime,
-		RecoveryEndTime:   startTime.Add(elapsed),
-	}
-
-	return &RecoveryResult{
-		RecoveryID: recoveryID,
-		State:      StateCompleted,
-		Phase:      PhaseCleanup,
-		Success:    true,
-		RTO:        rto,
-		Events:     c.Events(),
-	}, nil
+	_ = ctx
+	return nil, errors.New("legacy RecoveryCoordinator is disabled; use backup.Engine")
 }
 
 func (c *RecoveryCoordinator) executeBackup(ctx context.Context) error {

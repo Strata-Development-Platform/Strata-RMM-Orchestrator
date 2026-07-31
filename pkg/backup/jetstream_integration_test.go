@@ -1,90 +1,149 @@
 //go:build integration
-// +build integration
 
 package backup
 
 import (
+	"bytes"
+	"context"
+	"fmt"
+	"os"
 	"testing"
 	"time"
 
+	"github.com/nats-io/nats.go"
 	"github.com/stretchr/testify/require"
 )
 
-func TestJetStreamBackup_Structure(t *testing.T) {
-	// Verify JetStream backup structure
+// TestJetStreamRecovery_RoundTrip exercises the production recovery component
+// against an actual JetStream server. It deliberately deletes the source stream
+// before restore so a serializer-only implementation cannot pass.
+func TestJetStreamRecovery_RoundTrip(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
-	store := NewJetStreamBackupStore(nil, nil, nil)
-	require.NotNil(t, store)
-}
-
-func TestJetStreamBackup_Configuration(t *testing.T) {
-	// Verify JetStream configuration
-
-	config := BackupStreamConfig{
-		Name:      "TEST_STREAM",
-		Subjects:  []string{"test.>"},
-		Retention: "limits",
-		MaxAge:    3600,
+	url := firstNonEmpty(os.Getenv("TEST_NATS_URL"), os.Getenv("NATS_URL"))
+	if url == "" {
+		t.Skip("TEST_NATS_URL is required for JetStream integration tests")
 	}
 
-	require.Equal(t, "TEST_STREAM", config.Name)
-	require.Equal(t, []string{"test.>"}, config.Subjects)
-	require.Equal(t, int64(3600), config.MaxAge)
-}
+	nc, err := nats.Connect(url, nats.Timeout(5*time.Second))
+	require.NoError(t, err)
+	t.Cleanup(nc.Close)
 
-func TestJetStreamBackup_MessageStructure(t *testing.T) {
-	// Verify message structure
+	js, err := nc.JetStream(nats.MaxWait(5 * time.Second))
+	require.NoError(t, err)
 
-	msg := BackupMessage{
-		Stream:  "test-stream",
-		Subject: "test.subject",
-		Data:    "test data",
-		Seq:     1,
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	stream := "RECOVERY_" + suffix
+	durable := "RECOVERY_CONSUMER_" + suffix
+	subject := "recovery." + suffix + ".>"
+
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name:      stream,
+		Subjects:  []string{subject},
+		Retention: nats.LimitsPolicy,
+		Storage:   nats.MemoryStorage,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = js.DeleteStream(stream) })
+
+	_, err = js.AddConsumer(stream, &nats.ConsumerConfig{
+		Durable:       durable,
+		AckPolicy:     nats.AckExplicitPolicy,
+		FilterSubject: subject,
+	})
+	require.NoError(t, err)
+
+	want := []struct {
+		subject string
+		data    []byte
+		header  string
+	}{
+		{"recovery." + suffix + ".one", []byte("first"), "tenant-a"},
+		{"recovery." + suffix + ".two", []byte{0, 1, 2, 255}, "tenant-b"},
+		{"recovery." + suffix + ".three", []byte("third"), "tenant-a"},
+	}
+	for _, item := range want {
+		msg := nats.NewMsg(item.subject)
+		msg.Data = item.data
+		msg.Header.Set("X-Tenant-ID", item.header)
+		_, err = js.PublishMsg(msg)
+		require.NoError(t, err)
 	}
 
-	require.Equal(t, "test-stream", msg.Stream)
-	require.Equal(t, "test.subject", msg.Subject)
-	require.Equal(t, "test data", msg.Data)
-	require.Equal(t, uint64(1), msg.Seq)
-}
+	var artifact bytes.Buffer
+	recovery, err := NewJetStreamRecovery(nc)
+	require.NoError(t, err)
+	manifest, err := recovery.Backup(ctx, &artifact)
+	require.NoError(t, err)
+	require.NotEmpty(t, artifact.Bytes(), "backup must contain the stream data")
 
-func TestJetStreamBackup_ConsumerConfig(t *testing.T) {
-	// Verify consumer configuration
+	require.NoError(t, js.DeleteStream(stream))
+	_, err = js.StreamInfo(stream)
+	require.Error(t, err, "source stream must be absent before restore")
 
-	consumer := BackupConsumerConfig{
-		Stream:    "test-stream",
-		Name:      "test-consumer",
-		AckPolicy: "explicit",
+	require.NoError(t, recovery.Restore(ctx, bytes.NewReader(artifact.Bytes())))
+	require.NoError(t, recovery.Verify(ctx, manifest))
+
+	info, err := js.StreamInfo(stream)
+	require.NoError(t, err)
+	require.Equal(t, uint64(len(want)), info.State.Msgs)
+
+	consumer, err := js.ConsumerInfo(stream, durable)
+	require.NoError(t, err)
+	require.Equal(t, durable, consumer.Config.Durable)
+	require.Equal(t, nats.AckExplicitPolicy, consumer.Config.AckPolicy)
+
+	sub, err := js.PullSubscribe(subject, durable, nats.Bind(stream, durable))
+	require.NoError(t, err)
+	messages, err := sub.Fetch(len(want), nats.MaxWait(5*time.Second))
+	require.NoError(t, err)
+	require.Len(t, messages, len(want))
+	for i, msg := range messages {
+		require.Equal(t, want[i].subject, msg.Subject)
+		require.Equal(t, want[i].data, msg.Data)
+		require.Equal(t, want[i].header, msg.Header.Get("X-Tenant-ID"))
+		require.NoError(t, msg.Ack())
 	}
 
-	require.Equal(t, "test-stream", consumer.Stream)
-	require.Equal(t, "test-consumer", consumer.Name)
-	require.Equal(t, "explicit", consumer.AckPolicy)
+	// Restoration must be idempotent: replaying the same artifact cannot append
+	// a second copy of each message.
+	require.NoError(t, recovery.Restore(ctx, bytes.NewReader(artifact.Bytes())))
+	info, err = js.StreamInfo(stream)
+	require.NoError(t, err)
+	require.Equal(t, uint64(len(want)), info.State.Msgs)
+	require.NoError(t, recovery.Verify(ctx, manifest))
 }
 
-func TestJetStreamBackup_ObjectConfig(t *testing.T) {
-	// Verify object configuration
+func TestJetStreamRecovery_RequiresJetStream(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
 
-	obj := BackupObjectConfig{
-		Key:      "test/key",
-		Bucket:   "test-bucket",
-		Size:     1024,
-		ETag:     "abc123",
-		LastMod:  "2024-01-01",
-		Checksum: "sha256:abc123",
+	url := os.Getenv("TEST_NATS_NO_JS_URL")
+	if url == "" {
+		t.Skip("TEST_NATS_NO_JS_URL is required for the JetStream-disabled negative test")
 	}
 
-	require.Equal(t, "test/key", obj.Key)
-	require.Equal(t, "test-bucket", obj.Bucket)
-	require.Equal(t, int64(1024), obj.Size)
-	require.Equal(t, "abc123", obj.ETag)
-	require.Equal(t, "2024-01-01", obj.LastMod)
-	require.Equal(t, "sha256:abc123", obj.Checksum)
+	nc, err := nats.Connect(url, nats.Timeout(5*time.Second))
+	require.NoError(t, err)
+	t.Cleanup(nc.Close)
+
+	var artifact bytes.Buffer
+	recovery, err := NewJetStreamRecovery(nc)
+	require.Error(t, err)
+	require.Nil(t, recovery)
+	if recovery != nil {
+		_, err = recovery.Backup(ctx, &artifact)
+	}
+	require.Error(t, err)
+	require.Empty(t, artifact.Bytes())
 }
 
-func TestJetStreamBackup_Timestamps(t *testing.T) {
-	// Verify timestamps
-
-	now := time.Now()
-	require.False(t, now.IsZero())
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }

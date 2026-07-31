@@ -383,7 +383,9 @@ func (s *APIServer) Start(ctx context.Context) error {
 			withLogging(
 				s.withBranding(
 					s.withAccessControl(
-						s.withTenantTransaction(mux),
+						s.withTenantTransaction(
+							s.withRecoveryGate(mux),
+						),
 					),
 				),
 				s.logger,

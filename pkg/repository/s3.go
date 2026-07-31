@@ -2,6 +2,8 @@ package repository
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -22,6 +24,9 @@ type S3Repository struct {
 
 // NewS3Repository creates a repository backed by an S3 bucket.
 func NewS3Repository(client *s3.Client, bucket string) (*S3Repository, error) {
+	if client == nil {
+		return nil, fmt.Errorf("S3 client required")
+	}
 	if bucket == "" {
 		return nil, fmt.Errorf("bucket name required")
 	}
@@ -52,6 +57,9 @@ func (r *S3Repository) retentionKey(backupSetID string) string {
 }
 
 func (r *S3Repository) CreateBackupSet(ctx context.Context, set BackupSet) error {
+	if err := ValidateIdentifier(set.ID); err != nil {
+		return err
+	}
 	// S3 is eventually consistent but we use put-object for the marker
 	_, err := r.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(r.bucket),
@@ -65,6 +73,9 @@ func (r *S3Repository) CreateBackupSet(ctx context.Context, set BackupSet) error
 }
 
 func (r *S3Repository) WriteComponent(ctx context.Context, backupSetID, componentID string, reader io.Reader) error {
+	if err := validateComponentIdentifiers(backupSetID, componentID); err != nil {
+		return err
+	}
 	key := r.objectKey(backupSetID, componentID)
 
 	// Upload with bounded concurrency via manager
@@ -80,6 +91,9 @@ func (r *S3Repository) WriteComponent(ctx context.Context, backupSetID, componen
 }
 
 func (r *S3Repository) FinalizeComponent(ctx context.Context, backupSetID, componentID, plaintextDigest, ciphertextDigest string, encryptedSize, originalSize int64) error {
+	if err := validateComponentIdentifiers(backupSetID, componentID); err != nil {
+		return err
+	}
 	status := struct {
 		ComponentID      string `json:"component_id"`
 		PlaintextDigest  string `json:"plaintext_digest"`
@@ -170,6 +184,9 @@ func (r *S3Repository) ListBackupSets(ctx context.Context) ([]BackupSet, error) 
 }
 
 func (r *S3Repository) ReadManifest(ctx context.Context, backupSetID string) (*Manifest, error) {
+	if err := ValidateIdentifier(backupSetID); err != nil {
+		return nil, err
+	}
 	result, err := r.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(r.bucket),
 		Key:    aws.String(r.objectKey(backupSetID, "")),
@@ -179,19 +196,28 @@ func (r *S3Repository) ReadManifest(ctx context.Context, backupSetID string) (*M
 	}
 	defer result.Body.Close() //nolint:errcheck
 
-	data, err := io.ReadAll(result.Body)
+	data, err := io.ReadAll(io.LimitReader(result.Body, manifestMaxBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("read manifest body: %w", err)
+	}
+	if len(data) > manifestMaxBytes {
+		return nil, fmt.Errorf("read manifest: size exceeds %d bytes", manifestMaxBytes)
 	}
 
 	var m Manifest
 	if err := json.Unmarshal(data, &m); err != nil {
 		return nil, fmt.Errorf("unmarshal manifest: %w", err)
 	}
+	if err := m.VerifyManifest(); err != nil {
+		return nil, fmt.Errorf("verify manifest: %w", err)
+	}
 	return &m, nil
 }
 
 func (r *S3Repository) ReadComponent(ctx context.Context, backupSetID, componentID string) (io.ReadCloser, error) {
+	if err := validateComponentIdentifiers(backupSetID, componentID); err != nil {
+		return nil, err
+	}
 	result, err := r.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(r.bucket),
 		Key:    aws.String(r.objectKey(backupSetID, componentID)),
@@ -203,6 +229,9 @@ func (r *S3Repository) ReadComponent(ctx context.Context, backupSetID, component
 }
 
 func (r *S3Repository) VerifyIntegrity(ctx context.Context, backupSetID, componentID, expectedDigest string) error {
+	if err := validateComponentIdentifiers(backupSetID, componentID); err != nil {
+		return err
+	}
 	// Read the component and compute its digest
 	body, err := r.ReadComponent(ctx, backupSetID, componentID)
 	if err != nil {
@@ -210,12 +239,12 @@ func (r *S3Repository) VerifyIntegrity(ctx context.Context, backupSetID, compone
 	}
 	defer body.Close() //nolint:errcheck
 
-	data, err := io.ReadAll(body)
-	if err != nil {
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, body); err != nil {
 		return fmt.Errorf("read component for verification: %w", err)
 	}
 
-	actualDigest := DigestBase64(data)
+	actualDigest := base64.StdEncoding.EncodeToString(hasher.Sum(nil))
 	if actualDigest != expectedDigest {
 		return fmt.Errorf("integrity mismatch: expected %s, got %s", expectedDigest, actualDigest)
 	}
@@ -223,6 +252,9 @@ func (r *S3Repository) VerifyIntegrity(ctx context.Context, backupSetID, compone
 }
 
 func (r *S3Repository) MarkRetention(ctx context.Context, backupSetID, policy string) error {
+	if err := ValidateIdentifier(backupSetID); err != nil {
+		return err
+	}
 	data, err := json.Marshal(map[string]string{"policy": policy, "backup_set_id": backupSetID})
 	if err != nil {
 		return fmt.Errorf("marshal retention: %w", err)
@@ -237,6 +269,9 @@ func (r *S3Repository) MarkRetention(ctx context.Context, backupSetID, policy st
 }
 
 func (r *S3Repository) DeleteBackupSet(ctx context.Context, backupSetID, policy string) error {
+	if err := ValidateIdentifier(backupSetID); err != nil {
+		return err
+	}
 	if policy == "" {
 		return fmt.Errorf("delete policy required")
 	}
