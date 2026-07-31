@@ -221,7 +221,11 @@ func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 				if err := sysCollector.Start(ctx); err != nil {
 					return fmt.Errorf("starting system collector: %w", err)
 				}
-				defer sysCollector.Stop()
+				defer func() {
+					if err := sysCollector.Stop(); err != nil {
+						logger.Warn("stopping system collector", zap.Error(err))
+					}
+				}()
 				go collectAndPublish(ctx, sysCollector, commsHandler, logger)
 			}
 
