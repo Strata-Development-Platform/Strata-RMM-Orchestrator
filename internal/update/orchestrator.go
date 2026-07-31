@@ -207,7 +207,9 @@ func (u *OrchestratorUpdater) Download(ctx context.Context, release *Orchestrato
 
 	actualChecksum := hex.EncodeToString(hasher.Sum(nil))
 	if !strings.EqualFold(actualChecksum, release.Checksum) {
-		os.Remove(binaryPath)
+		if err := os.Remove(binaryPath); err != nil {
+			return "", fmt.Errorf("checksum mismatch; remove invalid release artifact: %w", err)
+		}
 		return "", fmt.Errorf("checksum mismatch for downloaded release artifact")
 	}
 
