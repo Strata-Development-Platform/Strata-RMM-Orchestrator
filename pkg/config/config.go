@@ -84,6 +84,10 @@ type HTTPConfig struct {
 	MaxBodySizeBytes int64
 }
 
+type ObservabilityConfig struct {
+	MetricsToken string
+}
+
 type SeedingConfig struct {
 	SeedDev       bool
 	DevAdminEmail string
@@ -150,16 +154,17 @@ func (b *BackupConfig) validate() error {
 }
 
 type OrchestratorConfig struct {
-	RuntimeMode RuntimeMode
-	NATS        NATSConfig
-	DB          DatabaseConfig
-	Storage     StorageConfig
-	JWT         JWTConfig
-	HTTP        HTTPConfig
-	Seeding     SeedingConfig
-	Backup      BackupConfig
-	Version     string
-	Commit      string
+	RuntimeMode   RuntimeMode
+	NATS          NATSConfig
+	DB            DatabaseConfig
+	Storage       StorageConfig
+	JWT           JWTConfig
+	HTTP          HTTPConfig
+	Observability ObservabilityConfig
+	Seeding       SeedingConfig
+	Backup        BackupConfig
+	Version       string
+	Commit        string
 }
 
 func (c *OrchestratorConfig) Validate() error {
@@ -212,6 +217,9 @@ func (c *OrchestratorConfig) Validate() error {
 	}
 	if c.HTTP.MaxBodySizeBytes <= 0 {
 		errs = append(errs, "HTTP.MaxBodySizeBytes: must be positive")
+	}
+	if c.Observability.MetricsToken != "" && len(c.Observability.MetricsToken) < 32 {
+		errs = append(errs, "Observability.MetricsToken: must be at least 32 characters when set")
 	}
 
 	check("Storage", c.Storage.validate())
@@ -319,6 +327,9 @@ func (c *OrchestratorConfig) ProductionValidate() error {
 		if origin == "*" {
 			errs = append(errs, "HTTP.CORSOrigins: wildcard not allowed in production")
 		}
+	}
+	if c.Observability.MetricsToken == "" {
+		errs = append(errs, "Observability.MetricsToken: required in production")
 	}
 
 	if !c.NATS.TLSEnabled {
@@ -451,6 +462,7 @@ func LoadOrchestratorConfig() (*OrchestratorConfig, error) {
 	cfg.Storage.KMSKeyID = os.Getenv("STORAGE_KMS_KEY_ID")
 
 	cfg.JWT.Secret = os.Getenv("JWT_SECRET")
+	cfg.Observability.MetricsToken = os.Getenv("STRATA_METRICS_TOKEN")
 
 	if v := envStr("STRATA_API_ADDR", ""); v != "" {
 		cfg.HTTP.APIAddr = v
@@ -622,20 +634,21 @@ func splitTrim(s, sep string) []string {
 
 func (c *OrchestratorConfig) RedactedSummary() map[string]interface{} {
 	return map[string]interface{}{
-		"runtime_mode":   string(c.RuntimeMode),
-		"nats_url":       redactURL(c.NATS.URL),
-		"nats_tls":       c.NATS.TLSEnabled,
-		"db_dsn":         redactDSN(c.DB.DSN),
-		"db_pool_max":    c.DB.MaxOpenConns,
-		"db_pool_idle":   c.DB.MaxIdleConns,
-		"storage_type":   c.Storage.Backend,
-		"storage_bucket": c.Storage.Bucket,
-		"api_addr":       c.HTTP.APIAddr,
-		"tunnel_addr":    c.HTTP.TunnelAddr,
-		"public_url":     c.HTTP.PublicURL,
-		"cors_origins":   c.HTTP.CORSOrigins,
-		"jwt_configured": c.JWT.Secret != "",
-		"seed_dev":       c.Seeding.SeedDev,
+		"runtime_mode":             string(c.RuntimeMode),
+		"nats_url":                 redactURL(c.NATS.URL),
+		"nats_tls":                 c.NATS.TLSEnabled,
+		"db_dsn":                   redactDSN(c.DB.DSN),
+		"db_pool_max":              c.DB.MaxOpenConns,
+		"db_pool_idle":             c.DB.MaxIdleConns,
+		"storage_type":             c.Storage.Backend,
+		"storage_bucket":           c.Storage.Bucket,
+		"api_addr":                 c.HTTP.APIAddr,
+		"tunnel_addr":              c.HTTP.TunnelAddr,
+		"public_url":               c.HTTP.PublicURL,
+		"cors_origins":             c.HTTP.CORSOrigins,
+		"jwt_configured":           c.JWT.Secret != "",
+		"metrics_token_configured": c.Observability.MetricsToken != "",
+		"seed_dev":                 c.Seeding.SeedDev,
 	}
 }
 

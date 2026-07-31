@@ -16,3 +16,9 @@ datasources:
     type: grafana-simple-json-datasource
     url: http://orchestrator:8080
     access: proxy
+  - name: StrataRMM Prometheus
+    uid: strata-prometheus
+    type: prometheus
+    url: http://prometheus:9090
+    access: proxy
+    isDefault: true

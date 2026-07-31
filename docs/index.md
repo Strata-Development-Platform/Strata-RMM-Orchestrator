@@ -7,6 +7,7 @@ Strata RMM is a multi-tenant remote monitoring and management platform for MSPs.
 - [Installation](INSTALL.md)
 - [Architecture](ARCHITECTURE.md)
 - [Operations runbook](RUNBOOK.md)
+- [Production observability and synthetics](OBSERVABILITY.md)
 - [Security architecture](SECURITY.md)
 - [SaaS tenancy](SAAS_TENANCY.md)
 - [Agent protocol](AGENT_PROTOCOL.md)

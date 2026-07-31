@@ -926,7 +926,10 @@ jobs:
       - name: Validate docker-compose syntax
         env:
           JWT_SECRET: ci-only-compose-render-secret-000000000000
+          STRATA_METRICS_TOKEN: ci-only-metrics-render-secret-000000000
+          STRATA_METRICS_TOKEN_FILE: /tmp/strata-metrics-token
         run: |
+          printf '%s' "$STRATA_METRICS_TOKEN" > "$STRATA_METRICS_TOKEN_FILE"
           docker compose -f deploy/docker/docker-compose.yml config --quiet
       - name: Validate Kots application manifest
         run: |

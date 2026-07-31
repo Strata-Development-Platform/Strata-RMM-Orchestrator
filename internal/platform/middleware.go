@@ -447,6 +447,7 @@ func (s *APIServer) publicRoutes() []Route {
 	return []Route{
 		{Method: "GET", Path: "/", Access: AccessPublic},
 		{Method: "GET", Path: "/health", Access: AccessPublic},
+		{Method: "GET", Path: "/metrics", Access: AccessPublic},
 		{Method: "POST", Path: "/api/v1/auth/login", Access: AccessPublic},
 		{Method: "POST", Path: "/api/v1/agent/register", Access: AccessPublic},
 		{Method: "POST", Path: "/api/v1/enrollment/validate", Access: AccessPublic},
