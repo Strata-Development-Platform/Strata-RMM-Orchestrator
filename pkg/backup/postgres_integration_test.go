@@ -70,22 +70,22 @@ func setupPGEnv(t *testing.T) pgEnv {
 		}
 
 		// Split host:port into host and port
-		colonIdx := strings.LastIndex(hostPort, ":")
-		if colonIdx > -1 {
-			host = hostPort[:colonIdx]
-			port = hostPort[colonIdx+1:]
+		lastColon := strings.LastIndex(hostPort, ":")
+		if lastColon > -1 {
+			host = hostPort[:lastColon]
+			port = hostPort[lastColon+1:]
 		} else {
 			host = hostPort
 			port = "5432"
 		}
 
 		// Split credentials
-		colonIdx := strings.Index(creds, ":")
-		if colonIdx == -1 {
+		credColon := strings.Index(creds, ":")
+		if credColon == -1 {
 			require.Fail(t, "invalid admin DSN: missing : in credentials", "dsn="+rawDSN)
 		}
-		user = creds[:colonIdx]
-		password = creds[colonIdx+1:]
+		user = creds[:credColon]
+		password = creds[credColon+1:]
 	}
 
 	// Admin DSN: connect to 'postgres' database to create/drop test databases

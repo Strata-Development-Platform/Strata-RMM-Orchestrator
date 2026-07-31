@@ -81,7 +81,7 @@ func setupTestDB(t *testing.T, ctx context.Context) (*sql.DB, string) {
 
 	// Drop if exists, then create
 	adminDB.ExecContext(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %s", pqIdent(dbName))) //nolint:errcheck
-	_, err := adminDB.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE %s", pqIdent(dbName)))
+	_, err = adminDB.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE %s", pqIdent(dbName)))
 	require.NoError(t, err)
 
 	testDSN := makeMigrationDSN(host, port, user, password, dbName)
