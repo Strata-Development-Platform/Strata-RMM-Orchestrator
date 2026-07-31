@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -561,4 +562,50 @@ func setenv(t *testing.T, key, value string) {
 			_ = os.Setenv(key, prev)
 		}
 	})
+}
+
+func TestSecretEnvReadsFileWithoutLoggingValue(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(path, []byte("file-secret-value\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TEST_SECRET", "")
+	t.Setenv("TEST_SECRET_FILE", path)
+
+	got, err := secretEnv("TEST_SECRET")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "file-secret-value" {
+		t.Fatal("secret file value was not loaded")
+	}
+}
+
+func TestSecretEnvRejectsAmbiguousSources(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(path, []byte("file-secret-value"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TEST_SECRET", "environment-secret")
+	t.Setenv("TEST_SECRET_FILE", path)
+
+	if _, err := secretEnv("TEST_SECRET"); err == nil {
+		t.Fatal("expected direct and file secret sources to be rejected")
+	}
+}
+
+func TestSecretEnvRejectsRelativeAndNonCanonicalPaths(t *testing.T) {
+	tests := []string{
+		"relative/secret",
+		t.TempDir() + string(os.PathSeparator) + ".." + string(os.PathSeparator) + "secret",
+	}
+	for _, path := range tests {
+		t.Run(path, func(t *testing.T) {
+			t.Setenv("TEST_SECRET", "")
+			t.Setenv("TEST_SECRET_FILE", path)
+			if _, err := secretEnv("TEST_SECRET"); err == nil || !strings.Contains(err.Error(), "absolute and canonical") {
+				t.Fatalf("secretEnv() error = %v, want path validation failure", err)
+			}
+		})
+	}
 }

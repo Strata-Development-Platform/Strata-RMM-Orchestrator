@@ -1,0 +1,140 @@
+name: strata-rmm
+
+services:
+  postgres:
+    image: timescale/timescaledb:2.15-pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: strata_rmm
+      POSTGRES_USER: strata
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    command:
+      - postgres
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/run/postgres-tls/server.crt
+      - -c
+      - ssl_key_file=/run/postgres-tls/server.key
+    secrets:
+      - postgres_password
+      - postgres_tls_cert
+      - postgres_tls_key
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-postgres-tls.sh:/usr/local/bin/strata-postgres-entrypoint:ro
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U strata -d strata_rmm"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [backend]
+
+  nats:
+    image: nats:2.11-alpine
+    restart: unless-stopped
+    command: ["-c", "/run/secrets/nats_config"]
+    secrets:
+      - nats_config
+      - nats_tls_cert
+      - nats_tls_key
+      - platform_ca
+    ports:
+      - "4222:4222"
+    networks: [backend]
+
+  orchestrator:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["orchestrator"]
+    environment:
+      STRATA_RUNTIME_MODE: production
+      STRATA_PUBLIC_URL: https://${STRATA_DOMAIN}
+      CORS_ORIGINS: https://${STRATA_DOMAIN}
+      STRATA_API_ADDR: :8080
+      TIMESCALE_DSN_FILE: /run/secrets/timescale_dsn
+      NATS_URL: tls://nats:4222
+      NATS_ADVERTISE_URLS: tls://${STRATA_DOMAIN}:4222
+      NATS_TOKEN_FILE: /run/secrets/nats_token
+      NATS_TLS_ENABLED: "true"
+      NATS_TLS_CA: /run/secrets/platform_ca
+      JWT_SECRET_FILE: /run/secrets/jwt_secret
+      STRATA_METRICS_TOKEN_FILE: /run/secrets/metrics_token
+      STORAGE_BACKEND: none
+      STRATA_SEED_DEV: "false"
+    secrets:
+      - timescale_dsn
+      - nats_token
+      - platform_ca
+      - jwt_secret
+      - metrics_token
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
+    healthcheck:
+      test: [CMD, "wget", "-q", "-O", "-", "http://127.0.0.1:8080/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - orchestrator_data:/var/lib/strata-rmm
+    networks: [backend, frontend]
+
+  web:
+    build:
+      context: ../../ui
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      STRATA_DOMAIN: ${STRATA_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      orchestrator:
+        condition: service_healthy
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [frontend]
+
+secrets:
+  postgres_password:
+    file: ./secrets/postgres_password
+  postgres_tls_cert:
+    file: ./secrets/postgres_server.crt
+  postgres_tls_key:
+    file: ./secrets/postgres_server.key
+  timescale_dsn:
+    file: ./secrets/timescale_dsn
+  nats_config:
+    file: ./secrets/nats.conf
+  nats_token:
+    file: ./secrets/nats_token
+  nats_tls_cert:
+    file: ./secrets/nats_server.crt
+  nats_tls_key:
+    file: ./secrets/nats_server.key
+  platform_ca:
+    file: ./secrets/platform_ca.crt
+  jwt_secret:
+    file: ./secrets/jwt_secret
+  metrics_token:
+    file: ./secrets/metrics_token
+
+networks:
+  frontend:
+  backend:
+    internal: true
+
+volumes:
+  postgres_data:
+  orchestrator_data:
+  caddy_data:
+  caddy_config:

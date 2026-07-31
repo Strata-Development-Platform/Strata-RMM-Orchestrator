@@ -1,0 +1,27 @@
+{
+	admin off
+	email {$ACME_EMAIL}
+}
+
+{$STRATA_DOMAIN} {
+	encode zstd gzip
+
+	@api path /api/* /health /health/* /ready /ready/*
+	handle @api {
+		reverse_proxy orchestrator:8080
+	}
+
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+}
