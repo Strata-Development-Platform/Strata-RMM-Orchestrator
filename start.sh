@@ -1,6 +1,13 @@
 #!/bin/bash
-export JWT_SECRET=b02088ce0a77671a2790d8ac6f3c6b0923af35d45b5b34fdb2024338f79038ab
+set -euo pipefail
+
+: "${JWT_SECRET:?JWT_SECRET must be supplied by the deployment secret store}"
+: "${TIMESCALE_DSN:?TIMESCALE_DSN must be supplied without embedding it in this script}"
+
+NATS_URL="${NATS_URL:-nats://127.0.0.1:4222}"
+API_ADDR="${API_ADDR:-127.0.0.1:8080}"
+
 exec /home/administrator/strata-rmm/bin/strata-rmm orchestrator \
-  --nats-url nats://127.0.0.1:4222 \
-  --timescale-dsn "postgres://strata:strata_dev_2026@localhost:5432/strata_rmm?sslmode=disable" \
-  --api-addr 127.0.0.1:8080
+  --nats-url "$NATS_URL" \
+  --timescale-dsn "$TIMESCALE_DSN" \
+  --api-addr "$API_ADDR"

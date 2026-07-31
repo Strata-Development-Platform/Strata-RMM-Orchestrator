@@ -412,7 +412,13 @@ func (s *APIServer) classifyRoute(method, path string) RouteAccess {
 			return r.Access
 		}
 	}
-	if strings.HasPrefix(path, "/api/v1/admin/") {
+	// Privileged namespaces fail closed. The explicit route inventory above
+	// documents supported operations; these prefix guards ensure a newly added
+	// handler cannot silently inherit ordinary user access if its inventory entry
+	// is missed during review.
+	if strings.HasPrefix(path, "/api/v1/admin/") ||
+		strings.HasPrefix(path, "/api/v2/platform/") ||
+		strings.HasPrefix(path, "/api/v2/deployment/") {
 		return AccessAdmin
 	}
 	return AccessUser
@@ -447,6 +453,8 @@ func (s *APIServer) publicRoutes() []Route {
 	return []Route{
 		{Method: "GET", Path: "/", Access: AccessPublic},
 		{Method: "GET", Path: "/health", Access: AccessPublic},
+		{Method: "GET", Path: "/health/live", Access: AccessPublic},
+		{Method: "GET", Path: "/health/ready", Access: AccessPublic},
 		{Method: "GET", Path: "/metrics", Access: AccessPublic},
 		{Method: "POST", Path: "/api/v1/auth/login", Access: AccessPublic},
 		{Method: "POST", Path: "/api/v1/agent/register", Access: AccessPublic},
@@ -463,7 +471,6 @@ func (s *APIServer) adminRoutes() []Route {
 		{Method: "GET", Path: "/api/v2/platform/msps", Access: AccessAdmin},
 		{Method: "POST", Path: "/api/v2/platform/msps", Access: AccessAdmin},
 		{Method: "GET", Path: "/api/v2/platform/msps/{mspID}", Access: AccessAdmin},
-		{Method: "PATCH", Path: "/api/v2/platform/msps/{mspID}", Access: AccessAdmin},
 		{Method: "POST", Path: "/api/v2/platform/msps/{mspID}/suspend", Access: AccessAdmin},
 		{Method: "POST", Path: "/api/v2/platform/msps/{mspID}/activate", Access: AccessAdmin},
 		{Method: "POST", Path: "/api/v2/platform/msps/{mspID}/offboarding", Access: AccessAdmin},
@@ -474,6 +481,8 @@ func (s *APIServer) adminRoutes() []Route {
 		{Method: "PATCH", Path: "/api/v2/platform/domains/{domainID}/certificate", Access: AccessAdmin},
 		{Method: "POST", Path: "/api/v2/platform/support-grants", Access: AccessAdmin},
 		{Method: "DELETE", Path: "/api/v2/platform/support-grants/{grantID}", Access: AccessAdmin},
+		{Method: "GET", Path: "/api/v2/deployment/state", Access: AccessAdmin},
+		{Method: "GET", Path: "/api/v2/deployment/history", Access: AccessAdmin},
 		// Legacy admin routes
 		{Method: "GET", Path: "/api/v1/admin/users", Access: AccessAdmin},
 		{Method: "POST", Path: "/api/v1/admin/users", Access: AccessAdmin},

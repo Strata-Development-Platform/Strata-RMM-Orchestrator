@@ -78,6 +78,62 @@ func TestRateLimiterDifferentIPs(t *testing.T) {
 	}
 }
 
+func TestSensitiveRoutesUseIndependentStrictBuckets(t *testing.T) {
+	rl := NewRateLimiter(100, 200)
+	handler := rl.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	for i := 0; i < 6; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
+		req.RemoteAddr = "203.0.113.10:12345"
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if i < 5 && rec.Code != http.StatusOK {
+			t.Fatalf("login request %d: status = %d, want 200", i+1, rec.Code)
+		}
+		if i == 5 {
+			if rec.Code != http.StatusTooManyRequests {
+				t.Fatalf("login request 6: status = %d, want 429", rec.Code)
+			}
+			if rec.Header().Get("Retry-After") == "" {
+				t.Fatal("rate-limited response must include Retry-After")
+			}
+		}
+	}
+
+	// Exhausting the login bucket must not consume ordinary API capacity.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+	req.RemoteAddr = "203.0.113.10:12345"
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("general API after login throttle: status = %d, want 200", rec.Code)
+	}
+}
+
+func TestRateLimiterIgnoresForwardedAddressFromUntrustedPeer(t *testing.T) {
+	rl := NewRateLimiter(1, 1)
+	handler := rl.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	for i, forwarded := range []string{"198.51.100.1", "198.51.100.2"} {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+		req.RemoteAddr = "203.0.113.20:12345"
+		req.Header.Set("X-Forwarded-For", forwarded)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		want := http.StatusOK
+		if i == 1 {
+			want = http.StatusTooManyRequests
+		}
+		if rec.Code != want {
+			t.Fatalf("request %d with spoofed forwarded address: status = %d, want %d", i+1, rec.Code, want)
+		}
+	}
+}
+
 func TestSecurityHeaders(t *testing.T) {
 	handler := SecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

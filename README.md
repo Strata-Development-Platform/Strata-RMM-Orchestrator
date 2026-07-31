@@ -10,21 +10,28 @@ A horizontally-scalable, multi-tenant Remote Monitoring & Management platform wi
 ## Quick Start
 
 ```bash
-# Docker (recommended)
-curl -O https://raw.githubusercontent.com/Strata-Development-Platform/Strata-RMM-Orchestrator/master/deploy/docker/docker-compose.yml
-docker compose up -d
+# Docker (recommended local-development topology)
+git clone https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator.git
+cd Strata-RMM-Orchestrator
+export JWT_SECRET="$(openssl rand -hex 32)"
+export STRATA_METRICS_TOKEN="$(openssl rand -hex 32)"
+export POSTGRES_PASSWORD="$(openssl rand -hex 24)"
+export MINIO_ROOT_PASSWORD="$(openssl rand -hex 24)"
+export GRAFANA_ADMIN_PASSWORD="$(openssl rand -hex 24)"
+export STRATA_METRICS_TOKEN_FILE="$(mktemp)"
+printf '%s' "$STRATA_METRICS_TOKEN" > "$STRATA_METRICS_TOKEN_FILE"
+chmod 600 "$STRATA_METRICS_TOKEN_FILE"
+docker compose -f deploy/docker/docker-compose.yml up -d
 
 # Verify
-curl http://localhost:8080/health
-
-# Create first customer
-curl -X POST http://localhost:8080/api/v1/admin/customers \
-  -H 'Content-Type: application/json' \
-  -d '{"name": "My Company", "admin_email": "admin@example.com"}'
-# Returns deployment_id → use to install agents
+curl http://localhost:8080/health/live
 ```
 
-Start with the [documentation index](docs/index.md), or see [docs/INSTALL.md](docs/INSTALL.md) for the full installation guide (bare metal, Docker, Kubernetes).
+This Compose topology is for local development; its dependency credentials and
+unencrypted transports are not production settings. Start with the
+[documentation index](docs/index.md), or follow the
+[installation guide](docs/INSTALL.md) for production preflight, TLS,
+authentication, bootstrap, and supported deployment guidance.
 
 ## Architecture
 

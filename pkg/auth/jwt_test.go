@@ -81,6 +81,56 @@ func TestGeneratorRejectsUnsafeSecret(t *testing.T) {
 	}
 }
 
+func TestJWTSecretRotationOverlap(t *testing.T) {
+	const oldSecret = "old-test-secret-that-is-at-least-32-bytes-long"
+	const newSecret = "new-test-secret-that-is-at-least-32-bytes-long"
+	oldGenerator := NewTokenGenerator(oldSecret)
+	oldToken, err := oldGenerator.GenerateUserToken("user-1", "tenant-1", "", "", "", []string{"viewer"}, time.Hour)
+	if err != nil {
+		t.Fatalf("generate old token: %v", err)
+	}
+
+	t.Setenv("JWT_SECRET", newSecret)
+	t.Setenv("JWT_SECRET_PREVIOUS", oldSecret)
+	rotatingGenerator, err := NewTokenGeneratorOrFail("")
+	if err != nil {
+		t.Fatalf("create rotating generator: %v", err)
+	}
+	if _, err := rotatingGenerator.Validate(oldToken); err != nil {
+		t.Fatalf("old token must remain valid during overlap: %v", err)
+	}
+
+	newToken, err := rotatingGenerator.GenerateUserToken("user-1", "tenant-1", "", "", "", []string{"viewer"}, time.Hour)
+	if err != nil {
+		t.Fatalf("generate new token: %v", err)
+	}
+	if _, err := oldGenerator.Validate(newToken); err == nil {
+		t.Fatal("new token must be signed only by the current secret")
+	}
+
+	t.Setenv("JWT_SECRET_PREVIOUS", "")
+	postRotation, err := NewTokenGeneratorOrFail("")
+	if err != nil {
+		t.Fatalf("create post-rotation generator: %v", err)
+	}
+	if _, err := postRotation.Validate(oldToken); err == nil {
+		t.Fatal("old token must fail after the overlap secret is removed")
+	}
+}
+
+func TestJWTSecretRotationConfigurationRejectsUnsafeOverlap(t *testing.T) {
+	t.Setenv("JWT_SECRET", "new-test-secret-that-is-at-least-32-bytes-long")
+	for _, previous := range []string{
+		"short",
+		"new-test-secret-that-is-at-least-32-bytes-long",
+	} {
+		t.Setenv("JWT_SECRET_PREVIOUS", previous)
+		if err := ValidateJWTConfig(); err == nil {
+			t.Errorf("ValidateJWTConfig accepted unsafe previous secret %q", previous)
+		}
+	}
+}
+
 func TestAgentTokenRequiresIdentityAndTenant(t *testing.T) {
 	generator := NewTokenGenerator(testJWTSecret)
 	if _, err := generator.GenerateAgentToken("", "agent-1", time.Hour); err == nil {
