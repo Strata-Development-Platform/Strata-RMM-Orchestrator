@@ -444,7 +444,7 @@ func authorizePlatformActor(ctx context.Context, tx *sql.Tx, actorID string) err
 func (s *OwnerInvitationService) deliver(ctx context.Context, invitationID, mspID, mspName, recipient, rawToken, tokenHash string, expiresAt time.Time) string {
 	status := "unconfigured"
 	if s.mailer != nil && s.publicURL != "" {
-		activationURL := s.publicURL + "/activate-msp"
+		activationURL := s.publicURL + "/activate-account#" + rawToken
 		if err := s.mailer.SendOwnerActivation(ctx, OwnerActivationMail{
 			Recipient: recipient, MSPName: mspName, ActivationURL: activationURL,
 			Token: rawToken, ExpiresAt: expiresAt,

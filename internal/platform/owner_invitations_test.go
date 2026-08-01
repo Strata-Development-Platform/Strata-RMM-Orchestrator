@@ -66,18 +66,21 @@ func TestOwnerInvitationInspectionMasksEmail(t *testing.T) {
 	}
 }
 
-func TestOwnerActivationMailNeverPlacesTokenInURL(t *testing.T) {
+func TestOwnerActivationMailPlacesTokenInURLFragment(t *testing.T) {
 	activation := OwnerActivationMail{
 		Recipient: "owner@example.test", MSPName: "Example MSP",
-		ActivationURL: "https://rmm.example.test/activate-msp",
+		ActivationURL: "https://rmm.example.test/activate-account#one-time-secret",
 		Token:         "one-time-secret", ExpiresAt: time.Unix(1_800_000_000, 0),
 	}
 	message := buildOwnerActivationMessage("accounts@example.test", activation.Recipient, activation)
-	if strings.Contains(message, "?token=") || strings.Contains(message, "#one-time-secret") {
-		t.Fatal("activation token was placed in a URL")
+	if strings.Contains(message, "?token=") || strings.Contains(message, "?") {
+		t.Fatal("activation token was placed in a query string")
 	}
-	if !strings.Contains(message, "\r\none-time-secret\r\n") {
-		t.Fatal("activation code is missing from the mail body")
+	if !strings.Contains(message, "https://rmm.example.test/activate-account#one-time-secret") {
+		t.Fatal("activation link is missing from the mail body")
+	}
+	if strings.Contains(message, "enter this one-time invitation code") {
+		t.Fatal("mail body must not present a separate typed code")
 	}
 }
 

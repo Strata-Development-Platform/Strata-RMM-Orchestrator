@@ -152,7 +152,7 @@ func buildOwnerActivationMessage(from, recipient string, activation OwnerActivat
 		"Content-Type: text/plain; charset=UTF-8\r\n" +
 		"\r\n" +
 		"You were invited to activate the owner account for " + activation.MSPName + ".\r\n\r\n" +
-		"Open " + activation.ActivationURL + " and enter this one-time invitation code:\r\n\r\n" +
-		activation.Token + "\r\n\r\n" +
+		"Open this link to activate your account:\r\n\r\n" +
+		activation.ActivationURL + "\r\n\r\n" +
 		"This invitation expires at " + activation.ExpiresAt.UTC().Format(time.RFC3339) + ".\r\n"
 }

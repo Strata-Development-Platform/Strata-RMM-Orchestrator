@@ -110,8 +110,11 @@ func TestOwnerActivationLifecycleDeliveryRotationAndLogin(t *testing.T) {
 		t.Fatalf("delivery status = %q, want failed", created.DeliveryStatus)
 	}
 	firstMail := mailer.last(t)
-	if strings.Contains(firstMail.ActivationURL, firstMail.Token) || strings.Contains(firstMail.ActivationURL, "?") {
-		t.Fatal("raw invitation token was embedded in the activation URL")
+	if !strings.Contains(firstMail.ActivationURL, "/activate-account#"+firstMail.Token) {
+		t.Fatal("activation URL must carry the token in a hash fragment")
+	}
+	if strings.Contains(firstMail.ActivationURL, "?") {
+		t.Fatal("activation URL must not use a query string (fragments avoid request-log exposure)")
 	}
 	var active bool
 	var onboarding, entitlementStatus, storedHash, deliveryStatus string
