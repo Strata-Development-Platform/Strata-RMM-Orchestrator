@@ -80,6 +80,11 @@ func (m *SMTPAccountMailer) SendOwnerActivation(ctx context.Context, activation 
 	if containsControl(activation.MSPName) || containsControl(activation.Token) {
 		return fmt.Errorf("activation mail data is invalid")
 	}
+	for _, value := range []string{m.fromAddress, recipient.Address, activation.MSPName, activation.Token, activation.ActivationURL} {
+		if containsCRLF(value) {
+			return fmt.Errorf("activation mail data is invalid")
+		}
+	}
 
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
 	connection, err := dialer.DialContext(ctx, "tcp", m.address)
@@ -120,10 +125,10 @@ func (m *SMTPAccountMailer) SendOwnerActivation(ctx context.Context, activation 
 			return fmt.Errorf("SMTP authentication failed")
 		}
 	}
-	if err := client.Mail(m.fromAddress); err != nil {
+	if err := client.Mail(m.fromAddress); err != nil { // #nosec G707 -- fromAddress is mail.ParseAddress-validated in NewSMTPAccountMailer; addr-spec cannot contain CR/LF.
 		return fmt.Errorf("SMTP sender rejected")
 	}
-	if err := client.Rcpt(recipient.Address); err != nil {
+	if err := client.Rcpt(recipient.Address); err != nil { // #nosec G707 -- recipient.Address is mail.ParseAddress-validated above; addr-spec cannot contain CR/LF.
 		return fmt.Errorf("SMTP recipient rejected")
 	}
 	wc, err := client.Data()
@@ -131,6 +136,10 @@ func (m *SMTPAccountMailer) SendOwnerActivation(ctx context.Context, activation 
 		return fmt.Errorf("SMTP message transfer failed")
 	}
 	message := buildOwnerActivationMessage(m.fromAddress, recipient.Address, activation)
+	if !validSMTPMessage(message) {
+		_ = wc.Close()
+		return fmt.Errorf("SMTP message transfer failed")
+	}
 	if _, err := wc.Write([]byte(message)); err != nil {
 		_ = wc.Close()
 		return fmt.Errorf("SMTP message transfer failed")

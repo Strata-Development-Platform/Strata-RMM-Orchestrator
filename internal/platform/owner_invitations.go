@@ -537,6 +537,28 @@ func containsControl(value string) bool {
 	return false
 }
 
+func containsCRLF(value string) bool {
+	return strings.ContainsRune(value, '\r') || strings.ContainsRune(value, '\n')
+}
+
+func validSMTPMessage(value string) bool {
+	if strings.HasPrefix(value, "\r\n") || strings.HasSuffix(value, "\r\n") {
+		return false
+	}
+	for i := 0; i < len(value); i++ {
+		switch value[i] {
+		case '\r':
+			if i+1 >= len(value) || value[i+1] != '\n' {
+				return false
+			}
+			i++
+		case '\n':
+			return false
+		}
+	}
+	return true
+}
+
 func maskEmail(email string) string {
 	parts := strings.Split(email, "@")
 	if len(parts) != 2 {
