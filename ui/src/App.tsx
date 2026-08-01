@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from '@/hooks/useAuth';
 import { WorkspaceProvider, useWorkspace } from '@/hooks/useWorkspace';
 import Layout from '@/components/layout/Layout';
@@ -21,6 +21,7 @@ import DeviceRemotePage from '@/pages/DeviceRemotePage';
 import MSPWorkspacePage from '@/pages/MSPWorkspacePage';
 import LegalPage from '@/pages/LegalPage';
 import ProviderSetupPage from '@/pages/ProviderSetupPage';
+import ActivateAccountPage from '@/pages/ActivateAccountPage';
 import { ToastProvider } from '@/components/shared/Toast';
 
 function LoadingScreen() {
@@ -127,15 +128,24 @@ function AppRoutes() {
   );
 }
 
+function AppContent() {
+  const location = useLocation();
+  if (location.pathname === '/activate-account') return <ActivateAccountPage />;
+
+  return (
+    <AuthProvider>
+      <WorkspaceProvider>
+        <AppRoutes />
+      </WorkspaceProvider>
+    </AuthProvider>
+  );
+}
+
 export default function App() {
   return (
     <BrowserRouter>
       <ToastProvider>
-        <AuthProvider>
-          <WorkspaceProvider>
-            <AppRoutes />
-          </WorkspaceProvider>
-        </AuthProvider>
+        <AppContent />
       </ToastProvider>
     </BrowserRouter>
   );

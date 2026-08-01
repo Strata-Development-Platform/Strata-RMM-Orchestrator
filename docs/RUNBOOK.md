@@ -149,6 +149,96 @@ DELETE attempts against any control-plane audit row. Provider mutation handlers
 also fail the request if the audit append fails, causing the request transaction
 to roll back.
 
+## MSP owner activation recovery
+
+An MSP is incomplete while `onboarding_status = 'pending_owner'`. In that state
+`is_active` is false, its initial entitlement is suspended, and host resolution
+and workspace switching deliberately reject it. Do not use the ordinary MSP
+activate endpoint to bypass owner verification; that endpoint updates only
+MSPs whose onboarding status is already `active`.
+
+Start with read-only state checks from a privileged operator database session
+that can inspect forced-RLS tables:
+
+```sql
+SELECT id, name
+FROM schema_migrations
+WHERE id = 68;
+
+SELECT m.id, m.name, m.slug, m.onboarding_status, m.is_active,
+       e.status AS entitlement_status,
+       i.id AS invitation_id, i.delivery_status,
+       i.created_at, i.expires_at, i.delivered_at,
+       i.accepted_at, i.revoked_at
+FROM msp_tenants m
+LEFT JOIN plan_entitlements e ON e.msp_id = m.id
+LEFT JOIN LATERAL (
+  SELECT id, delivery_status, created_at, expires_at, delivered_at,
+         accepted_at, revoked_at
+  FROM account_invitations
+  WHERE msp_id = m.id
+  ORDER BY created_at DESC
+  LIMIT 1
+) i ON true
+WHERE m.onboarding_status = 'pending_owner'
+ORDER BY m.created_at;
+```
+
+Interpret the latest delivery state as follows:
+
+- `unconfigured`: no account mailer or usable public origin was wired when the
+  invitation was delivered. Configure SMTP and `STRATA_PUBLIC_URL`, restart the
+  orchestrator, then resend.
+- `failed`: the SMTP attempt failed. Check redacted orchestrator errors, DNS,
+  network reachability, TLS mode/certificate, credentials, sender policy, and
+  recipient policy; then resend.
+- `pending`: the service could not confirm persistence of the delivery result.
+  Check database health before deciding whether to resend.
+- `delivered`: the SMTP server accepted the message; this is not proof that the
+  mailbox received it. A still-valid delivered invitation cannot be resent and
+  returns `409`. Check spam/quarantine and recipient routing, or wait for expiry
+  before rotation.
+
+Use **MSP Tenants → Resend invitation** only after correcting the cause. Resend
+is allowed for failed, unconfigured, pending, or expired invitations. It locks
+and revokes the current invitation, creates a fresh 72-hour token, and attempts
+delivery. Every older link then fails. Raw tokens cannot be recovered from the
+database because only SHA-256 digests are stored, and the API never returns
+them. Do not copy hashes into a URL, manually mark an email verified, edit
+invitation timestamps, or activate the MSP in SQL.
+
+After the owner accepts the latest link, expect the newest invitation to have
+`accepted_at`, the MSP to be `onboarding_status = 'active'` and `is_active =
+true`, its entitlement to be active, and exactly one active `msp_owner`
+membership. Acceptance creates no browser session; the owner must sign in with
+the invited email and chosen password. If the page reports an unavailable
+invitation, check expiry/revocation/acceptance and resend if the MSP remains
+pending. If the MSP is already active, treat the link as consumed and do not
+issue another owner invitation.
+
+### MSP owner activation audit checks
+
+```sql
+SELECT action, msp_id, actor_user_id, resource_type, resource_id,
+       details, created_at
+FROM control_plane_audit
+WHERE action IN (
+  'msp.owner_invitation_created',
+  'msp.owner_invitation_resent',
+  'msp.owner_activated'
+)
+ORDER BY created_at;
+```
+
+Creation and successful rotation are attributed to the top-level platform
+operator; activation is attributed to the new owner. Invitation events refer
+to the invitation row, and activation refers to the MSP. For all three events,
+`details` must be an empty object: owner emails, raw or hashed tokens, passwords,
+and password hashes must not appear. A rejected resend of a still-valid
+delivered invitation adds no resend event. Creation/rotation state and their
+audit event commit together before email delivery; activation state and its
+audit event commit atomically with invitation acceptance.
+
 ### View active alerts
 ```sql
 SELECT * FROM alerts WHERE status = 'firing' ORDER BY fired_at DESC;

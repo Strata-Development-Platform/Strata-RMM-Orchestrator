@@ -9,6 +9,8 @@
 | GET | /health/live | public | - | - | - | - |
 | GET | /health/ready | public | - | - | - | - |
 | POST | /api/v1/auth/login | public | - | - | - | - |
+| POST | /api/v1/auth/invitations/inspect | public, dedicated abuse bucket | - | possession of one-time invitation | invitation | token body |
+| POST | /api/v1/auth/invitations/accept | public, dedicated abuse bucket | - | possession of one-time invitation | MSP owner activation | token body |
 | GET | /install.sh | public | - | - | - | - |
 | GET | /releases/latest/agent/{os}/{arch} | public | - | - | - | - |
 | GET | /api/v1/auth/me | required | user | authenticated | user | user |
@@ -32,8 +34,10 @@
 | GET/POST/DELETE | /api/v1/keys/* | required | user | msp_admin | client | client |
 | GET/POST | /api/v1/branding | required | user | msp_admin | msp | msp |
 | GET/POST | /api/v1/domains | required | user | msp_admin | msp | msp |
-| GET/POST | /api/v2/platform/msps | required | user | platform_admin | platform | platform |
+| GET | /api/v2/platform/msps | required | user | platform_owner/platform_admin | platform | platform |
+| POST | /api/v2/platform/msps | required | user | platform_owner/platform_admin, top-level session | MSP owner invitation | platform |
 | GET | /api/v2/platform/msps/{id} | required | user | platform_admin | msp | platform |
+| POST | /api/v2/platform/msps/{id}/owner-invitation | required | user | platform_owner/platform_admin, top-level session | invitation | platform |
 | POST | /api/v2/platform/msps/{id}/suspend | required | user | platform_admin | msp | platform |
 | POST | /api/v2/platform/msps/{id}/activate | required | user | platform_admin | msp | platform |
 | GET/POST | /api/v2/platform/msps/{id}/offboarding | required | user | platform_admin | msp | platform |

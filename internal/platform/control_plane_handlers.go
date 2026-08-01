@@ -395,6 +395,16 @@ func (s *APIServer) handleContextSwitch(w http.ResponseWriter, r *http.Request) 
 	if !s.AuthorizeMSPAccess(w, r, req.MSPID) {
 		return
 	}
+	var workspaceActive bool
+	if err := s.requestDB(r).QueryRowContext(r.Context(), `
+		SELECT EXISTS (
+			SELECT 1 FROM msp_tenants
+			WHERE id = $1 AND is_active = TRUE AND onboarding_status = 'active'
+		)
+	`, req.MSPID).Scan(&workspaceActive); err != nil || !workspaceActive {
+		writeAuthorizationDenied(w)
+		return
+	}
 	if req.ClientID != "" {
 		if !s.AuthorizeClientAccess(w, r, req.ClientID) {
 			return

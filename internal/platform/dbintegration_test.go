@@ -81,7 +81,7 @@ func seedTestData(t *testing.T, db *sql.DB) (mspID, clientID, siteID, deviceID, 
 	_, _ = db.Exec(`DELETE FROM tenants`)
 
 	_, _ = db.Exec(`INSERT INTO tenants (id, name, slug, plan) VALUES ('00000000-0000-0000-0000-000000000001', 'Test', 'test', 'enterprise')`)
-	_, _ = db.Exec(`INSERT INTO users (id, tenant_id, email, password_hash, role) VALUES ($1, $2, 'test@test.com', '$2a$10$test', 'admin')`, userID, "00000000-0000-0000-0000-000000000001")
+	_, _ = db.Exec(`INSERT INTO users (id, tenant_id, email, password_hash, role, email_verified_at) VALUES ($1, $2, 'test@test.com', '$2a$10$test', 'admin', NOW())`, userID, "00000000-0000-0000-0000-000000000001")
 	_, _ = db.Exec(`INSERT INTO msp_tenants (id, name, slug, is_active) VALUES ($1, 'Test MSP', 'test-msp', true)`, mspID)
 	_, _ = db.Exec(`INSERT INTO client_organizations (id, msp_id, name, slug, is_active) VALUES ($1, $2, 'Test Client', 'test-client', true)`, clientID, mspID)
 	_, _ = db.Exec(`INSERT INTO sites (id, client_id, name, slug, is_active) VALUES ($1, $2, 'Test Site', 'test-site', true)`, siteID, clientID)
@@ -189,7 +189,7 @@ func TestApprovalDuplicateDecisionDenied(t *testing.T) {
 	expiresAt := time.Now().Add(1 * time.Hour)
 	otherUserID := "00000000-0000-0000-0000-000000000030"
 
-	_, err := db.Exec(`INSERT INTO users (id, tenant_id, email, password_hash, role) VALUES ($1, '00000000-0000-0000-0000-000000000001', 'other@test.com', '$2a$10$test', 'admin')`, otherUserID)
+	_, err := db.Exec(`INSERT INTO users (id, tenant_id, email, password_hash, role, email_verified_at) VALUES ($1, '00000000-0000-0000-0000-000000000001', 'other@test.com', '$2a$10$test', 'admin', NOW())`, otherUserID)
 	if err != nil {
 		t.Fatalf("seed other user: %v", err)
 	}

@@ -442,6 +442,52 @@ func TestValidateRejectsMissingPublicURLInProduction(t *testing.T) {
 	}
 }
 
+func TestSMTPConfigurationRequiresCompleteTLSDeliveryInputs(t *testing.T) {
+	base := &OrchestratorConfig{
+		RuntimeMode: ModeDevelopment,
+		JWT:         JWTConfig{Secret: "abcdefghijklmnopqrstuvwxyz123456"},
+		DB:          DatabaseConfig{DSN: "postgres://h:1/d", MaxOpenConns: 5, MaxIdleConns: 2, ConnMaxLifetime: 10},
+		NATS:        NATSConfig{URL: "nats://localhost:4222", ReconnectWait: 5, MaxReconnects: -1},
+		HTTP:        HTTPConfig{APIAddr: ":8080", ReadTimeout: 5, WriteTimeout: 5, MaxBodySizeBytes: 1000},
+		SMTP:        SMTPConfig{Host: "smtp.example.test", Port: 587, FromAddress: "accounts@example.test", Username: "user", Password: "secret"},
+	}
+	if err := base.Validate(); err == nil || !strings.Contains(err.Error(), "PublicURL") {
+		t.Fatalf("Validate() error = %v, want public URL requirement", err)
+	}
+	base.HTTP.PublicURL = "https://rmm.example.test"
+	if err := base.Validate(); err != nil {
+		t.Fatalf("complete SMTP configuration rejected: %v", err)
+	}
+	base.SMTP.Password = ""
+	if err := base.Validate(); err == nil || !strings.Contains(err.Error(), "configured together") {
+		t.Fatalf("Validate() error = %v, want credential pairing failure", err)
+	}
+}
+
+func TestLoadSMTPPasswordFromProtectedFile(t *testing.T) {
+	secretPath := filepath.Join(t.TempDir(), "smtp-password")
+	if err := os.WriteFile(secretPath, []byte("smtp-password\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	setenv(t, "STRATA_SMTP_HOST", "smtp.example.test")
+	setenv(t, "STRATA_SMTP_PORT", "465")
+	setenv(t, "STRATA_SMTP_FROM", "accounts@example.test")
+	setenv(t, "STRATA_SMTP_USERNAME", "mailer")
+	setenv(t, "STRATA_SMTP_PASSWORD", "")
+	setenv(t, "STRATA_SMTP_PASSWORD_FILE", secretPath)
+	setenv(t, "STRATA_SMTP_IMPLICIT_TLS", "true")
+	cfg, err := LoadOrchestratorConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SMTP.Password != "smtp-password" || !cfg.SMTP.ImplicitTLS || !cfg.SMTP.Configured() {
+		t.Fatalf("SMTP protected configuration was not loaded")
+	}
+	if summary := cfg.RedactedSummary(); summary["smtp_configured"] != true {
+		t.Fatalf("redacted summary = %#v", summary)
+	}
+}
+
 func TestValidateRejectsSeedDevInProduction(t *testing.T) {
 	cfg := &OrchestratorConfig{
 		RuntimeMode: ModeProduction,

@@ -57,11 +57,39 @@ export type MSPTenant = {
   id: string;
   name: string;
   slug: string;
-  plan?: string;
+  plan: string;
   client_count: number;
   device_count: number;
   is_active: boolean;
+  onboarding_status: 'pending_owner' | 'active';
+  owner_invitation_delivery_status: string;
   created_at: string;
+};
+
+export type InvitationInspection = {
+  msp: {
+    name: string;
+  };
+  masked_email: string;
+  expires_at: string;
+};
+
+export type CreateMSPWithOwnerRequest = {
+  name: string;
+  slug: string;
+  plan: string;
+  owner_email: string;
+};
+
+export type CreateMSPWithOwnerResponse = {
+  id: string;
+  status: 'pending_owner';
+  delivery_status: string;
+};
+
+export type ResendOwnerInvitationResponse = {
+  status: 'invitation_rotated';
+  delivery_status: string;
 };
 
 export type WorkspaceScope = {

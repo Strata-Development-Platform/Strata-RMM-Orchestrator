@@ -80,7 +80,7 @@ func TestPhase8FOffboardingAndBoundedExport(t *testing.T) {
 		args  []interface{}
 	}{
 		{`INSERT INTO tenants (id, name, slug, plan) VALUES ($1, 'Lifecycle tenant', 'lifecycle-tenant', 'managed')`, []interface{}{tenantID}},
-		{`INSERT INTO users (id, tenant_id, email, password_hash, role) VALUES ($1, $2, 'owner@example.test', 'redacted-hash', 'admin')`, []interface{}{userID, tenantID}},
+		{`INSERT INTO users (id, tenant_id, email, password_hash, role, email_verified_at) VALUES ($1, $2, 'owner@example.test', 'redacted-hash', 'admin', NOW())`, []interface{}{userID, tenantID}},
 		{`INSERT INTO msp_tenants (id, name, slug, plan) VALUES ($1, 'Lifecycle MSP', 'lifecycle-msp', 'free')`, []interface{}{mspID}},
 		{`INSERT INTO plan_entitlements (msp_id, plan_id) VALUES ($1, '00000000-0000-0000-0000-000000000001')`, []interface{}{mspID}},
 		{`INSERT INTO client_organizations (id, msp_id, name, slug) VALUES ($1, $2, 'Lifecycle Client', 'lifecycle-client')`, []interface{}{clientID, mspID}},

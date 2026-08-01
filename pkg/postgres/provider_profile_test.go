@@ -9,10 +9,16 @@ import (
 
 func TestMigration67ProviderProfileContract(t *testing.T) {
 	migrations := Migrations()
-	if got := migrations[len(migrations)-1].ID; got != 67 {
-		t.Fatalf("last migration ID = %d, want 67", got)
+	var migration Migration
+	for _, candidate := range migrations {
+		if candidate.ID == 67 {
+			migration = candidate
+			break
+		}
 	}
-	migration := migrations[len(migrations)-1]
+	if migration.ID != 67 {
+		t.Fatal("migration 67 is missing")
+	}
 	for _, fragment := range []string{
 		"ADD COLUMN IF NOT EXISTS legal_name",
 		"setup_completed_at TIMESTAMPTZ",

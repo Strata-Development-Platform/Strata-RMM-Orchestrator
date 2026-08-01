@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/mail"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -92,6 +93,38 @@ type ObservabilityConfig struct {
 	MetricsToken string
 }
 
+type SMTPConfig struct {
+	Host        string
+	Port        int
+	Username    string
+	Password    string
+	FromAddress string
+	ImplicitTLS bool
+}
+
+func (s SMTPConfig) Configured() bool {
+	return s.Host != "" || s.Port != 0 || s.Username != "" || s.Password != "" || s.FromAddress != "" || s.ImplicitTLS
+}
+
+func (s SMTPConfig) validate() error {
+	if !s.Configured() {
+		return nil
+	}
+	if strings.TrimSpace(s.Host) == "" {
+		return fmt.Errorf("host is required when SMTP delivery is configured")
+	}
+	if s.Port < 1 || s.Port > 65535 {
+		return fmt.Errorf("port must be from 1 to 65535")
+	}
+	if _, err := mail.ParseAddress(strings.TrimSpace(s.FromAddress)); err != nil {
+		return fmt.Errorf("from address is invalid")
+	}
+	if (s.Username == "") != (s.Password == "") {
+		return fmt.Errorf("username and password must be configured together")
+	}
+	return nil
+}
+
 type SeedingConfig struct {
 	SeedDev       bool
 	DevAdminEmail string
@@ -165,6 +198,7 @@ type OrchestratorConfig struct {
 	JWT           JWTConfig
 	HTTP          HTTPConfig
 	Observability ObservabilityConfig
+	SMTP          SMTPConfig
 	Seeding       SeedingConfig
 	Backup        BackupConfig
 	Version       string
@@ -230,6 +264,17 @@ func (c *OrchestratorConfig) Validate() error {
 	check("JWT.Secret", c.JWT.validate())
 	check("Seeding", c.Seeding.validate(c.RuntimeMode))
 	check("Backup", c.Backup.validate())
+	check("SMTP", c.SMTP.validate())
+	if c.SMTP.Configured() && c.HTTP.PublicURL == "" {
+		errs = append(errs, "HTTP.PublicURL: required when SMTP delivery is configured")
+	} else if c.SMTP.Configured() {
+		publicURL, err := url.Parse(c.HTTP.PublicURL)
+		if err != nil || publicURL.Host == "" || publicURL.User != nil || publicURL.RawQuery != "" ||
+			publicURL.Fragment != "" || (publicURL.Path != "" && publicURL.Path != "/") ||
+			(publicURL.Scheme != "http" && publicURL.Scheme != "https") {
+			errs = append(errs, "HTTP.PublicURL: must be an absolute HTTP(S) URL without credentials for SMTP delivery")
+		}
+	}
 
 	if len(errs) > 0 {
 		return fmt.Errorf("configuration validation failed:\n  - %s", strings.Join(errs, "\n  - "))
@@ -508,6 +553,28 @@ func LoadOrchestratorConfig() (*OrchestratorConfig, error) {
 	} else {
 		cfg.Observability.MetricsToken = value
 	}
+	cfg.SMTP.Host = strings.TrimSpace(os.Getenv("STRATA_SMTP_HOST"))
+	if value, err := secretEnv("STRATA_SMTP_USERNAME"); err != nil {
+		errs = append(errs, fmt.Sprintf("STRATA_SMTP_USERNAME: %v", err))
+	} else {
+		cfg.SMTP.Username = value
+	}
+	if value, err := secretEnv("STRATA_SMTP_PASSWORD"); err != nil {
+		errs = append(errs, fmt.Sprintf("STRATA_SMTP_PASSWORD: %v", err))
+	} else {
+		cfg.SMTP.Password = value
+	}
+	cfg.SMTP.FromAddress = strings.TrimSpace(os.Getenv("STRATA_SMTP_FROM"))
+	if v, err := envIntStrict("STRATA_SMTP_PORT", 0); err != nil {
+		errs = append(errs, fmt.Sprintf("STRATA_SMTP_PORT: %v", err))
+	} else {
+		cfg.SMTP.Port = v
+	}
+	if v, err := envBoolStrict("STRATA_SMTP_IMPLICIT_TLS"); err != nil {
+		errs = append(errs, fmt.Sprintf("STRATA_SMTP_IMPLICIT_TLS: %v", err))
+	} else {
+		cfg.SMTP.ImplicitTLS = v
+	}
 
 	if v := envStr("STRATA_API_ADDR", ""); v != "" {
 		cfg.HTTP.APIAddr = v
@@ -738,6 +805,7 @@ func (c *OrchestratorConfig) RedactedSummary() map[string]interface{} {
 		"cors_origins":             c.HTTP.CORSOrigins,
 		"jwt_configured":           c.JWT.Secret != "",
 		"metrics_token_configured": c.Observability.MetricsToken != "",
+		"smtp_configured":          c.SMTP.Configured(),
 		"seed_dev":                 c.Seeding.SeedDev,
 	}
 }

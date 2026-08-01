@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"net/http"
+	"strings"
 )
 
 type dbExecutor interface {
@@ -61,7 +62,7 @@ func (s *APIServer) requestDB(r *http.Request) dbExecutor {
 func (s *APIServer) withTenantTransaction(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		userID, _ := r.Context().Value(ctxKeyUserID).(string)
-		if s.db == nil || userID == "" {
+		if s.db == nil || userID == "" || ownerInvitationOwnsTransaction(r) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -124,4 +125,13 @@ func (s *APIServer) withTenantTransaction(next http.Handler) http.Handler {
 		committed = true
 		buffered.flushTo(w)
 	})
+}
+
+func ownerInvitationOwnsTransaction(r *http.Request) bool {
+	if r.Method != http.MethodPost {
+		return false
+	}
+	return r.URL.Path == "/api/v2/platform/msps" ||
+		(strings.HasPrefix(r.URL.Path, "/api/v2/platform/msps/") &&
+			strings.HasSuffix(r.URL.Path, "/owner-invitation"))
 }

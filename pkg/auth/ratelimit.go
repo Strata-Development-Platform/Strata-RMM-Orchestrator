@@ -80,6 +80,8 @@ func (rl *RateLimiter) policy(method, path string) (string, int, int) {
 	switch {
 	case path == "/api/v1/auth/login":
 		return "login", 1, 5
+	case path == "/api/v1/auth/invitations/inspect" || path == "/api/v1/auth/invitations/accept":
+		return "account-invitation", 1, 5
 	case path == "/api/v1/enroll" || path == "/api/v1/agent/register" || strings.HasPrefix(path, "/api/v1/enrollment/"):
 		return "enrollment", 2, 10
 	case strings.HasPrefix(path, "/api/v1/remote/") || strings.HasPrefix(path, "/api/v1/recordings"):

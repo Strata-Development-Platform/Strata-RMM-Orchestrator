@@ -166,3 +166,22 @@ does not change the existing program-wide acceptance status above.
 
 PB-01…PB-06 do not represent a white-label licensing system, all dashboard
 levels, or complete internal-alpha readiness.
+
+## Provider-approved MSP owner activation slice
+
+This bounded slice advances the operator-created portion of A8-18 and adds
+identity controls relevant to A8-13, A8-22, and A8-23. It does not change the
+program-wide acceptance status above.
+
+| ID | Acceptance criterion | Current status |
+|---|---|---|
+| OA-01 | Migration 68 safely adds global normalized-email uniqueness, verified-email metadata, nullable legacy `tenant_id`, pending-owner onboarding, and forced-RLS invitations | Implemented; SQL contract plus three focused migration/RLS database tests added. Duplicate normalized emails cause a report-bearing migration failure. |
+| OA-02 | Only an active top-level platform owner/admin can create an MSP with an owner email or rotate its invitation | Implemented; request-context and database membership checks plus negative authorization coverage added. |
+| OA-03 | Raw invitation material is 32 random bytes, digest-only at rest, fragment-delivered, safely inspected, abuse-isolated, expiring, rotated, and one-time | Implemented; unit, route/rate-limit, frontend, and focused database coverage added. Live SMTP was not exercised. |
+| OA-04 | Acceptance verifies the email, creates exactly one first owner, activates MSP and entitlement atomically, and creates no implicit session | Implemented; focused activation and concurrency database coverage plus frontend component coverage added. |
+| OA-05 | Pending MSPs cannot resolve by host or be entered as workspaces, while suspended active-onboarded MSPs remain a distinct lifecycle state | Implemented; server and frontend state contracts added. |
+| OA-06 | Invitation creation, resend, and activation are auditable without email, token, or password material | Implemented; focused database assertions added. Hosted audit review remains pending. |
+| OA-07 | Exact-head CI, review, activation-specific browser evidence, live email delivery, and remaining internal-alpha gates are complete | Not accepted; draft-PR exact-head CI is pending, no activation-specific Playwright test was added, SMTP was not contacted live, and A8-22…A8-26 remain governed by their rows above. |
+
+This slice does not implement or accept MFA, password recovery, open public
+sign-up, billing, or refresh-token redesign.

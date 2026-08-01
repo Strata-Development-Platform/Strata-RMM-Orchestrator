@@ -65,6 +65,65 @@ details, is returned only by the provider-profile API to an authorized
 top-level platform owner or administrator. Audit records contain the setup
 schema version or changed field names, not profile values.
 
+## SMTP account mailer and owner lifecycle
+
+SMTP is optional, but it is the only implemented delivery path for MSP owner
+activation links. If any `STRATA_SMTP_*` setting is present, host, port, and
+sender must form a complete configuration; username and password must either
+both be present or both be absent. The orchestrator validates this at startup.
+
+| Setting | Purpose |
+|---|---|
+| `STRATA_SMTP_HOST` | SMTP server host name or address. It is also used for TLS certificate verification. |
+| `STRATA_SMTP_PORT` | SMTP TCP port, from 1 through 65535. |
+| `STRATA_SMTP_FROM` | Valid envelope and message sender email address. |
+| `STRATA_SMTP_USERNAME` / `STRATA_SMTP_USERNAME_FILE` | Optional SMTP username, supplied directly or from a protected file, never both. |
+| `STRATA_SMTP_PASSWORD` / `STRATA_SMTP_PASSWORD_FILE` | Password paired with the username. Prefer a protected file. |
+| `STRATA_SMTP_IMPLICIT_TLS` | `false` (default) connects and requires STARTTLS before authentication; `true` performs implicit TLS immediately. |
+| `STRATA_PUBLIC_URL` | Absolute public web-console origin used to construct `https://host/activate-account#<token>`. SMTP requires it in every mode; production also requires HTTPS. Paths, credentials, query strings, and fragments are rejected. |
+
+Both SMTP modes require TLS 1.2 or newer. STARTTLS mode fails closed if the
+server does not advertise STARTTLS, and implicit mode completes the TLS
+handshake before sending SMTP commands or credentials. Plaintext SMTP is not
+supported. `_FILE` values must name an absolute canonical regular file no
+larger than 16 KiB; one trailing newline is removed. Do not set both the direct
+variable and its `_FILE` variant.
+
+Example using protected credentials:
+
+```bash
+STRATA_PUBLIC_URL=https://rmm.example.com
+STRATA_SMTP_HOST=smtp.example.com
+STRATA_SMTP_PORT=587
+STRATA_SMTP_FROM=accounts@example.com
+STRATA_SMTP_USERNAME_FILE=/run/secrets/smtp_username
+STRATA_SMTP_PASSWORD_FILE=/run/secrets/smtp_password
+STRATA_SMTP_IMPLICIT_TLS=false
+```
+
+A top-level platform owner or administrator creates an MSP with an owner email.
+Creation commits an inactive `pending_owner` MSP, a suspended entitlement, and
+a 72-hour invitation before attempting delivery. Delivery is reported as
+`delivered`, `failed`, `unconfigured`, or, when delivery-state persistence
+cannot be confirmed, `pending`; SMTP acceptance does not prove inbox receipt.
+The raw invitation token is delivered only by email and is never returned by
+the API.
+
+Acceptance verifies possession of the invited mailbox, creates the first
+`msp_owner`, and changes both the MSP onboarding state and entitlement to
+active in one transaction. It does not sign the owner in. Pending MSPs cannot
+resolve by host or be selected as a workspace. Resend is available for a
+failed, unconfigured, pending, or expired invitation; it revokes the previous
+row and creates a new token. A valid invitation already marked delivered
+returns a conflict instead of rotating.
+
+Migration 68 also makes normalized email uniqueness global, permits
+tenant-neutral identities by making legacy `users.tenant_id` nullable, and
+requires `email_verified_at` for login. Existing active users are backfilled as
+verified during the migration; newly invited MSP owners become verified only
+on successful acceptance. This flow is provider-approved onboarding, not open
+sign-up, MFA, password recovery, billing, or a refresh-token redesign.
+
 ## Exhaustive Configuration Inventory
 
 ### Orchestrator Settings (Environment / CLI)
@@ -97,7 +156,7 @@ schema version or changed field names, not profile values.
 | `JWT_SECRET_PREVIOUS` | — | — | string | — | no | rotation only | yes | empty or min 32 chars; must differ from current secret | JWT verification during a bounded rotation overlap | env | process restart | remove after the maximum token lifetime |
 | `STRATA_API_ADDR` | `API_ADDR` | `--api-addr` | string | `:8080` | no | no | no | — | API server | flag > env (STRATA_API_ADDR > API_ADDR) > default | no | `API_ADDR` is legacy |
 | `STRATA_TUNNEL_ADDR` | `TUNNEL_ADDR` | `--tunnel-addr` | string | — | no | **prohibited** | no | production rejects the unauthenticated raw TCP gateway | development-only tunnel server | flag > env (STRATA_TUNNEL_ADDR > TUNNEL_ADDR) | no | `TUNNEL_ADDR` is legacy; authenticated TLS replacement required |
-| `STRATA_PUBLIC_URL` | — | — | string | — | no | yes | no | must be https, no credentials, host required | CORS / public access | env | no | — |
+| `STRATA_PUBLIC_URL` | — | — | string | — | no | yes | no | production requires HTTPS; SMTP requires an absolute HTTP(S) origin with no credentials, path, query, or fragment | CORS / public access / owner activation links | env | process restart | — |
 | `CORS_ORIGINS` | — | — | comma-separated | — | no | yes | no | prod rejects wildcard `*` | CORS middleware | env | no | — |
 | `HTTP_READ_TIMEOUT` | — | — | duration | `10s` | no | no | no | must be positive | HTTP server | env > default | no | — |
 | `HTTP_WRITE_TIMEOUT` | — | — | duration | `10s` | no | no | no | must be positive | HTTP server | env > default | no | — |
@@ -105,6 +164,12 @@ schema version or changed field names, not profile values.
 | `HTTP_MAX_BODY_SIZE` | — | — | int64 | `10485760` (10 MB) | no | no | no | must be positive | HTTP server | env > default | no | — |
 | `STRATA_METRICS_TOKEN` | — | — | string | — | no | yes | yes | minimum 32 characters; endpoint disabled when absent | `/metrics` bearer authentication | env | no | — |
 | `STRATA_METRICS_TOKEN_FILE` | — | — | path | — | compose | compose | sensitive location | readable file containing the same token | Prometheus scrape authentication | compose interpolation | container restart | — |
+| `STRATA_SMTP_HOST` | — | — | string | — | no | conditional | no | required when any SMTP setting is present | account invitation mail | env | process restart | TLS is always required |
+| `STRATA_SMTP_PORT` | — | — | int | — | no | conditional | no | 1-65535 | account invitation mail | env | process restart | — |
+| `STRATA_SMTP_FROM` | — | — | email | — | no | conditional | no | valid sender address | account invitation mail | env | process restart | — |
+| `STRATA_SMTP_USERNAME` | — | — | string | — | no | conditional | yes | must be paired with password; alternatively use `STRATA_SMTP_USERNAME_FILE` | SMTP authentication | env / protected file | process restart | — |
+| `STRATA_SMTP_PASSWORD` | — | — | string | — | no | conditional | yes | must be paired with username; alternatively use `STRATA_SMTP_PASSWORD_FILE` | SMTP authentication | env / protected file | process restart | prefer `STRATA_SMTP_PASSWORD_FILE` |
+| `STRATA_SMTP_IMPLICIT_TLS` | — | — | bool | `false` | no | no | no | strict boolean; false requires STARTTLS | SMTP transport | env > default | process restart | plaintext delivery is never allowed |
 | `STRATA_SEED_DEV` | — | — | bool | `false` | no | no (must be false) | no | must be false in production | dev seeding | env > default | no | — |
 | `STRATA_DEV_ADMIN_EMAIL` | — | — | string | — | no | no | no | — | dev seeding | env | no | — |
 | `STRATA_DEV_ADMIN_PASSWORD_HASH` | — | — | string | — | no | no | yes | — | dev seeding | env | no | — |

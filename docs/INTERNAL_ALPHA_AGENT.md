@@ -31,6 +31,28 @@ This matrix is limited to provider account setup. It does not claim a complete
 white-label licensing system, every dashboard level, hosted acceptance, or full
 internal-alpha readiness.
 
+## MSP owner activation slice compatibility
+
+Provider-approved MSP owner activation changes the orchestrator schema, account
+mailer, HTTP API, and web console only. It does not change endpoint-agent
+protocol versions, NATS subjects, identity files, installer inputs, enrollment,
+durable command handling, or release compatibility. Existing enrolled agents
+do not need to be replaced when migration 68 is applied.
+
+| Criterion | Slice status |
+|---|---|
+| Migration 68 adds global normalized-email uniqueness, email verification metadata, nullable legacy `tenant_id`, pending-owner onboarding, and RLS-protected invitation rows | Implemented with a schema contract plus three focused PostgreSQL migration/RLS tests |
+| Top-level provider owner/admin creates an inactive MSP and emails its intended owner a digest-backed, expiring link | Implemented with unit, authorization, and focused activation integration coverage; live SMTP was not contacted |
+| Public inspect/accept is abuse-isolated, token-safe, one-time, and atomically creates the owner and activates the MSP/entitlement | Implemented with focused service/database tests and React component tests |
+| Pending MSPs are excluded from host resolution and workspace switching; tenant-scoped callers cannot create or resend | Implemented with authorization and route contracts |
+| Activation-specific browser and hosted email-delivery evidence | Pending; no new Playwright test was added for this slice and SMTP delivery was not exercised against a live provider |
+| Exact-head repository CI, review, and all remaining internal-alpha operational gates | Pending; opening a draft PR does not satisfy them |
+
+This slice does not add open sign-up, MFA, password recovery, billing, or
+refresh-token redesign. Those items and the mandatory hosted-agent exercises
+below remain prerequisites; the activation work alone does not establish
+internal-alpha readiness.
+
 ## Supported internal-alpha matrix
 
 | Platform | Architecture | Build coverage | Installer coverage | Status |
