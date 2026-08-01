@@ -4,6 +4,21 @@ Phase 8F provides platform-operated controls for onboarding, entitlement changes
 suspension, reactivation, and retention-safe offboarding. Platform routes require
 `platform_owner` or `platform_admin`; MSP-scoped roles cannot invoke them.
 
+## Owner activation
+
+`POST /api/v2/platform/msps` requires `name`, `slug`, `plan`, and
+`owner_email`. It creates an inactive `pending_owner` MSP with a suspended
+entitlement and sends a one-time activation code when SMTP is configured. The
+code is accepted only in the JSON body of
+`POST /api/v1/auth/invitations/accept`; acceptance returns `204` and never
+creates a session. Failed or unconfigured delivery remains visible through the
+MSP response and can be rotated with
+`POST /api/v2/platform/msps/{mspID}/owner-invitation`.
+
+Only a top-level platform owner or administrator session can create or rotate
+owner invitations. Pending MSPs do not resolve by host and cannot be entered as
+a workspace.
+
 ## Entitlement grace periods
 
 `PATCH /api/v2/platform/msps/{mspID}/entitlement` accepts:

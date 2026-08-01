@@ -99,8 +99,8 @@ func BootstrapInitialAdmin(ctx context.Context, db *sql.DB, in BootstrapAdminInp
 
 	var userID string
 	err = tx.QueryRowContext(ctx, `
-		INSERT INTO users (tenant_id, email, password_hash, role)
-		VALUES ($1, lower($2), $3, 'admin')
+		INSERT INTO users (tenant_id, email, password_hash, role, email_verified_at)
+		VALUES ($1, lower($2), $3, 'admin', NOW())
 		RETURNING id::text
 	`, tenantID, strings.TrimSpace(in.Email), string(passwordHash)).Scan(&userID)
 	if err != nil {

@@ -42,6 +42,8 @@ type APIServer struct {
 	keyStore       *encrypt.KeyStore
 	recordingStore *remote.RecordingStore
 	storageBackend storage.Backend
+	accountMailer  AccountMailer
+	publicURL      string
 
 	startTime time.Time
 	mu        sync.RWMutex
@@ -112,6 +114,12 @@ func (s *APIServer) WithHTTPConfig(readTimeout, writeTimeout, idleTimeout time.D
 
 func (s *APIServer) WithProductionMode(production bool) *APIServer {
 	s.requireHTTPSWebsite = production
+	return s
+}
+
+func (s *APIServer) WithAccountMailer(publicURL string, mailer AccountMailer) *APIServer {
+	s.publicURL, _ = activationOrigin(publicURL)
+	s.accountMailer = mailer
 	return s
 }
 
@@ -218,6 +226,8 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /releases/latest/agent/{os}/{arch}/sha256", s.handleReleaseChecksum)
 
 	mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
+	mux.HandleFunc("POST /api/v1/auth/invitations/inspect", s.handleInspectOwnerInvitation)
+	mux.HandleFunc("POST /api/v1/auth/invitations/accept", s.handleAcceptOwnerInvitation)
 	mux.HandleFunc("GET /api/v1/auth/me", s.handleMe)
 
 	mux.HandleFunc("GET /api/v1/platform/overview", s.handlePlatformOverview)
@@ -346,6 +356,7 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /api/v2/platform/msps", s.handleListMSPS)
 	mux.HandleFunc("POST /api/v2/platform/msps", s.handleCreateMSP)
 	mux.HandleFunc("GET /api/v2/platform/msps/{mspID}", s.handleGetMSP)
+	mux.HandleFunc("POST /api/v2/platform/msps/{mspID}/owner-invitation", s.handleResendOwnerInvitation)
 	mux.HandleFunc("POST /api/v2/platform/msps/{mspID}/suspend", s.handleSuspendMSP)
 	mux.HandleFunc("POST /api/v2/platform/msps/{mspID}/activate", s.handleActivateMSP)
 	mux.HandleFunc("POST /api/v2/platform/msps/{mspID}/offboarding", s.handleOffboardMSP)

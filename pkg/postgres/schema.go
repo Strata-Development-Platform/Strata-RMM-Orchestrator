@@ -2438,6 +2438,170 @@ func Migrations() []Migration {
 					DROP COLUMN IF EXISTS updated_at;
 			`,
 		},
+		{
+			ID:   68,
+			Name: "add_msp_owner_activation",
+			Up: `
+				ALTER TABLE users
+					ADD COLUMN IF NOT EXISTS normalized_email TEXT
+						GENERATED ALWAYS AS (lower(btrim(email))) STORED,
+					ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ;
+
+				DO $$
+				DECLARE
+					duplicate_report TEXT;
+				BEGIN
+					SELECT string_agg(normalized_email || ' (' || duplicate_count || ')', ', ' ORDER BY normalized_email)
+					INTO duplicate_report
+					FROM (
+						SELECT normalized_email, COUNT(*) AS duplicate_count
+						FROM users
+						GROUP BY normalized_email
+						HAVING COUNT(*) > 1
+					) duplicates;
+					IF duplicate_report IS NOT NULL THEN
+						RAISE EXCEPTION 'migration 68 cannot enforce global normalized email uniqueness; duplicates: %', duplicate_report
+							USING ERRCODE = '23505';
+					END IF;
+					IF EXISTS (SELECT 1 FROM users WHERE normalized_email = '') THEN
+						RAISE EXCEPTION 'migration 68 cannot normalize blank user email addresses'
+							USING ERRCODE = '23514';
+					END IF;
+				END
+				$$;
+
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_users_normalized_email_unique
+					ON users(normalized_email);
+				ALTER TABLE users DROP CONSTRAINT IF EXISTS users_normalized_email_nonempty;
+				ALTER TABLE users ADD CONSTRAINT users_normalized_email_nonempty
+					CHECK (normalized_email <> '');
+				UPDATE users
+				SET email_verified_at = COALESCE(email_verified_at, created_at)
+				WHERE is_active = TRUE;
+				ALTER TABLE users ALTER COLUMN tenant_id DROP NOT NULL;
+
+				ALTER TABLE msp_tenants
+					ADD COLUMN IF NOT EXISTS onboarding_status TEXT NOT NULL DEFAULT 'active';
+				UPDATE msp_tenants SET onboarding_status = 'active';
+				ALTER TABLE msp_tenants DROP CONSTRAINT IF EXISTS msp_tenants_onboarding_status_check;
+				ALTER TABLE msp_tenants ADD CONSTRAINT msp_tenants_onboarding_status_check
+					CHECK (onboarding_status IN ('pending_owner', 'active'));
+
+				CREATE TABLE IF NOT EXISTS account_invitations (
+					id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					msp_id           UUID NOT NULL REFERENCES msp_tenants(id) ON DELETE CASCADE,
+					email_normalized TEXT NOT NULL CHECK (
+						email_normalized = lower(btrim(email_normalized))
+						AND email_normalized <> ''
+						AND length(email_normalized) <= 320
+					),
+					purpose          TEXT NOT NULL DEFAULT 'msp_owner_activation'
+						CHECK (purpose = 'msp_owner_activation'),
+					token_hash       CHAR(64) NOT NULL UNIQUE
+						CHECK (token_hash ~ '^[0-9a-f]{64}$'),
+					created_by       UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+					expires_at       TIMESTAMPTZ NOT NULL,
+					accepted_at      TIMESTAMPTZ,
+					revoked_at       TIMESTAMPTZ,
+					created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					delivery_status  TEXT NOT NULL DEFAULT 'pending'
+						CHECK (delivery_status IN ('pending', 'delivered', 'failed', 'unconfigured')),
+					delivered_at     TIMESTAMPTZ,
+					CHECK (expires_at > created_at),
+					CHECK (accepted_at IS NULL OR revoked_at IS NULL),
+					CHECK ((delivery_status = 'delivered') = (delivered_at IS NOT NULL))
+				);
+				CREATE INDEX IF NOT EXISTS idx_account_invitations_msp_created
+					ON account_invitations(msp_id, created_at DESC);
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_account_invitations_one_unconsumed_msp
+					ON account_invitations(msp_id)
+					WHERE accepted_at IS NULL AND revoked_at IS NULL;
+
+				ALTER TABLE account_invitations ENABLE ROW LEVEL SECURITY;
+				DROP POLICY IF EXISTS account_invitation_access ON account_invitations;
+				CREATE POLICY account_invitation_access ON account_invitations
+					USING (
+						app_is_platform_admin()
+						OR token_hash = safe_app_setting('app.invitation_hash')
+					)
+					WITH CHECK (
+						app_is_platform_admin()
+						OR token_hash = safe_app_setting('app.invitation_hash')
+					);
+				ALTER TABLE account_invitations FORCE ROW LEVEL SECURITY;
+
+				DROP POLICY IF EXISTS tenant_isolation_users ON users;
+				DROP POLICY IF EXISTS identity_scope ON users;
+				CREATE POLICY identity_scope ON users
+					USING (
+						app_is_platform_admin()
+						OR id::text = safe_app_setting('app.user_id')
+						OR tenant_id::text = safe_app_setting('app.tenant_id')
+						OR normalized_email = safe_app_setting('app.login_email')
+						OR EXISTS (
+							SELECT 1 FROM account_invitations invitation
+							WHERE invitation.token_hash = safe_app_setting('app.invitation_hash')
+							  AND invitation.email_normalized = users.normalized_email
+							  AND invitation.accepted_at IS NULL
+							  AND invitation.revoked_at IS NULL
+							  AND invitation.expires_at > statement_timestamp()
+						)
+					)
+					WITH CHECK (
+						app_is_platform_admin()
+						OR id::text = safe_app_setting('app.user_id')
+						OR tenant_id::text = safe_app_setting('app.tenant_id')
+						OR EXISTS (
+							SELECT 1 FROM account_invitations invitation
+							WHERE invitation.token_hash = safe_app_setting('app.invitation_hash')
+							  AND invitation.email_normalized = users.normalized_email
+							  AND invitation.accepted_at IS NULL
+							  AND invitation.revoked_at IS NULL
+							  AND invitation.expires_at > statement_timestamp()
+						)
+					);
+				ALTER TABLE users FORCE ROW LEVEL SECURITY;
+
+				DROP TRIGGER IF EXISTS recovery_mutation_gate_trigger ON account_invitations;
+				CREATE TRIGGER recovery_mutation_gate_trigger
+					BEFORE INSERT OR UPDATE OR DELETE ON account_invitations
+					FOR EACH STATEMENT EXECUTE FUNCTION enforce_recovery_mutation_gate();
+			`,
+			Down: `
+				SELECT set_config('app.role', 'platform_admin', true);
+				UPDATE plan_entitlements entitlement
+				SET status = 'active', updated_at = NOW()
+				FROM msp_tenants msp
+				WHERE entitlement.msp_id = msp.id
+				  AND msp.onboarding_status = 'pending_owner';
+				UPDATE msp_tenants
+				SET is_active = TRUE
+				WHERE onboarding_status = 'pending_owner';
+
+				ALTER TABLE users NO FORCE ROW LEVEL SECURITY;
+				DROP POLICY IF EXISTS identity_scope ON users;
+				DROP TABLE IF EXISTS account_invitations;
+				CREATE POLICY tenant_isolation_users ON users
+					USING (tenant_id = current_setting('app.tenant_id')::UUID);
+
+				DO $$
+				BEGIN
+					IF EXISTS (SELECT 1 FROM users WHERE tenant_id IS NULL) THEN
+						RAISE EXCEPTION 'cannot rollback migration 68 while tenant-neutral user identities exist';
+					END IF;
+				END
+				$$;
+				ALTER TABLE users ALTER COLUMN tenant_id SET NOT NULL;
+				ALTER TABLE users DROP CONSTRAINT IF EXISTS users_normalized_email_nonempty;
+				DROP INDEX IF EXISTS idx_users_normalized_email_unique;
+				ALTER TABLE users
+					DROP COLUMN IF EXISTS normalized_email,
+					DROP COLUMN IF EXISTS email_verified_at;
+				ALTER TABLE msp_tenants
+					DROP CONSTRAINT IF EXISTS msp_tenants_onboarding_status_check,
+					DROP COLUMN IF EXISTS onboarding_status;
+			`,
+		},
 	}
 }
 
@@ -2672,13 +2836,14 @@ func SeedDevTenant(db *sql.DB) error {
 	}
 
 	_, err = db.Exec(`
-		INSERT INTO users (id, tenant_id, email, password_hash, role)
+		INSERT INTO users (id, tenant_id, email, password_hash, role, email_verified_at)
 		VALUES (
 			'00000000-0000-0000-0000-000000000010',
 			'00000000-0000-0000-0000-000000000001',
 			$1,
 			$2,
-			'viewer'
+			'viewer',
+			NOW()
 		) ON CONFLICT DO NOTHING
 	`, email, passwordHash)
 	if err != nil {

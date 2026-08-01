@@ -105,6 +105,12 @@ schema version or changed field names, not profile values.
 | `HTTP_MAX_BODY_SIZE` | — | — | int64 | `10485760` (10 MB) | no | no | no | must be positive | HTTP server | env > default | no | — |
 | `STRATA_METRICS_TOKEN` | — | — | string | — | no | yes | yes | minimum 32 characters; endpoint disabled when absent | `/metrics` bearer authentication | env | no | — |
 | `STRATA_METRICS_TOKEN_FILE` | — | — | path | — | compose | compose | sensitive location | readable file containing the same token | Prometheus scrape authentication | compose interpolation | container restart | — |
+| `STRATA_SMTP_HOST` | — | — | string | — | no | conditional | no | required when any SMTP setting is present | account invitation mail | env | process restart | TLS is always required |
+| `STRATA_SMTP_PORT` | — | — | int | — | no | conditional | no | 1-65535 | account invitation mail | env | process restart | — |
+| `STRATA_SMTP_FROM` | — | — | email | — | no | conditional | no | valid sender address | account invitation mail | env | process restart | — |
+| `STRATA_SMTP_USERNAME` | — | — | string | — | no | conditional | yes | must be paired with password; supports `_FILE` | SMTP authentication | env / protected file | process restart | — |
+| `STRATA_SMTP_PASSWORD` | — | — | string | — | no | conditional | yes | must be paired with username; supports `_FILE` | SMTP authentication | env / protected file | process restart | prefer `STRATA_SMTP_PASSWORD_FILE` |
+| `STRATA_SMTP_IMPLICIT_TLS` | — | — | bool | `false` | no | no | no | strict boolean; false requires STARTTLS | SMTP transport | env > default | process restart | plaintext delivery is never allowed |
 | `STRATA_SEED_DEV` | — | — | bool | `false` | no | no (must be false) | no | must be false in production | dev seeding | env > default | no | — |
 | `STRATA_DEV_ADMIN_EMAIL` | — | — | string | — | no | no | no | — | dev seeding | env | no | — |
 | `STRATA_DEV_ADMIN_PASSWORD_HASH` | — | — | string | — | no | no | yes | — | dev seeding | env | no | — |

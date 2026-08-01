@@ -134,6 +134,23 @@ func TestRateLimiterIgnoresForwardedAddressFromUntrustedPeer(t *testing.T) {
 	}
 }
 
+func TestRateLimiterInvitationEndpointsUseDedicatedBucket(t *testing.T) {
+	limiter := NewRateLimiter(30, 60)
+	for _, path := range []string{
+		"/api/v1/auth/invitations/inspect",
+		"/api/v1/auth/invitations/accept",
+	} {
+		class, rate, burst := limiter.policy(http.MethodPost, path)
+		if class != "account-invitation" || rate != 1 || burst != 5 {
+			t.Fatalf("policy(%q) = %q/%d/%d", path, class, rate, burst)
+		}
+	}
+	generalClass, _, _ := limiter.policy(http.MethodGet, "/api/v1/devices")
+	if generalClass == "account-invitation" {
+		t.Fatal("general traffic shares the invitation abuse bucket")
+	}
+}
+
 func TestSecurityHeaders(t *testing.T) {
 	handler := SecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

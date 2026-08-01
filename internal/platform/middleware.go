@@ -83,7 +83,10 @@ func (s *APIServer) resolveMSPByHost(host string) (mspID, slug string) {
 	if strings.HasSuffix(host, "."+platformDomain) {
 		slug := strings.TrimSuffix(host, "."+platformDomain)
 		var id string
-		err := s.db.DB().QueryRow(`SELECT id FROM msp_tenants WHERE slug = $1 AND is_active = true`, slug).Scan(&id)
+		err := s.db.DB().QueryRow(`
+			SELECT id FROM msp_tenants
+			WHERE slug = $1 AND is_active = true AND onboarding_status = 'active'
+		`, slug).Scan(&id)
 		if err == nil {
 			return id, slug
 		}
@@ -94,6 +97,7 @@ func (s *APIServer) resolveMSPByHost(host string) (mspID, slug string) {
 		SELECT m.id, m.slug FROM msp_tenants m
 		JOIN custom_domains d ON d.msp_id = m.id
 		WHERE d.hostname = $1 AND d.verification_status IN ('verified', 'active')
+		  AND m.is_active = true AND m.onboarding_status = 'active'
 		LIMIT 1
 	`, host).Scan(&domainMSPID, &domainSlug)
 	if err == nil {
@@ -203,7 +207,7 @@ func (s *APIServer) validateAndBuildPrincipal(rawToken string) (*Principal, erro
 
 	var email string
 	if err := tx.QueryRow(
-		`SELECT email FROM users WHERE id = $1 AND is_active = true`,
+		`SELECT email FROM users WHERE id = $1 AND is_active = true AND email_verified_at IS NOT NULL`,
 		claims.Subject,
 	).Scan(&email); err != nil {
 		return nil, fmt.Errorf("user identity is inactive or revoked")
@@ -457,6 +461,8 @@ func (s *APIServer) publicRoutes() []Route {
 		{Method: "GET", Path: "/health/ready", Access: AccessPublic},
 		{Method: "GET", Path: "/metrics", Access: AccessPublic},
 		{Method: "POST", Path: "/api/v1/auth/login", Access: AccessPublic},
+		{Method: "POST", Path: "/api/v1/auth/invitations/inspect", Access: AccessPublic},
+		{Method: "POST", Path: "/api/v1/auth/invitations/accept", Access: AccessPublic},
 		{Method: "POST", Path: "/api/v1/agent/register", Access: AccessPublic},
 		{Method: "POST", Path: "/api/v1/enrollment/validate", Access: AccessPublic},
 		{Method: "GET", Path: "/install.sh", Access: AccessPublic},
@@ -471,6 +477,7 @@ func (s *APIServer) adminRoutes() []Route {
 		{Method: "GET", Path: "/api/v2/platform/msps", Access: AccessAdmin},
 		{Method: "POST", Path: "/api/v2/platform/msps", Access: AccessAdmin},
 		{Method: "GET", Path: "/api/v2/platform/msps/{mspID}", Access: AccessAdmin},
+		{Method: "POST", Path: "/api/v2/platform/msps/{mspID}/owner-invitation", Access: AccessAdmin},
 		{Method: "POST", Path: "/api/v2/platform/msps/{mspID}/suspend", Access: AccessAdmin},
 		{Method: "POST", Path: "/api/v2/platform/msps/{mspID}/activate", Access: AccessAdmin},
 		{Method: "POST", Path: "/api/v2/platform/msps/{mspID}/offboarding", Access: AccessAdmin},

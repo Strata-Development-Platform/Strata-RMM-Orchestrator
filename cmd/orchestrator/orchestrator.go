@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"sync/atomic"
@@ -218,12 +219,25 @@ func NewCommand(ctx context.Context, version, commit string, logger *zap.Logger)
 			updateMgr := platform.NewUpdateManager(version, "Strata-Development-Platform", "Strata-RMM-Orchestrator", cfg.HTTP.APIAddr, logger)
 			releaseServer := platform.NewReleaseServer("/var/lib/strata-rmm/releases", "Strata-Development-Platform", "Strata-RMM-Orchestrator")
 
+			var accountMailer platform.AccountMailer
+			if cfg.SMTP.Configured() {
+				accountMailer, err = platform.NewSMTPAccountMailer(platform.SMTPAccountMailerConfig{
+					Address:  net.JoinHostPort(cfg.SMTP.Host, fmt.Sprintf("%d", cfg.SMTP.Port)),
+					Username: cfg.SMTP.Username, Password: cfg.SMTP.Password,
+					FromAddress: cfg.SMTP.FromAddress, ImplicitTLS: cfg.SMTP.ImplicitTLS,
+				})
+				if err != nil {
+					return fmt.Errorf("stage %d: configuring account mailer: %w", atomic.LoadInt32(&startupStage), err)
+				}
+			}
+
 			api, err := platform.NewAPIServer(cfg.HTTP.APIAddr, tsdb, nc, logger, tokenGen)
 			if err != nil {
 				return fmt.Errorf("stage %d: creating API server: %w", atomic.LoadInt32(&startupStage), err)
 			}
 			api.WithVersion(version, commit).
 				WithProductionMode(cfg.RuntimeMode == config.ModeProduction).
+				WithAccountMailer(cfg.HTTP.PublicURL, accountMailer).
 				WithMetricsToken(cfg.Observability.MetricsToken).
 				WithHTTPConfig(
 					cfg.HTTP.ReadTimeout, cfg.HTTP.WriteTimeout, cfg.HTTP.IdleTimeout,

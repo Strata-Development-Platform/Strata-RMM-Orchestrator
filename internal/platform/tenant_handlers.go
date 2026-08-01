@@ -1,28 +1,32 @@
 package platform
 
 import (
-	"database/sql"
 	"encoding/json"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
 )
 
 type createMSPRequest struct {
-	Name string `json:"name"`
-	Slug string `json:"slug"`
-	Plan string `json:"plan,omitempty"`
+	Name       string `json:"name"`
+	Slug       string `json:"slug"`
+	Plan       string `json:"plan,omitempty"`
+	OwnerEmail string `json:"owner_email"`
 }
 
 // --- Platform MSP Management ---
 
 func (s *APIServer) handleListMSPS(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.requestDB(r).QueryContext(r.Context(), `
-		SELECT m.id, m.name, m.slug, m.plan, m.is_active, m.created_at,
+		SELECT m.id, m.name, m.slug, m.plan, m.is_active, m.onboarding_status, m.created_at,
 		       (SELECT COUNT(*) FROM client_organizations co WHERE co.msp_id = m.id) as client_count,
-		       (SELECT COUNT(*) FROM devices d JOIN client_organizations co ON d.client_id = co.id WHERE co.msp_id = m.id) as device_count
+		       (SELECT COUNT(*) FROM devices d JOIN client_organizations co ON d.client_id = co.id WHERE co.msp_id = m.id) as device_count,
+		       COALESCE((
+		           SELECT invitation.delivery_status FROM account_invitations invitation
+		           WHERE invitation.msp_id = m.id
+		           ORDER BY invitation.created_at DESC LIMIT 1
+		       ), '')
 		FROM msp_tenants m ORDER BY m.created_at DESC
 	`)
 	if err != nil {
@@ -33,16 +37,17 @@ func (s *APIServer) handleListMSPS(w http.ResponseWriter, r *http.Request) {
 
 	var msps []map[string]interface{}
 	for rows.Next() {
-		var id, name, slug, plan string
+		var id, name, slug, plan, onboardingStatus, invitationDeliveryStatus string
 		var isActive bool
 		var createdAt time.Time
 		var clientCount, deviceCount int
-		if err := rows.Scan(&id, &name, &slug, &plan, &isActive, &createdAt, &clientCount, &deviceCount); err != nil {
+		if err := rows.Scan(&id, &name, &slug, &plan, &isActive, &onboardingStatus, &createdAt, &clientCount, &deviceCount, &invitationDeliveryStatus); err != nil {
 			continue
 		}
 		msps = append(msps, map[string]interface{}{
 			"id": id, "name": name, "slug": slug, "plan": plan,
 			"is_active": isActive, "created_at": createdAt.UTC().Format(time.RFC3339),
+			"onboarding_status": onboardingStatus, "owner_invitation_delivery_status": invitationDeliveryStatus,
 			"client_count": clientCount, "device_count": deviceCount,
 		})
 	}
@@ -53,81 +58,81 @@ func (s *APIServer) handleListMSPS(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *APIServer) handleCreateMSP(w http.ResponseWriter, r *http.Request) {
+	if !authorizeTopLevelPlatformRequest(w, r) {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, invitationBodyMax)
 	var req createMSPRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeStrictJSON(r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
 		return
 	}
-	req.Name = strings.TrimSpace(req.Name)
-	req.Slug = strings.ToLower(strings.TrimSpace(req.Slug))
-	req.Plan = strings.ToLower(strings.TrimSpace(req.Plan))
-	if req.Name == "" || req.Slug == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name and slug required"})
+	if s.db == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "owner invitation service unavailable"})
 		return
 	}
-	if req.Plan == "" {
-		req.Plan = "free"
-	}
-
-	var existingID string
-	err := s.requestDB(r).QueryRowContext(r.Context(), `SELECT id FROM msp_tenants WHERE slug = $1`, req.Slug).Scan(&existingID)
-	if err == nil {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "msp slug already exists", "existing_id": existingID})
-		return
-	}
-	if err != sql.ErrNoRows {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "unable to validate MSP slug"})
-		return
-	}
-
-	id := uuid.New().String()
-	var createdID string
-	err = s.requestDB(r).QueryRowContext(r.Context(), `
-		WITH selected_plan AS (
-			SELECT id, slug FROM plans WHERE slug = $4 AND is_active = true
-		), new_msp AS (
-			INSERT INTO msp_tenants (id, name, slug, plan)
-			SELECT $1, $2, $3, selected_plan.slug
-			FROM selected_plan
-			RETURNING id
-		), new_entitlement AS (
-			INSERT INTO plan_entitlements (msp_id, plan_id)
-			SELECT new_msp.id, selected_plan.id
-			FROM new_msp CROSS JOIN selected_plan
-		)
-		SELECT id::text FROM new_msp
-	`, id, req.Name, req.Slug, req.Plan).Scan(&createdID)
-	if err == sql.ErrNoRows {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown or inactive plan"})
-		return
-	}
+	actorID, _ := r.Context().Value(ctxKeyUserID).(string)
+	service := newOwnerInvitationService(s.db.DB(), s.accountMailer, s.publicURL)
+	created, err := service.createPendingMSP(r.Context(), createPendingMSPInput{
+		Name: req.Name, Slug: req.Slug, Plan: req.Plan, OwnerEmail: req.OwnerEmail, ActorID: actorID,
+	})
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "unable to create MSP"})
+		writeOwnerInvitationError(w, err)
 		return
 	}
-	if err := s.auditControlPlane(r, createdID, "msp.created", "msp", createdID,
-		map[string]string{"name": req.Name, "slug": req.Slug, "plan": req.Plan}); err != nil {
-		writeControlPlaneAuditFailure(w)
+	writeJSON(w, http.StatusCreated, map[string]string{
+		"id": created.MSPID, "status": "pending_owner", "delivery_status": created.DeliveryStatus,
+	})
+}
+
+func (s *APIServer) handleResendOwnerInvitation(w http.ResponseWriter, r *http.Request) {
+	if !authorizeTopLevelPlatformRequest(w, r) {
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]string{"id": createdID, "status": "created"})
+	if s.db == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "owner invitation service unavailable"})
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, invitationBodyMax)
+	if r.ContentLength != 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "request body is not allowed"})
+		return
+	}
+	actorID, _ := r.Context().Value(ctxKeyUserID).(string)
+	service := newOwnerInvitationService(s.db.DB(), s.accountMailer, s.publicURL)
+	rotated, err := service.resend(r.Context(), r.PathValue("mspID"), actorID)
+	if err != nil {
+		writeOwnerInvitationError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status": "invitation_rotated", "delivery_status": rotated.DeliveryStatus,
+	})
 }
 
 func (s *APIServer) handleGetMSP(w http.ResponseWriter, r *http.Request) {
 	mspID := r.PathValue("mspID")
-	var id, name, slug, plan string
+	var id, name, slug, plan, onboardingStatus, invitationDeliveryStatus string
 	var isActive bool
 	var createdAt time.Time
 	err := s.requestDB(r).QueryRowContext(r.Context(), `
-		SELECT id, name, slug, plan, is_active, created_at FROM msp_tenants WHERE id = $1
-	`, mspID).Scan(&id, &name, &slug, &plan, &isActive, &createdAt)
+		SELECT m.id, m.name, m.slug, m.plan, m.is_active, m.onboarding_status, m.created_at,
+		       COALESCE((
+		           SELECT invitation.delivery_status FROM account_invitations invitation
+		           WHERE invitation.msp_id = m.id
+		           ORDER BY invitation.created_at DESC LIMIT 1
+		       ), '')
+		FROM msp_tenants m WHERE m.id = $1
+	`, mspID).Scan(&id, &name, &slug, &plan, &isActive, &onboardingStatus, &createdAt, &invitationDeliveryStatus)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "msp not found"})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"id": id, "name": name, "slug": slug, "plan": plan,
-		"is_active": isActive, "created_at": createdAt.UTC().Format(time.RFC3339),
+		"is_active": isActive, "onboarding_status": onboardingStatus,
+		"owner_invitation_delivery_status": invitationDeliveryStatus,
+		"created_at":                       createdAt.UTC().Format(time.RFC3339),
 	})
 }
 
@@ -147,9 +152,17 @@ func (s *APIServer) handleSuspendMSP(w http.ResponseWriter, r *http.Request) {
 
 func (s *APIServer) handleActivateMSP(w http.ResponseWriter, r *http.Request) {
 	mspID := r.PathValue("mspID")
-	_, err := s.requestDB(r).ExecContext(r.Context(), `UPDATE msp_tenants SET is_active = true WHERE id = $1`, mspID)
+	result, err := s.requestDB(r).ExecContext(r.Context(), `
+		UPDATE msp_tenants SET is_active = true
+		WHERE id = $1 AND onboarding_status = 'active'
+	`, mspID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	affected, _ := result.RowsAffected()
+	if affected != 1 {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "pending owner activation cannot be bypassed"})
 		return
 	}
 	if err := s.auditControlPlane(r, mspID, "msp.activated", "msp", mspID, nil); err != nil {

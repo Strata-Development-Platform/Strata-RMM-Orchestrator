@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
@@ -54,13 +55,30 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "email and password required"})
 		return
 	}
+	normalizedEmail, normalizeErr := normalizeEmail(req.Email)
+	if normalizeErr != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
+		return
+	}
 
 	db := s.requestDB(r)
-	var userID, tenantID, passwordHash string
-	err := db.QueryRowContext(r.Context(), `
+	var userID, passwordHash string
+	var tenantIDNullable sql.NullString
+	loginTx, err := s.db.DB().BeginTx(r.Context(), &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "database error"})
+		return
+	}
+	defer func() { _ = loginTx.Rollback() }()
+	if _, err := loginTx.ExecContext(r.Context(), `SELECT set_config('app.login_email', $1, true)`, normalizedEmail); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "database error"})
+		return
+	}
+	err = loginTx.QueryRowContext(r.Context(), `
 		SELECT id, tenant_id, email, password_hash
-		FROM users WHERE email = $1 AND is_active = true
-	`, req.Email).Scan(&userID, &tenantID, &req.Email, &passwordHash)
+		FROM users
+		WHERE normalized_email = $1 AND is_active = true AND email_verified_at IS NOT NULL
+	`, normalizedEmail).Scan(&userID, &tenantIDNullable, &req.Email, &passwordHash)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			s.logAuditAuth("", req.Email, r.RemoteAddr, false, "user not found")
@@ -70,6 +88,11 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "database error"})
 		return
 	}
+	if err := loginTx.Commit(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "database error"})
+		return
+	}
+	tenantID := tenantIDNullable.String
 
 	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(req.Password)); err != nil {
 		s.logAuditAuth(userID, req.Email, r.RemoteAddr, false, "wrong password")
@@ -110,7 +133,7 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	db.ExecContext(r.Context(), `UPDATE users SET last_login = NOW() WHERE id = $1`, userID)
+	updateLoginTimestamp(r.Context(), s.db.DB(), userID)
 	s.logAuditAuth(userID, req.Email, r.RemoteAddr, true, "login")
 
 	writeJSON(w, http.StatusOK, loginResponse{
@@ -136,11 +159,13 @@ func (s *APIServer) handleMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	db := s.requestDB(r)
-	var userID, email, tenantID string
+	var userID, email string
+	var tenantIDNullable sql.NullString
 	var isActive bool
 	err := db.QueryRowContext(r.Context(), `
-		SELECT id, email, tenant_id, is_active FROM users WHERE id = $1
-	`, principal).Scan(&userID, &email, &tenantID, &isActive)
+		SELECT id, email, tenant_id, is_active AND email_verified_at IS NOT NULL
+		FROM users WHERE id = $1
+	`, principal).Scan(&userID, &email, &tenantIDNullable, &isActive)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
 		return
@@ -149,6 +174,7 @@ func (s *APIServer) handleMe(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "account disabled"})
 		return
 	}
+	tenantID := tenantIDNullable.String
 
 	effectiveRoles := getRoles(r)
 	accessibleTenants, _ := s.getAccessibleTenants(r, userID, effectiveRoles)
@@ -169,6 +195,21 @@ func (s *APIServer) handleMe(w http.ResponseWriter, r *http.Request) {
 		SetupComplete:       providerProfile.SetupComplete,
 		AccessibleTenants:   accessibleTenants,
 	})
+}
+
+func updateLoginTimestamp(ctx context.Context, db *sql.DB, userID string) {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.user_id', $1, true)`, userID); err != nil {
+		return
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE users SET last_login = NOW() WHERE id = $1`, userID); err != nil {
+		return
+	}
+	_ = tx.Commit()
 }
 
 func (s *APIServer) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
@@ -245,8 +286,8 @@ func (s *APIServer) handleAdminCreateUser(w http.ResponseWriter, r *http.Request
 	db := s.requestDB(r)
 	var userID string
 	err = db.QueryRowContext(r.Context(), `
-		INSERT INTO users (email, password_hash, role)
-		VALUES ($1, $2, $3)
+		INSERT INTO users (email, password_hash, role, email_verified_at)
+		VALUES ($1, $2, $3, NOW())
 		RETURNING id
 	`, req.Email, string(hash), req.Role).Scan(&userID)
 	if err != nil {

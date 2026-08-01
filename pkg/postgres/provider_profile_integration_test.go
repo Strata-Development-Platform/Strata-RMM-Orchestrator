@@ -327,8 +327,8 @@ func seedProviderActor(t *testing.T, db *sql.DB, userID, role, scopeType, scopeI
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`
-		INSERT INTO users (id, tenant_id, email, password_hash, role)
-		VALUES ($2, $1, $3, 'redacted-hash', 'admin') ON CONFLICT (id) DO NOTHING
+		INSERT INTO users (id, tenant_id, email, password_hash, role, email_verified_at)
+		VALUES ($2, $1, $3, 'redacted-hash', 'admin', NOW()) ON CONFLICT (id) DO NOTHING
 	`, tenantID, userID, userID+"@example.test"); err != nil {
 		t.Fatal(err)
 	}

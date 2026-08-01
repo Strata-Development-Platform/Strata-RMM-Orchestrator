@@ -224,8 +224,8 @@ func TestProviderProfileHTTPAuthorizationSetupRetryPatchAndContext(t *testing.T)
 func seedHTTPProviderUser(t *testing.T, db *sql.DB, tenantID, userID, email, passwordHash, role, scopeType, scopeID string) {
 	t.Helper()
 	if _, err := db.Exec(`
-		INSERT INTO users (id, tenant_id, email, password_hash, role)
-		VALUES ($1, $2, $3, $4, 'admin')
+		INSERT INTO users (id, tenant_id, email, password_hash, role, email_verified_at)
+		VALUES ($1, $2, $3, $4, 'admin', NOW())
 	`, userID, tenantID, email, passwordHash); err != nil {
 		t.Fatal(err)
 	}
