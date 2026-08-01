@@ -184,13 +184,7 @@ async function completeWizard(page: Page) {
   await page.getByLabel(/Default locale/).selectOption(setupValues.default_locale);
   await page.getByLabel(/Default currency/).selectOption(setupValues.default_currency);
   await page.getByLabel(/Tax identifier/).fill(setupValues.tax_identifier);
-  const continueToReview = page.getByRole('button', { name: 'Continue' });
-  // The application currently reuses this DOM node as the submit button while the
-  // click is still being activated, which otherwise submits before Review renders.
-  await continueToReview.evaluate(button => {
-    button.addEventListener('click', event => event.preventDefault(), { once: true });
-  });
-  await continueToReview.click();
+  await page.getByRole('button', { name: 'Continue' }).click();
   await expect(page.getByRole('heading', { name: 'Review' })).toBeVisible();
 }
 
@@ -229,8 +223,8 @@ test('platform owner completes first-login setup, returns without repetition, an
 
   await page.getByRole('button', { name: 'Sign Out' }).click();
   await expect(page).toHaveURL(/\/login$/);
-  await page.getByPlaceholder('admin@example.com').fill(platformOwner.email);
-  await page.getByPlaceholder('••••••••').fill('correct horse battery staple');
+  await page.getByLabel('Email').fill(platformOwner.email);
+  await page.getByLabel('Password').fill('correct horse battery staple');
   await page.getByRole('button', { name: 'Sign In' }).click();
 
   await expect(page).toHaveURL(/\/$/);

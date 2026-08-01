@@ -218,11 +218,11 @@ export default function ProviderSetupPage() {
               <ChevronLeft size={16} /> Back
             </button>
             {step < steps.length - 1 ? (
-              <button type="button" onClick={continueToNextStep} className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
+              <button key="continue" type="button" onClick={continueToNextStep} className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
                 Continue <ChevronRight size={16} />
               </button>
             ) : (
-              <button type="submit" disabled={submitting} className="inline-flex min-w-36 items-center justify-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60">
+              <button key="submit" type="submit" disabled={submitting} className="inline-flex min-w-36 items-center justify-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60">
                 {submitting ? 'Completing setup...' : 'Complete setup'}
               </button>
             )}

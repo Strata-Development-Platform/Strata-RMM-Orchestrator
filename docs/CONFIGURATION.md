@@ -18,6 +18,53 @@ Production mode rejects:
 - Public URLs without HTTPS
 - SeedDev enabled
 
+## Provider business profile
+
+The provider business profile is account data stored in the singleton
+`platforms` row by migration 67; it is not environment configuration and does
+not require a process restart. On first sign-in, a top-level `platform_owner` or
+`platform_admin` completes it at `/provider/setup`. After completion, the same
+roles edit it under **Settings → Platform Settings → Provider business
+profile** (`/admin/settings`). The API routes are
+`POST /api/v2/platform/provider/setup`,
+`GET /api/v2/platform/provider/profile`, and
+`PATCH /api/v2/platform/provider/profile`.
+
+| Field | Required | Server validation |
+|---|---|---|
+| Legal business name | yes | 200 Unicode characters or fewer |
+| Display name | yes | 100 Unicode characters or fewer |
+| Primary contact name | yes | 150 Unicode characters or fewer |
+| Support email | yes | valid bare email address, 254 characters or fewer |
+| Billing email | yes | valid bare email address, 254 characters or fewer |
+| Business phone | yes | 32 characters or fewer; starts with `+` or a digit, uses supported telephone punctuation, and contains at least 7 digits |
+| Website URL | no | absolute HTTP(S) URL without embedded credentials, 2048 characters or fewer; HTTPS is required in production |
+| Address line 1 | yes | 200 Unicode characters or fewer |
+| Address line 2 | no | 200 Unicode characters or fewer |
+| City | yes | 100 Unicode characters or fewer |
+| State or province | no | 100 Unicode characters or fewer |
+| Postal code | yes | 32 Unicode characters or fewer |
+| Country | yes | supported ISO 3166-1 alpha-2 code |
+| Default timezone | yes | valid IANA timezone other than `Local`, 64 characters or fewer |
+| Default locale | yes | two- or three-letter language, optionally followed by a two-letter region or three-digit region |
+| Default currency | yes | supported ISO 4217 code |
+| Tax identifier | no | 100 Unicode characters or fewer |
+
+The server trims every value, requires valid UTF-8, and rejects control
+characters. It lowercases email addresses, uppercases country and currency
+codes, and normalizes locale casing. It also rejects control characters hidden
+in URL path or query escapes. Browser validation is guidance only; the Go API
+repeats the complete validation before every setup or update write. PATCH input
+may contain only editable fields, and the server validates the merged complete
+profile. Platform ID, slug, setup status, completion time/actor, and update time
+are server-owned.
+
+The display name is exposed in authenticated workspace context for navigation
+and headings. The full profile, including the tax identifier and contact
+details, is returned only by the provider-profile API to an authorized
+top-level platform owner or administrator. Audit records contain the setup
+schema version or changed field names, not profile values.
+
 ## Exhaustive Configuration Inventory
 
 ### Orchestrator Settings (Environment / CLI)

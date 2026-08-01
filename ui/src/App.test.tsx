@@ -207,6 +207,20 @@ describe('provider setup wizard', () => {
     expect(screen.getByLabelText(/Display name/)).toHaveValue('Example Provider');
   });
 
+  it('shows Review without submitting when Regional Defaults continues', async () => {
+    installApi();
+    const complete = vi.spyOn(api, 'completeProviderSetup').mockResolvedValue(providerProfile);
+    const user = userEvent.setup();
+    renderAt('/provider/setup');
+    await screen.findByRole('heading', { name: /Set up your provider business profile/ });
+
+    await advanceToReview(user);
+
+    expect(screen.getByRole('heading', { name: 'Review' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Complete setup' })).toHaveAttribute('type', 'submit');
+    expect(complete).not.toHaveBeenCalled();
+  });
+
   it('retries a recoverable failure without losing data', async () => {
     installApi();
     const context = vi.mocked(api.getWorkspaceContext);

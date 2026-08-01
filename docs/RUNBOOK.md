@@ -79,6 +79,76 @@ docker compose exec postgres psql -U strata -d strata_rmm
 SELECT * FROM schema_migrations ORDER BY id;
 ```
 
+## Provider business-profile setup and recovery
+
+Provider setup is complete only when the server reports a non-null
+`setup_completed_at` for the singleton platform. The browser route alone is not
+authoritative. From an operator-controlled database session, check migration 67
+and the profile state:
+
+```sql
+SELECT id, display_name,
+       setup_completed_at IS NOT NULL AS setup_complete,
+       setup_completed_at, setup_completed_by, updated_at
+FROM platforms
+WHERE id = '00000000-0000-0000-0000-000000000001';
+
+SELECT id, name
+FROM schema_migrations
+WHERE id = 67;
+```
+
+If a first sign-in remains on setup:
+
+1. Confirm migration 67 is present and the API/database readiness checks pass.
+2. Confirm the user has an active, unexpired `platform_owner` or
+   `platform_admin` membership with `scope_type = 'platform'` and `scope_id =
+   '00000000-0000-0000-0000-000000000001'`.
+3. Confirm the session has no MSP, client, or site scope. A switched or
+   tenant-scoped token is deliberately forbidden from provider-profile routes.
+4. If `setup_completed_at` is null, sign in at the top-level platform context,
+   re-enter any values lost by a reload, proceed through Review, and explicitly
+   select **Complete setup**.
+5. If `setup_completed_at` is populated, sign out and back in to refresh the
+   login and `/api/v2/context` state. Do not clear completion columns or edit
+   profile columns directly.
+
+The initial-admin bootstrap and migration 67 create or repair the required
+platform-owner membership for installer-created administrators. If that
+membership is still absent, stop and investigate bootstrap/migration evidence;
+do not bypass the API with an ad hoc profile update.
+
+An identical retry of a completed setup request is an idempotent success and
+does not add another audit event. A different setup payload after completion is
+rejected; use **Platform Settings → Provider business profile** for later
+changes. A settings save sends only changed fields, but the server merges and
+validates the entire profile. A failed request leaves the current wizard values
+available only while that page remains loaded.
+
+### Provider profile audit checks
+
+Completion and updates are written to the platform-wide control-plane audit
+trail in the same transaction as the profile change. Inspect them with an
+authorized operator connection:
+
+```sql
+SELECT action, resource_type, resource_id, actor_user_id, details, created_at
+FROM control_plane_audit
+WHERE resource_type = 'platform'
+  AND resource_id = '00000000-0000-0000-0000-000000000001'
+  AND action IN ('provider.setup_completed', 'provider.profile_updated')
+ORDER BY created_at;
+```
+
+Expect one `provider.setup_completed` event after first completion, with only a
+profile schema version in `details`. Each effective later save records a
+`provider.profile_updated` event whose details list sorted changed field names;
+contact, address, and tax-identifier values are not copied into audit details.
+No-op updates add no event. The migration-67 database trigger rejects UPDATE or
+DELETE attempts against any control-plane audit row. Provider mutation handlers
+also fail the request if the audit append fails, causing the request transaction
+to roll back.
+
 ### View active alerts
 ```sql
 SELECT * FROM alerts WHERE status = 'firing' ORDER BY fired_at DESC;

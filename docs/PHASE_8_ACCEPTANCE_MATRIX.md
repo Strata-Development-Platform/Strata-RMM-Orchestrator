@@ -148,3 +148,21 @@ Implementation evidence is maintained in [Phase 8G evidence](PHASE_8G_EVIDENCE.m
 | A8-24 | Four-scenario incident-response tabletop is signed | Not accepted; procedure/template only |
 | A8-25 | Alert/runbook owners and escalation paths are exercised | Partial; hosted delivery audit pending |
 | A8-26 | Mandatory evidence and residual risks receive signed go/no-go | Not accepted |
+
+## Provider first-login business-profile slice
+
+This bounded slice adds provider account setup and later profile management. It
+does not change the existing program-wide acceptance status above.
+
+| ID | Acceptance criterion | Current status |
+|---|---|---|
+| PB-01 | Migration 67 adds provider fields and immutable completion metadata; secure bootstrap grants the first platform owner | Implemented; focused schema, bootstrap, and PostgreSQL coverage added |
+| PB-02 | An incomplete top-level provider administrator must pass Business, Contact, Regional Defaults, and Review before explicit submission | Implemented; frontend and Chromium acceptance coverage added |
+| PB-03 | The API, rather than client routing, enforces active singleton-platform owner/admin authorization and denies tenant-scoped/non-platform access | Implemented; handler authorization and PostgreSQL negative coverage added |
+| PB-04 | Server validation, strict input, concurrency locking, identical-retry idempotency, and protected completion metadata are enforced | Implemented; validation, handler, and database integration coverage added |
+| PB-05 | Setup and effective profile edits atomically append immutable control-plane audit evidence without copying profile values | Implemented; focused PostgreSQL integration coverage added |
+| PB-06 | Completed profile fields can be edited in Platform Settings while completion actor/time remain unchanged | Implemented; frontend and browser persistence coverage added |
+| PB-07 | Exact-head CI, review, hosted exercises, and all internal-alpha launch gates are complete | Not accepted; broader A8-22…A8-26 status remains unchanged |
+
+PB-01…PB-06 do not represent a white-label licensing system, all dashboard
+levels, or complete internal-alpha readiness.

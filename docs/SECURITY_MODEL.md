@@ -16,6 +16,50 @@ The original prototype findings below drove Phases 1–7. The following controls
 
 This is a verified engineering baseline, not a declaration of unrestricted production readiness.
 
+## First-login provider setup
+
+Provider setup uses the authenticated UI, but the UI redirect is not a security
+boundary. Login, `/api/v1/auth/me`, and `/api/v2/context` derive
+`setup_complete` from `setup_completed_at` in the singleton platform row. The
+API remains authoritative for every read and mutation.
+
+The provider-profile routes are classified as privileged platform routes and
+apply layered authorization:
+
+- the access token must carry `platform_owner` or `platform_admin`;
+- MSP, client, and site scope must all be empty;
+- the database must confirm a current active, unexpired owner/admin membership
+  on the exact singleton platform ID; and
+- the request executes inside the restricted-role database transaction with its
+  user, role, scope, and write intent set as local security context.
+
+An MSP, client, technician, agent, expired member, or context-switched platform
+session therefore receives a denial even if it calls the API directly. Provider
+mutations always target the constant singleton platform ID and never accept a
+tenant or platform identifier from the request. The profile is platform-wide
+rather than tenant-owned; its full contents are not available through MSP or
+client APIs. Only the display name is included in ordinary authenticated
+workspace context.
+
+Setup and updates use strict JSON decoding, full server-side normalization and
+validation, a row lock, and a single transaction. Protected completion fields
+are not accepted as input. Setup completion time and actor are written once;
+identical completion retries are no-ops, different retries conflict, and PATCH
+is unavailable before completion.
+
+The same transaction appends `provider.setup_completed` or
+`provider.profile_updated` to `control_plane_audit`. Audit details contain only
+the profile schema version or changed field names, never business-profile
+values. Migration 67 installs a trigger that rejects control-plane audit UPDATE
+and DELETE operations. Control-plane mutation handlers treat an audit append
+failure as a request failure, so the surrounding request transaction is rolled
+back rather than returning an unaudited success.
+
+Contact, address, and tax-identifier data are business-sensitive. They must not
+be logged, placed in audit details, or exposed to tenant-scoped roles. This
+slice does not implement licensing enforcement, logo/theme white-labeling, or a
+general multi-provider hierarchy.
+
 ## Phase 8G security review
 
 Phase 8G adds the following internal-alpha controls:

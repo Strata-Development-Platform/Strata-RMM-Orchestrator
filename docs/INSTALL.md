@@ -70,6 +70,37 @@ The Docker installer:
 
 After success, visit `https://rmm.example.com` and sign in with the administrator email and the password you supplied.
 
+## First sign-in and provider business setup
+
+The bootstrap command grants the initial administrator an active
+`platform_owner` membership on the singleton platform. On that account's first
+sign-in, the web console reads the server-owned setup status and redirects the
+administrator to `/provider/setup` until the provider business profile is
+complete.
+
+Complete all four wizard stages:
+
+1. enter the legal and display names;
+2. enter the primary, support, billing, and telephone contacts;
+3. enter the address and regional defaults;
+4. review the complete profile, then explicitly select **Complete setup**.
+
+The Continue control on Regional Defaults only opens Review; it does not submit
+the profile. Completion is accepted only after server-side authorization and
+validation. The profile, immutable completion actor/time, and
+`provider.setup_completed` audit event are committed together. A successful
+completion returns the administrator to the provider dashboard, and later
+sign-ins do not repeat the wizard.
+
+If setup is interrupted before completion, sign in again and complete the
+wizard. Unsaved wizard values are browser state and must be re-entered after a
+reload or sign-out. After completion, a top-level platform owner or platform
+administrator can edit the business fields under **Settings → Platform
+Settings → Provider business profile**. Completion metadata cannot be edited.
+See [CONFIGURATION.md](CONFIGURATION.md#provider-business-profile) for the field
+contract and [RUNBOOK.md](RUNBOOK.md#provider-business-profile-setup-and-recovery)
+for recovery and audit checks.
+
 ## Native package install
 
 The native mode never downloads a mutable package. Provide the locally verified release artifact and protected dependency files:
