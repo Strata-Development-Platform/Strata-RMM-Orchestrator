@@ -2,9 +2,12 @@ import type {
   CustomerSummary,
   BrandingProfile,
   ClientOrganization,
+  CreateMSPWithOwnerRequest,
+  CreateMSPWithOwnerResponse,
   CustomDomain,
   EnrollmentToken,
   Entitlement,
+  InvitationInspection,
   LoginResponse,
   ManagedDevice,
   Membership,
@@ -13,6 +16,7 @@ import type {
   ProviderBusinessProfile,
   ProviderBusinessProfilePatch,
   ProviderBusinessProfileValues,
+  ResendOwnerInvitationResponse,
   Site,
   Usage,
   User,
@@ -20,6 +24,13 @@ import type {
 } from './types';
 
 const BASE = '';
+
+export class ApiError extends Error {
+  constructor(public readonly status: number, message: string) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
 
 class ApiClient {
   private token: string | null = null;
@@ -36,24 +47,26 @@ class ApiClient {
 
   getToken() { return this.token; }
 
-  private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  private async request<T>(method: string, path: string, body?: unknown, authenticated = true): Promise<T> {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (this.token) headers['Authorization'] = `Bearer ${this.token}`;
+    if (authenticated && this.token) headers['Authorization'] = `Bearer ${this.token}`;
 
     const res = await fetch(`${BASE}${path}`, {
       method,
       headers,
-      body: body ? JSON.stringify(body) : undefined,
+      body: body === undefined ? undefined : JSON.stringify(body),
     });
 
-    if (res.status === 401) {
+    if (res.status === 401 && authenticated) {
       this.setToken(null);
       window.location.href = '/login';
-      throw new Error('unauthorized');
+      throw new ApiError(res.status, 'unauthorized');
     }
 
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'request failed');
+    if (res.status === 204) return undefined as T;
+
+    const data = await res.json().catch(() => undefined) as { error?: string } | undefined;
+    if (!res.ok) throw new ApiError(res.status, data?.error || 'request failed');
     return data as T;
   }
 
@@ -62,6 +75,10 @@ class ApiClient {
     this.request<LoginResponse>('POST', '/api/v1/auth/login', { email, password });
 
   me = () => this.request<LoginResponse>('GET', '/api/v1/auth/me');
+  inspectInvitation = (token: string) =>
+    this.request<InvitationInspection>('POST', '/api/v1/auth/invitations/inspect', { token }, false);
+  acceptInvitation = (token: string, password: string) =>
+    this.request<void>('POST', '/api/v1/auth/invitations/accept', { token, password }, false);
 
   // Platform
   getOverview = () => this.request<PlatformOverview>('GET', '/api/v1/platform/overview');
@@ -78,8 +95,10 @@ class ApiClient {
       'POST', '/api/v2/context/switch', { msp_id, client_id, site_id }
     );
   getMSPs = () => this.request<{ msps: MSPTenant[] }>('GET', '/api/v2/platform/msps');
-  createMSP = (name: string, slug: string, plan: string) =>
-    this.request<{ id: string; status: string }>('POST', '/api/v2/platform/msps', { name, slug, plan });
+  createMSPWithOwner = (request: CreateMSPWithOwnerRequest) =>
+    this.request<CreateMSPWithOwnerResponse>('POST', '/api/v2/platform/msps', request);
+  resendOwnerInvitation = (mspID: string) =>
+    this.request<ResendOwnerInvitationResponse>('POST', `/api/v2/platform/msps/${mspID}/owner-invitation`);
   getClients = (mspID: string) =>
     this.request<{ clients: ClientOrganization[] }>('GET', `/api/v2/msps/${mspID}/clients`);
   createClient = (mspID: string, name: string, slug: string) =>

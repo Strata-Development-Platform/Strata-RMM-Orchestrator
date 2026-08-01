@@ -27,6 +27,7 @@ export default function LoginPage() {
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-slate-900 dark:text-white">Strata RMM</h1>
           <p className="text-sm text-slate-500 mt-2">Platform Management Console</p>
+          <p className="mt-3 text-sm leading-5 text-slate-600 dark:text-slate-400">Access is provisioned by invitation. Sign in after activating your invited account.</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
