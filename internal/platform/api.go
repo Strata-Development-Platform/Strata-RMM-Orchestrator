@@ -50,11 +50,12 @@ type APIServer struct {
 	dispatcherHealthy  bool
 	migrationsComplete bool
 
-	httpReadTimeout  time.Duration
-	httpWriteTimeout time.Duration
-	httpIdleTimeout  time.Duration
-	httpBodyLimit    int64
-	corsOrigins      []string
+	httpReadTimeout     time.Duration
+	httpWriteTimeout    time.Duration
+	httpIdleTimeout     time.Duration
+	httpBodyLimit       int64
+	corsOrigins         []string
+	requireHTTPSWebsite bool
 
 	healthRegistry *HealthRegistry
 
@@ -106,6 +107,11 @@ func (s *APIServer) WithHTTPConfig(readTimeout, writeTimeout, idleTimeout time.D
 	s.httpIdleTimeout = idleTimeout
 	s.httpBodyLimit = bodyLimit
 	s.corsOrigins = corsOrigins
+	return s
+}
+
+func (s *APIServer) WithProductionMode(production bool) *APIServer {
+	s.requireHTTPSWebsite = production
 	return s
 }
 
@@ -376,6 +382,11 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("POST /api/v2/platform/support-grants", s.handleCreateSupportGrant)
 	mux.HandleFunc("DELETE /api/v2/platform/support-grants/{grantID}", s.handleRevokeSupportGrant)
 	mux.HandleFunc("GET /api/v2/context", s.handleContext)
+
+	// v2 API — singleton provider business profile and first-login setup
+	mux.HandleFunc("GET /api/v2/platform/provider/profile", s.handleGetProviderProfile)
+	mux.HandleFunc("POST /api/v2/platform/provider/setup", s.handleCompleteProviderSetup)
+	mux.HandleFunc("PATCH /api/v2/platform/provider/profile", s.handleUpdateProviderProfile)
 
 	// v2 API — deployment state
 	mux.HandleFunc("GET /api/v2/deployment/state", s.handleDeploymentState)

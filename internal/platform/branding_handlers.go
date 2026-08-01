@@ -92,7 +92,10 @@ func (s *APIServer) handleUpdateBranding(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	s.auditControlPlane(r, mspID, "branding.updated", "branding_profile", mspID, nil)
+	if err := s.auditControlPlane(r, mspID, "branding.updated", "branding_profile", mspID, nil); err != nil {
+		writeControlPlaneAuditFailure(w)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 

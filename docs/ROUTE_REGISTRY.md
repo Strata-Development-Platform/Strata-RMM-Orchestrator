@@ -12,6 +12,7 @@
 | GET | /install.sh | public | - | - | - | - |
 | GET | /releases/latest/agent/{os}/{arch} | public | - | - | - | - |
 | GET | /api/v1/auth/me | required | user | authenticated | user | user |
+| GET | /api/v2/context | required | user | membership-derived roles/scopes plus provider setup status | user | current workspace |
 | POST | /api/v1/enroll | required | user | authorized client operator | client | client |
 | POST | /api/v1/agent/register | public bootstrap | enrollment token | single-use enrollment | device | enrolled scope |
 | POST | /api/v1/agent/config | required | agent | agent | device | tenant |
@@ -41,6 +42,9 @@
 | PATCH | /api/v2/platform/msps/{id}/entitlement | required | user | platform_admin | msp | platform |
 | PATCH | /api/v2/platform/domains/{id}/certificate | required | user | platform_admin | domain | platform |
 | POST/DELETE | /api/v2/platform/support-grants/* | required | user | platform_admin | support grant | platform |
+| GET | /api/v2/platform/provider/profile | required | user | platform_owner/platform_admin | provider profile | singleton platform |
+| POST | /api/v2/platform/provider/setup | required | user | platform_owner/platform_admin | provider setup | singleton platform |
+| PATCH | /api/v2/platform/provider/profile | required | user | platform_owner/platform_admin | provider profile | singleton platform |
 | GET | /api/v2/deployment/state | required | user | platform_admin | deployment | platform |
 | GET | /api/v2/deployment/history | required | user | platform_admin | deployment | platform |
 | GET/POST | /api/v2/msps/{id}/clients | required | user | msp_admin | msp | msp |

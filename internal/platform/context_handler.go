@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"sort"
 	"time"
+
+	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/postgres"
 )
 
 type contextScope struct {
@@ -25,24 +27,28 @@ type contextEntitlement struct {
 }
 
 type contextResponse struct {
-	UserID          string              `json:"user_id"`
-	Email           string              `json:"email"`
-	Roles           []string            `json:"roles"`
-	Permissions     []string            `json:"permissions"`
-	AvailableScopes []contextScope      `json:"available_scopes"`
-	MSPID           string              `json:"msp_id"`
-	MSPName         string              `json:"msp_name"`
-	MSPActive       bool                `json:"msp_active"`
-	ClientID        string              `json:"client_id"`
-	ClientName      string              `json:"client_name"`
-	SiteID          string              `json:"site_id"`
-	SiteName        string              `json:"site_name"`
-	Branding        json.RawMessage     `json:"branding,omitempty"`
-	Entitlement     *contextEntitlement `json:"entitlement,omitempty"`
-	SupportGrantID  string              `json:"support_grant_id,omitempty"`
-	SupportGrantExp string              `json:"support_grant_expires_at,omitempty"`
-	PlatformRole    bool                `json:"platform_role"`
-	AuthenticatedAt string              `json:"authenticated_at"`
+	UserID              string              `json:"user_id"`
+	Email               string              `json:"email"`
+	TenantID            string              `json:"tenant_id"`
+	Roles               []string            `json:"roles"`
+	Permissions         []string            `json:"permissions"`
+	AvailableScopes     []contextScope      `json:"available_scopes"`
+	MSPID               string              `json:"msp_id"`
+	MSPName             string              `json:"msp_name"`
+	MSPActive           bool                `json:"msp_active"`
+	ClientID            string              `json:"client_id"`
+	ClientName          string              `json:"client_name"`
+	SiteID              string              `json:"site_id"`
+	SiteName            string              `json:"site_name"`
+	Branding            json.RawMessage     `json:"branding,omitempty"`
+	Entitlement         *contextEntitlement `json:"entitlement,omitempty"`
+	SupportGrantID      string              `json:"support_grant_id,omitempty"`
+	SupportGrantExp     string              `json:"support_grant_expires_at,omitempty"`
+	PlatformRole        bool                `json:"platform_role"`
+	PlatformID          string              `json:"platform_id"`
+	ProviderDisplayName string              `json:"provider_display_name"`
+	SetupComplete       bool                `json:"setup_complete"`
+	AuthenticatedAt     string              `json:"authenticated_at"`
 }
 
 func (s *APIServer) handleContext(w http.ResponseWriter, r *http.Request) {
@@ -57,12 +63,14 @@ func (s *APIServer) handleContext(w http.ResponseWriter, r *http.Request) {
 	}
 
 	roles := getRoles(r)
+	tenantID, _ := r.Context().Value(ctxKeyTenantID).(string)
 	mspID, _ := r.Context().Value(ctxKeyMSPID).(string)
 	clientID, _ := r.Context().Value(ctxKeyClientID).(string)
 	siteID, _ := r.Context().Value(ctxKeySiteID).(string)
 	db := s.requestDB(r)
 	resp := contextResponse{
 		UserID:          userID,
+		TenantID:        tenantID,
 		Roles:           roles,
 		Permissions:     permissionsForRoles(roles),
 		AvailableScopes: []contextScope{},
@@ -72,6 +80,14 @@ func (s *APIServer) handleContext(w http.ResponseWriter, r *http.Request) {
 		PlatformRole:    isPlatformGlobal(roles),
 		AuthenticatedAt: time.Now().UTC().Format(time.RFC3339),
 	}
+	profile, err := postgres.GetProviderBusinessProfile(r.Context(), db)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "provider setup status unavailable"})
+		return
+	}
+	resp.PlatformID = profile.ID
+	resp.ProviderDisplayName = profile.DisplayName
+	resp.SetupComplete = profile.SetupComplete
 
 	if err := db.QueryRowContext(r.Context(),
 		`SELECT email FROM users WHERE id = $1 AND is_active = true`,
@@ -188,12 +204,26 @@ func (s *APIServer) handleContext(w http.ResponseWriter, r *http.Request) {
 
 func loadAvailableScopes(r *http.Request, db dbExecutor, userID string, roles []string) ([]contextScope, error) {
 	if isPlatformGlobal(roles) {
+		platformRole := "platform_admin"
+		for _, role := range roles {
+			if role == "platform_owner" {
+				platformRole = role
+				break
+			}
+		}
 		rows, err := db.QueryContext(r.Context(), `
-			SELECT 'msp', id::text, name, '', 'platform_admin'
-			FROM msp_tenants
-			WHERE is_active = true
-			ORDER BY name
-		`)
+			SELECT scope_type, scope_id, scope_name, parent_id, role
+			FROM (
+				SELECT 'platform' AS scope_type, id::text AS scope_id,
+				       COALESCE(NULLIF(display_name, ''), name) AS scope_name,
+				       '' AS parent_id, $1 AS role, 0 AS sort_order
+				FROM platforms WHERE id = $2
+				UNION ALL
+				SELECT 'msp', id::text, name, '', $1, 1
+				FROM msp_tenants WHERE is_active = true
+			) scopes
+			ORDER BY sort_order, scope_name
+		`, platformRole, postgres.SingletonPlatformID)
 		if err != nil {
 			return nil, err
 		}

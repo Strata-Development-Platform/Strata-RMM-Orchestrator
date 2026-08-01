@@ -2348,6 +2348,96 @@ func Migrations() []Migration {
 				ALTER TABLE plan_entitlements DROP COLUMN IF EXISTS grace_period_ends_at;
 			`,
 		},
+		{
+			ID:   67,
+			Name: "add_provider_business_profile",
+			Up: `
+				ALTER TABLE platforms
+					ADD COLUMN IF NOT EXISTS legal_name TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS display_name TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS contact_name TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS support_email TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS billing_email TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS business_phone TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS website_url TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS address_line1 TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS address_line2 TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS city TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS state_province TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS postal_code TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS country_code TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS default_timezone TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS default_locale TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS default_currency TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS tax_identifier TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS setup_completed_at TIMESTAMPTZ,
+					ADD COLUMN IF NOT EXISTS setup_completed_by UUID REFERENCES users(id) ON DELETE SET NULL,
+					ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+				-- The migration transaction is trusted platform maintenance. Establish the
+				-- same fail-closed RLS role used by authenticated platform requests before
+				-- repairing installs created by the local bootstrap command.
+				SELECT set_config('app.role', 'platform_admin', true);
+
+				INSERT INTO memberships (
+					user_id, role, scope_type, scope_id, created_by, status
+				)
+				SELECT DISTINCT
+					a.user_id::text,
+					'platform_owner',
+					'platform',
+					'00000000-0000-0000-0000-000000000001',
+					a.user_id::text,
+					'active'
+				FROM audit_log a
+				JOIN users u ON u.id = a.user_id
+				WHERE a.action = 'platform.bootstrap_admin'
+				  AND a.user_id IS NOT NULL
+				ON CONFLICT (user_id, scope_type, scope_id, role)
+					WHERE status = 'active'
+				DO NOTHING;
+
+				CREATE OR REPLACE FUNCTION prevent_control_plane_audit_mutation()
+				RETURNS trigger
+				LANGUAGE plpgsql
+				AS $$
+				BEGIN
+					RAISE EXCEPTION 'control plane audit records are immutable'
+						USING ERRCODE = '55000';
+				END;
+				$$;
+
+				DROP TRIGGER IF EXISTS control_plane_audit_immutable ON control_plane_audit;
+				CREATE TRIGGER control_plane_audit_immutable
+					BEFORE UPDATE OR DELETE ON control_plane_audit
+					FOR EACH ROW EXECUTE FUNCTION prevent_control_plane_audit_mutation();
+			`,
+			Down: `
+				DROP TRIGGER IF EXISTS control_plane_audit_immutable ON control_plane_audit;
+				DROP FUNCTION IF EXISTS prevent_control_plane_audit_mutation();
+				ALTER TABLE platforms
+					DROP COLUMN IF EXISTS legal_name,
+					DROP COLUMN IF EXISTS display_name,
+					DROP COLUMN IF EXISTS contact_name,
+					DROP COLUMN IF EXISTS support_email,
+					DROP COLUMN IF EXISTS billing_email,
+					DROP COLUMN IF EXISTS business_phone,
+					DROP COLUMN IF EXISTS website_url,
+					DROP COLUMN IF EXISTS address_line1,
+					DROP COLUMN IF EXISTS address_line2,
+					DROP COLUMN IF EXISTS city,
+					DROP COLUMN IF EXISTS state_province,
+					DROP COLUMN IF EXISTS postal_code,
+					DROP COLUMN IF EXISTS country_code,
+					DROP COLUMN IF EXISTS default_timezone,
+					DROP COLUMN IF EXISTS default_locale,
+					DROP COLUMN IF EXISTS default_currency,
+					DROP COLUMN IF EXISTS tax_identifier,
+					DROP COLUMN IF EXISTS setup_completed_at,
+					DROP COLUMN IF EXISTS setup_completed_by,
+					DROP COLUMN IF EXISTS updated_at;
+			`,
+		},
 	}
 }
 
