@@ -44,7 +44,8 @@ func TestTenantRLSMigration(t *testing.T) {
 		mspB    = "20000000-0000-0000-0000-000000000001"
 		clientA = "10000000-0000-0000-0000-000000000002"
 		clientB = "20000000-0000-0000-0000-000000000002"
-		userID  = "30000000-0000-0000-0000-000000000001"
+		userA   = "30000000-0000-0000-0000-000000000001"
+		userB   = "30000000-0000-0000-0000-000000000003"
 		grantID = "30000000-0000-0000-0000-000000000002"
 	)
 
@@ -100,26 +101,44 @@ func TestTenantRLSMigration(t *testing.T) {
 			$1, $2, $3, 'CI isolation test', 'CI-1', 'ci',
 			NOW() + INTERVAL '15 minutes', 'active', ARRAY['read']::text[]
 		)
-	`, grantID, userID, mspB); err != nil {
+	`, grantID, userA, mspB); err != nil {
 		_ = seed.Rollback()
 		t.Fatalf("seed support grant: %v", err)
+	}
+	if _, err := seed.Exec(`
+		INSERT INTO users (id, email, password_hash, role, is_active, email_verified_at)
+		VALUES
+			($1, 'user-a@example.test', 'x', 'viewer', true, NOW()),
+			($2, 'user-b@example.test', 'x', 'viewer', true, NOW())
+	`, userA, userB); err != nil {
+		_ = seed.Rollback()
+		t.Fatalf("seed users: %v", err)
+	}
+	if _, err := seed.Exec(`
+		INSERT INTO memberships (user_id, role, scope_type, scope_id, status)
+		VALUES
+			($1, 'msp_owner', 'msp', $2, 'active'),
+			($3, 'msp_owner', 'msp', $4, 'active')
+	`, userA, mspA, userB, mspB); err != nil {
+		_ = seed.Rollback()
+		t.Fatalf("seed memberships: %v", err)
 	}
 	if err := seed.Commit(); err != nil {
 		t.Fatalf("commit seed: %v", err)
 	}
 
 	assertVisibleClients(t, db, "", "", "", 0)
-	assertVisibleClients(t, db, mspA, "", "", 1)
-	assertVisibleClients(t, db, mspB, "", "", 1)
-	assertVisibleClients(t, db, "", userID, grantID, 1)
+	assertVisibleClients(t, db, mspA, userA, "", 1)
+	assertVisibleClients(t, db, mspB, userB, "", 1)
+	assertVisibleClients(t, db, "", userA, grantID, 1)
 	assertVisibleEntitlements(t, db, "", "", "", 0)
-	assertVisibleEntitlements(t, db, mspA, "", "", 1)
-	assertVisibleEntitlements(t, db, mspB, "", "", 1)
-	assertVisibleEntitlements(t, db, "", userID, grantID, 1)
-	assertTenantTableCount(t, db, "usage_snapshots", mspA, "", "", 1)
-	assertTenantTableCount(t, db, "usage_snapshots", mspB, "", "", 1)
-	assertTenantTableCount(t, db, "control_plane_audit", mspA, "", "", 1)
-	assertTenantTableCount(t, db, "control_plane_audit", mspB, "", "", 1)
+	assertVisibleEntitlements(t, db, mspA, userA, "", 1)
+	assertVisibleEntitlements(t, db, mspB, userB, "", 1)
+	assertVisibleEntitlements(t, db, "", userA, grantID, 1)
+	assertTenantTableCount(t, db, "usage_snapshots", mspA, userA, "", 1)
+	assertTenantTableCount(t, db, "usage_snapshots", mspB, userB, "", 1)
+	assertTenantTableCount(t, db, "control_plane_audit", mspA, userA, "", 1)
+	assertTenantTableCount(t, db, "control_plane_audit", mspB, userB, "", 1)
 
 	tx, err := db.Begin()
 	if err != nil {
@@ -195,6 +214,7 @@ func assertTenantTableCount(t *testing.T, db *sql.DB, table, mspID, userID, gran
 		SELECT set_config('app.msp_id', $1, true),
 		       set_config('app.user_id', $2, true),
 		       set_config('app.support_grant_id', $3, true),
+		       set_config('app.scope_type', CASE WHEN $1 = '' THEN '' ELSE 'msp' END, true),
 		       set_config('app.permission', 'read', true)
 	`, mspID, userID, grantID); err != nil {
 		t.Fatalf("set %s visibility context: %v", table, err)
@@ -227,6 +247,7 @@ func assertVisibleClients(t *testing.T, db *sql.DB, mspID, userID, grantID strin
 			set_config('app.msp_id', $1, true),
 			set_config('app.user_id', $2, true),
 			set_config('app.support_grant_id', $3, true),
+			set_config('app.scope_type', CASE WHEN $1 = '' THEN '' ELSE 'msp' END, true),
 			set_config('app.permission', 'read', true)
 	`, mspID, userID, grantID); err != nil {
 		t.Fatalf("set visibility context: %v", err)
@@ -255,6 +276,7 @@ func assertVisibleEntitlements(t *testing.T, db *sql.DB, mspID, userID, grantID 
 			set_config('app.msp_id', $1, true),
 			set_config('app.user_id', $2, true),
 			set_config('app.support_grant_id', $3, true),
+			set_config('app.scope_type', CASE WHEN $1 = '' THEN '' ELSE 'msp' END, true),
 			set_config('app.permission', 'read', true)
 	`, mspID, userID, grantID); err != nil {
 		t.Fatalf("set entitlement visibility context: %v", err)

@@ -332,7 +332,7 @@ func (s *APIServer) handleCreateApprovalRequest(w http.ResponseWriter, r *http.R
 	targets, _ := json.Marshal(uniqueIDs)
 	if err := writeEndpointAuditEvidence(r, db, &EndpointAuditEntry{
 		MSPID: mspID, ClientID: approvalClientID, SiteID: approvalSiteID,
-		ActorUserID: userID, ActorRole: strings.Join(getRoles(r), ","),
+		ActorUserID: userID, ActorRole: strings.Join(authorizationFromRequest(r).Roles, ","),
 		RequestSource: "api", NormalizedIP: requestIPAddress(r),
 		Action: "endpoint.approval.created", Targets: targets, Reason: req.Reason,
 		RequestHash: requestHash, IdempotencyKey: idempotencyKey,
@@ -521,7 +521,9 @@ func (s *APIServer) handleApproveRequest(w http.ResponseWriter, r *http.Request)
 	if !s.AuthorizeMSPManage(w, r, mspID) {
 		return
 	}
-	var decisionReq struct{ Reason string `json:"reason"` }
+	var decisionReq struct {
+		Reason string `json:"reason"`
+	}
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&decisionReq); err != nil && !errors.Is(err, io.EOF) {
@@ -540,8 +542,8 @@ func (s *APIServer) handleApproveRequest(w http.ResponseWriter, r *http.Request)
 		       client_id::text,site_id::text,schedule_at,expires_at
 		FROM endpoint_approval_requests
 		WHERE id=$1 AND msp_id=$2 FOR UPDATE
-	`, approvalID, mspID).Scan(&requesterID,&status,&actionName,&policyText,&operationText,
-		&correlationID,&requestHash,&deviceIDsText,&clientID,&siteID,&scheduleAt,&expiresAt)
+	`, approvalID, mspID).Scan(&requesterID, &status, &actionName, &policyText, &operationText,
+		&correlationID, &requestHash, &deviceIDsText, &clientID, &siteID, &scheduleAt, &expiresAt)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "approval request not found"})
 		return
@@ -564,7 +566,7 @@ func (s *APIServer) handleApproveRequest(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	allowed := false
-	for _, role := range getRoles(r) {
+	for _, role := range authorizationFromRequest(r).Roles {
 		for _, permitted := range policy.AllowedRoles {
 			if role == permitted {
 				allowed = true
@@ -599,13 +601,13 @@ func (s *APIServer) handleApproveRequest(w http.ResponseWriter, r *http.Request)
 		}
 		if err := writeEndpointAuditEvidence(r, db, &EndpointAuditEntry{
 			MSPID: mspID, ClientID: clientID.String, SiteID: siteID.String,
-			ActorUserID: userID, ActorRole: strings.Join(getRoles(r), ","),
+			ActorUserID: userID, ActorRole: strings.Join(authorizationFromRequest(r).Roles, ","),
 			RequestSource: "api", NormalizedIP: requestIPAddress(r),
 			Action: "endpoint.approval.decision", Reason: decisionReq.Reason,
 			RequestHash: requestHash, PolicySnapshot: json.RawMessage(policyText),
 			ApprovalState: "pending", CorrelationID: correlationID,
 			StateTransition: "pending->pending",
-			ResultSummary: fmt.Sprintf("%d of %d approvals recorded", approvedCount, policy.MinApprovers),
+			ResultSummary:   fmt.Sprintf("%d of %d approvals recorded", approvedCount, policy.MinApprovers),
 		}); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "write audit evidence failed"})
 			return
@@ -645,8 +647,8 @@ func (s *APIServer) handleApproveRequest(w http.ResponseWriter, r *http.Request)
 		                 max_retries,max_devices,expires_at,correlation_id,request_hash,
 		                 scheduled_for,approval_request_id)
 		VALUES($1,$2,$3,$4,$5,$6,'queued',10,$7,1,$8,$9,$10,$11,$12,$13)
-	`, jobID,mspID,clientID,siteID,"api:approval:"+actionName,op.JobType,payloadJSON,
-		len(deviceIDs),jobExpiresAt,correlationID,requestHash,availableAt,approvalID)
+	`, jobID, mspID, clientID, siteID, "api:approval:"+actionName, op.JobType, payloadJSON,
+		len(deviceIDs), jobExpiresAt, correlationID, requestHash, availableAt, approvalID)
 	if err != nil {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "approved operation already dispatched or job creation failed"})
 		return
@@ -658,7 +660,7 @@ func (s *APIServer) handleApproveRequest(w http.ResponseWriter, r *http.Request)
 		err := db.QueryRowContext(r.Context(), `
 			SELECT COALESCE(client_id::text,''),COALESCE(site_id::text,''),status,COALESCE(agent_id,'')
 			FROM devices WHERE id=$1 AND msp_id=$2
-		`, deviceID,mspID).Scan(&targetClientID,&targetSiteID,&deviceStatus,&agentID)
+		`, deviceID, mspID).Scan(&targetClientID, &targetSiteID, &deviceStatus, &agentID)
 		if err != nil || targetClientID != clientID.String || targetSiteID != siteID.String ||
 			deviceStatus == "disabled" || agentID == "" {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "approved target scope or agent state changed"})
@@ -690,20 +692,20 @@ func (s *APIServer) handleApproveRequest(w http.ResponseWriter, r *http.Request)
 			                        offline_at)
 			VALUES($1,$2,$3,$4,$5,$6,'approved',
 			       CASE WHEN $6='waiting' THEN NOW() ELSE NULL END)
-		`,targetID,jobID,deviceID,agentID,mspID,targetStatus)
+		`, targetID, jobID, deviceID, agentID, mspID, targetStatus)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create approved target failed"})
 			return
 		}
 		if targetStatus == "queued" {
-			eventID := jobID+":"+targetID+":1"
+			eventID := jobID + ":" + targetID + ":1"
 			outboxPayload, err := json.Marshal(map[string]interface{}{
-				"schema_version":1,"event_id":eventID,"job_id":jobID,"target_id":targetID,
-				"msp_id":mspID,"client_id":targetClientID,"site_id":targetSiteID,
-				"device_id":deviceID,"agent_id":agentID,"correlation_id":correlationID,
-				"attempt":1,"issued_at":now.Format(time.RFC3339),
-				"expires_at":jobExpiresAt.Format(time.RFC3339),
-				"command_type":op.JobType,"type":op.JobType,"payload":operationPayload,
+				"schema_version": 1, "event_id": eventID, "job_id": jobID, "target_id": targetID,
+				"msp_id": mspID, "client_id": targetClientID, "site_id": targetSiteID,
+				"device_id": deviceID, "agent_id": agentID, "correlation_id": correlationID,
+				"attempt": 1, "issued_at": now.Format(time.RFC3339),
+				"expires_at":   jobExpiresAt.Format(time.RFC3339),
+				"command_type": op.JobType, "type": op.JobType, "payload": operationPayload,
 			})
 			if err != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "encode dispatch failed"})
@@ -712,7 +714,7 @@ func (s *APIServer) handleApproveRequest(w http.ResponseWriter, r *http.Request)
 			if _, err := db.ExecContext(r.Context(), `
 				INSERT INTO job_outbox(id,msp_id,aggregate_id,event_type,payload,available_at)
 				VALUES(gen_random_uuid(),$1,$2,'job.dispatch',$3,$4)
-			`,mspID,jobID,outboxPayload,availableAt); err != nil {
+			`, mspID, jobID, outboxPayload, availableAt); err != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create dispatch failed"})
 				return
 			}
@@ -721,7 +723,7 @@ func (s *APIServer) handleApproveRequest(w http.ResponseWriter, r *http.Request)
 	result, err := db.ExecContext(r.Context(), `
 		UPDATE endpoint_approval_requests SET status='dispatched',decided_at=NOW(),
 		       decided_by=$1,updated_at=NOW() WHERE id=$2 AND status='pending'
-	`,userID,approvalID)
+	`, userID, approvalID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "finalize approval failed"})
 		return
@@ -732,20 +734,20 @@ func (s *APIServer) handleApproveRequest(w http.ResponseWriter, r *http.Request)
 	}
 	targets, _ := json.Marshal(deviceIDs)
 	if err := writeEndpointAuditEvidence(r, db, &EndpointAuditEntry{
-		MSPID:mspID,ClientID:clientID.String,SiteID:siteID.String,
-		ActorUserID:userID,ActorRole:strings.Join(getRoles(r),","),
-		RequestSource:"api",NormalizedIP:requestIPAddress(r),
-		Action:"endpoint.approval.dispatched",Targets:targets,
-		Reason:decisionReq.Reason,RequestHash:requestHash,
-		PolicySnapshot:json.RawMessage(policyText),ApprovalState:"dispatched",
-		JobID:jobID,CorrelationID:correlationID,ScheduleAt:&availableAt,
-		StateTransition:"pending->dispatched",
-		ResultSummary:fmt.Sprintf("%d approvals satisfied",approvedCount),
+		MSPID: mspID, ClientID: clientID.String, SiteID: siteID.String,
+		ActorUserID: userID, ActorRole: strings.Join(authorizationFromRequest(r).Roles, ","),
+		RequestSource: "api", NormalizedIP: requestIPAddress(r),
+		Action: "endpoint.approval.dispatched", Targets: targets,
+		Reason: decisionReq.Reason, RequestHash: requestHash,
+		PolicySnapshot: json.RawMessage(policyText), ApprovalState: "dispatched",
+		JobID: jobID, CorrelationID: correlationID, ScheduleAt: &availableAt,
+		StateTransition: "pending->dispatched",
+		ResultSummary:   fmt.Sprintf("%d approvals satisfied", approvedCount),
 	}); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "write audit evidence failed"})
 		return
 	}
-	writeJSON(w,http.StatusOK,map[string]interface{}{"status":"dispatched","approval_id":approvalID,"job_id":jobID})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "dispatched", "approval_id": approvalID, "job_id": jobID})
 }
 func (s *APIServer) handleRejectRequest(w http.ResponseWriter, r *http.Request) {
 	approvalID := r.PathValue("approvalID")
@@ -906,11 +908,11 @@ func expirePendingApprovals(db dbExecutor) {
 
 func transitionApprovalStatus(currentStatus, nextStatus string) error {
 	valid := map[string]map[string]bool{
-		"pending":   {"approved": true, "rejected": true, "cancelled": true, "expired": true},
-		"approved":  {"dispatched": true, "expired": true},
-		"rejected":  {},
-		"cancelled": {},
-		"expired":   {},
+		"pending":    {"approved": true, "rejected": true, "cancelled": true, "expired": true},
+		"approved":   {"dispatched": true, "expired": true},
+		"rejected":   {},
+		"cancelled":  {},
+		"expired":    {},
 		"dispatched": {},
 	}
 	transitions, ok := valid[currentStatus]

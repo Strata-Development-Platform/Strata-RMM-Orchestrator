@@ -68,9 +68,18 @@ func BootstrapInitialAdmin(ctx context.Context, db *sql.DB, in BootstrapAdminInp
 	if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock($1)", bootstrapLockID); err != nil {
 		return "", fmt.Errorf("acquire bootstrap lock: %w", err)
 	}
+	if _, err := tx.ExecContext(ctx, `
+		SELECT set_config('app.initial_bootstrap', 'true', true),
+		       set_config('app.scope_type', 'platform', true),
+		       set_config('app.msp_id', '', true),
+		       set_config('app.client_id', '', true),
+		       set_config('app.site_id', '', true)
+	`); err != nil {
+		return "", fmt.Errorf("set initial bootstrap security context: %w", err)
+	}
 
 	var userCount int
-	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM users").Scan(&userCount); err != nil {
+	if err := tx.QueryRowContext(ctx, "SELECT app_bootstrap_user_count()").Scan(&userCount); err != nil {
 		return "", fmt.Errorf("check existing users: %w", err)
 	}
 	if userCount != 0 {
@@ -91,7 +100,6 @@ func BootstrapInitialAdmin(ctx context.Context, db *sql.DB, in BootstrapAdminInp
 	if _, err := tx.ExecContext(ctx, `
 		SELECT
 			set_config('app.tenant_id', $1, true),
-			set_config('app.msp_id', $1, true),
 			set_config('app.role', 'platform_admin', true)
 	`, tenantID); err != nil {
 		return "", fmt.Errorf("set bootstrap security context: %w", err)

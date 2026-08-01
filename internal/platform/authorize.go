@@ -1,88 +1,82 @@
 package platform
 
-import (
-	"net/http"
-	"strings"
-)
+import "net/http"
 
-func getRoles(r *http.Request) []string {
-	rolesStr, _ := r.Context().Value(ctxKeyRole).(string)
-	if rolesStr == "" {
-		return nil
+func canManageMSPAtSelectedScope(authorization AuthorizationResult, mspID string) bool {
+	switch authorization.Selected.Type {
+	case ScopePlatform:
+		return authorization.IsPlatformGlobal()
+	case ScopeMSP:
+		return authorization.Selected.MSPID == mspID &&
+			authorization.HasRole("platform_owner", "platform_admin", "msp_owner", "msp_admin")
+	default:
+		// A child selection never grants access back to its parent MSP.
+		return false
 	}
-	return strings.Split(rolesStr, ",")
 }
 
-func hasAdminRole(roles []string) bool {
-	for _, r := range roles {
-		switch r {
-		case "platform_owner", "platform_admin":
-			return true
-		}
+func canReadMSPAtSelectedScope(authorization AuthorizationResult, mspID string) bool {
+	switch authorization.Selected.Type {
+	case ScopePlatform:
+		return authorization.IsPlatformGlobal()
+	case ScopeMSP:
+		return authorization.Selected.MSPID == mspID &&
+			(authorization.HasRole("platform_owner", "platform_admin") || hasMSPRole(authorization.Roles))
+	default:
+		return false
 	}
+}
+
+// AuthorizeMSPAccess authorizes an MSP-level resource only from platform or the
+// exact selected MSP. Client/site selections cannot be used to climb upward.
+func (s *APIServer) AuthorizeMSPAccess(w http.ResponseWriter, r *http.Request, mspID string) bool {
+	if mspID == "" || s.db == nil {
+		writeAuthorizationDenied(w)
+		return false
+	}
+	authorization := authorizationFromRequest(r)
+	var active bool
+	if err := s.requestDB(r).QueryRowContext(r.Context(), `
+		SELECT EXISTS (
+			SELECT 1 FROM msp_tenants
+			WHERE id = $1 AND is_active = true AND onboarding_status = 'active'
+		)
+	`, mspID).Scan(&active); err != nil || !active {
+		writeAuthorizationDenied(w)
+		return false
+	}
+	if canReadMSPAtSelectedScope(authorization, mspID) {
+		return true
+	}
+	if authorization.Selected.Type == ScopeMSP &&
+		authorization.Selected.MSPID == mspID &&
+		authorization.HasRole("platform_support") && s.supportGrantAllows(r, mspID) {
+		return true
+	}
+	writeAuthorizationDenied(w)
 	return false
 }
 
-// AuthorizeMSPAccess checks whether the authenticated principal can access the given MSP.
-func (s *APIServer) AuthorizeMSPAccess(w http.ResponseWriter, r *http.Request, mspID string) bool {
-	roles := getRoles(r)
-
-	if hasAdminRole(roles) {
-		return true
-	}
-	if mspID == "" || s.db == nil {
-		writeAuthorizationDenied(w)
-		return false
-	}
-	if hasSupportRole(roles) && s.supportGrantAllows(r, mspID) {
-		return true
-	}
-
-	userID, _ := r.Context().Value(ctxKeyUserID).(string)
-	var allowed bool
-	err := s.requestDB(r).QueryRowContext(r.Context(), `
-		SELECT EXISTS (
-			SELECT 1
-			FROM msp_tenants m
-			JOIN memberships mb
-			  ON mb.user_id = $1
-			 AND mb.scope_type = 'msp'
-			 AND mb.scope_id = m.id::text
-			 AND mb.status = 'active'
-			 AND (mb.expires_at IS NULL OR mb.expires_at > NOW())
-			WHERE m.id = $2
-			  AND m.is_active = true
-		)
-	`, userID, mspID).Scan(&allowed)
-	if err != nil || !allowed {
-		writeAuthorizationDenied(w)
-		return false
-	}
-	return true
-}
-
-// AuthorizeMSPManage requires an owner/admin membership on the exact MSP scope.
-// Roles from memberships on other tenants never grant write access here.
+// AuthorizeMSPManage requires a managing role effective in the exact selected
+// MSP, or a top-level platform administrator. A child selection never manages
+// its parent MSP.
 func (s *APIServer) AuthorizeMSPManage(w http.ResponseWriter, r *http.Request, mspID string) bool {
-	if hasAdminRole(getRoles(r)) {
-		return true
-	}
 	if mspID == "" || s.db == nil {
 		writeAuthorizationDenied(w)
 		return false
 	}
-	userID, _ := r.Context().Value(ctxKeyUserID).(string)
-	var allowed bool
-	err := s.requestDB(r).QueryRowContext(r.Context(), `
+	authorization := authorizationFromRequest(r)
+	if !canManageMSPAtSelectedScope(authorization, mspID) {
+		writeAuthorizationDenied(w)
+		return false
+	}
+	var active bool
+	if err := s.requestDB(r).QueryRowContext(r.Context(), `
 		SELECT EXISTS (
-			SELECT 1 FROM memberships
-			WHERE user_id = $1 AND scope_type = 'msp' AND scope_id = $2
-			  AND role IN ('msp_owner', 'msp_admin')
-			  AND status = 'active'
-			  AND (expires_at IS NULL OR expires_at > NOW())
+			SELECT 1 FROM msp_tenants
+			WHERE id = $1 AND is_active = true AND onboarding_status = 'active'
 		)
-	`, userID, mspID).Scan(&allowed)
-	if err != nil || !allowed {
+	`, mspID).Scan(&active); err != nil || !active {
 		writeAuthorizationDenied(w)
 		return false
 	}
@@ -90,142 +84,158 @@ func (s *APIServer) AuthorizeMSPManage(w http.ResponseWriter, r *http.Request, m
 }
 
 func (s *APIServer) authorizeClientManage(w http.ResponseWriter, r *http.Request, clientID string) (string, bool) {
+	if clientID == "" || s.db == nil {
+		writeAuthorizationDenied(w)
+		return "", false
+	}
 	var mspID string
-	if err := s.requestDB(r).QueryRowContext(r.Context(),
-		`SELECT msp_id FROM client_organizations WHERE id = $1 AND is_active = true`,
-		clientID,
-	).Scan(&mspID); err != nil || !s.AuthorizeMSPManage(w, r, mspID) {
-		if err != nil {
-			writeAuthorizationDenied(w)
-		}
+	if err := s.requestDB(r).QueryRowContext(r.Context(), `
+		SELECT c.msp_id::text
+		FROM client_organizations c
+		JOIN msp_tenants m ON m.id = c.msp_id
+		WHERE c.id = $1 AND c.is_active = true
+		  AND m.is_active = true AND m.onboarding_status = 'active'
+	`, clientID).Scan(&mspID); err != nil {
+		writeAuthorizationDenied(w)
+		return "", false
+	}
+	authorization := authorizationFromRequest(r)
+	allowed := false
+	switch authorization.Selected.Type {
+	case ScopePlatform:
+		allowed = authorization.IsPlatformGlobal()
+	case ScopeMSP:
+		allowed = authorization.Selected.MSPID == mspID &&
+			authorization.HasRole("platform_owner", "platform_admin", "msp_owner", "msp_admin")
+	case ScopeClient:
+		allowed = authorization.Selected.ClientID == clientID && authorization.HasRole("client_admin")
+	}
+	if !allowed {
+		writeAuthorizationDenied(w)
 		return "", false
 	}
 	return mspID, true
 }
 
 func (s *APIServer) authorizeSiteManage(w http.ResponseWriter, r *http.Request, siteID string) (string, bool) {
-	var mspID string
+	if siteID == "" || s.db == nil {
+		writeAuthorizationDenied(w)
+		return "", false
+	}
+	var mspID, clientID string
 	if err := s.requestDB(r).QueryRowContext(r.Context(), `
-		SELECT c.msp_id FROM sites s JOIN client_organizations c ON c.id = s.client_id
-		WHERE s.id = $1 AND s.is_active = true
-	`, siteID).Scan(&mspID); err != nil || !s.AuthorizeMSPManage(w, r, mspID) {
-		if err != nil {
-			writeAuthorizationDenied(w)
-		}
+		SELECT c.msp_id::text, s.client_id::text
+		FROM sites s
+		JOIN client_organizations c ON c.id = s.client_id
+		JOIN msp_tenants m ON m.id = c.msp_id
+		WHERE s.id = $1 AND s.is_active = true AND c.is_active = true
+		  AND m.is_active = true AND m.onboarding_status = 'active'
+	`, siteID).Scan(&mspID, &clientID); err != nil {
+		writeAuthorizationDenied(w)
+		return "", false
+	}
+	authorization := authorizationFromRequest(r)
+	allowed := false
+	switch authorization.Selected.Type {
+	case ScopePlatform:
+		allowed = authorization.IsPlatformGlobal()
+	case ScopeMSP:
+		allowed = authorization.Selected.MSPID == mspID &&
+			authorization.HasRole("platform_owner", "platform_admin", "msp_owner", "msp_admin")
+	case ScopeClient:
+		allowed = authorization.Selected.ClientID == clientID && authorization.HasRole("client_admin")
+	case ScopeSite:
+		allowed = authorization.Selected.SiteID == siteID && authorization.HasRole("client_admin")
+	}
+	if !allowed {
+		writeAuthorizationDenied(w)
 		return "", false
 	}
 	return mspID, true
 }
 
-// AuthorizeClientAccess checks whether the authenticated principal can access the given client.
+// AuthorizeClientAccess authorizes only a client selected directly, or a parent
+// platform/MSP scope whose active hierarchy contains that client.
 func (s *APIServer) AuthorizeClientAccess(w http.ResponseWriter, r *http.Request, clientID string) bool {
-	roles := getRoles(r)
-
-	if hasAdminRole(roles) {
-		return true
-	}
 	if clientID == "" || s.db == nil {
 		writeAuthorizationDenied(w)
 		return false
 	}
-
-	var clientMSPID string
-	if err := s.requestDB(r).QueryRowContext(
-		r.Context(),
-		`SELECT msp_id FROM client_organizations WHERE id = $1`,
-		clientID,
-	).Scan(&clientMSPID); err != nil {
+	var mspID string
+	if err := s.requestDB(r).QueryRowContext(r.Context(), `
+		SELECT c.msp_id::text
+		FROM client_organizations c
+		JOIN msp_tenants m ON m.id = c.msp_id
+		WHERE c.id = $1 AND c.is_active = true
+		  AND m.is_active = true AND m.onboarding_status = 'active'
+	`, clientID).Scan(&mspID); err != nil {
 		writeAuthorizationDenied(w)
 		return false
 	}
-	if hasSupportRole(roles) && s.supportGrantAllows(r, clientMSPID) {
+	authorization := authorizationFromRequest(r)
+	allowed := false
+	switch authorization.Selected.Type {
+	case ScopePlatform:
+		allowed = authorization.IsPlatformGlobal()
+	case ScopeMSP:
+		allowed = authorization.Selected.MSPID == mspID &&
+			(authorization.HasRole("platform_owner", "platform_admin") || hasMSPRole(authorization.Roles))
+	case ScopeClient:
+		allowed = authorization.Selected.ClientID == clientID
+	}
+	if allowed {
 		return true
 	}
-
-	userID, _ := r.Context().Value(ctxKeyUserID).(string)
-	var allowed bool
-	err := s.requestDB(r).QueryRowContext(r.Context(), `
-		SELECT EXISTS (
-			SELECT 1
-			FROM client_organizations c
-			JOIN msp_tenants m ON m.id = c.msp_id AND m.is_active = true
-			WHERE c.id = $2
-			  AND c.is_active = true
-			  AND EXISTS (
-				SELECT 1
-				FROM memberships mb
-				WHERE mb.user_id = $1
-				  AND mb.status = 'active'
-				  AND (mb.expires_at IS NULL OR mb.expires_at > NOW())
-				  AND (
-					(mb.scope_type = 'msp' AND mb.scope_id = c.msp_id::text)
-					OR (mb.scope_type = 'client' AND mb.scope_id = c.id::text)
-				  )
-			  )
-		)
-	`, userID, clientID).Scan(&allowed)
-	if err != nil || !allowed {
-		writeAuthorizationDenied(w)
-		return false
+	if authorization.Selected.Type == ScopeMSP && authorization.Selected.MSPID == mspID &&
+		authorization.HasRole("platform_support") && s.supportGrantAllows(r, mspID) {
+		return true
 	}
-	return true
+	writeAuthorizationDenied(w)
+	return false
 }
 
-// AuthorizeSiteAccess checks whether the authenticated principal can access the given site.
+// AuthorizeSiteAccess permits downward access only when the database-proven
+// site ancestry is inside the selected platform/MSP/client scope, or the exact
+// selected site matches. It never permits a sibling.
 func (s *APIServer) AuthorizeSiteAccess(w http.ResponseWriter, r *http.Request, siteID string) bool {
-	roles := getRoles(r)
-
-	if hasAdminRole(roles) {
-		return true
-	}
 	if siteID == "" || s.db == nil {
 		writeAuthorizationDenied(w)
 		return false
 	}
-
-	var siteMSPID string
+	var mspID, clientID string
 	if err := s.requestDB(r).QueryRowContext(r.Context(), `
-		SELECT c.msp_id
+		SELECT c.msp_id::text, s.client_id::text
 		FROM sites s
 		JOIN client_organizations c ON c.id = s.client_id
-		WHERE s.id = $1
-	`, siteID).Scan(&siteMSPID); err != nil {
+		JOIN msp_tenants m ON m.id = c.msp_id
+		WHERE s.id = $1 AND s.is_active = true AND c.is_active = true
+		  AND m.is_active = true AND m.onboarding_status = 'active'
+	`, siteID).Scan(&mspID, &clientID); err != nil {
 		writeAuthorizationDenied(w)
 		return false
 	}
-	if hasSupportRole(roles) && s.supportGrantAllows(r, siteMSPID) {
+	authorization := authorizationFromRequest(r)
+	allowed := false
+	switch authorization.Selected.Type {
+	case ScopePlatform:
+		allowed = authorization.IsPlatformGlobal()
+	case ScopeMSP:
+		allowed = authorization.Selected.MSPID == mspID &&
+			(authorization.HasRole("platform_owner", "platform_admin") || hasMSPRole(authorization.Roles))
+	case ScopeClient:
+		allowed = authorization.Selected.ClientID == clientID
+	case ScopeSite:
+		allowed = authorization.Selected.SiteID == siteID
+	}
+	if allowed {
 		return true
 	}
-
-	userID, _ := r.Context().Value(ctxKeyUserID).(string)
-	var allowed bool
-	err := s.requestDB(r).QueryRowContext(r.Context(), `
-		SELECT EXISTS (
-			SELECT 1
-			FROM sites s
-			JOIN client_organizations c ON c.id = s.client_id AND c.is_active = true
-			JOIN msp_tenants m ON m.id = c.msp_id AND m.is_active = true
-			WHERE s.id = $2
-			  AND s.is_active = true
-			  AND EXISTS (
-				SELECT 1
-				FROM memberships mb
-				WHERE mb.user_id = $1
-				  AND mb.status = 'active'
-				  AND (mb.expires_at IS NULL OR mb.expires_at > NOW())
-				  AND (
-					(mb.scope_type = 'msp' AND mb.scope_id = c.msp_id::text)
-					OR (mb.scope_type = 'client' AND mb.scope_id = c.id::text)
-					OR (mb.scope_type = 'site' AND mb.scope_id = s.id::text)
-				  )
-			  )
-		)
-	`, userID, siteID).Scan(&allowed)
-	if err != nil || !allowed {
-		writeAuthorizationDenied(w)
-		return false
+	if authorization.Selected.Type == ScopeMSP && authorization.Selected.MSPID == mspID &&
+		authorization.HasRole("platform_support") && s.supportGrantAllows(r, mspID) {
+		return true
 	}
-	return true
+	writeAuthorizationDenied(w)
+	return false
 }
 
 func writeAuthorizationDenied(w http.ResponseWriter) {

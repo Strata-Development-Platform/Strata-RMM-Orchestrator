@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { api } from '@/api/client';
-import type { ProviderBusinessProfile, WorkspaceContext } from '@/api/types';
+import type { ProviderBusinessProfile, ScopeType, WorkspaceContext } from '@/api/types';
 import { useAuth } from '@/hooks/useAuth';
 
 type WorkspaceContextValue = {
@@ -9,13 +9,13 @@ type WorkspaceContextValue = {
   error: string | null;
   refresh: () => Promise<void>;
   applyProviderProfile: (profile: ProviderBusinessProfile) => void;
-  switchWorkspace: (mspID: string, clientID?: string, siteID?: string) => Promise<void>;
+  switchWorkspace: (mspID: string, clientID?: string, siteID?: string, scopeType?: ScopeType) => Promise<void>;
 };
 
 const WorkspaceState = createContext<WorkspaceContextValue | null>(null);
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
-  const { user } = useAuth();
+  const { user, refreshSession } = useAuth();
   const [workspace, setWorkspace] = useState<WorkspaceContext | null>(null);
   const [loadedUserID, setLoadedUserID] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -43,9 +43,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     void refresh().catch(() => undefined);
   }, [refresh]);
 
-  const switchWorkspace = async (mspID: string, clientID = '', siteID = '') => {
-    const result = await api.switchWorkspace(mspID, clientID, siteID);
+  const switchWorkspace = async (mspID: string, clientID = '', siteID = '', scopeType?: ScopeType) => {
+    const result = await api.switchWorkspace(mspID, clientID, siteID, scopeType);
     api.setToken(result.token);
+    await refreshSession();
     await refresh();
   };
 

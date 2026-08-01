@@ -83,8 +83,8 @@ SELECT * FROM schema_migrations ORDER BY id;
 
 Provider setup is complete only when the server reports a non-null
 `setup_completed_at` for the singleton platform. The browser route alone is not
-authoritative. From an operator-controlled database session, check migration 67
-and the profile state:
+authoritative. From an operator-controlled database session, check migrations
+67 and 69 and the profile state:
 
 ```sql
 SELECT id, display_name,
@@ -95,23 +95,45 @@ WHERE id = '00000000-0000-0000-0000-000000000001';
 
 SELECT id, name
 FROM schema_migrations
-WHERE id = 67;
+WHERE id IN (67, 69)
+ORDER BY id;
 ```
 
 If a first sign-in remains on setup:
 
-1. Confirm migration 67 is present and the API/database readiness checks pass.
+1. Confirm migrations 67 and 69 are present and the API/database readiness
+   checks pass.
 2. Confirm the user has an active, unexpired `platform_owner` or
    `platform_admin` membership with `scope_type = 'platform'` and `scope_id =
    '00000000-0000-0000-0000-000000000001'`.
-3. Confirm the session has no MSP, client, or site scope. A switched or
-   tenant-scoped token is deliberately forbidden from provider-profile routes.
-4. If `setup_completed_at` is null, sign in at the top-level platform context,
+3. Use `GET /api/v1/auth/me` or `GET /api/v2/context` to inspect the
+   server-owned setup state. While setup is incomplete, a direct call to any
+   non-allowlisted authenticated route for this administrator should return
+   HTTP `428` with `code: provider_setup_required`; that is expected, not a
+   reason to disable middleware.
+4. Confirm the session has no MSP, client, or site scope before calling a
+   provider-profile route. `POST /api/v2/context/switch` remains available so a
+   switched administrator can return to the platform scope.
+5. If `setup_completed_at` is null, sign in at the top-level platform context,
    re-enter any values lost by a reload, proceed through Review, and explicitly
    select **Complete setup**.
-5. If `setup_completed_at` is populated, sign out and back in to refresh the
-   login and `/api/v2/context` state. Do not clear completion columns or edit
-   profile columns directly.
+6. If `setup_completed_at` is populated, refresh `/api/v2/context`; the setup
+   gate reads the database on each affected request, so no new token or service
+   restart is required. Sign out and back in only to clear stale browser state.
+   Do not clear completion columns or edit profile columns directly.
+
+The exact authenticated setup-gate allowlist is:
+
+- `GET /api/v1/auth/me`;
+- `POST /api/v1/auth/logout`;
+- `GET /api/v2/context`;
+- `POST /api/v2/context/switch`;
+- `GET /api/v2/platform/provider/profile`;
+- `POST /api/v2/platform/provider/setup`; and
+- `PATCH /api/v2/platform/provider/profile`.
+
+Public health routes leave access control before the gate and remain available.
+There is no authenticated HTTP recovery endpoint in the current route registry.
 
 The initial-admin bootstrap and migration 67 create or repair the required
 platform-owner membership for installer-created administrators. If that
@@ -148,6 +170,90 @@ No-op updates add no event. The migration-67 database trigger rejects UPDATE or
 DELETE attempts against any control-plane audit row. Provider mutation handlers
 also fail the request if the audit append fails, causing the request transaction
 to roll back.
+
+## Scope authorization and user-provisioning recovery
+
+Migration 69 makes `memberships` authoritative, revalidates identity,
+membership, and hierarchy state for protected requests, and records ambiguous
+legacy state without manufacturing access. After upgrade, inspect its presence
+and issue summary from a privileged read-only operator session:
+
+```sql
+SELECT id, name
+FROM schema_migrations
+WHERE id = 69;
+
+SELECT issue_type, COUNT(*) AS affected_rows
+FROM authorization_migration_issues
+GROUP BY issue_type
+ORDER BY issue_type;
+
+SELECT issue_type, user_id, scope_type, scope_id, role, details, detected_at
+FROM authorization_migration_issues
+ORDER BY detected_at, id;
+```
+
+Interpret the issue types as follows:
+
+- `invalid_membership` means the preserved row has a missing identity/scope or
+  an illegal role/scope pairing. Runtime authorization ignores illegal pairings;
+  correct access through the scoped membership APIs after validating intent.
+- `legacy_role_without_membership` means `users.role` has no corresponding
+  authoritative membership. The account has no access until an authorized
+  administrator explicitly provisions a legal membership.
+- `legacy_tenant_access_without_membership` means the
+  `user_tenant_access` row is a compatibility mirror only. Do not translate it
+  automatically into a grant; confirm the intended scope and role first.
+
+Do not delete or rewrite `authorization_migration_issues` to make the report
+empty. Migration 69 preserves evidence and protects it with the recovery
+mutation gate. Do not restore authorization from `users.role`,
+`users.tenant_id`, or `user_tenant_access`.
+
+Top-level platform administrators may use **User Management**. The current
+console route is platform-only; MSP/client/site scope managers use the same API
+from an approved operator client until a scoped console is implemented.
+Creation requires an email, a 12–72-byte password, and one or more explicit
+scope/type/role assignments. Membership changes use
+`PUT /api/v1/admin/users/{userID}/memberships`; the legacy `/tenants` path is
+only a route-name compatibility alias and accepts the same `memberships` body.
+The server rejects inactive/mismatched scopes, illegal role/scope combinations,
+duplicate scopes, assignments outside the actor's selected scope, and owner
+escalation. Do not repair a failed operation with direct inserts: identity,
+memberships, compatibility mirrors, and audit evidence are designed to commit
+or roll back together. Serialize membership replacement operationally for each
+target user. The current handler does not lock the user row, and concurrent
+requests with different roles for the same scope can leave both roles active.
+If overlapping requests occurred, inspect the authoritative rows below and use
+one subsequent membership replacement after the competing requests finish.
+
+Confirm successful changes and their sanitized audit evidence:
+
+```sql
+SELECT user_id, scope_type, scope_id, role, status, expires_at, created_at
+FROM memberships
+WHERE user_id = 'USER_UUID'
+ORDER BY scope_type, scope_id, created_at;
+
+SELECT action, actor_user_id, resource_id, details, created_at
+FROM control_plane_audit
+WHERE resource_type = 'user'
+  AND action IN ('user.provisioned', 'user.memberships_updated')
+ORDER BY created_at DESC;
+```
+
+Revoked or expired memberships, disabled/unverified users, suspended/pending
+MSPs, and archived clients/sites invalidate outstanding user access on the next
+protected request. Logout itself is stateless; it returns `204` and the client
+discards local session state.
+
+Migration 69's down migration is deliberately a no-op: the hardening,
+compatibility disposition, and issue evidence remain in place. For rollback,
+retain the database backup and schema 69, stop before deploying an older binary,
+and verify that the candidate binary neither trusts legacy role/tenant mirrors
+nor expects the pre-69 RLS helpers. If that cannot be proven, roll forward with
+the current authorization-aware binary instead of weakening the database or
+deleting evidence.
 
 ## MSP owner activation recovery
 

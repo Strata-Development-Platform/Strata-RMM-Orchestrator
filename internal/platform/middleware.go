@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/auth"
+	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/postgres"
 )
 
 const platformDomain = "rmm.stratadevplatform.com"
@@ -28,6 +29,7 @@ const (
 	ctxKeySupportGrantID contextKey = "supportGrantID"
 	ctxKeyTokenUse       contextKey = "tokenUse"
 	ctxKeyDBTransaction  contextKey = "dbTransaction"
+	ctxKeyAuthorization  contextKey = "authorization"
 )
 
 type Principal struct {
@@ -40,8 +42,7 @@ type Principal struct {
 	ClientID       string
 	SiteID         string
 	LegacyTenantID string
-	Roles          []string
-	Permissions    []string
+	Authorization  AuthorizationResult
 	AuthMethod     string
 	SupportGrantID string
 }
@@ -141,7 +142,6 @@ func (s *APIServer) validateAndBuildPrincipal(rawToken string) (*Principal, erro
 		MSPID:          claims.MSPID,
 		ClientID:       claims.ClientID,
 		SiteID:         claims.SiteID,
-		Roles:          claims.Roles,
 		AuthMethod:     "jwt",
 	}
 
@@ -150,6 +150,12 @@ func (s *APIServer) validateAndBuildPrincipal(rawToken string) (*Principal, erro
 	}
 
 	if s.allowClaimPrincipal {
+		scope := inferredAuthorizationScope(claims.MSPID, claims.ClientID, claims.SiteID)
+		grants := make([]AuthorizationGrant, 0, len(claims.Roles))
+		for _, role := range claims.Roles {
+			grants = append(grants, AuthorizationGrant{Role: role, SourceType: scope.Type, SourceID: scope.ID})
+		}
+		p.Authorization = newAuthorizationResult(scope, grants)
 		return p, nil
 	}
 	if s.db == nil {
@@ -171,14 +177,16 @@ func (s *APIServer) validateAndBuildPrincipal(rawToken string) (*Principal, erro
 			set_config('app.msp_id', $2, true),
 			set_config('app.client_id', $3, true),
 			set_config('app.site_id', $4, true),
-			set_config('app.tenant_id', $5, true)
-	`, claims.Subject, claims.MSPID, claims.ClientID, claims.SiteID, claims.TenantID); err != nil {
+			set_config('app.tenant_id', $5, true),
+			set_config('app.scope_type', $6, true)
+	`, claims.Subject, claims.MSPID, claims.ClientID, claims.SiteID, claims.TenantID,
+		string(inferredAuthorizationScope(claims.MSPID, claims.ClientID, claims.SiteID).Type)); err != nil {
 		return nil, fmt.Errorf("establishing identity security context: %w", err)
 	}
 	if claims.TokenUse == "agent" {
-		var tenantID, agentID string
+		var tenantID, agentID, mspID, clientID, siteID string
 		err := tx.QueryRow(`
-			SELECT d.tenant_id::text, ar.agent_id
+			SELECT d.tenant_id::text, ar.agent_id, d.msp_id::text, d.client_id::text, d.site_id::text
 			FROM agent_registrations ar
 			JOIN devices d ON d.id = ar.device_id
 			JOIN tenants t ON t.id = d.tenant_id
@@ -192,12 +200,19 @@ func (s *APIServer) validateAndBuildPrincipal(rawToken string) (*Principal, erro
 			  AND m.is_active = true
 			  AND c.is_active = true
 			  AND s.is_active = true
-		`, claims.Subject).Scan(&tenantID, &agentID)
+		`, claims.Subject).Scan(&tenantID, &agentID, &mspID, &clientID, &siteID)
 		if err != nil || agentID != claims.AgentID {
 			return nil, fmt.Errorf("agent identity is inactive or revoked")
 		}
 		p.LegacyTenantID = tenantID
-		p.Roles = []string{"agent"}
+		p.MSPID, p.ClientID, p.SiteID = mspID, clientID, siteID
+		scope := AuthorizationScope{
+			Type: ScopeSite, ID: siteID, PlatformID: postgres.SingletonPlatformID,
+			MSPID: mspID, ClientID: clientID, SiteID: siteID,
+		}
+		p.Authorization = newAuthorizationResult(scope, []AuthorizationGrant{{
+			Role: "agent", SourceType: ScopeSite, SourceID: siteID,
+		}})
 		if err := tx.Commit(); err != nil {
 			return nil, fmt.Errorf("committing agent identity transaction: %w", err)
 		}
@@ -213,96 +228,18 @@ func (s *APIServer) validateAndBuildPrincipal(rawToken string) (*Principal, erro
 		return nil, fmt.Errorf("user identity is inactive or revoked")
 	}
 	p.Email = email
-	p.Roles = nil
-
-	rows, err := tx.Query(`
-		SELECT role, scope_type, scope_id
-		FROM memberships
-		WHERE user_id = $1
-		  AND status = 'active'
-		  AND (expires_at IS NULL OR expires_at > NOW())
-		ORDER BY created_at
-	`, claims.Subject)
+	authorization, err := s.resolveAuthorization(
+		context.Background(), tx, claims.Subject, claims.MSPID, claims.ClientID, claims.SiteID,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("loading memberships: %w", err)
+		return nil, err
 	}
-	defer func() {
-		_ = rows.Close()
-	}()
-
-	hasClaimedMSP := claims.MSPID == ""
-	hasClaimedClient := claims.ClientID == ""
-	hasClaimedSite := claims.SiteID == ""
-	for rows.Next() {
-		var role, scopeType, scopeID string
-		if err := rows.Scan(&role, &scopeType, &scopeID); err != nil {
-			return nil, fmt.Errorf("reading membership: %w", err)
-		}
-		p.Roles = appendUnique(p.Roles, role)
-		switch scopeType {
-		case "platform":
-			if role == "platform_owner" || role == "platform_admin" {
-				hasClaimedMSP = true
-				hasClaimedClient = true
-				hasClaimedSite = true
-			}
-		case "msp":
-			if scopeID == claims.MSPID {
-				hasClaimedMSP = true
-			}
-		case "client":
-			if scopeID == claims.ClientID {
-				hasClaimedClient = true
-			}
-		case "site":
-			if scopeID == claims.SiteID {
-				hasClaimedSite = true
-			}
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterating memberships: %w", err)
-	}
-	if len(p.Roles) == 0 {
-		return nil, fmt.Errorf("user has no active memberships")
-	}
-	if !hasClaimedMSP || !hasClaimedClient || !hasClaimedSite {
-		return nil, fmt.Errorf("token scope is no longer authorized")
-	}
-	if claims.MSPID != "" {
-		var active bool
-		if err := tx.QueryRow(
-			`SELECT EXISTS (SELECT 1 FROM msp_tenants WHERE id = $1 AND is_active = true)`,
-			claims.MSPID,
-		).Scan(&active); err != nil || !active {
-			return nil, fmt.Errorf("MSP scope is suspended or inactive")
-		}
-	}
-	if claims.ClientID != "" {
-		var active bool
-		if err := tx.QueryRow(`
-			SELECT EXISTS (
-				SELECT 1 FROM client_organizations c
-				JOIN msp_tenants m ON m.id = c.msp_id
-				WHERE c.id = $1 AND c.is_active = true AND m.is_active = true
-			)
-		`, claims.ClientID).Scan(&active); err != nil || !active {
-			return nil, fmt.Errorf("client scope is archived or inactive")
-		}
-	}
-	if claims.SiteID != "" {
-		var active bool
-		if err := tx.QueryRow(`
-			SELECT EXISTS (
-				SELECT 1 FROM sites s
-				JOIN client_organizations c ON c.id = s.client_id
-				JOIN msp_tenants m ON m.id = c.msp_id
-				WHERE s.id = $1 AND s.is_active = true AND c.is_active = true AND m.is_active = true
-			)
-		`, claims.SiteID).Scan(&active); err != nil || !active {
-			return nil, fmt.Errorf("site scope is archived or inactive")
-		}
-	}
+	p.Authorization = authorization
+	p.PlatformID = authorization.Selected.PlatformID
+	p.MSPID = authorization.Selected.MSPID
+	p.ClientID = authorization.Selected.ClientID
+	p.SiteID = authorization.Selected.SiteID
+	p.LegacyTenantID = authorization.Selected.ClientID
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("committing user identity transaction: %w", err)
 	}
@@ -326,7 +263,8 @@ func principalToContext(ctx context.Context, p *Principal) context.Context {
 	ctx = context.WithValue(ctx, ctxKeyMSPID, p.MSPID)
 	ctx = context.WithValue(ctx, ctxKeyClientID, p.ClientID)
 	ctx = context.WithValue(ctx, ctxKeySiteID, p.SiteID)
-	ctx = context.WithValue(ctx, ctxKeyRole, strings.Join(p.Roles, ","))
+	ctx = context.WithValue(ctx, ctxKeyRole, strings.Join(p.Authorization.Roles, ","))
+	ctx = context.WithValue(ctx, ctxKeyAuthorization, p.Authorization)
 	ctx = context.WithValue(ctx, ctxKeyAuthMethod, p.AuthMethod)
 	ctx = context.WithValue(ctx, ctxKeyTokenID, p.TokenID)
 	ctx = context.WithValue(ctx, ctxKeyTokenUse, p.TokenUse)
@@ -362,7 +300,7 @@ func (s *APIServer) withAccessControl(next http.Handler) http.Handler {
 			http.Error(w, "agent tokens cannot access this endpoint", http.StatusForbidden)
 			return
 		}
-		if hasSupportRole(principal.Roles) {
+		if hasSupportRole(principal.Authorization.Roles) {
 			principal.SupportGrantID = strings.TrimSpace(r.Header.Get("X-Support-Grant-ID"))
 		}
 
@@ -383,7 +321,7 @@ func (s *APIServer) withAccessControl(next http.Handler) http.Handler {
 			return
 		}
 
-		if access == AccessAgent && !hasAgentRole(principal.Roles) {
+		if access == AccessAgent && !hasAgentRole(principal.Authorization.Roles) {
 			http.Error(w, "agent role required", http.StatusForbidden)
 			return
 		}
@@ -392,12 +330,15 @@ func (s *APIServer) withAccessControl(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
+		if !s.enforceProviderSetupGate(w, r, principal.Authorization) {
+			return
+		}
 		if access == AccessAdmin {
-			if !isPlatformGlobal(principal.Roles) {
+			if !principal.Authorization.IsPlatformGlobal() {
 				http.Error(w, `{"error":"admin privileges required"}`, http.StatusForbidden)
 				return
 			}
-		} else if !hasMSPRole(principal.Roles) && !hasPlatformRole(principal.Roles) {
+		} else if !hasMSPRole(principal.Authorization.Roles) && !hasPlatformRole(principal.Authorization.Roles) {
 			http.Error(w, `{"error":"insufficient permissions"}`, http.StatusForbidden)
 			return
 		}
@@ -410,6 +351,7 @@ func (s *APIServer) withAccessControl(next http.Handler) http.Handler {
 func (s *APIServer) classifyRoute(method, path string) RouteAccess {
 	allRoutes := s.publicRoutes()
 	allRoutes = append(allRoutes, s.agentRoutes()...)
+	allRoutes = append(allRoutes, s.scopedUserRoutes()...)
 	allRoutes = append(allRoutes, s.adminRoutes()...)
 	for _, r := range allRoutes {
 		if r.Method == method && matchPath(r.Path, path) {
@@ -426,6 +368,16 @@ func (s *APIServer) classifyRoute(method, path string) RouteAccess {
 		return AccessAdmin
 	}
 	return AccessUser
+}
+
+func (s *APIServer) scopedUserRoutes() []Route {
+	return []Route{
+		// These handlers perform scope- and role-specific assignment checks. They
+		// are intentionally inventoried before the privileged-prefix fallback.
+		{Method: "POST", Path: "/api/v1/admin/users", Access: AccessUser},
+		{Method: "PUT", Path: "/api/v1/admin/users/{userID}/tenants", Access: AccessUser},
+		{Method: "PUT", Path: "/api/v1/admin/users/{userID}/memberships", Access: AccessUser},
+	}
 }
 
 func (s *APIServer) agentRoutes() []Route {
@@ -468,6 +420,7 @@ func (s *APIServer) publicRoutes() []Route {
 		{Method: "GET", Path: "/install.sh", Access: AccessPublic},
 		{Method: "GET", Path: "/releases/latest/agent/{os}/{arch}", Access: AccessPublic},
 		{Method: "GET", Path: "/api/v1/auth/me", Access: AccessUser},
+		{Method: "POST", Path: "/api/v1/auth/logout", Access: AccessUser},
 	}
 }
 
@@ -495,8 +448,6 @@ func (s *APIServer) adminRoutes() []Route {
 		{Method: "GET", Path: "/api/v2/deployment/history", Access: AccessAdmin},
 		// Legacy admin routes
 		{Method: "GET", Path: "/api/v1/admin/users", Access: AccessAdmin},
-		{Method: "POST", Path: "/api/v1/admin/users", Access: AccessAdmin},
-		{Method: "PUT", Path: "/api/v1/admin/users/{userID}/tenants", Access: AccessAdmin},
 		{Method: "POST", Path: "/api/v1/admin/customers", Access: AccessAdmin},
 		{Method: "GET", Path: "/api/v1/admin/update/check", Access: AccessAdmin},
 		{Method: "POST", Path: "/api/v1/admin/update/apply", Access: AccessAdmin},
@@ -547,11 +498,3 @@ func isMSPOwner(roles []string) bool {
 }
 
 // isPlatformGlobal returns true only for platform-level roles.
-func isPlatformGlobal(roles []string) bool {
-	for _, r := range roles {
-		if r == "platform_owner" || r == "platform_admin" {
-			return true
-		}
-	}
-	return false
-}

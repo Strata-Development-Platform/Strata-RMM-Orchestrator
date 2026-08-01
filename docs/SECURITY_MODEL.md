@@ -1,6 +1,6 @@
 # Security Model
 
-## Current verified state after Phase 7
+## Current verified state
 
 The original prototype findings below drove Phases 1–7. The following controls are now part of the verified baseline:
 
@@ -23,10 +23,40 @@ boundary. Login, `/api/v1/auth/me`, and `/api/v2/context` derive
 `setup_complete` from `setup_completed_at` in the singleton platform row. The
 API remains authoritative for every read and mutation.
 
-The provider-profile routes are classified as privileged platform routes and
-apply layered authorization:
+While that value is incomplete, the access-control middleware applies a
+server-side gate to every authenticated request whose effective grants include
+a singleton-platform `platform_owner` or `platform_admin` membership. The exact
+authenticated allowlist is:
 
-- the access token must carry `platform_owner` or `platform_admin`;
+- `GET /api/v1/auth/me`;
+- `POST /api/v1/auth/logout`;
+- `GET /api/v2/context`;
+- `POST /api/v2/context/switch`;
+- `GET /api/v2/platform/provider/profile`;
+- `POST /api/v2/platform/provider/setup`; and
+- `PATCH /api/v2/platform/provider/profile`.
+
+Public health routes leave access control before the gate is consulted. There
+is no authenticated HTTP recovery endpoint in the current route registry. Any
+other authenticated route for such an incomplete provider administrator
+returns HTTP `428 Precondition Required`, `Cache-Control: no-store`, and:
+
+```json
+{
+  "error": "provider setup is required before provider administration",
+  "code": "provider_setup_required",
+  "setup_url": "/provider/setup"
+}
+```
+
+Setup completion is read from PostgreSQL on each affected request; it is not
+accepted from browser state or a JWT. The gate does not apply to users without
+an effective singleton-platform owner/admin grant.
+
+The provider-profile routes remain privileged platform routes and apply
+layered authorization after the setup-gate allowlist check:
+
+- the selected request scope must be the top-level singleton platform;
 - MSP, client, and site scope must all be empty;
 - the database must confirm a current active, unexpired owner/admin membership
   on the exact singleton platform ID; and
@@ -59,6 +89,122 @@ Contact, address, and tax-identifier data are business-sensitive. They must not
 be logged, placed in audit details, or exposed to tenant-scoped roles. This
 slice does not implement licensing enforcement, logo/theme white-labeling, or a
 general multi-provider hierarchy.
+
+## Scope-bound authorization
+
+User authorization is represented as one `AuthorizationResult` bound to one
+selected scope. It contains the database-proven hierarchy, the exact membership
+grants that apply there, and the roles and permissions derived from only those
+grants. Login, `/api/v1/auth/me`, `/api/v2/context`, context switching, route
+checks, handler checks, and the web console consume that scope-bound result.
+They do not union unrelated memberships into a global role list.
+
+In production, JWT role claims are not an authorization source. On every
+protected user request the server validates the signed token, confirms that the
+user is active and email-verified, resolves the token-selected MSP/client/site
+hierarchy from active database rows, and reloads memberships from PostgreSQL.
+Only memberships with `status = 'active'`, no elapsed `expires_at`, a legal
+role/scope pairing, and an exact applicable scope are retained. Ancestor IDs are
+therefore proven from database relationships rather than trusted because they
+appeared together in a token.
+
+The inheritance policy is explicitly downward:
+
+- a platform role applies at the platform and may flow to selected MSP, client,
+  and site descendants only when its membership uses the singleton platform ID
+  `00000000-0000-0000-0000-000000000001`;
+- an MSP role applies to that exact MSP and its selected client/site
+  descendants;
+- a client role applies to that exact client and its selected sites; and
+- a site role applies only to that exact site.
+
+A child membership never implies its parent, a sibling, or the platform. An MSP
+membership cannot authorize another MSP, and a client/site identifier cannot be
+combined with an unrelated ancestor. Platform-global administration additionally
+requires that the selected scope itself be the singleton platform and that the
+effective grant be `platform_owner` or `platform_admin` from that platform.
+
+Revocation and expiry are effective for outstanding access tokens on their next
+protected use because membership is reloaded for every request. The same is
+true when a user is disabled or loses email verification, or when an MSP is
+suspended/pending, a client is archived, or a site is archived: hierarchy or
+identity revalidation fails closed. `POST /api/v1/auth/logout` is stateless and
+does not maintain a token revocation list; clients discard local state, while
+database revalidation remains the immediate authorization control. Refresh-token
+redesign is not part of this remediation.
+
+Agent tokens remain purpose-separated. Their approved registration, device,
+tenant, MSP, client, and site relationships and active lifecycle state are also
+revalidated from PostgreSQL before an agent route is entered.
+
+## Scoped user provisioning
+
+`POST /api/v1/admin/users` creates an identity and one or more explicit
+memberships in the request transaction. The request may use one
+`scope_type`/`scope_id`/`role` tuple or a `memberships` array, but not both.
+`PUT /api/v1/admin/users/{userID}/memberships` replaces the memberships the
+actor is authorized to manage; the legacy
+`PUT /api/v1/admin/users/{userID}/tenants` path is an alias with the same
+membership payload and behavior. A request contains 1–100 assignments, at most
+one role per scope, and every scope ID must resolve to an active hierarchy row.
+
+Role legality is enforced before mutation:
+
+| Scope | Legal roles |
+|---|---|
+| platform singleton | `platform_owner`, `platform_admin`, `platform_support`, `platform_billing`, `platform_security_auditor`, `platform_viewer` |
+| MSP | `msp_owner`, `msp_admin`, `msp_technician`, `msp_viewer` |
+| client or site | `client_admin`, `client_viewer` |
+
+Assignment authority is also bound to the actor's selected scope. A global
+platform owner/admin may assign within the hierarchy, but only a platform owner
+may create another platform owner. An MSP owner/admin can assign within that
+exact MSP and its children; creating an `msp_owner` additionally requires an
+MSP owner or a platform owner/admin. A client administrator can assign roles
+only on its exact client and child sites, and a site administrator only on that
+site. These checks prevent a lower-scope administrator from manufacturing a
+parent, sibling, platform, or otherwise illegal grant.
+
+Identity insert, membership insert/replacement, compatibility-mirror updates,
+and `user.provisioned` or `user.memberships_updated` audit insertion share the
+buffered request transaction. A membership, mirror, audit, or commit failure
+therefore returns an error without a partial success. Normalized-email conflicts
+are deterministic: an active verified identity with the exact visible active
+assignment set returns idempotent `status: exists`; any different or unavailable
+identity returns `409 email_conflict`. Passwords are bcrypt-hashed and never
+included in responses or audit details.
+
+Each request is atomic, but membership replacement is not serialized by a lock
+on the target user. Concurrent replacements with different roles for the same
+scope can therefore leave both role rows active because the database uniqueness
+key includes the role. Operators must avoid concurrent replacement for one user
+until target-user serialization and a dedicated regression test are added.
+
+The `memberships` table is the sole authorization source. `users.role`,
+`users.tenant_id`, and `user_tenant_access` remain compatibility mirrors for
+legacy consumers and display; provisioning keeps them synchronized where a
+single legacy representation is possible, but they never create effective
+authority. At login, legacy `users.tenant_id` is only a candidate for selecting
+an initial client and must be independently proven by the current hierarchy and
+an applicable active membership.
+
+Migration 69 (`enforce_scope_bound_authorization`) is forward-safe: it preserves
+existing membership and legacy rows, records `invalid_membership`,
+`legacy_role_without_membership`, and
+`legacy_tenant_access_without_membership` evidence in
+`authorization_migration_issues`, and adds the legal role/scope constraint as
+`NOT VALID`. Existing ambiguous rows are therefore reportable rather than
+silently converted, deleted, or granted authority; new or changed rows must
+satisfy the constraint. The migration also installs membership-aware RLS helper
+functions and policies for users, memberships, hierarchy rows, devices, and
+control-plane audit access.
+
+Migration 69 has an intentionally non-destructive no-op down migration. Its
+authorization hardening, ambiguity evidence, and compatibility disposition are
+retained because automatically restoring the legacy authority model would
+reopen the escalation path. A binary rollback must retain schema 69 and be
+reviewed for runtime compatibility; it must not delete issue evidence or
+re-enable `users.role`/`user_tenant_access` as authority.
 
 ## Provider-approved MSP owner activation
 

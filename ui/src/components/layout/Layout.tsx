@@ -36,13 +36,13 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
   const [collapsed, setCollapsed] = useState(false);
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    await logout();
     navigate('/login');
   };
 
   if (!user) return <>{children}</>;
-  const platformRole = workspace?.roles.some(role => role === 'platform_owner' || role === 'platform_admin') ?? false;
+  const platformRole = workspace?.platform_role ?? false;
   const permissions = new Set(workspace?.permissions ?? []);
   const visibleNavItems = navItems.filter(item => {
     if (item.platformOnly && !platformRole) return false;
@@ -54,6 +54,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const displayName = mspDisplayName || workspace?.provider_display_name || 'Strata RMM';
   const sidebarBackground = typeof branding?.sidebar_bg === 'string' ? branding.sidebar_bg : undefined;
   const primaryColor = typeof branding?.primary_color === 'string' ? branding.primary_color : undefined;
+  const switchableScopes = workspace?.available_scopes.filter(scope => scope.type === 'platform' || scope.type === 'msp') ?? [];
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex">
@@ -68,19 +69,22 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </button>
         </div>
 
-        {!collapsed && workspace && workspace.available_scopes.length > 0 && (
+        {!collapsed && workspace && switchableScopes.length > 0 && (
           <div className="p-2 border-b border-slate-700">
             <label htmlFor="workspace-scope" className="block text-[11px] uppercase tracking-wide text-slate-400 mb-1">
               Workspace
             </label>
             <select
               id="workspace-scope"
-              value={workspace.msp_id}
-              onChange={event => void switchWorkspace(event.target.value)}
+              value={workspace.selected_scope.id}
+              onChange={event => {
+                const scope = switchableScopes.find(candidate => candidate.id === event.target.value);
+                if (scope?.type === 'platform') void switchWorkspace('', '', '', 'platform');
+                if (scope?.type === 'msp') void switchWorkspace(scope.id, '', '', 'msp');
+              }}
               className="w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs text-white"
             >
-              <option value="" disabled>Select an MSP</option>
-              {workspace.available_scopes.filter(scope => scope.type === 'msp').map(scope => (
+              {switchableScopes.map(scope => (
                 <option key={scope.id} value={scope.id}>{scope.name}</option>
               ))}
             </select>
@@ -140,13 +144,13 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             {!collapsed && (
               <div className="flex-1 min-w-0">
                 <p className="text-sm truncate">{user.email}</p>
-                <p className="text-xs text-slate-400 capitalize">{user.role}</p>
+                <p className="text-xs text-slate-400 capitalize">{workspace?.roles.join(', ') || 'authenticated'}</p>
               </div>
             )}
           </div>
           {!collapsed && (
             <div className="flex items-center justify-between mt-2">
-              <button onClick={handleLogout} className="text-xs text-slate-400 hover:text-white flex items-center gap-1">
+              <button onClick={() => void handleLogout()} className="text-xs text-slate-400 hover:text-white flex items-center gap-1">
                 <LogOut size={12} /> Sign Out
               </button>
               <ThemeToggle />

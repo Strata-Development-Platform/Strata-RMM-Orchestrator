@@ -15,7 +15,6 @@ type contextScope struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
 	ParentID string `json:"parent_id,omitempty"`
-	Role     string `json:"role"`
 }
 
 type contextEntitlement struct {
@@ -27,28 +26,30 @@ type contextEntitlement struct {
 }
 
 type contextResponse struct {
-	UserID              string              `json:"user_id"`
-	Email               string              `json:"email"`
-	TenantID            string              `json:"tenant_id"`
-	Roles               []string            `json:"roles"`
-	Permissions         []string            `json:"permissions"`
-	AvailableScopes     []contextScope      `json:"available_scopes"`
-	MSPID               string              `json:"msp_id"`
-	MSPName             string              `json:"msp_name"`
-	MSPActive           bool                `json:"msp_active"`
-	ClientID            string              `json:"client_id"`
-	ClientName          string              `json:"client_name"`
-	SiteID              string              `json:"site_id"`
-	SiteName            string              `json:"site_name"`
-	Branding            json.RawMessage     `json:"branding,omitempty"`
-	Entitlement         *contextEntitlement `json:"entitlement,omitempty"`
-	SupportGrantID      string              `json:"support_grant_id,omitempty"`
-	SupportGrantExp     string              `json:"support_grant_expires_at,omitempty"`
-	PlatformRole        bool                `json:"platform_role"`
-	PlatformID          string              `json:"platform_id"`
-	ProviderDisplayName string              `json:"provider_display_name"`
-	SetupComplete       bool                `json:"setup_complete"`
-	AuthenticatedAt     string              `json:"authenticated_at"`
+	UserID              string               `json:"user_id"`
+	Email               string               `json:"email"`
+	TenantID            string               `json:"tenant_id"`
+	SelectedScope       AuthorizationScope   `json:"selected_scope"`
+	Grants              []AuthorizationGrant `json:"grants"`
+	Roles               []string             `json:"roles"`
+	Permissions         []string             `json:"permissions"`
+	AvailableScopes     []contextScope       `json:"available_scopes"`
+	MSPID               string               `json:"msp_id"`
+	MSPName             string               `json:"msp_name"`
+	MSPActive           bool                 `json:"msp_active"`
+	ClientID            string               `json:"client_id"`
+	ClientName          string               `json:"client_name"`
+	SiteID              string               `json:"site_id"`
+	SiteName            string               `json:"site_name"`
+	Branding            json.RawMessage      `json:"branding,omitempty"`
+	Entitlement         *contextEntitlement  `json:"entitlement,omitempty"`
+	SupportGrantID      string               `json:"support_grant_id,omitempty"`
+	SupportGrantExp     string               `json:"support_grant_expires_at,omitempty"`
+	PlatformRole        bool                 `json:"platform_role"`
+	PlatformID          string               `json:"platform_id"`
+	ProviderDisplayName string               `json:"provider_display_name"`
+	SetupComplete       bool                 `json:"setup_complete"`
+	AuthenticatedAt     string               `json:"authenticated_at"`
 }
 
 func (s *APIServer) handleContext(w http.ResponseWriter, r *http.Request) {
@@ -62,7 +63,8 @@ func (s *APIServer) handleContext(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	roles := getRoles(r)
+	authorization := authorizationFromRequest(r)
+	roles := authorization.Roles
 	tenantID, _ := r.Context().Value(ctxKeyTenantID).(string)
 	mspID, _ := r.Context().Value(ctxKeyMSPID).(string)
 	clientID, _ := r.Context().Value(ctxKeyClientID).(string)
@@ -71,13 +73,15 @@ func (s *APIServer) handleContext(w http.ResponseWriter, r *http.Request) {
 	resp := contextResponse{
 		UserID:          userID,
 		TenantID:        tenantID,
+		SelectedScope:   authorization.Selected,
+		Grants:          authorization.Grants,
 		Roles:           roles,
-		Permissions:     permissionsForRoles(roles),
+		Permissions:     authorization.Permissions,
 		AvailableScopes: []contextScope{},
 		MSPID:           mspID,
 		ClientID:        clientID,
 		SiteID:          siteID,
-		PlatformRole:    isPlatformGlobal(roles),
+		PlatformRole:    authorization.IsPlatformGlobal(),
 		AuthenticatedAt: time.Now().UTC().Format(time.RFC3339),
 	}
 	profile, err := postgres.GetProviderBusinessProfile(r.Context(), db)
@@ -97,7 +101,7 @@ func (s *APIServer) handleContext(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	scopes, err := loadAvailableScopes(r, db, userID, roles)
+	scopes, err := loadAvailableScopes(r, db, userID, authorization)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "workspace scopes unavailable"})
 		return
@@ -202,28 +206,21 @@ func (s *APIServer) handleContext(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func loadAvailableScopes(r *http.Request, db dbExecutor, userID string, roles []string) ([]contextScope, error) {
-	if isPlatformGlobal(roles) {
-		platformRole := "platform_admin"
-		for _, role := range roles {
-			if role == "platform_owner" {
-				platformRole = role
-				break
-			}
-		}
+func loadAvailableScopes(r *http.Request, db dbExecutor, userID string, authorization AuthorizationResult) ([]contextScope, error) {
+	if authorization.IsPlatformGlobal() {
 		rows, err := db.QueryContext(r.Context(), `
-			SELECT scope_type, scope_id, scope_name, parent_id, role
+			SELECT scope_type, scope_id, scope_name, parent_id
 			FROM (
 				SELECT 'platform' AS scope_type, id::text AS scope_id,
 				       COALESCE(NULLIF(display_name, ''), name) AS scope_name,
-				       '' AS parent_id, $1 AS role, 0 AS sort_order
-				FROM platforms WHERE id = $2
+				       '' AS parent_id, 0 AS sort_order
+				FROM platforms WHERE id = $1
 				UNION ALL
-				SELECT 'msp', id::text, name, '', $1, 1
+				SELECT 'msp', id::text, name, '', 1
 				FROM msp_tenants WHERE is_active = true
 			) scopes
 			ORDER BY sort_order, scope_name
-		`, platformRole, postgres.SingletonPlatformID)
+		`, postgres.SingletonPlatformID)
 		if err != nil {
 			return nil, err
 		}
@@ -238,13 +235,12 @@ func loadAvailableScopes(r *http.Request, db dbExecutor, userID string, roles []
 		         WHEN 'client' THEN COALESCE(c.name, '')
 		         WHEN 'site' THEN COALESCE(s.name, '')
 		         ELSE 'Platform'
-		       END,
+		       END AS scope_name,
 		       CASE mb.scope_type
 		         WHEN 'client' THEN COALESCE(c.msp_id::text, '')
 		         WHEN 'site' THEN COALESCE(s.client_id::text, '')
 		         ELSE ''
-		       END,
-		       mb.role
+		       END AS parent_id
 		FROM memberships mb
 		LEFT JOIN msp_tenants m ON mb.scope_type = 'msp' AND m.id::text = mb.scope_id AND m.is_active = true
 		LEFT JOIN client_organizations c ON mb.scope_type = 'client' AND c.id::text = mb.scope_id AND c.is_active = true
@@ -265,7 +261,7 @@ func scanContextScopes(rows *sql.Rows) ([]contextScope, error) {
 	scopes := make([]contextScope, 0)
 	for rows.Next() {
 		var scope contextScope
-		if err := rows.Scan(&scope.Type, &scope.ID, &scope.Name, &scope.ParentID, &scope.Role); err != nil {
+		if err := rows.Scan(&scope.Type, &scope.ID, &scope.Name, &scope.ParentID); err != nil {
 			return nil, err
 		}
 		if scope.Name != "" {

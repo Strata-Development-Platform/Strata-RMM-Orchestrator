@@ -5,6 +5,8 @@ export type LoginResponse = {
   role: string;
   roles: string[];
   permissions: string[];
+  selected_scope: AuthorizationScope;
+  grants: AuthorizationGrant[];
   tenant_id: string;
   provider_display_name: string;
   setup_complete: boolean;
@@ -47,10 +49,39 @@ export type User = {
   id: string;
   email: string;
   role: string;
+  legacy_role: string;
   is_active: boolean;
   last_login?: string;
   created_at: string;
   accessible_tenants?: TenantInfo[];
+  memberships: UserMembership[];
+};
+
+export type ScopeType = 'platform' | 'msp' | 'client' | 'site';
+
+export type AuthorizationScope = {
+  type: ScopeType;
+  id: string;
+  platform_id?: string;
+  msp_id?: string;
+  client_id?: string;
+  site_id?: string;
+};
+
+export type AuthorizationGrant = {
+  role: string;
+  source_type: ScopeType;
+  source_id: string;
+  inherited: boolean;
+};
+
+export type UserMembership = {
+  id?: string;
+  scope_type: ScopeType;
+  scope_id: string;
+  role: string;
+  status?: string;
+  expires_at?: string;
 };
 
 export type MSPTenant = {
@@ -97,7 +128,6 @@ export type WorkspaceScope = {
   id: string;
   name: string;
   parent_id?: string;
-  role: string;
 };
 
 export type WorkspaceContext = {
@@ -105,6 +135,8 @@ export type WorkspaceContext = {
   email: string;
   roles: string[];
   permissions: string[];
+  selected_scope: AuthorizationScope;
+  grants: AuthorizationGrant[];
   available_scopes: WorkspaceScope[];
   msp_id: string;
   msp_name: string;

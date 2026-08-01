@@ -49,7 +49,7 @@ func TestCrossClientAccessDenied(t *testing.T) {
 	}
 }
 
-func TestOwnMSPSucceeds(t *testing.T) {
+func TestPlatformRoleClaimInsideMSPScopeIsNotGlobal(t *testing.T) {
 	os.Setenv("JWT_SECRET", "test-secret-that-is-long-enough-for-testing")
 	defer os.Unsetenv("JWT_SECRET")
 
@@ -63,8 +63,8 @@ func TestOwnMSPSucceeds(t *testing.T) {
 	s.withAccessControl(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})).ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Errorf("expected 200 for own MSP, got %d", w.Code)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for a platform role claim bound to an MSP scope, got %d", w.Code)
 	}
 }
 

@@ -52,7 +52,7 @@ export default function DashboardPage() {
   if (loading) return <div className="text-center py-12 text-slate-500">Loading...</div>;
 
   const roles = workspace?.roles ?? (user ? [user.role] : []);
-  const isPlatform = Boolean(workspace?.platform_role) || roles.some(role => ['platform_owner', 'platform_admin'].includes(role));
+  const isPlatform = Boolean(workspace?.platform_role);
   const isPlatformSupport = roles.includes('platform_support');
   const isPlatformBilling = roles.includes('platform_billing');
   const isSecurityAuditor = roles.some(role => ['platform_security_auditor', 'platform_viewer'].includes(role));

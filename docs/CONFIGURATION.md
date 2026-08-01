@@ -30,6 +30,17 @@ profile** (`/admin/settings`). The API routes are
 `GET /api/v2/platform/provider/profile`, and
 `PATCH /api/v2/platform/provider/profile`.
 
+This is enforced by the server, not only by the browser redirect. Until setup
+is complete, an authenticated session with an effective singleton-platform
+`platform_owner` or `platform_admin` grant may call only `/api/v1/auth/me`,
+`/api/v1/auth/logout`, `/api/v2/context`, `/api/v2/context/switch`, and the
+three provider-profile routes above, with the exact methods listed in
+`docs/SECURITY_MODEL.md`. Other authenticated routes return HTTP `428` with
+code `provider_setup_required` and `setup_url: /provider/setup`. Public health
+routes remain available. The server checks `platforms.setup_completed_at` on
+each affected request, so no environment setting or restart disables or clears
+the gate.
+
 | Field | Required | Server validation |
 |---|---|---|
 | Legal business name | yes | 200 Unicode characters or fewer |
@@ -123,6 +134,32 @@ requires `email_verified_at` for login. Existing active users are backfilled as
 verified during the migration; newly invited MSP owners become verified only
 on successful acceptance. This flow is provider-approved onboarding, not open
 sign-up, MFA, password recovery, billing, or a refresh-token redesign.
+
+## Scoped user provisioning
+
+User provisioning is account data and requires no new environment setting.
+Top-level platform administrators select explicit membership scope(s) and roles
+in the User Management console. The backend also permits an authorized
+selected-scope manager to use the scoped API directly; the current console
+route itself remains platform-only. The API no longer treats legacy
+`tenant_ids` plus `users.role` as an authorization grant:
+
+- `POST /api/v1/admin/users` accepts either one complete
+  `scope_type`/`scope_id`/`role` tuple or a `memberships` array;
+- `PUT /api/v1/admin/users/{userID}/memberships` replaces the memberships the
+  current selected-scope manager is authorized to manage; and
+- `PUT /api/v1/admin/users/{userID}/tenants` remains a compatibility route name
+  but accepts the same explicit `memberships` body and has the same behavior.
+
+Each request must contain 1–100 memberships, with no duplicate scope. Scope IDs
+must be UUIDs for active hierarchy rows, roles must be legal at that scope, and
+the actor cannot assign outside the selected scope or escalate above its
+authority. Creation passwords are 12–72 bytes. User, memberships, compatibility
+mirrors, and audit evidence commit together. `memberships` is authoritative;
+`users.role`, `users.tenant_id`, and `user_tenant_access` are compatibility
+mirrors only. Do not issue concurrent membership replacements for the same
+user: target-user serialization is not implemented, and different concurrent
+role sets can leave more than one active role at a scope.
 
 ## Exhaustive Configuration Inventory
 
@@ -303,6 +340,15 @@ The agent reads `agent.yaml` (default path: `~/.strata-rmm/agent.yaml` or `STRAT
 Existing installations should set `STRATA_RUNTIME_MODE` to the appropriate value.
 The default is `development`, preserving backward compatibility. Production
 deployments must explicitly set it to `production`.
+
+Migration 69 (`enforce_scope_bound_authorization`) requires no configuration
+key. It preserves existing rows, records ambiguous or invalid authorization
+state in `authorization_migration_issues`, constrains new/changed memberships to
+legal role/scope combinations, and makes `memberships` the only authorization
+source. Review the issue table after upgrade before provisioning additional
+users. Its down migration intentionally retains the hardening and evidence;
+binary rollback therefore keeps schema 69 and requires the compatibility checks
+in `docs/RUNBOOK.md`.
 
 For full deployment and rollback procedures, see `docs/DEPLOYMENT.md`, `docs/UPGRADE.md`, and `docs/ROLLBACK.md`.
 

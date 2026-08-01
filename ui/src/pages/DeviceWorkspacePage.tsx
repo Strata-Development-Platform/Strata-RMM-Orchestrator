@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import { api } from '@/api/client';
-import { useAuth } from '@/hooks/useAuth';
+import { useWorkspace } from '@/hooks/useWorkspace';
 
 type Job = Record<string, unknown>;
 type Tab = 'overview' | 'inventory' | 'services' | 'processes' | 'jobs' | 'history' | 'audit' | 'approvals' | 'actions';
@@ -25,7 +25,7 @@ const actionDefs: { action: string; label: string; cls: string; destructive: boo
 
 export default function DeviceWorkspacePage() {
   const { deviceID } = useParams<{ deviceID: string }>();
-  const { user } = useAuth();
+  const { workspace } = useWorkspace();
   const [device, setDevice] = useState<Record<string, unknown> | null>(null);
   const [inventory, setInventory] = useState<Record<string, unknown> | null>(null);
   const [capabilities, setCapabilities] = useState<Capability | null>(null);
@@ -45,7 +45,7 @@ export default function DeviceWorkspacePage() {
   const [submitting, setSubmitting] = useState(false);
   const [selectedActions, setSelectedActions] = useState<string[]>([]);
 
-  const isAdmin = user?.role === 'msp_admin' || user?.role === 'msp_owner' || user?.role === 'platform_admin' || user?.role === 'platform_owner';
+  const canManageDevices = workspace?.permissions.includes('device:manage') ?? false;
 
   const fetchDevice = useCallback(async () => {
     if (!deviceID) return;
@@ -93,7 +93,7 @@ export default function DeviceWorkspacePage() {
     return capabilities.supported_job_types.includes(`device.${a.action}`) || capabilities.supported_job_types.includes(a.action);
   });
 
-  const visibleActions = isAdmin ? supportedActions : supportedActions.filter(a => !a.destructive);
+  const visibleActions = canManageDevices ? supportedActions : supportedActions.filter(a => !a.destructive);
 
   const confirmAndRun = (action: string) => {
     setShowConfirm(action);

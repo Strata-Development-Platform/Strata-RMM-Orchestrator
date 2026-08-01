@@ -18,6 +18,10 @@
 
 ### Added
 
+- Added migration 69 authorization hardening and ambiguity reporting,
+  server-side provider-setup enforcement with an exact recovery allowlist, a
+  stateless logout endpoint, explicit scoped-membership user provisioning, and
+  the `/api/v1/admin/users/{userID}/memberships` route.
 - Added provider-approved MSP owner onboarding: migration 68 global normalized
   email uniqueness and verification metadata, pending-owner lifecycle,
   digest-only one-time invitations with forced RLS, TLS-only SMTP delivery,
@@ -35,6 +39,14 @@
 
 ### Changed
 
+- Authorization is now bound to one database-validated selected scope. User
+  identity, active/unexpired membership, legal role/scope pairing, and active
+  hierarchy state are revalidated for protected requests; JWT role claims and
+  legacy `users.role`/`user_tenant_access` mirrors do not create authority.
+- User creation and membership replacement now validate scope legality and
+  actor escalation boundaries and atomically commit membership, compatibility
+  mirrors, and sanitized audit evidence. The legacy `/tenants` update route is
+  retained as an alias for the explicit membership payload.
 - Control-plane mutation handlers now fail the request when their audit event
   cannot be recorded, allowing the request transaction to roll back.
 - Corrected StrataLabs project metadata and replaced the obsolete roadmap with current SaaS, orchestration, endpoint-operations, beta-hardening, and hosted-service milestones.

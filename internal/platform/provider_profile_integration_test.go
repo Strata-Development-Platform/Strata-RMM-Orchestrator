@@ -91,7 +91,7 @@ func TestProviderProfileHTTPAuthorizationSetupRetryPatchAndContext(t *testing.T)
 	seedHTTPProviderUser(t, raw, tenantID, ownerID, "owner@example.test", string(passwordHash), "platform_owner", "platform", postgres.SingletonPlatformID)
 	seedHTTPProviderUser(t, raw, tenantID, mspAdminID, "msp-admin@example.test", string(passwordHash), "msp_admin", "msp", mspID)
 	seedHTTPProviderUser(t, raw, tenantID, technicianID, "technician@example.test", string(passwordHash), "msp_technician", "msp", mspID)
-	seedHTTPProviderUser(t, raw, tenantID, customerID, "customer@example.test", string(passwordHash), "client_admin", "msp", mspID)
+	seedHTTPProviderUser(t, raw, tenantID, customerID, "customer@example.test", string(passwordHash), "msp_viewer", "msp", mspID)
 
 	tokenGenerator := auth.NewTokenGenerator(secret)
 	server := &APIServer{db: client, tokenGen: tokenGenerator, requireHTTPSWebsite: true}
@@ -178,7 +178,8 @@ func TestProviderProfileHTTPAuthorizationSetupRetryPatchAndContext(t *testing.T)
 		t.Fatal(err)
 	}
 	if !actorContext.SetupComplete || actorContext.ProviderDisplayName != "Updated Provider" ||
-		actorContext.TenantID != tenantID || primaryEffectiveRole(actorContext.Roles) != "platform_owner" {
+		actorContext.TenantID != "" || actorContext.SelectedScope.Type != ScopePlatform ||
+		primaryEffectiveRole(actorContext.Roles) != "platform_owner" {
 		t.Fatalf("unexpected authenticated context: %+v", actorContext)
 	}
 

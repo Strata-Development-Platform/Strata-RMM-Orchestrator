@@ -7,7 +7,13 @@ import (
 
 func TestMigration68OwnerActivationContract(t *testing.T) {
 	migrations := Migrations()
-	migration := migrations[len(migrations)-1]
+	var migration Migration
+	for _, candidate := range migrations {
+		if candidate.ID == 68 {
+			migration = candidate
+			break
+		}
+	}
 	if migration.ID != 68 || migration.Name != "add_msp_owner_activation" {
 		t.Fatalf("last migration = %d/%q", migration.ID, migration.Name)
 	}

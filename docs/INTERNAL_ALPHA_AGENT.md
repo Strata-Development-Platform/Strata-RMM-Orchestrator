@@ -53,6 +53,32 @@ refresh-token redesign. Those items and the mandatory hosted-agent exercises
 below remain prerequisites; the activation work alone does not establish
 internal-alpha readiness.
 
+## Scope-authorization remediation compatibility
+
+The scope-bound authorization, scoped user provisioning, and provider setup
+gate remediation changes the orchestrator schema/API and web console. It does
+not change endpoint-agent protocol versions, NATS subjects, enrollment inputs,
+identity files, installer behavior, durable command envelopes, or release
+artifact formats. Existing enrolled agents do not need to be replaced when
+migration 69 is applied. Agent-token validation does continue to fail closed if
+the approved registration, device, or active MSP/client/site hierarchy no
+longer exists.
+
+| Criterion | Slice status |
+|---|---|
+| User roles and permissions are derived from active, unexpired memberships applicable to one exact database-validated selected scope | Implemented; exact-head CI and review pending |
+| Singleton-platform membership is required for platform roles, and child/sibling membership never implies parent or global authority | Implemented; exact-head CI and review pending |
+| Protected requests revalidate active identity, membership, expiry, and hierarchy state instead of trusting JWT role claims | Implemented; stateless logout and the existing access-token design remain |
+| Scoped user creation/replacement validates role legality and actor authority and commits identity, memberships, mirrors, and audit together | Implemented per request; concurrent different replacements for one user are not serialized and require follow-up |
+| Incomplete provider administrators are server-gated with an exact recovery/setup allowlist and stable `provider_setup_required` response | Implemented; hosted browser/API exercise pending |
+| Migration 69 preserves rows, reports ambiguity, constrains new/changed membership state, and retains hardening on down migration | Implemented; operator review of `authorization_migration_issues` is required after upgrade |
+| Exact-head repository CI, security review, hosted adversarial exercises, and all remaining internal-alpha gates | Pending; opening a draft PR does not satisfy them |
+
+This bounded remediation does not establish internal-alpha readiness. It does
+not add or accept MFA, password recovery, open public sign-up, billing, or a
+refresh-token/session redesign, and it does not replace the mandatory hosted
+agent and operational exercises below.
+
 ## Supported internal-alpha matrix
 
 | Platform | Architecture | Build coverage | Installer coverage | Status |

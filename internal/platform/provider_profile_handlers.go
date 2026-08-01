@@ -75,7 +75,7 @@ func (s *APIServer) authorizeProviderProfile(w http.ResponseWriter, r *http.Requ
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "session required"})
 		return false
 	}
-	if !isPlatformGlobal(getRoles(r)) {
+	if !authorizationFromRequest(r).IsPlatformGlobal() {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "platform owner or administrator required"})
 		return false
 	}

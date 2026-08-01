@@ -21,12 +21,14 @@ import type {
   Usage,
   User,
   WorkspaceContext,
+  ScopeType,
+  UserMembership,
 } from './types';
 
 const BASE = '';
 
 export class ApiError extends Error {
-  constructor(public readonly status: number, message: string) {
+  constructor(public readonly status: number, message: string, public readonly code?: string) {
     super(message);
     this.name = 'ApiError';
   }
@@ -65,8 +67,11 @@ class ApiClient {
 
     if (res.status === 204) return undefined as T;
 
-    const data = await res.json().catch(() => undefined) as { error?: string } | undefined;
-    if (!res.ok) throw new ApiError(res.status, data?.error || 'request failed');
+    const data = await res.json().catch(() => undefined) as { error?: string; code?: string } | undefined;
+    if (res.status === 428 && data?.code === 'provider_setup_required' && window.location.pathname !== '/provider/setup') {
+      window.location.href = '/provider/setup';
+    }
+    if (!res.ok) throw new ApiError(res.status, data?.error || 'request failed', data?.code);
     return data as T;
   }
 
@@ -75,6 +80,7 @@ class ApiClient {
     this.request<LoginResponse>('POST', '/api/v1/auth/login', { email, password });
 
   me = () => this.request<LoginResponse>('GET', '/api/v1/auth/me');
+  logout = () => this.request<void>('POST', '/api/v1/auth/logout');
   inspectInvitation = (token: string) =>
     this.request<InvitationInspection>('POST', '/api/v1/auth/invitations/inspect', { token }, false);
   acceptInvitation = (token: string, password: string) =>
@@ -90,9 +96,9 @@ class ApiClient {
     this.request<ProviderBusinessProfile>('POST', '/api/v2/platform/provider/setup', profile);
   updateProviderProfile = (profile: ProviderBusinessProfilePatch) =>
     this.request<ProviderBusinessProfile>('PATCH', '/api/v2/platform/provider/profile', profile);
-  switchWorkspace = (msp_id: string, client_id = '', site_id = '') =>
-    this.request<{ token: string; msp_id: string; client_id: string; site_id: string; expires_at: string }>(
-      'POST', '/api/v2/context/switch', { msp_id, client_id, site_id }
+  switchWorkspace = (msp_id: string, client_id = '', site_id = '', scope_type?: ScopeType) =>
+    this.request<{ token: string; selected_scope: import('./types').AuthorizationScope; roles: string[]; permissions: string[]; msp_id: string; client_id: string; site_id: string; expires_at: string }>(
+      'POST', '/api/v2/context/switch', { scope_type, msp_id, client_id, site_id }
     );
   getMSPs = () => this.request<{ msps: MSPTenant[] }>('GET', '/api/v2/platform/msps');
   createMSPWithOwner = (request: CreateMSPWithOwnerRequest) =>
@@ -151,10 +157,14 @@ class ApiClient {
 
   // Admin
   getUsers = () => this.request<{ users: User[] }>('GET', '/api/v1/admin/users');
-  createUser = (email: string, password: string, role: string, tenant_ids: string[]) =>
-    this.request<{ id: string }>('POST', '/api/v1/admin/users', { email, password, role, tenant_ids });
-  updateUserTenants = (userId: string, tenant_ids: string[]) =>
-    this.request<{ status: string }>('PUT', `/api/v1/admin/users/${userId}/tenants`, { tenant_ids });
+  createUser = (email: string, password: string, membership: UserMembership) =>
+    this.request<{ id: string; status: string; memberships: UserMembership[] }>(
+      'POST', '/api/v1/admin/users', { email, password, ...membership }
+    );
+  updateUserMemberships = (userId: string, memberships: UserMembership[]) =>
+    this.request<{ status: string; memberships: UserMembership[] }>(
+      'PUT', `/api/v1/admin/users/${userId}/memberships`, { memberships }
+    );
 
   // Admin
   createCustomer = (name: string, slug: string, plan: string, adminEmail: string) =>
