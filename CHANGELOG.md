@@ -18,6 +18,13 @@
 
 ### Added
 
+- Added provider-approved MSP owner onboarding: migration 68 global normalized
+  email uniqueness and verification metadata, pending-owner lifecycle,
+  digest-only one-time invitations with forced RLS, TLS-only SMTP delivery,
+  public hash-fragment activation, atomic first-owner/MSP/entitlement activation,
+  fail-closed platform authorization, immutable token-safe audit events, and
+  provider-console creation/resend states. This does not add open sign-up, MFA,
+  password recovery, billing, or refresh-token redesign.
 - Added migration 67, server-authoritative first-login provider business setup,
   later Platform Settings editing, active platform-membership authorization,
   tenant-scope denials, and transactional immutable audit evidence.

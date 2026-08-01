@@ -60,6 +60,58 @@ be logged, placed in audit details, or exposed to tenant-scoped roles. This
 slice does not implement licensing enforcement, logo/theme white-labeling, or a
 general multi-provider hierarchy.
 
+## Provider-approved MSP owner activation
+
+There is no public account-registration route. An active, unexpired
+`platform_owner` or `platform_admin` membership on the singleton platform is
+required to create an MSP with an owner email or rotate that invitation. Both
+the request context and a fresh database authorization query must pass, and any
+MSP/client/site-scoped platform session is denied. Tenant-scoped roles cannot
+create or resend invitations.
+
+Each invitation uses 32 cryptographically random bytes encoded as unpadded
+base64url. The raw value is delivered in
+`/activate-account#<token>` and is never stored, logged, returned in an API
+response, or copied into audit details. A URL fragment is not included in the
+browser's HTTP request or referrer. PostgreSQL stores only the lowercase
+hex-encoded SHA-256 digest. The UI reads the fragment into memory, sends it only
+in JSON bodies to the inspect/accept APIs, and clears the fragment after
+successful acceptance; it does not persist the token in browser storage.
+
+`POST /api/v1/auth/invitations/inspect` and
+`POST /api/v1/auth/invitations/accept` are intentionally public so the invited
+owner needs no prior account. They share a dedicated per-direct-peer abuse
+bucket of one request per second with a burst of five, separate from login and
+general API capacity. Inputs use strict JSON decoding and a 16 KiB body limit.
+Invalid, expired, revoked, consumed, malformed, or wrong-state invitations use
+safe errors and do not disclose the owner address; inspection returns only the
+MSP name, a masked email, and expiry.
+
+Invitation access is fail closed in the database. Migration 68 forces RLS on
+`account_invitations`; only a platform-admin database context or the exact
+digest in the transaction-local invitation context can see or change a row.
+The corresponding user RLS permits only the narrowly matched invitation
+identity during acceptance. Acceptance locks the invitation row and checks it
+is unaccepted, unrevoked, unexpired, attached to an inactive `pending_owner`
+MSP, and backed by a suspended entitlement. It refuses an existing normalized
+email or existing MSP owner. Concurrent or replayed acceptance therefore has
+one winner.
+
+The winning transaction creates a bcrypt password hash and verified active
+tenant-neutral identity, grants the first `msp_owner` membership, activates the
+MSP and entitlement, records `msp.owner_activated`, and marks the invitation
+accepted. Any failure rolls back all of it, and success returns no session.
+Resend similarly locks and revokes the old invitation before creating a fresh
+one, and refuses to rotate a valid invitation already marked delivered.
+
+Normalized emails are globally unique after migration 68. The migration
+reports every duplicate normalized address and aborts before adding the unique
+index; it also rejects blank normalized addresses. Existing active users are
+backfilled with `email_verified_at`, while login now requires an active identity
+with non-null verification. For invited owners, successful possession-based
+acceptance supplies that verification. MFA, password recovery, open sign-up,
+billing, and refresh-token redesign remain outside this slice.
+
 ## Phase 8G security review
 
 Phase 8G adds the following internal-alpha controls:
@@ -93,13 +145,16 @@ exercises, and closure of every launch-blocking item in the
 
 ```text
 User login
-  → credential and MFA verification
+  → credential and email-verification eligibility checks
   → signed access token
   → centralized route classification
   → authenticated identity and membership
   → scoped database transaction
   → authorization and RLS enforcement
 ```
+
+MFA and password-recovery flows are not implemented by this slice and remain
+later security work.
 
 Agent enrollment establishes a persistent, scoped agent identity. Subsequent agent traffic must authenticate that identity and match MSP, client, site, device, agent, subject, correlation, attempt, and expiry constraints.
 

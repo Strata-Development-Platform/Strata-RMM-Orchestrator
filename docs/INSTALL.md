@@ -101,6 +101,32 @@ See [CONFIGURATION.md](CONFIGURATION.md#provider-business-profile) for the field
 contract and [RUNBOOK.md](RUNBOOK.md#provider-business-profile-setup-and-recovery)
 for recovery and audit checks.
 
+## Create an MSP and activate its owner
+
+Configure the account mailer and `STRATA_PUBLIC_URL` before inviting an MSP
+owner; see [SMTP account mailer and owner lifecycle](CONFIGURATION.md#smtp-account-mailer-and-owner-lifecycle).
+Then a top-level platform owner or platform administrator completes the
+provider-approved onboarding flow:
+
+1. In **MSP Tenants**, create the MSP with its name, slug, plan, and intended
+   owner email address. The tenant is created as **Pending owner activation**;
+   it cannot resolve by MSP host name or be opened as a workspace yet.
+2. Strata sends that address a 72-hour email link of the form
+   `https://rmm.example.com/activate-account#<token>`. The token is in the URL
+   fragment and is not sent to the web server by browser navigation.
+3. The invited owner opens the link, confirms the masked destination and MSP
+   name, and sets a 14–72-byte password. Successful acceptance verifies the
+   email address, creates the first `msp_owner` membership, and activates the
+   MSP and its entitlement atomically.
+4. Acceptance does not create a session. The owner follows the sign-in link and
+   signs in with the invited email address and new password.
+
+There is no open public sign-up path. If delivery is failed or unconfigured, or
+the link expires, a top-level platform operator can rotate and resend it from
+**MSP Tenants**. A still-valid invitation already recorded as delivered is not
+rotated. See [RUNBOOK.md](RUNBOOK.md#msp-owner-activation-recovery) for recovery
+and audit checks.
+
 ## Native package install
 
 The native mode never downloads a mutable package. Provide the locally verified release artifact and protected dependency files:
