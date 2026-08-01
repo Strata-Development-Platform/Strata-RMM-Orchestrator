@@ -185,3 +185,29 @@ program-wide acceptance status above.
 
 This slice does not implement or accept MFA, password recovery, open public
 sign-up, billing, or refresh-token redesign.
+
+## Scope-bound authorization and account-provisioning remediation
+
+This bounded remediation addresses authorization-scope union, legacy-only user
+provisioning, and the client-only provider setup gate. It does not change the
+program-wide A8-01…A8-26 status above.
+
+| ID | Acceptance criterion | Current status |
+|---|---|---|
+| SA-01 | Login and protected requests produce roles/permissions only from active, unexpired memberships applicable to one exact selected scope | Implemented; exact-head CI and review pending |
+| SA-02 | Platform roles require the singleton-platform membership, hierarchy IDs are database-proven, and child/sibling membership never implies parent/global access | Implemented; exact-head CI and hosted adversarial review pending |
+| SA-03 | Outstanding user tokens fail closed after membership revocation/expiry, identity disablement/unverification, MSP suspension/pending state, or client/site archival | Implemented by per-request database revalidation; exact-head CI pending |
+| SA-04 | User creation accepts explicit legal memberships and atomically commits identity, memberships, compatibility mirrors, and sanitized audit evidence | Implemented; exact-head CI and review pending |
+| SA-05 | Membership replacement is selected-scope bound, denies illegal/out-of-scope/owner escalation, and keeps the legacy `/tenants` route only as a payload-compatible alias | Partial: per-request checks are implemented, but concurrent different replacements for one user are not serialized and can leave multiple active roles at one scope |
+| SA-06 | Incomplete provider owners/admins are blocked server-side outside the exact auth/context/profile allowlist with stable HTTP `428` `provider_setup_required` | Implemented; hosted browser/API exercise pending |
+| SA-07 | Migration 69 preserves existing data, reports invalid/ambiguous state, constrains new/changed assignments, and does not restore the vulnerable model on down migration | Implemented; post-upgrade operator issue review required |
+| SA-08 | Legacy `users.role`, `users.tenant_id`, and `user_tenant_access` cannot independently create authority | Implemented as compatibility-only disposition; exact-head CI and review pending |
+| SA-09 | Exact-head CI, security review, hosted adversarial exercises, and remaining internal-alpha gates are complete | Not accepted; draft-PR exact-head CI and A8-24…A8-26 remain pending |
+
+SA-01…SA-08 describe the implemented remediation boundary, not promotion
+evidence. This phase does not run the full `dbintegration` suite because its
+known baseline failures are outside the remediation; focused checks and
+exact-head CI must be recorded separately. The remediation does not implement
+or accept MFA, password recovery, open public sign-up, billing, or
+refresh-token/session redesign, and it does not establish internal-alpha
+readiness.

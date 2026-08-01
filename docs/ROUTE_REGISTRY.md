@@ -14,16 +14,19 @@
 | GET | /install.sh | public | - | - | - | - |
 | GET | /releases/latest/agent/{os}/{arch} | public | - | - | - | - |
 | GET | /api/v1/auth/me | required | user | authenticated | user | user |
+| POST | /api/v1/auth/logout | required | user | authenticated; stateless logout response | session | selected scope |
 | GET | /api/v2/context | required | user | membership-derived roles/scopes plus provider setup status | user | current workspace |
+| POST | /api/v2/context/switch | required | user | active membership applicable to the exact requested hierarchy | session | requested workspace |
 | POST | /api/v1/enroll | required | user | authorized client operator | client | client |
 | POST | /api/v1/agent/register | public bootstrap | enrollment token | single-use enrollment | device | enrolled scope |
 | POST | /api/v1/agent/config | required | agent | agent | device | tenant |
 | GET | /api/v1/platform/overview | required | user | authenticated | platform | user |
 | GET | /api/v1/platform/customers | required | user | msp_admin | msp | msp |
 | GET | /api/v1/platform/customers/{id}/devices | required | user | msp_admin | client | client |
-| GET | /api/v1/admin/users | required | user | platform_admin | platform | platform |
-| POST | /api/v1/admin/users | required | user | platform_admin | platform | platform |
-| PUT | /api/v1/admin/users/{id}/tenants | required | user | platform_admin | user membership | platform |
+| GET | /api/v1/admin/users | required | user | platform_owner/platform_admin at singleton platform | platform users | platform |
+| POST | /api/v1/admin/users | required | user | selected-scope manager; explicit legal memberships; platform-owner assignment requires platform owner | user + memberships | selected scope and authorized descendants |
+| PUT | /api/v1/admin/users/{id}/memberships | required | user | selected-scope manager; explicit legal membership replacement | user memberships | selected scope and authorized descendants |
+| PUT | /api/v1/admin/users/{id}/tenants | required | user | compatibility alias of `/memberships`; accepts the same explicit `memberships` payload | user memberships | selected scope and authorized descendants |
 | POST | /api/v1/admin/customers | required | user | platform_admin | customer | platform |
 | GET | /api/v1/admin/update/check | required | user | platform_admin | release | platform |
 | POST | /api/v1/admin/update/apply | required | user | platform_admin | release | platform |
@@ -58,6 +61,20 @@
 The table documents registered privileged operations. Independently of the
 table, `/api/v1/admin/*`, `/api/v2/platform/*`, and `/api/v2/deployment/*` fail
 closed to platform-admin access so a future handler cannot inherit ordinary user
-access when an inventory entry is missed. Handler-level authorization and scoped
-database transactions remain mandatory; route classification is not a substitute
-for resource ownership checks.
+access when an inventory entry is missed. The three user-provisioning routes are
+explicitly classified before that prefix fallback because their handlers apply
+selected-scope, hierarchy, role-legality, and anti-escalation checks. Creation
+accepts either one `scope_type`/`scope_id`/`role` tuple or a `memberships` array;
+updates require a non-empty `memberships` array. Identity, memberships, legacy
+mirrors, and audit evidence commit atomically.
+
+Handler-level authorization and scoped database transactions remain mandatory;
+route classification is not a substitute for resource ownership checks. JWT
+role claims are not authoritative: protected user requests reload active,
+unexpired memberships and validate the selected hierarchy against PostgreSQL.
+
+When provider setup is incomplete, any authenticated request with an effective
+singleton-platform owner/admin grant is denied with HTTP `428` and code
+`provider_setup_required` except for the exact setup-gate allowlist documented
+in [Security Model](SECURITY_MODEL.md). Public health routes bypass authenticated
+access control and are unaffected.
