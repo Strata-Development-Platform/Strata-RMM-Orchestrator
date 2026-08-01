@@ -82,8 +82,11 @@ func (s *APIServer) handleCreateEnrollmentToken(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	s.auditControlPlane(r, mspID, "enrollment.created", "enrollment_token", id,
-		map[string]interface{}{"client_id": req.ClientID, "site_id": req.SiteID, "max_uses": req.MaxUses})
+	if err := s.auditControlPlane(r, mspID, "enrollment.created", "enrollment_token", id,
+		map[string]interface{}{"client_id": req.ClientID, "site_id": req.SiteID, "max_uses": req.MaxUses}); err != nil {
+		writeControlPlaneAuditFailure(w)
+		return
+	}
 	writeJSON(w, http.StatusCreated, enrollmentTokenResponse{
 		ID:        id,
 		Token:     rawToken,
@@ -218,6 +221,9 @@ func (s *APIServer) handleRevokeEnrollmentToken(w http.ResponseWriter, r *http.R
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "active token not found"})
 		return
 	}
-	s.auditControlPlane(r, mspID, "enrollment.revoked", "enrollment_token", tokenID, nil)
+	if err := s.auditControlPlane(r, mspID, "enrollment.revoked", "enrollment_token", tokenID, nil); err != nil {
+		writeControlPlaneAuditFailure(w)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "revoked"})
 }

@@ -3,6 +3,7 @@ import { api } from '@/api/client';
 import { useToast } from '@/components/shared/Toast';
 import { Skeleton } from '@/components/shared/Skeleton';
 import type { PlatformOverview } from '@/api/types';
+import { ProviderBusinessSettings } from '@/components/provider/ProviderBusinessSettings';
 
 export default function AdminSettingsPage() {
   const { showToast } = useToast();
@@ -40,6 +41,8 @@ export default function AdminSettingsPage() {
   return (
     <div className="space-y-8">
       <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Platform Settings</h1>
+
+      <ProviderBusinessSettings />
 
       {/* Platform Info */}
       <section>

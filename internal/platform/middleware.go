@@ -481,6 +481,9 @@ func (s *APIServer) adminRoutes() []Route {
 		{Method: "PATCH", Path: "/api/v2/platform/domains/{domainID}/certificate", Access: AccessAdmin},
 		{Method: "POST", Path: "/api/v2/platform/support-grants", Access: AccessAdmin},
 		{Method: "DELETE", Path: "/api/v2/platform/support-grants/{grantID}", Access: AccessAdmin},
+		{Method: "GET", Path: "/api/v2/platform/provider/profile", Access: AccessAdmin},
+		{Method: "POST", Path: "/api/v2/platform/provider/setup", Access: AccessAdmin},
+		{Method: "PATCH", Path: "/api/v2/platform/provider/profile", Access: AccessAdmin},
 		{Method: "GET", Path: "/api/v2/deployment/state", Access: AccessAdmin},
 		{Method: "GET", Path: "/api/v2/deployment/history", Access: AccessAdmin},
 		// Legacy admin routes
@@ -507,7 +510,8 @@ func hasPlatformRole(roles []string) bool {
 func hasMSPRole(roles []string) bool {
 	for _, r := range roles {
 		switch r {
-		case "msp_owner", "msp_admin", "technician", "patch_manager",
+		case "msp_owner", "msp_admin", "msp_technician", "msp_viewer",
+			"client_admin", "client_viewer", "technician", "patch_manager",
 			"automation_operator", "billing_manager", "auditor", "viewer",
 			"admin":
 			return true

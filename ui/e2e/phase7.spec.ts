@@ -30,11 +30,24 @@ async function installApi(page: Page, actionHandler?: (route: Route) => Promise<
     if (path === '/api/v1/auth/me') return json(route, user);
     if (path === '/api/v2/context') {
       return json(route, {
+        user_id: user.user_id,
+        email: user.email,
+        roles: [user.role],
+        permissions: ['device:manage', 'job:manage'],
         msp_id: 'msp-1',
+        msp_name: 'Test MSP',
+        msp_active: true,
         client_id: 'client-1',
+        client_name: 'Test Client',
         site_id: 'site-1',
+        site_name: 'Test Site',
         available_scopes: [],
         branding: { display_name: 'Test MSP' },
+        platform_role: false,
+        platform_id: 'platform-1',
+        provider_display_name: 'Test MSP',
+        setup_complete: true,
+        authenticated_at: '2026-07-28T12:00:00Z',
       });
     }
     if (path === `/api/v2/devices/${DEVICE_ID}`) {

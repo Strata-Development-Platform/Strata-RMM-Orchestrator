@@ -253,8 +253,11 @@ func (s *APIServer) handleExportMSP(w http.ResponseWriter, r *http.Request) {
 	}
 	digest := sha256.Sum256(serialized)
 	exportedRecords := limit - remaining
-	s.auditControlPlane(r, mspID, "msp.exported", "msp", mspID,
-		map[string]interface{}{"record_count": exportedRecords, "truncated": totalRecords > exportedRecords})
+	if err := s.auditControlPlane(r, mspID, "msp.exported", "msp", mspID,
+		map[string]interface{}{"record_count": exportedRecords, "truncated": totalRecords > exportedRecords}); err != nil {
+		writeControlPlaneAuditFailure(w)
+		return
+	}
 	w.Header().Set("Content-Disposition", `attachment; filename="strata-msp-export.json"`)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"schema_version": 1,

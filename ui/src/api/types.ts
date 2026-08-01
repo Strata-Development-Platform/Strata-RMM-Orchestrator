@@ -3,6 +3,11 @@ export type LoginResponse = {
   user_id: string;
   email: string;
   role: string;
+  roles: string[];
+  permissions: string[];
+  tenant_id: string;
+  provider_display_name: string;
+  setup_complete: boolean;
   accessible_tenants: TenantInfo[];
   expires_at?: string;
 };
@@ -89,8 +94,45 @@ export type WorkspaceContext = {
     features: Record<string, unknown>;
   };
   platform_role: boolean;
+  platform_id: string;
+  provider_display_name: string;
+  setup_complete: boolean;
   authenticated_at: string;
 };
+
+export type ProviderBusinessProfileValues = {
+  legal_name: string;
+  display_name: string;
+  contact_name: string;
+  support_email: string;
+  billing_email: string;
+  business_phone: string;
+  website_url: string;
+  address_line1: string;
+  address_line2: string;
+  city: string;
+  state_province: string;
+  postal_code: string;
+  country_code: string;
+  default_timezone: string;
+  default_locale: string;
+  default_currency: string;
+  tax_identifier: string;
+};
+
+type OptionalProviderBusinessProfileFields = 'website_url' | 'address_line2' | 'state_province' | 'tax_identifier';
+
+export type ProviderBusinessProfile = Omit<ProviderBusinessProfileValues, OptionalProviderBusinessProfileFields> &
+  Partial<Pick<ProviderBusinessProfileValues, OptionalProviderBusinessProfileFields>> & {
+  id: string;
+  slug: string;
+  setup_complete: boolean;
+  setup_completed_at?: string;
+  setup_completed_by?: string;
+  updated_at: string;
+  };
+
+export type ProviderBusinessProfilePatch = Partial<ProviderBusinessProfileValues>;
 
 export type ClientOrganization = {
   id: string;

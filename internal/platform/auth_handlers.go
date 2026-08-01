@@ -16,6 +16,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/auth"
+	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/postgres"
 )
 
 type loginRequest struct {
@@ -24,12 +25,17 @@ type loginRequest struct {
 }
 
 type loginResponse struct {
-	Token             string       `json:"token"`
-	UserID            string       `json:"user_id"`
-	Email             string       `json:"email"`
-	Role              string       `json:"role"`
-	AccessibleTenants []tenantInfo `json:"accessible_tenants"`
-	ExpiresAt         time.Time    `json:"expires_at"`
+	Token               string       `json:"token"`
+	UserID              string       `json:"user_id"`
+	Email               string       `json:"email"`
+	Role                string       `json:"role"`
+	Roles               []string     `json:"roles"`
+	Permissions         []string     `json:"permissions"`
+	TenantID            string       `json:"tenant_id"`
+	ProviderDisplayName string       `json:"provider_display_name"`
+	SetupComplete       bool         `json:"setup_complete"`
+	AccessibleTenants   []tenantInfo `json:"accessible_tenants"`
+	ExpiresAt           time.Time    `json:"expires_at"`
 }
 
 type tenantInfo struct {
@@ -50,11 +56,11 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	db := s.requestDB(r)
-	var userID, tenantID, role, passwordHash string
+	var userID, tenantID, passwordHash string
 	err := db.QueryRowContext(r.Context(), `
-		SELECT id, tenant_id, email, role, password_hash
+		SELECT id, tenant_id, email, password_hash
 		FROM users WHERE email = $1 AND is_active = true
-	`, req.Email).Scan(&userID, &tenantID, &req.Email, &role, &passwordHash)
+	`, req.Email).Scan(&userID, &tenantID, &req.Email, &passwordHash)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			s.logAuditAuth("", req.Email, r.RemoteAddr, false, "user not found")
@@ -68,6 +74,11 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(req.Password)); err != nil {
 		s.logAuditAuth(userID, req.Email, r.RemoteAddr, false, "wrong password")
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
+		return
+	}
+	effectiveRoles, err := s.loadEffectiveRolesForLogin(r, userID, tenantID)
+	if err != nil || len(effectiveRoles) == 0 {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "account has no active access membership"})
 		return
 	}
 
@@ -86,24 +97,34 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "authentication configuration error"})
 		return
 	}
-	token, err := tokenGen.GenerateUserToken(userID, tenantID, mspID, "", "", []string{role}, ttl)
+	token, err := tokenGen.GenerateUserToken(userID, tenantID, mspID, "", "", effectiveRoles, ttl)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("token generation failed: %v", err)})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "authentication token unavailable"})
 		return
 	}
 
-	accessibleTenants, _ := s.getAccessibleTenants(r, userID, role, tenantID)
+	accessibleTenants, _ := s.getAccessibleTenants(r, userID, effectiveRoles)
+	providerProfile, err := postgres.GetProviderBusinessProfile(r.Context(), db)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "provider context unavailable"})
+		return
+	}
 
 	db.ExecContext(r.Context(), `UPDATE users SET last_login = NOW() WHERE id = $1`, userID)
 	s.logAuditAuth(userID, req.Email, r.RemoteAddr, true, "login")
 
 	writeJSON(w, http.StatusOK, loginResponse{
-		Token:             token,
-		UserID:            userID,
-		Email:             req.Email,
-		Role:              role,
-		AccessibleTenants: accessibleTenants,
-		ExpiresAt:         time.Now().Add(ttl),
+		Token:               token,
+		UserID:              userID,
+		Email:               req.Email,
+		Role:                primaryEffectiveRole(effectiveRoles),
+		Roles:               effectiveRoles,
+		Permissions:         permissionsForRoles(effectiveRoles),
+		TenantID:            tenantID,
+		ProviderDisplayName: providerProfile.DisplayName,
+		SetupComplete:       providerProfile.SetupComplete,
+		AccessibleTenants:   accessibleTenants,
+		ExpiresAt:           time.Now().Add(ttl),
 	})
 }
 
@@ -115,11 +136,11 @@ func (s *APIServer) handleMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	db := s.requestDB(r)
-	var userID, email, role, tenantID string
+	var userID, email, tenantID string
 	var isActive bool
 	err := db.QueryRowContext(r.Context(), `
-		SELECT id, email, role, tenant_id, is_active FROM users WHERE id = $1
-	`, principal).Scan(&userID, &email, &role, &tenantID, &isActive)
+		SELECT id, email, tenant_id, is_active FROM users WHERE id = $1
+	`, principal).Scan(&userID, &email, &tenantID, &isActive)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
 		return
@@ -129,13 +150,24 @@ func (s *APIServer) handleMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	accessibleTenants, _ := s.getAccessibleTenants(r, userID, role, tenantID)
+	effectiveRoles := getRoles(r)
+	accessibleTenants, _ := s.getAccessibleTenants(r, userID, effectiveRoles)
+	providerProfile, err := postgres.GetProviderBusinessProfile(r.Context(), db)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "provider context unavailable"})
+		return
+	}
 
 	writeJSON(w, http.StatusOK, loginResponse{
-		UserID:            userID,
-		Email:             email,
-		Role:              role,
-		AccessibleTenants: accessibleTenants,
+		UserID:              userID,
+		Email:               email,
+		Role:                primaryEffectiveRole(effectiveRoles),
+		Roles:               effectiveRoles,
+		Permissions:         permissionsForRoles(effectiveRoles),
+		TenantID:            tenantID,
+		ProviderDisplayName: providerProfile.DisplayName,
+		SetupComplete:       providerProfile.SetupComplete,
+		AccessibleTenants:   accessibleTenants,
 	})
 }
 
@@ -385,9 +417,9 @@ func (s *APIServer) handlePlatformCustomers(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, map[string]interface{}{"customers": customers})
 }
 
-func (s *APIServer) getAccessibleTenants(r *http.Request, userID, role, tenantID string) ([]tenantInfo, error) {
+func (s *APIServer) getAccessibleTenants(r *http.Request, userID string, roles []string) ([]tenantInfo, error) {
 	db := s.db.DB()
-	if role == "admin" {
+	if isPlatformGlobal(roles) {
 		rows, err := db.Query(`SELECT id, name, slug FROM tenants ORDER BY name`)
 		if err != nil {
 			return nil, err
@@ -419,6 +451,72 @@ func (s *APIServer) getAccessibleTenants(r *http.Request, userID, role, tenantID
 		tenants = append(tenants, t)
 	}
 	return tenants, nil
+}
+
+func (s *APIServer) loadEffectiveRolesForLogin(r *http.Request, userID, tenantID string) ([]string, error) {
+	if s.db == nil {
+		return nil, fmt.Errorf("identity database is not configured")
+	}
+	tx, err := s.db.DB().BeginTx(r.Context(), &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	if _, err := tx.ExecContext(r.Context(), `
+		SELECT set_config('app.user_id', $1, true),
+		       set_config('app.tenant_id', $2, true)
+	`, userID, tenantID); err != nil {
+		return nil, err
+	}
+	rows, err := tx.QueryContext(r.Context(), `
+		SELECT DISTINCT role
+		FROM memberships
+		WHERE user_id = $1
+		  AND status = 'active'
+		  AND (expires_at IS NULL OR expires_at > NOW())
+		ORDER BY role
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	var roles []string
+	for rows.Next() {
+		var membershipRole string
+		if err := rows.Scan(&membershipRole); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		roles = append(roles, membershipRole)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	_ = rows.Close()
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	committed = true
+	return roles, nil
+}
+
+func primaryEffectiveRole(roles []string) string {
+	for _, preferred := range []string{"platform_owner", "platform_admin", "msp_owner", "msp_admin"} {
+		for _, role := range roles {
+			if role == preferred {
+				return role
+			}
+		}
+	}
+	if len(roles) > 0 {
+		return roles[0]
+	}
+	return ""
 }
 
 func (s *APIServer) handleAgentRegister(w http.ResponseWriter, r *http.Request) {

@@ -105,8 +105,11 @@ func (s *APIServer) handleCreateMSP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "unable to create MSP"})
 		return
 	}
-	s.auditControlPlane(r, createdID, "msp.created", "msp", createdID,
-		map[string]string{"name": req.Name, "slug": req.Slug, "plan": req.Plan})
+	if err := s.auditControlPlane(r, createdID, "msp.created", "msp", createdID,
+		map[string]string{"name": req.Name, "slug": req.Slug, "plan": req.Plan}); err != nil {
+		writeControlPlaneAuditFailure(w)
+		return
+	}
 	writeJSON(w, http.StatusCreated, map[string]string{"id": createdID, "status": "created"})
 }
 
@@ -135,7 +138,10 @@ func (s *APIServer) handleSuspendMSP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	s.auditControlPlane(r, mspID, "msp.suspended", "msp", mspID, nil)
+	if err := s.auditControlPlane(r, mspID, "msp.suspended", "msp", mspID, nil); err != nil {
+		writeControlPlaneAuditFailure(w)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "suspended"})
 }
 
@@ -146,7 +152,10 @@ func (s *APIServer) handleActivateMSP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	s.auditControlPlane(r, mspID, "msp.activated", "msp", mspID, nil)
+	if err := s.auditControlPlane(r, mspID, "msp.activated", "msp", mspID, nil); err != nil {
+		writeControlPlaneAuditFailure(w)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "activated"})
 }
 
@@ -229,8 +238,11 @@ func (s *APIServer) handleCreateClient(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	s.auditControlPlane(r, mspID, "client.created", "client", id,
-		map[string]string{"name": req.Name, "slug": req.Slug})
+	if err := s.auditControlPlane(r, mspID, "client.created", "client", id,
+		map[string]string{"name": req.Name, "slug": req.Slug}); err != nil {
+		writeControlPlaneAuditFailure(w)
+		return
+	}
 	writeJSON(w, http.StatusCreated, map[string]string{"id": id, "status": "created"})
 }
 
@@ -266,7 +278,10 @@ func (s *APIServer) handleArchiveClient(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	mspID := r.PathValue("mspID")
-	s.auditControlPlane(r, mspID, "client.archived", "client", clientID, nil)
+	if err := s.auditControlPlane(r, mspID, "client.archived", "client", clientID, nil); err != nil {
+		writeControlPlaneAuditFailure(w)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "archived"})
 }
 
@@ -341,8 +356,11 @@ func (s *APIServer) handleCreateSite(w http.ResponseWriter, r *http.Request) {
 	var mspID string
 	_ = s.requestDB(r).QueryRowContext(r.Context(),
 		`SELECT msp_id FROM client_organizations WHERE id = $1`, clientID).Scan(&mspID)
-	s.auditControlPlane(r, mspID, "site.created", "site", id,
-		map[string]string{"client_id": clientID, "name": req.Name, "slug": req.Slug})
+	if err := s.auditControlPlane(r, mspID, "site.created", "site", id,
+		map[string]string{"client_id": clientID, "name": req.Name, "slug": req.Slug}); err != nil {
+		writeControlPlaneAuditFailure(w)
+		return
+	}
 	writeJSON(w, http.StatusCreated, map[string]string{"id": id, "status": "created"})
 }
 
@@ -381,7 +399,10 @@ func (s *APIServer) handleArchiveSite(w http.ResponseWriter, r *http.Request) {
 	_ = s.requestDB(r).QueryRowContext(r.Context(), `
 		SELECT c.msp_id FROM sites s JOIN client_organizations c ON c.id = s.client_id WHERE s.id = $1
 	`, siteID).Scan(&mspID)
-	s.auditControlPlane(r, mspID, "site.archived", "site", siteID, nil)
+	if err := s.auditControlPlane(r, mspID, "site.archived", "site", siteID, nil); err != nil {
+		writeControlPlaneAuditFailure(w)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "archived"})
 }
 
@@ -478,8 +499,11 @@ func (s *APIServer) handleCreateMembership(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "active membership already exists"})
 		return
 	}
-	s.auditControlPlane(r, mspID, "membership.created", "membership", id,
-		map[string]string{"user_id": req.UserID, "role": req.Role})
+	if err := s.auditControlPlane(r, mspID, "membership.created", "membership", id,
+		map[string]string{"user_id": req.UserID, "role": req.Role}); err != nil {
+		writeControlPlaneAuditFailure(w)
+		return
+	}
 	writeJSON(w, http.StatusCreated, map[string]string{"id": id, "status": "created"})
 }
 
@@ -502,6 +526,9 @@ func (s *APIServer) handleRevokeMembership(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "active membership not found"})
 		return
 	}
-	s.auditControlPlane(r, mspID, "membership.revoked", "membership", membershipID, nil)
+	if err := s.auditControlPlane(r, mspID, "membership.revoked", "membership", membershipID, nil); err != nil {
+		writeControlPlaneAuditFailure(w)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "revoked"})
 }

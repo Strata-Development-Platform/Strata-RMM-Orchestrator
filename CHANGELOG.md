@@ -18,11 +18,18 @@
 
 ### Added
 
+- Added migration 67, server-authoritative first-login provider business setup,
+  later Platform Settings editing, active platform-membership authorization,
+  tenant-scope denials, and transactional immutable audit evidence.
+- Added validation, authorization, database integration, frontend unit, and
+  Chromium acceptance coverage for the provider business-profile lifecycle.
 - Completed Phase 7 endpoint operations and technician-console workflows, including approvals, idempotency, offline lifecycle handling, immutable audit evidence, capability negotiation, inventory ingestion, and browser acceptance coverage.
 - Added the complete StrataLabs project contract: documentation index, contribution guide, security policy, and website-integration guidance.
 
 ### Changed
 
+- Control-plane mutation handlers now fail the request when their audit event
+  cannot be recorded, allowing the request transaction to roll back.
 - Corrected StrataLabs project metadata and replaced the obsolete roadmap with current SaaS, orchestration, endpoint-operations, beta-hardening, and hosted-service milestones.
 
 - Wired the durable jobs dispatcher into the managed-agent lifecycle.
@@ -33,6 +40,12 @@
 - Propagated job cancellation, expiry deadlines, and agent shutdown to handlers.
 - Corrected Job Center tenant/client filtering and surfaced action failures.
 - Removed generated TypeScript build metadata from source control.
+
+### Fixed
+
+- Kept Regional Defaults Continue as a non-submit control with a distinct DOM
+  identity so native click activation cannot skip Review, and associated login
+  labels with their email and password inputs.
 
 All notable changes to this project should be documented here.
 

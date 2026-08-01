@@ -108,6 +108,21 @@ func BootstrapInitialAdmin(ctx context.Context, db *sql.DB, in BootstrapAdminInp
 	}
 
 	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO memberships (
+			user_id, role, scope_type, scope_id, created_by, status
+		)
+		VALUES (
+			$1, 'platform_owner', 'platform',
+			'00000000-0000-0000-0000-000000000001', $1, 'active'
+		)
+		ON CONFLICT (user_id, scope_type, scope_id, role)
+			WHERE status = 'active'
+		DO NOTHING
+	`, userID); err != nil {
+		return "", fmt.Errorf("grant initial platform owner membership: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO audit_log (tenant_id, user_id, action, resource, details)
 		VALUES ($1, $2, 'platform.bootstrap_admin', 'user', '{"source":"local-installer"}'::jsonb)
 	`, tenantID, userID); err != nil {

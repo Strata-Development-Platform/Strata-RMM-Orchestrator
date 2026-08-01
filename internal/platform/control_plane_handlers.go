@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"regexp"
@@ -48,7 +49,10 @@ func (s *APIServer) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "hostname is already registered"})
 		return
 	}
-	s.auditControlPlane(r, mspID, "domain.created", "custom_domain", id, map[string]string{"hostname": req.Hostname})
+	if err := s.auditControlPlane(r, mspID, "domain.created", "custom_domain", id, map[string]string{"hostname": req.Hostname}); err != nil {
+		writeControlPlaneAuditFailure(w)
+		return
+	}
 	writeJSON(w, http.StatusCreated, map[string]string{
 		"id": id, "hostname": req.Hostname, "verification_token": token,
 		"txt_name": "_strata-verification." + req.Hostname,
@@ -109,7 +113,10 @@ func (s *APIServer) handleVerifyDomain(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "pending domain not found"})
 		return
 	}
-	s.auditControlPlane(r, mspID, "domain.verified", "custom_domain", domainID, nil)
+	if err := s.auditControlPlane(r, mspID, "domain.verified", "custom_domain", domainID, nil); err != nil {
+		writeControlPlaneAuditFailure(w)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "verified", "certificate_status": "requested"})
 }
 
@@ -130,7 +137,10 @@ func (s *APIServer) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "domain not found"})
 		return
 	}
-	s.auditControlPlane(r, mspID, "domain.deleted", "custom_domain", domainID, nil)
+	if err := s.auditControlPlane(r, mspID, "domain.deleted", "custom_domain", domainID, nil); err != nil {
+		writeControlPlaneAuditFailure(w)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
@@ -161,8 +171,11 @@ func (s *APIServer) handleUpdateDomainCertificate(w http.ResponseWriter, r *http
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "verified domain not found"})
 		return
 	}
-	s.auditControlPlane(r, mspID, "domain.certificate_updated", "custom_domain", domainID,
-		map[string]string{"status": req.Status})
+	if err := s.auditControlPlane(r, mspID, "domain.certificate_updated", "custom_domain", domainID,
+		map[string]string{"status": req.Status}); err != nil {
+		writeControlPlaneAuditFailure(w)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": req.Status})
 }
 
@@ -247,9 +260,15 @@ func (s *APIServer) handleUpdateEntitlement(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown plan or invalid status"})
 		return
 	}
-	_, _ = s.requestDB(r).ExecContext(r.Context(), `UPDATE msp_tenants SET plan = $2 WHERE id = $1`, mspID, req.PlanSlug)
-	s.auditControlPlane(r, mspID, "entitlement.updated", "plan_entitlement", mspID,
-		map[string]interface{}{"plan": req.PlanSlug, "status": req.Status, "grace_period_days": req.GracePeriodDays})
+	if _, err := s.requestDB(r).ExecContext(r.Context(), `UPDATE msp_tenants SET plan = $2 WHERE id = $1`, mspID, req.PlanSlug); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "MSP plan synchronization failed"})
+		return
+	}
+	if err := s.auditControlPlane(r, mspID, "entitlement.updated", "plan_entitlement", mspID,
+		map[string]interface{}{"plan": req.PlanSlug, "status": req.Status, "grace_period_days": req.GracePeriodDays}); err != nil {
+		writeControlPlaneAuditFailure(w)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
@@ -411,25 +430,35 @@ func (s *APIServer) handleContextSwitch(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "workspace token unavailable"})
 		return
 	}
-	s.auditControlPlane(r, req.MSPID, "context.switched", "workspace", req.MSPID,
-		map[string]string{"client_id": req.ClientID, "site_id": req.SiteID})
+	if err := s.auditControlPlane(r, req.MSPID, "context.switched", "workspace", req.MSPID,
+		map[string]string{"client_id": req.ClientID, "site_id": req.SiteID}); err != nil {
+		writeControlPlaneAuditFailure(w)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"token": token, "msp_id": req.MSPID, "client_id": req.ClientID,
 		"site_id": req.SiteID, "expires_at": time.Now().Add(8 * time.Hour).UTC().Format(time.RFC3339),
 	})
 }
 
-func (s *APIServer) auditControlPlane(r *http.Request, mspID, action, resourceType, resourceID string, details interface{}) {
+func (s *APIServer) auditControlPlane(r *http.Request, mspID, action, resourceType, resourceID string, details interface{}) error {
 	if details == nil {
 		details = map[string]string{}
 	}
 	payload, err := json.Marshal(details)
 	if err != nil {
-		return
+		return fmt.Errorf("encode control-plane audit details: %w", err)
 	}
 	userID, _ := r.Context().Value(ctxKeyUserID).(string)
-	_, _ = s.requestDB(r).ExecContext(r.Context(), `
+	if _, err := s.requestDB(r).ExecContext(r.Context(), `
 		INSERT INTO control_plane_audit (msp_id, actor_user_id, action, resource_type, resource_id, details)
 		VALUES ($1, $2, $3, $4, $5, $6)
-	`, nullIfEmpty(mspID), userID, action, resourceType, resourceID, payload)
+	`, nullIfEmpty(mspID), userID, action, resourceType, resourceID, payload); err != nil {
+		return fmt.Errorf("record control-plane audit event: %w", err)
+	}
+	return nil
+}
+
+func writeControlPlaneAuditFailure(w http.ResponseWriter) {
+	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "control-plane audit recording failed"})
 }

@@ -42,7 +42,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   };
 
   if (!user) return <>{children}</>;
-  const platformRole = ['platform_owner', 'platform_admin'].includes(user.role);
+  const platformRole = workspace?.roles.some(role => role === 'platform_owner' || role === 'platform_admin') ?? false;
   const permissions = new Set(workspace?.permissions ?? []);
   const visibleNavItems = navItems.filter(item => {
     if (item.platformOnly && !platformRole) return false;
@@ -50,7 +50,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     return item.permissions.some(permission => permissions.has(permission));
   });
   const branding = workspace?.branding;
-  const displayName = typeof branding?.display_name === 'string' ? branding.display_name : 'Strata RMM';
+  const mspDisplayName = workspace?.msp_id && typeof branding?.display_name === 'string' ? branding.display_name : '';
+  const displayName = mspDisplayName || workspace?.provider_display_name || 'Strata RMM';
   const sidebarBackground = typeof branding?.sidebar_bg === 'string' ? branding.sidebar_bg : undefined;
   const primaryColor = typeof branding?.primary_color === 'string' ? branding.primary_color : undefined;
 
@@ -78,7 +79,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               onChange={event => void switchWorkspace(event.target.value)}
               className="w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs text-white"
             >
-              <option value="">Select an MSP</option>
+              <option value="" disabled>Select an MSP</option>
               {workspace.available_scopes.filter(scope => scope.type === 'msp').map(scope => (
                 <option key={scope.id} value={scope.id}>{scope.name}</option>
               ))}

@@ -126,8 +126,11 @@ func (s *APIServer) handleOffboardMSP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.auditControlPlane(r, mspID, "msp.offboarded", "msp_offboarding", mspID,
-		map[string]interface{}{"retention_days": req.RetentionDays, "reason": req.Reason})
+	if err := s.auditControlPlane(r, mspID, "msp.offboarded", "msp_offboarding", mspID,
+		map[string]interface{}{"retention_days": req.RetentionDays, "reason": req.Reason}); err != nil {
+		writeControlPlaneAuditFailure(w)
+		return
+	}
 	s.writeOffboardingStatus(w, r, mspID, http.StatusOK)
 }
 
@@ -203,6 +206,9 @@ func (s *APIServer) handleApproveMSPDeletion(w http.ResponseWriter, r *http.Requ
 		})
 		return
 	}
-	s.auditControlPlane(r, mspID, "msp.deletion_approved", "msp_offboarding", mspID, nil)
+	if err := s.auditControlPlane(r, mspID, "msp.deletion_approved", "msp_offboarding", mspID, nil); err != nil {
+		writeControlPlaneAuditFailure(w)
+		return
+	}
 	s.writeOffboardingStatus(w, r, mspID, http.StatusOK)
 }

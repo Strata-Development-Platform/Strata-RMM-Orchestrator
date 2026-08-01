@@ -12,6 +12,25 @@ The endpoint agent is intended for controlled, ephemeral internal-alpha environm
 - Remote session input and stop operations must match the tenant, device, and agent binding established when the session was dispatched. Pending bindings expire after 30 minutes, are removed on stop or failed dispatch, and disappear on orchestrator shutdown/restart. The start response is `pending`; the current HTTP path does not prove that the endpoint accepted or activated the session.
 - Linux and Windows installers validate TLS, verify SHA-256 checksums, bound download attempts, preserve the data directory during binary replacement, and fail if enrollment material remains in the runtime configuration.
 
+## Provider first-login slice compatibility
+
+This slice changes the orchestrator database/API and web console only. It does
+not change the endpoint-agent protocol, subjects, identity files,
+configuration, installers, or release compatibility.
+
+| Criterion | Slice status |
+|---|---|
+| Migration 67 adds the singleton business fields and immutable setup metadata; clean bootstrap grants the initial platform-owner membership | Implemented with focused schema/bootstrap coverage |
+| First top-level provider sign-in is routed through Business, Contact, Regional Defaults, and Review before explicit completion | Implemented with frontend and Chromium acceptance coverage |
+| Setup and profile APIs enforce active platform membership and reject tenant-scoped and non-platform roles | Implemented with authorization and PostgreSQL integration coverage |
+| Server validation, idempotent identical setup retry, protected completion metadata, partial updates, and persisted context are covered | Implemented with validation, handler, and database integration coverage |
+| Completion and effective edits create transactional immutable control-plane audit evidence without profile values | Implemented with focused PostgreSQL integration coverage |
+| Exact-head repository CI, review, and the remaining internal-alpha operational gates | Pending; this slice does not satisfy them |
+
+This matrix is limited to provider account setup. It does not claim a complete
+white-label licensing system, every dashboard level, hosted acceptance, or full
+internal-alpha readiness.
+
 ## Supported internal-alpha matrix
 
 | Platform | Architecture | Build coverage | Installer coverage | Status |

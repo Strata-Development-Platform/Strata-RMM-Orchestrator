@@ -78,6 +78,20 @@ func TestBootstrapInitialAdminExactlyOnce(t *testing.T) {
 		t.Fatal("stored password hash does not match")
 	}
 
+	var membershipRole, scopeType, scopeID, membershipStatus string
+	if err := db.QueryRow(`
+		SELECT role, scope_type, scope_id, status
+		FROM memberships
+		WHERE user_id = $1
+	`, userID).Scan(&membershipRole, &scopeType, &scopeID, &membershipStatus); err != nil {
+		t.Fatal(err)
+	}
+	if membershipRole != "platform_owner" || scopeType != "platform" ||
+		scopeID != SingletonPlatformID || membershipStatus != "active" {
+		t.Fatalf("unexpected bootstrap membership: role=%q type=%q id=%q status=%q",
+			membershipRole, scopeType, scopeID, membershipStatus)
+	}
+
 	if _, err := BootstrapInitialAdmin(ctx, db, input); !errors.Is(err, ErrAlreadyBootstrapped) {
 		t.Fatalf("second bootstrap error = %v, want ErrAlreadyBootstrapped", err)
 	}

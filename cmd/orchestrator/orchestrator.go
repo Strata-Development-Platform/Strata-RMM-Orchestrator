@@ -223,6 +223,7 @@ func NewCommand(ctx context.Context, version, commit string, logger *zap.Logger)
 				return fmt.Errorf("stage %d: creating API server: %w", atomic.LoadInt32(&startupStage), err)
 			}
 			api.WithVersion(version, commit).
+				WithProductionMode(cfg.RuntimeMode == config.ModeProduction).
 				WithMetricsToken(cfg.Observability.MetricsToken).
 				WithHTTPConfig(
 					cfg.HTTP.ReadTimeout, cfg.HTTP.WriteTimeout, cfg.HTTP.IdleTimeout,
