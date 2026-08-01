@@ -10,6 +10,9 @@ import type {
   Membership,
   MSPTenant,
   PlatformOverview,
+  ProviderBusinessProfile,
+  ProviderBusinessProfilePatch,
+  ProviderBusinessProfileValues,
   Site,
   Usage,
   User,
@@ -64,6 +67,12 @@ class ApiClient {
   getOverview = () => this.request<PlatformOverview>('GET', '/api/v1/platform/overview');
   getCustomers = () => this.request<{ customers: CustomerSummary[] }>('GET', '/api/v1/platform/customers');
   getWorkspaceContext = () => this.request<WorkspaceContext>('GET', '/api/v2/context');
+  getProviderProfile = () =>
+    this.request<ProviderBusinessProfile>('GET', '/api/v2/platform/provider/profile');
+  completeProviderSetup = (profile: ProviderBusinessProfileValues) =>
+    this.request<ProviderBusinessProfile>('POST', '/api/v2/platform/provider/setup', profile);
+  updateProviderProfile = (profile: ProviderBusinessProfilePatch) =>
+    this.request<ProviderBusinessProfile>('PATCH', '/api/v2/platform/provider/profile', profile);
   switchWorkspace = (msp_id: string, client_id = '', site_id = '') =>
     this.request<{ token: string; msp_id: string; client_id: string; site_id: string; expires_at: string }>(
       'POST', '/api/v2/context/switch', { msp_id, client_id, site_id }

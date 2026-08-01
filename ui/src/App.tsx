@@ -20,45 +20,91 @@ import DeviceWorkspacePage from '@/pages/DeviceWorkspacePage';
 import DeviceRemotePage from '@/pages/DeviceRemotePage';
 import MSPWorkspacePage from '@/pages/MSPWorkspacePage';
 import LegalPage from '@/pages/LegalPage';
+import ProviderSetupPage from '@/pages/ProviderSetupPage';
+import { ToastProvider } from '@/components/shared/Toast';
+
+function LoadingScreen() {
+  return <div className="min-h-screen flex items-center justify-center text-slate-500 dark:text-slate-400">Loading...</div>;
+}
+
+function WorkspaceError() {
+  const { refresh } = useWorkspace();
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6 dark:bg-slate-950">
+      <div role="alert" className="max-w-md rounded-lg border border-red-200 bg-white p-6 text-center dark:border-red-900 dark:bg-slate-900">
+        <h1 className="text-lg font-semibold text-slate-900 dark:text-white">Workspace unavailable</h1>
+        <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">We could not load your server workspace context.</p>
+        <button onClick={() => void refresh().catch(() => undefined)} className="mt-4 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
+          Try again
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function isProviderAdministrator(roles: string[] | undefined) {
+  return roles?.some(role => role === 'platform_owner' || role === 'platform_admin') ?? false;
+}
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth();
-  if (loading) return <div className="min-h-screen flex items-center justify-center text-slate-500">Loading...</div>;
+  const { user, loading: authLoading } = useAuth();
+  const { workspace, loading: workspaceLoading, error } = useWorkspace();
+  if (authLoading || (user && workspaceLoading)) return <LoadingScreen />;
   if (!user) return <Navigate to="/login" replace />;
+  if (error || !workspace) return <WorkspaceError />;
+  if (isProviderAdministrator(workspace.roles) && !workspace.setup_complete) {
+    return <Navigate to="/provider/setup" replace />;
+  }
   return <Layout>{children}</Layout>;
 }
 
 function PlatformRoute({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth();
-  if (loading) return <div className="min-h-screen flex items-center justify-center text-slate-500">Loading...</div>;
+  const { user, loading: authLoading } = useAuth();
+  const { workspace, loading: workspaceLoading, error } = useWorkspace();
+  if (authLoading || (user && workspaceLoading)) return <LoadingScreen />;
   if (!user) return <Navigate to="/login" replace />;
-  if (!['platform_owner', 'platform_admin'].includes(user.role)) {
-    return <Navigate to="/" replace />;
-  }
+  if (error || !workspace) return <WorkspaceError />;
+  if (!isProviderAdministrator(workspace.roles)) return <Navigate to="/" replace />;
+  if (!workspace.setup_complete) return <Navigate to="/provider/setup" replace />;
   return <Layout>{children}</Layout>;
 }
 
 function CapabilityRoute({ permissions, children }: { permissions: string[]; children: React.ReactNode }) {
   const { user, loading: authLoading } = useAuth();
-  const { workspace, loading: workspaceLoading } = useWorkspace();
+  const { workspace, loading: workspaceLoading, error } = useWorkspace();
   if (authLoading || workspaceLoading) {
-    return <div className="min-h-screen flex items-center justify-center text-slate-500">Loading...</div>;
+    return <LoadingScreen />;
   }
   if (!user) return <Navigate to="/login" replace />;
-  const platformRole = ['platform_owner', 'platform_admin'].includes(user.role);
+  if (error || !workspace) return <WorkspaceError />;
+  const platformRole = isProviderAdministrator(workspace.roles);
+  if (platformRole && !workspace.setup_complete) return <Navigate to="/provider/setup" replace />;
   const allowed = platformRole || permissions.some(permission => workspace?.permissions.includes(permission));
   if (!allowed) return <Navigate to="/" replace />;
   return <Layout>{children}</Layout>;
 }
 
+function ProviderSetupRoute() {
+  const { user, loading: authLoading } = useAuth();
+  const { workspace, loading: workspaceLoading, error } = useWorkspace();
+  if (authLoading || (user && workspaceLoading)) return <LoadingScreen />;
+  if (!user) return <Navigate to="/login" replace />;
+  if (error || !workspace) return <WorkspaceError />;
+  if (!isProviderAdministrator(workspace.roles) || workspace.setup_complete) {
+    return <Navigate to="/" replace />;
+  }
+  return <ProviderSetupPage />;
+}
+
 function AppRoutes() {
   const { user, loading } = useAuth();
 
-  if (loading) return <div className="min-h-screen flex items-center justify-center text-slate-500">Loading...</div>;
+  if (loading) return <LoadingScreen />;
 
   return (
     <Routes>
       <Route path="/login" element={user ? <Navigate to="/" replace /> : <LoginPage />} />
+      <Route path="/provider/setup" element={<ProviderSetupRoute />} />
       <Route path="/" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
       <Route path="/legal" element={<LegalPage />} />
       <Route path="/customers" element={<CapabilityRoute permissions={['client:read', 'client:manage', 'msp:manage']}><CustomersPage /></CapabilityRoute>} />
@@ -84,11 +130,13 @@ function AppRoutes() {
 export default function App() {
   return (
     <BrowserRouter>
-      <AuthProvider>
-        <WorkspaceProvider>
-          <AppRoutes />
-        </WorkspaceProvider>
-      </AuthProvider>
+      <ToastProvider>
+        <AuthProvider>
+          <WorkspaceProvider>
+            <AppRoutes />
+          </WorkspaceProvider>
+        </AuthProvider>
+      </ToastProvider>
     </BrowserRouter>
   );
 }
