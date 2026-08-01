@@ -384,70 +384,115 @@ func (s *APIServer) handleMSPDevices(w http.ResponseWriter, r *http.Request) {
 func (s *APIServer) handleContextSwitch(w http.ResponseWriter, r *http.Request) {
 	userID, _ := r.Context().Value(ctxKeyUserID).(string)
 	var req struct {
-		MSPID    string `json:"msp_id"`
-		ClientID string `json:"client_id"`
-		SiteID   string `json:"site_id"`
+		ScopeType string `json:"scope_type"`
+		MSPID     string `json:"msp_id"`
+		ClientID  string `json:"client_id"`
+		SiteID    string `json:"site_id"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.MSPID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "msp_id required"})
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
 		return
 	}
-	if !s.AuthorizeMSPAccess(w, r, req.MSPID) {
+	if req.ScopeType == "" {
+		if req.MSPID == "" {
+			req.ScopeType = string(ScopePlatform)
+		} else if req.SiteID != "" {
+			req.ScopeType = string(ScopeSite)
+		} else if req.ClientID != "" {
+			req.ScopeType = string(ScopeClient)
+		} else {
+			req.ScopeType = string(ScopeMSP)
+		}
+	}
+	if ScopeType(req.ScopeType) == ScopePlatform {
+		if req.MSPID != "" || req.ClientID != "" || req.SiteID != "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "platform scope cannot include child identifiers"})
+			return
+		}
+	} else if req.MSPID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "msp_id required for a child scope"})
 		return
 	}
-	var workspaceActive bool
-	if err := s.requestDB(r).QueryRowContext(r.Context(), `
-		SELECT EXISTS (
-			SELECT 1 FROM msp_tenants
-			WHERE id = $1 AND is_active = TRUE AND onboarding_status = 'active'
-		)
-	`, req.MSPID).Scan(&workspaceActive); err != nil || !workspaceActive {
+	if (ScopeType(req.ScopeType) == ScopeMSP && (req.ClientID != "" || req.SiteID != "")) ||
+		(ScopeType(req.ScopeType) == ScopeClient && (req.ClientID == "" || req.SiteID != "")) ||
+		(ScopeType(req.ScopeType) == ScopeSite && (req.ClientID == "" || req.SiteID == "")) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "scope_type does not match the supplied hierarchy"})
+		return
+	}
+
+	tx, err := s.db.DB().BeginTx(r.Context(), nil)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "workspace transaction unavailable"})
+		return
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	if _, err := tx.ExecContext(r.Context(), `
+		SELECT set_config('app.user_id', $1, true),
+		       set_config('app.msp_id', $2, true),
+		       set_config('app.client_id', $3, true),
+		       set_config('app.site_id', $4, true),
+		       set_config('app.tenant_id', $3, true),
+		       set_config('app.scope_type', $5, true),
+		       set_config('app.permission', 'write', true)
+	`, userID, req.MSPID, req.ClientID, req.SiteID, req.ScopeType); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "workspace security context unavailable"})
+		return
+	}
+	authorization, err := s.resolveAuthorization(r.Context(), tx, userID, req.MSPID, req.ClientID, req.SiteID)
+	if err != nil || authorization.Selected.Type != ScopeType(req.ScopeType) {
 		writeAuthorizationDenied(w)
 		return
 	}
-	if req.ClientID != "" {
-		if !s.AuthorizeClientAccess(w, r, req.ClientID) {
-			return
-		}
-		var clientMSP string
-		if err := s.requestDB(r).QueryRowContext(r.Context(),
-			`SELECT msp_id FROM client_organizations WHERE id = $1 AND is_active = true`,
-			req.ClientID,
-		).Scan(&clientMSP); err != nil || clientMSP != req.MSPID {
-			writeAuthorizationDenied(w)
-			return
-		}
+	dbRole := ""
+	if authorization.IsPlatformGlobal() {
+		dbRole = "platform_admin"
 	}
-	if req.SiteID != "" {
-		if !s.AuthorizeSiteAccess(w, r, req.SiteID) {
-			return
-		}
-		var siteClient string
-		if err := s.requestDB(r).QueryRowContext(r.Context(),
-			`SELECT client_id FROM sites WHERE id = $1 AND is_active = true`,
-			req.SiteID,
-		).Scan(&siteClient); err != nil || req.ClientID == "" || siteClient != req.ClientID {
-			writeAuthorizationDenied(w)
-			return
-		}
+	if _, err := tx.ExecContext(r.Context(), `SELECT set_config('app.role', $1, true)`, dbRole); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "workspace security context unavailable"})
+		return
 	}
-	roles := getRoles(r)
-	legacyTenantID := req.ClientID
+	details, err := json.Marshal(map[string]string{
+		"scope_type": req.ScopeType, "msp_id": req.MSPID,
+		"client_id": req.ClientID, "site_id": req.SiteID,
+	})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "workspace audit unavailable"})
+		return
+	}
+	resourceID := authorization.Selected.ID
+	if _, err := tx.ExecContext(r.Context(), `
+		INSERT INTO control_plane_audit (msp_id, actor_user_id, action, resource_type, resource_id, details)
+		VALUES ($1, $2, 'context.switched', 'workspace', $3, $4)
+	`, nullIfEmpty(authorization.Selected.MSPID), userID, resourceID, details); err != nil {
+		writeControlPlaneAuditFailure(w)
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "workspace transaction failed"})
+		return
+	}
+	committed = true
+
 	token, err := s.tokenGen.GenerateUserToken(
-		userID, legacyTenantID, req.MSPID, req.ClientID, req.SiteID, roles, 8*time.Hour,
+		userID, authorization.Selected.ClientID, authorization.Selected.MSPID,
+		authorization.Selected.ClientID, authorization.Selected.SiteID,
+		authorization.Roles, 8*time.Hour,
 	)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "workspace token unavailable"})
 		return
 	}
-	if err := s.auditControlPlane(r, req.MSPID, "context.switched", "workspace", req.MSPID,
-		map[string]string{"client_id": req.ClientID, "site_id": req.SiteID}); err != nil {
-		writeControlPlaneAuditFailure(w)
-		return
-	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"token": token, "msp_id": req.MSPID, "client_id": req.ClientID,
-		"site_id": req.SiteID, "expires_at": time.Now().Add(8 * time.Hour).UTC().Format(time.RFC3339),
+		"token": token, "selected_scope": authorization.Selected,
+		"roles": authorization.Roles, "permissions": authorization.Permissions,
+		"msp_id": authorization.Selected.MSPID, "client_id": authorization.Selected.ClientID,
+		"site_id":    authorization.Selected.SiteID,
+		"expires_at": time.Now().Add(8 * time.Hour).UTC().Format(time.RFC3339),
 	})
 }
 

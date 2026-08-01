@@ -55,7 +55,7 @@ export function ProviderBusinessSettings() {
   const { workspace, applyProviderProfile } = useWorkspace();
   const canManage = Boolean(
     workspace && !workspace.msp_id &&
-    workspace.roles.some(role => role === 'platform_owner' || role === 'platform_admin'),
+    workspace.platform_role,
   );
   const [profile, setProfile] = useState<ProviderBusinessProfile | null>(null);
   const [values, setValues] = useState<ProviderBusinessProfileValues>(EMPTY_PROVIDER_PROFILE);

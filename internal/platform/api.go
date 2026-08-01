@@ -229,6 +229,7 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("POST /api/v1/auth/invitations/inspect", s.handleInspectOwnerInvitation)
 	mux.HandleFunc("POST /api/v1/auth/invitations/accept", s.handleAcceptOwnerInvitation)
 	mux.HandleFunc("GET /api/v1/auth/me", s.handleMe)
+	mux.HandleFunc("POST /api/v1/auth/logout", s.handleLogout)
 
 	mux.HandleFunc("GET /api/v1/platform/overview", s.handlePlatformOverview)
 	mux.HandleFunc("GET /api/v1/platform/customers", s.handlePlatformCustomers)
@@ -242,6 +243,7 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /api/v1/admin/users", s.handleAdminUsers)
 	mux.HandleFunc("POST /api/v1/admin/users", s.handleAdminCreateUser)
 	mux.HandleFunc("PUT /api/v1/admin/users/{userID}/tenants", s.handleAdminUpdateUserTenants)
+	mux.HandleFunc("PUT /api/v1/admin/users/{userID}/memberships", s.handleAdminUpdateUserTenants)
 	mux.HandleFunc("POST /api/v1/admin/customers", s.handleAdminCreateCustomer)
 
 	mux.HandleFunc("GET /api/v1/metrics", s.handleQueryMetrics)

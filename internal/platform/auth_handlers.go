@@ -26,17 +26,19 @@ type loginRequest struct {
 }
 
 type loginResponse struct {
-	Token               string       `json:"token"`
-	UserID              string       `json:"user_id"`
-	Email               string       `json:"email"`
-	Role                string       `json:"role"`
-	Roles               []string     `json:"roles"`
-	Permissions         []string     `json:"permissions"`
-	TenantID            string       `json:"tenant_id"`
-	ProviderDisplayName string       `json:"provider_display_name"`
-	SetupComplete       bool         `json:"setup_complete"`
-	AccessibleTenants   []tenantInfo `json:"accessible_tenants"`
-	ExpiresAt           time.Time    `json:"expires_at"`
+	Token               string               `json:"token"`
+	UserID              string               `json:"user_id"`
+	Email               string               `json:"email"`
+	Role                string               `json:"role"`
+	Roles               []string             `json:"roles"`
+	Permissions         []string             `json:"permissions"`
+	SelectedScope       AuthorizationScope   `json:"selected_scope"`
+	Grants              []AuthorizationGrant `json:"grants"`
+	TenantID            string               `json:"tenant_id"`
+	ProviderDisplayName string               `json:"provider_display_name"`
+	SetupComplete       bool                 `json:"setup_complete"`
+	AccessibleTenants   []tenantInfo         `json:"accessible_tenants"`
+	ExpiresAt           time.Time            `json:"expires_at"`
 }
 
 type tenantInfo struct {
@@ -99,34 +101,24 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
 		return
 	}
-	effectiveRoles, err := s.loadEffectiveRolesForLogin(r, userID, tenantID)
-	if err != nil || len(effectiveRoles) == 0 {
+	authorization, err := s.loadInitialAuthorizationForLogin(r, userID, tenantID)
+	if err != nil || len(authorization.Roles) == 0 {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "account has no active access membership"})
 		return
 	}
-
-	var mspID string
-	tx, _ := s.db.DB().BeginTx(r.Context(), nil)
-	if tx != nil {
-		if _, err := tx.Exec(`SELECT set_config('app.msp_id', $1, true)`, tenantID); err == nil {
-			_ = tx.QueryRow(`SELECT msp_id FROM client_organizations WHERE id = $1`, tenantID).Scan(&mspID)
-		}
-		_ = tx.Rollback()
-	}
+	effectiveRoles := authorization.Roles
 
 	ttl := 8 * time.Hour
-	tokenGen, err := auth.NewTokenGeneratorOrFail("")
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "authentication configuration error"})
-		return
-	}
-	token, err := tokenGen.GenerateUserToken(userID, tenantID, mspID, "", "", effectiveRoles, ttl)
+	token, err := s.tokenGen.GenerateUserToken(
+		userID, authorization.Selected.ClientID, authorization.Selected.MSPID,
+		authorization.Selected.ClientID, authorization.Selected.SiteID, effectiveRoles, ttl,
+	)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "authentication token unavailable"})
 		return
 	}
 
-	accessibleTenants, _ := s.getAccessibleTenants(r, userID, effectiveRoles)
+	accessibleTenants, _ := s.getAccessibleTenants(r, userID, authorization)
 	providerProfile, err := postgres.GetProviderBusinessProfile(r.Context(), db)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "provider context unavailable"})
@@ -143,7 +135,9 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Role:                primaryEffectiveRole(effectiveRoles),
 		Roles:               effectiveRoles,
 		Permissions:         permissionsForRoles(effectiveRoles),
-		TenantID:            tenantID,
+		SelectedScope:       authorization.Selected,
+		Grants:              authorization.Grants,
+		TenantID:            authorization.Selected.ClientID,
 		ProviderDisplayName: providerProfile.DisplayName,
 		SetupComplete:       providerProfile.SetupComplete,
 		AccessibleTenants:   accessibleTenants,
@@ -174,10 +168,9 @@ func (s *APIServer) handleMe(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "account disabled"})
 		return
 	}
-	tenantID := tenantIDNullable.String
-
-	effectiveRoles := getRoles(r)
-	accessibleTenants, _ := s.getAccessibleTenants(r, userID, effectiveRoles)
+	authorization := authorizationFromRequest(r)
+	effectiveRoles := authorization.Roles
+	accessibleTenants, _ := s.getAccessibleTenants(r, userID, authorization)
 	providerProfile, err := postgres.GetProviderBusinessProfile(r.Context(), db)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "provider context unavailable"})
@@ -190,11 +183,21 @@ func (s *APIServer) handleMe(w http.ResponseWriter, r *http.Request) {
 		Role:                primaryEffectiveRole(effectiveRoles),
 		Roles:               effectiveRoles,
 		Permissions:         permissionsForRoles(effectiveRoles),
-		TenantID:            tenantID,
+		SelectedScope:       authorization.Selected,
+		Grants:              authorization.Grants,
+		TenantID:            authorization.Selected.ClientID,
 		ProviderDisplayName: providerProfile.DisplayName,
 		SetupComplete:       providerProfile.SetupComplete,
 		AccessibleTenants:   accessibleTenants,
 	})
+}
+
+func (s *APIServer) handleLogout(w http.ResponseWriter, _ *http.Request) {
+	// User JWTs are stateless and short lived. The endpoint exists so clients can
+	// perform an explicit server-side session action before deleting local state;
+	// current membership is still revalidated on every use of an outstanding JWT.
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func updateLoginTimestamp(ctx context.Context, db *sql.DB, userID string) {
@@ -216,11 +219,15 @@ func (s *APIServer) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 	db := s.requestDB(r)
 	rows, err := db.QueryContext(r.Context(), `
 		SELECT u.id, u.email, u.role, u.is_active, u.last_login, u.created_at,
-		       COALESCE(json_agg(json_build_object('id', t.id, 'name', t.name, 'slug', t.slug))
-		                FILTER (WHERE t.id IS NOT NULL), '[]') as accessible_tenants
+		       COALESCE(json_agg(json_build_object(
+				'id', mb.id, 'scope_type', mb.scope_type, 'scope_id', mb.scope_id,
+				'role', mb.role, 'status', mb.status, 'expires_at', mb.expires_at
+			) ORDER BY mb.scope_type, mb.scope_id)
+			FILTER (WHERE mb.id IS NOT NULL), '[]') AS memberships
 		FROM users u
-		LEFT JOIN user_tenant_access uta ON u.id = uta.user_id
-		LEFT JOIN tenants t ON uta.tenant_id = t.id
+		LEFT JOIN memberships mb ON mb.user_id = u.id::text
+		  AND mb.status = 'active'
+		  AND (mb.expires_at IS NULL OR mb.expires_at > statement_timestamp())
 		GROUP BY u.id
 		ORDER BY u.created_at DESC
 	`)
@@ -236,72 +243,38 @@ func (s *APIServer) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		var isActive bool
 		var createdAt time.Time
 		var lastLoginNull sql.NullTime
-		var tenantsJSON []byte
+		var membershipsJSON []byte
 
-		if err := rows.Scan(&id, &email, &role, &isActive, &lastLoginNull, &createdAt, &tenantsJSON); err != nil {
+		if err := rows.Scan(&id, &email, &role, &isActive, &lastLoginNull, &createdAt, &membershipsJSON); err != nil {
 			continue
 		}
 		user := map[string]interface{}{
-			"id":         id,
-			"email":      email,
-			"role":       role,
-			"is_active":  isActive,
-			"created_at": createdAt,
+			"id":          id,
+			"email":       email,
+			"legacy_role": role,
+			"is_active":   isActive,
+			"created_at":  createdAt,
+			"role":        "",
 		}
 		if lastLoginNull.Valid {
 			user["last_login"] = lastLoginNull.Time
 		}
-		if len(tenantsJSON) > 0 {
-			var tenants []map[string]interface{}
-			json.Unmarshal(tenantsJSON, &tenants)
-			user["accessible_tenants"] = tenants
+		if len(membershipsJSON) > 0 {
+			var memberships []map[string]interface{}
+			if err := json.Unmarshal(membershipsJSON, &memberships); err == nil {
+				user["memberships"] = memberships
+				roles := make([]string, 0, len(memberships))
+				for _, membership := range memberships {
+					if membershipRole, ok := membership["role"].(string); ok {
+						roles = appendUnique(roles, membershipRole)
+					}
+				}
+				user["role"] = primaryEffectiveRole(roles)
+			}
 		}
 		users = append(users, user)
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"users": users})
-}
-
-func (s *APIServer) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Email     string   `json:"email"`
-		Password  string   `json:"password"`
-		Role      string   `json:"role"`
-		TenantIDs []string `json:"tenant_ids"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
-		return
-	}
-	if req.Email == "" || req.Password == "" || req.Role == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "email, password, role required"})
-		return
-	}
-
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "hash failed"})
-		return
-	}
-
-	db := s.requestDB(r)
-	var userID string
-	err = db.QueryRowContext(r.Context(), `
-		INSERT INTO users (email, password_hash, role, email_verified_at)
-		VALUES ($1, $2, $3, NOW())
-		RETURNING id
-	`, req.Email, string(hash), req.Role).Scan(&userID)
-	if err != nil {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "email already exists"})
-		return
-	}
-
-	for _, tenantID := range req.TenantIDs {
-		db.ExecContext(r.Context(), `
-			INSERT INTO user_tenant_access (user_id, tenant_id) VALUES ($1, $2) ON CONFLICT DO NOTHING
-		`, userID, tenantID)
-	}
-
-	writeJSON(w, http.StatusCreated, map[string]interface{}{"id": userID, "status": "created"})
 }
 
 func (s *APIServer) handleAdminCreateCustomer(w http.ResponseWriter, r *http.Request) {
@@ -351,31 +324,6 @@ func (s *APIServer) handleAdminCreateCustomer(w http.ResponseWriter, r *http.Req
 		"admin_email":   req.AdminEmail,
 		"admin_status":  "invitation_required",
 	})
-}
-
-func (s *APIServer) handleAdminUpdateUserTenants(w http.ResponseWriter, r *http.Request) {
-	userID := r.PathValue("userID")
-	var req struct {
-		TenantIDs []string `json:"tenant_ids"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"})
-		return
-	}
-
-	db := s.requestDB(r)
-	if _, err := db.ExecContext(r.Context(), `DELETE FROM user_tenant_access WHERE user_id = $1`, userID); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "tenant access update failed"})
-		return
-	}
-	for _, tenantID := range req.TenantIDs {
-		if _, err := db.ExecContext(r.Context(), `INSERT INTO user_tenant_access (user_id, tenant_id) VALUES ($1, $2)`, userID, tenantID); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "tenant access update failed"})
-			return
-		}
-	}
-
-	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
 func (s *APIServer) handlePlatformOverview(w http.ResponseWriter, r *http.Request) {
@@ -458,10 +406,30 @@ func (s *APIServer) handlePlatformCustomers(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, map[string]interface{}{"customers": customers})
 }
 
-func (s *APIServer) getAccessibleTenants(r *http.Request, userID string, roles []string) ([]tenantInfo, error) {
-	db := s.db.DB()
-	if isPlatformGlobal(roles) {
-		rows, err := db.Query(`SELECT id, name, slug FROM tenants ORDER BY name`)
+func (s *APIServer) getAccessibleTenants(r *http.Request, userID string, authorization AuthorizationResult) ([]tenantInfo, error) {
+	tx, err := s.db.DB().BeginTx(r.Context(), &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	dbRole := ""
+	if authorization.IsPlatformGlobal() {
+		dbRole = "platform_admin"
+	}
+	if _, err := tx.ExecContext(r.Context(), `
+		SELECT set_config('app.user_id', $1, true),
+		       set_config('app.msp_id', $2, true),
+		       set_config('app.client_id', $3, true),
+		       set_config('app.site_id', $4, true),
+		       set_config('app.tenant_id', $3, true),
+		       set_config('app.scope_type', $5, true),
+		       set_config('app.role', $6, true)
+	`, userID, authorization.Selected.MSPID, authorization.Selected.ClientID,
+		authorization.Selected.SiteID, string(authorization.Selected.Type), dbRole); err != nil {
+		return nil, err
+	}
+	if authorization.IsPlatformGlobal() {
+		rows, err := tx.QueryContext(r.Context(), `SELECT id, name, slug FROM tenants WHERE is_active = true ORDER BY name`)
 		if err != nil {
 			return nil, err
 		}
@@ -475,12 +443,17 @@ func (s *APIServer) getAccessibleTenants(r *http.Request, userID string, roles [
 		return tenants, nil
 	}
 
-	rows, err := db.Query(`
-		SELECT t.id, t.name, t.slug FROM tenants t
-		JOIN user_tenant_access uta ON t.id = uta.tenant_id
-		WHERE uta.user_id = $1
+	rows, err := tx.QueryContext(r.Context(), `
+		SELECT t.id, t.name, t.slug
+		FROM tenants t
+		JOIN client_organizations c ON c.id = t.id
+		WHERE t.is_active = true AND c.is_active = true
+		  AND (
+			($1 = 'msp' AND c.msp_id::text = $2)
+			OR ($1 IN ('client', 'site') AND c.id::text = $3)
+		  )
 		ORDER BY t.name
-	`, userID)
+	`, authorization.Selected.Type, authorization.Selected.MSPID, authorization.Selected.ClientID)
 	if err != nil {
 		return nil, err
 	}
@@ -494,13 +467,13 @@ func (s *APIServer) getAccessibleTenants(r *http.Request, userID string, roles [
 	return tenants, nil
 }
 
-func (s *APIServer) loadEffectiveRolesForLogin(r *http.Request, userID, tenantID string) ([]string, error) {
+func (s *APIServer) loadInitialAuthorizationForLogin(r *http.Request, userID, tenantID string) (AuthorizationResult, error) {
 	if s.db == nil {
-		return nil, fmt.Errorf("identity database is not configured")
+		return AuthorizationResult{}, fmt.Errorf("identity database is not configured")
 	}
 	tx, err := s.db.DB().BeginTx(r.Context(), &sql.TxOptions{ReadOnly: true})
 	if err != nil {
-		return nil, err
+		return AuthorizationResult{}, err
 	}
 	committed := false
 	defer func() {
@@ -512,38 +485,17 @@ func (s *APIServer) loadEffectiveRolesForLogin(r *http.Request, userID, tenantID
 		SELECT set_config('app.user_id', $1, true),
 		       set_config('app.tenant_id', $2, true)
 	`, userID, tenantID); err != nil {
-		return nil, err
+		return AuthorizationResult{}, err
 	}
-	rows, err := tx.QueryContext(r.Context(), `
-		SELECT DISTINCT role
-		FROM memberships
-		WHERE user_id = $1
-		  AND status = 'active'
-		  AND (expires_at IS NULL OR expires_at > NOW())
-		ORDER BY role
-	`, userID)
+	authorization, err := s.resolveInitialAuthorization(r.Context(), tx, userID, tenantID)
 	if err != nil {
-		return nil, err
+		return AuthorizationResult{}, err
 	}
-	var roles []string
-	for rows.Next() {
-		var membershipRole string
-		if err := rows.Scan(&membershipRole); err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
-		roles = append(roles, membershipRole)
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return nil, err
-	}
-	_ = rows.Close()
 	if err := tx.Commit(); err != nil {
-		return nil, err
+		return AuthorizationResult{}, err
 	}
 	committed = true
-	return roles, nil
+	return authorization, nil
 }
 
 func primaryEffectiveRole(roles []string) string {

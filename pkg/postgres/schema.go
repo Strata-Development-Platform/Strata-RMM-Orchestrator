@@ -2602,6 +2602,439 @@ func Migrations() []Migration {
 					DROP COLUMN IF EXISTS onboarding_status;
 			`,
 		},
+		{
+			ID:   69,
+			Name: "enforce_scope_bound_authorization",
+			Up: `
+				-- This migration transaction is trusted maintenance under the legacy
+				-- policy long enough to inspect every existing membership. The function
+				-- is hardened below before the transaction commits.
+				SELECT set_config('app.role', 'platform_admin', true);
+
+				-- Memberships are the sole authorization source. Legacy users.role and
+				-- user_tenant_access are deliberately not used to create authority.
+				CREATE TABLE IF NOT EXISTS authorization_migration_issues (
+					id          BIGSERIAL PRIMARY KEY,
+					issue_type  TEXT NOT NULL,
+					user_id     TEXT NOT NULL DEFAULT '',
+					scope_type  TEXT NOT NULL DEFAULT '',
+					scope_id    TEXT NOT NULL DEFAULT '',
+					role        TEXT NOT NULL DEFAULT '',
+					details     JSONB NOT NULL DEFAULT '{}'::jsonb,
+					detected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					UNIQUE(issue_type, user_id, scope_type, scope_id, role)
+				);
+
+				INSERT INTO authorization_migration_issues (issue_type, user_id, scope_type, scope_id, role, details)
+				SELECT 'invalid_membership', mb.user_id, mb.scope_type, mb.scope_id, mb.role,
+				       jsonb_build_object('status', mb.status, 'reason', 'illegal role/scope or unverified target')
+				FROM memberships mb
+				LEFT JOIN users u ON u.id::text = mb.user_id
+				LEFT JOIN platforms p ON mb.scope_type = 'platform' AND p.id::text = mb.scope_id
+				LEFT JOIN msp_tenants m ON mb.scope_type = 'msp' AND m.id::text = mb.scope_id
+				LEFT JOIN client_organizations c ON mb.scope_type = 'client' AND c.id::text = mb.scope_id
+				LEFT JOIN sites s ON mb.scope_type = 'site' AND s.id::text = mb.scope_id
+				WHERE u.id IS NULL
+				   OR (mb.scope_type = 'platform' AND (
+					p.id IS NULL OR mb.scope_id <> '00000000-0000-0000-0000-000000000001'
+					OR mb.role NOT IN ('platform_owner','platform_admin','platform_support','platform_billing','platform_security_auditor','platform_viewer')
+				   ))
+				   OR (mb.scope_type = 'msp' AND (m.id IS NULL OR mb.role NOT IN ('msp_owner','msp_admin','msp_technician','msp_viewer')))
+				   OR (mb.scope_type = 'client' AND (c.id IS NULL OR mb.role NOT IN ('client_admin','client_viewer')))
+				   OR (mb.scope_type = 'site' AND (s.id IS NULL OR mb.role NOT IN ('client_admin','client_viewer')))
+				ON CONFLICT (issue_type, user_id, scope_type, scope_id, role) DO NOTHING;
+
+				INSERT INTO authorization_migration_issues (issue_type, user_id, details)
+				SELECT 'legacy_role_without_membership', u.id::text,
+				       jsonb_build_object('legacy_role', u.role, 'disposition', 'compatibility_mirror_only')
+				FROM users u
+				WHERE NOT EXISTS (SELECT 1 FROM memberships mb WHERE mb.user_id = u.id::text)
+				ON CONFLICT (issue_type, user_id, scope_type, scope_id, role) DO NOTHING;
+
+				INSERT INTO authorization_migration_issues (issue_type, user_id, scope_id, details)
+				SELECT 'legacy_tenant_access_without_membership', uta.user_id::text, uta.tenant_id::text,
+				       jsonb_build_object('disposition', 'compatibility_mirror_only')
+				FROM user_tenant_access uta
+				WHERE NOT EXISTS (
+					SELECT 1 FROM memberships mb
+					WHERE mb.user_id = uta.user_id::text
+					  AND mb.status = 'active'
+					  AND (
+						(mb.scope_type = 'client' AND mb.scope_id = uta.tenant_id::text)
+						OR (mb.scope_type = 'site' AND EXISTS (
+							SELECT 1 FROM sites child_site
+							WHERE child_site.id::text = mb.scope_id AND child_site.client_id = uta.tenant_id
+						))
+					  )
+				)
+				ON CONFLICT (issue_type, user_id, scope_type, scope_id, role) DO NOTHING;
+
+				ALTER TABLE memberships DROP CONSTRAINT IF EXISTS memberships_role_scope_check;
+				ALTER TABLE memberships ADD CONSTRAINT memberships_role_scope_check CHECK (
+					(scope_type = 'platform' AND scope_id = '00000000-0000-0000-0000-000000000001'
+					 AND role IN ('platform_owner','platform_admin','platform_support','platform_billing','platform_security_auditor','platform_viewer'))
+					OR (scope_type = 'msp' AND role IN ('msp_owner','msp_admin','msp_technician','msp_viewer'))
+					OR (scope_type IN ('client','site') AND role IN ('client_admin','client_viewer'))
+				) NOT VALID;
+
+				CREATE OR REPLACE FUNCTION app_is_trusted_runtime()
+				RETURNS boolean
+				LANGUAGE SQL STABLE
+				AS $$
+					SELECT session_user = pg_get_userbyid(
+						(SELECT relowner FROM pg_class WHERE oid = 'public.memberships'::regclass)
+					)
+				$$;
+
+				CREATE OR REPLACE FUNCTION app_is_platform_admin()
+				RETURNS boolean
+				LANGUAGE SQL STABLE SECURITY DEFINER
+				SET search_path = pg_catalog, public
+				AS $$
+					SELECT public.app_is_trusted_runtime()
+					   AND COALESCE(public.safe_app_setting('app.role') = 'platform_admin', false)
+					   AND COALESCE(public.safe_app_setting('app.scope_type'), 'platform') = 'platform'
+					   AND public.safe_app_setting('app.msp_id') IS NULL
+					   AND public.safe_app_setting('app.client_id') IS NULL
+					   AND public.safe_app_setting('app.site_id') IS NULL
+					   AND EXISTS (
+						SELECT 1
+						FROM public.memberships mb
+						JOIN public.users u ON u.id::text = mb.user_id
+						WHERE mb.user_id = public.safe_app_setting('app.user_id')
+						  AND u.is_active = true AND u.email_verified_at IS NOT NULL
+						  AND mb.scope_type = 'platform'
+						  AND mb.scope_id = '00000000-0000-0000-0000-000000000001'
+						  AND mb.role IN ('platform_owner','platform_admin')
+						  AND mb.status = 'active'
+						  AND (mb.expires_at IS NULL OR mb.expires_at > statement_timestamp())
+					   )
+				$$;
+
+				-- Bootstrap is deliberately narrower than platform administration. It is
+				-- available only to the table-owning application runtime and disappears
+				-- as soon as the first authoritative platform membership is created.
+				CREATE OR REPLACE FUNCTION app_is_initial_bootstrap()
+				RETURNS boolean
+				LANGUAGE SQL STABLE SECURITY DEFINER
+				SET search_path = pg_catalog, public
+				AS $$
+					SELECT public.app_is_trusted_runtime()
+					   AND COALESCE(public.safe_app_setting('app.initial_bootstrap') = 'true', false)
+					   AND NOT EXISTS (
+						SELECT 1 FROM public.memberships mb
+						WHERE mb.scope_type = 'platform'
+						  AND mb.scope_id = '00000000-0000-0000-0000-000000000001'
+						  AND mb.role IN ('platform_owner','platform_admin')
+						  AND mb.status = 'active'
+						  AND (mb.expires_at IS NULL OR mb.expires_at > statement_timestamp())
+					   )
+				$$;
+
+				-- The bootstrap command needs one idempotency check even after bootstrap
+				-- RLS has closed. This helper exposes only the count, never user records.
+				CREATE OR REPLACE FUNCTION app_bootstrap_user_count()
+				RETURNS bigint
+				LANGUAGE SQL STABLE SECURITY DEFINER
+				SET search_path = pg_catalog, public
+				AS $$
+					SELECT COUNT(*) FROM public.users
+				$$;
+
+				CREATE OR REPLACE FUNCTION app_scope_is_authorized()
+				RETURNS boolean
+				LANGUAGE SQL STABLE SECURITY DEFINER
+				SET search_path = pg_catalog, public
+				AS $$
+					SELECT public.app_is_trusted_runtime()
+					AND CASE public.safe_app_setting('app.scope_type')
+						WHEN 'platform' THEN
+							public.safe_app_setting('app.msp_id') IS NULL
+							AND public.safe_app_setting('app.client_id') IS NULL
+							AND public.safe_app_setting('app.site_id') IS NULL
+						WHEN 'msp' THEN
+							public.safe_app_setting('app.client_id') IS NULL
+							AND public.safe_app_setting('app.site_id') IS NULL
+							AND EXISTS (
+								SELECT 1 FROM public.msp_tenants m
+								WHERE m.id::text = public.safe_app_setting('app.msp_id')
+								  AND m.is_active = true AND m.onboarding_status = 'active'
+							)
+						WHEN 'client' THEN
+							public.safe_app_setting('app.site_id') IS NULL
+							AND EXISTS (
+								SELECT 1 FROM public.client_organizations c
+								JOIN public.msp_tenants m ON m.id = c.msp_id
+								WHERE c.id::text = public.safe_app_setting('app.client_id')
+								  AND c.msp_id::text = public.safe_app_setting('app.msp_id')
+								  AND c.is_active = true AND m.is_active = true
+								  AND m.onboarding_status = 'active'
+							)
+						WHEN 'site' THEN EXISTS (
+							SELECT 1 FROM public.sites s
+							JOIN public.client_organizations c ON c.id = s.client_id
+							JOIN public.msp_tenants m ON m.id = c.msp_id
+							WHERE s.id::text = public.safe_app_setting('app.site_id')
+							  AND s.client_id::text = public.safe_app_setting('app.client_id')
+							  AND c.msp_id::text = public.safe_app_setting('app.msp_id')
+							  AND s.is_active = true AND c.is_active = true
+							  AND m.is_active = true AND m.onboarding_status = 'active'
+						)
+						ELSE false
+					END
+					AND EXISTS (
+						SELECT 1
+						FROM public.memberships mb
+						JOIN public.users u ON u.id::text = mb.user_id
+						WHERE mb.user_id = public.safe_app_setting('app.user_id')
+						  AND u.is_active = true AND u.email_verified_at IS NOT NULL
+						  AND mb.status = 'active'
+						  AND (mb.expires_at IS NULL OR mb.expires_at > statement_timestamp())
+						  AND (
+							(public.safe_app_setting('app.scope_type') = 'platform'
+							 AND mb.scope_type = 'platform'
+							 AND mb.scope_id = '00000000-0000-0000-0000-000000000001'
+							 AND mb.role IN ('platform_owner','platform_admin','platform_support','platform_billing','platform_security_auditor','platform_viewer'))
+							OR (public.safe_app_setting('app.scope_type') = 'msp' AND (
+								(mb.scope_type = 'platform' AND mb.scope_id = '00000000-0000-0000-0000-000000000001'
+								 AND mb.role IN ('platform_owner','platform_admin','platform_support','platform_billing','platform_security_auditor','platform_viewer'))
+								OR (mb.scope_type = 'msp' AND mb.scope_id = public.safe_app_setting('app.msp_id')
+								 AND mb.role IN ('msp_owner','msp_admin','msp_technician','msp_viewer'))
+							))
+							OR (public.safe_app_setting('app.scope_type') = 'client' AND (
+								(mb.scope_type = 'platform' AND mb.scope_id = '00000000-0000-0000-0000-000000000001'
+								 AND mb.role IN ('platform_owner','platform_admin','platform_support','platform_billing','platform_security_auditor','platform_viewer'))
+								OR (mb.scope_type = 'msp' AND mb.scope_id = public.safe_app_setting('app.msp_id')
+								 AND mb.role IN ('msp_owner','msp_admin','msp_technician','msp_viewer'))
+								OR (mb.scope_type = 'client' AND mb.scope_id = public.safe_app_setting('app.client_id')
+								 AND mb.role IN ('client_admin','client_viewer'))
+							))
+							OR (public.safe_app_setting('app.scope_type') = 'site' AND (
+								(mb.scope_type = 'platform' AND mb.scope_id = '00000000-0000-0000-0000-000000000001'
+								 AND mb.role IN ('platform_owner','platform_admin','platform_support','platform_billing','platform_security_auditor','platform_viewer'))
+								OR (mb.scope_type = 'msp' AND mb.scope_id = public.safe_app_setting('app.msp_id')
+								 AND mb.role IN ('msp_owner','msp_admin','msp_technician','msp_viewer'))
+								OR (mb.scope_type = 'client' AND mb.scope_id = public.safe_app_setting('app.client_id')
+								 AND mb.role IN ('client_admin','client_viewer'))
+								OR (mb.scope_type = 'site' AND mb.scope_id = public.safe_app_setting('app.site_id')
+								 AND mb.role IN ('client_admin','client_viewer'))
+							))
+						  )
+					)
+				$$;
+
+				CREATE OR REPLACE FUNCTION app_actor_can_manage_scope()
+				RETURNS boolean
+				LANGUAGE SQL STABLE SECURITY DEFINER
+				SET search_path = pg_catalog, public
+				AS $$
+					SELECT public.app_scope_is_authorized() AND EXISTS (
+						SELECT 1
+						FROM public.memberships mb
+						WHERE mb.user_id = public.safe_app_setting('app.user_id')
+						  AND mb.status = 'active'
+						  AND (mb.expires_at IS NULL OR mb.expires_at > statement_timestamp())
+						  AND (
+							(public.safe_app_setting('app.scope_type') IN ('platform','msp','client','site')
+							 AND mb.scope_type = 'platform'
+							 AND mb.scope_id = '00000000-0000-0000-0000-000000000001'
+							 AND mb.role IN ('platform_owner','platform_admin'))
+							OR (public.safe_app_setting('app.scope_type') IN ('msp','client','site')
+							 AND mb.scope_type = 'msp'
+							 AND mb.scope_id = public.safe_app_setting('app.msp_id')
+							 AND mb.role IN ('msp_owner','msp_admin'))
+							OR (public.safe_app_setting('app.scope_type') IN ('client','site')
+							 AND mb.scope_type = 'client'
+							 AND mb.scope_id = public.safe_app_setting('app.client_id')
+							 AND mb.role = 'client_admin')
+							OR (public.safe_app_setting('app.scope_type') = 'site'
+							 AND mb.scope_type = 'site'
+							 AND mb.scope_id = public.safe_app_setting('app.site_id')
+							 AND mb.role = 'client_admin')
+						  )
+					)
+				$$;
+
+				CREATE OR REPLACE FUNCTION app_may_manage_membership(target_scope_type text, target_scope_id text)
+				RETURNS boolean
+				LANGUAGE SQL STABLE SECURITY DEFINER
+				SET search_path = pg_catalog, public
+				AS $$
+					SELECT public.app_is_trusted_runtime()
+					   AND COALESCE(public.safe_app_setting('app.scope_manager') = 'true', false)
+					   AND public.app_actor_can_manage_scope()
+					   AND CASE public.safe_app_setting('app.scope_type')
+						WHEN 'platform' THEN true
+						WHEN 'msp' THEN
+							(target_scope_type = 'msp' AND target_scope_id = public.safe_app_setting('app.msp_id'))
+							OR (target_scope_type = 'client' AND EXISTS (
+								SELECT 1 FROM public.client_organizations c
+								WHERE c.id::text = target_scope_id
+								  AND c.msp_id::text = public.safe_app_setting('app.msp_id')
+								  AND c.is_active = true
+							))
+							OR (target_scope_type = 'site' AND EXISTS (
+								SELECT 1 FROM public.sites s
+								JOIN public.client_organizations c ON c.id = s.client_id
+								WHERE s.id::text = target_scope_id
+								  AND c.msp_id::text = public.safe_app_setting('app.msp_id')
+								  AND s.is_active = true AND c.is_active = true
+							))
+						WHEN 'client' THEN
+							(target_scope_type = 'client' AND target_scope_id = public.safe_app_setting('app.client_id'))
+							OR (target_scope_type = 'site' AND EXISTS (
+								SELECT 1 FROM public.sites s
+								WHERE s.id::text = target_scope_id
+								  AND s.client_id::text = public.safe_app_setting('app.client_id')
+								  AND s.is_active = true
+							))
+						WHEN 'site' THEN target_scope_type = 'site'
+							AND target_scope_id = public.safe_app_setting('app.site_id')
+						ELSE false
+					   END
+				$$;
+
+				CREATE OR REPLACE FUNCTION app_is_scope_manager()
+				RETURNS boolean
+				LANGUAGE SQL STABLE
+				AS $$
+					SELECT app_actor_can_manage_scope()
+					   AND COALESCE(safe_app_setting('app.scope_manager') = 'true', false)
+				$$;
+
+				DROP POLICY IF EXISTS tenant_scope ON client_organizations;
+				CREATE POLICY tenant_scope ON client_organizations
+					USING (
+						app_is_platform_admin()
+						OR (app_scope_is_authorized() AND (
+							(safe_app_setting('app.scope_type') = 'msp' AND msp_id::text = safe_app_setting('app.msp_id'))
+							OR (safe_app_setting('app.scope_type') IN ('client','site') AND id::text = safe_app_setting('app.client_id'))
+						))
+						OR support_access_allowed(msp_id)
+					)
+					WITH CHECK (
+						app_is_platform_admin()
+						OR (app_is_scope_manager() AND safe_app_setting('app.scope_type') = 'msp'
+							AND msp_id::text = safe_app_setting('app.msp_id'))
+					);
+
+				DROP POLICY IF EXISTS tenant_scope ON sites;
+				CREATE POLICY tenant_scope ON sites
+					USING (
+						app_is_platform_admin()
+						OR (app_scope_is_authorized() AND (
+							(safe_app_setting('app.scope_type') = 'msp' AND EXISTS (
+								SELECT 1 FROM client_organizations c WHERE c.id = sites.client_id
+								  AND c.msp_id::text = safe_app_setting('app.msp_id')
+							))
+							OR (safe_app_setting('app.scope_type') = 'client' AND client_id::text = safe_app_setting('app.client_id'))
+							OR (safe_app_setting('app.scope_type') = 'site' AND id::text = safe_app_setting('app.site_id'))
+						))
+					)
+					WITH CHECK (
+						app_is_platform_admin()
+						OR (app_is_scope_manager() AND (
+							(safe_app_setting('app.scope_type') = 'client' AND client_id::text = safe_app_setting('app.client_id'))
+							OR (safe_app_setting('app.scope_type') = 'site' AND id::text = safe_app_setting('app.site_id'))
+						))
+					);
+
+				DROP POLICY IF EXISTS tenant_scope ON devices;
+				CREATE POLICY tenant_scope ON devices
+					USING (
+						app_is_platform_admin()
+						OR (app_scope_is_authorized() AND (
+							(safe_app_setting('app.scope_type') = 'msp' AND msp_id::text = safe_app_setting('app.msp_id'))
+							OR (safe_app_setting('app.scope_type') = 'client' AND client_id::text = safe_app_setting('app.client_id'))
+							OR (safe_app_setting('app.scope_type') = 'site' AND site_id::text = safe_app_setting('app.site_id'))
+						))
+						OR support_access_allowed(msp_id)
+						OR EXISTS (
+							SELECT 1 FROM agent_registrations ar
+							WHERE ar.device_id = devices.id
+							  AND ar.agent_id = safe_app_setting('app.user_id') AND ar.approved = true
+						)
+					)
+					WITH CHECK (
+						app_is_platform_admin()
+						OR (app_is_scope_manager() AND (
+							(safe_app_setting('app.scope_type') = 'msp' AND msp_id::text = safe_app_setting('app.msp_id'))
+							OR (safe_app_setting('app.scope_type') = 'client' AND client_id::text = safe_app_setting('app.client_id'))
+							OR (safe_app_setting('app.scope_type') = 'site' AND site_id::text = safe_app_setting('app.site_id'))
+						))
+					);
+
+				DROP POLICY IF EXISTS tenant_scope ON memberships;
+				CREATE POLICY tenant_scope ON memberships
+					USING (
+						user_id = safe_app_setting('app.user_id')
+						OR app_is_platform_admin()
+						OR app_may_manage_membership(scope_type, scope_id)
+					)
+					WITH CHECK (
+						app_is_platform_admin()
+						OR app_is_initial_bootstrap()
+						OR app_may_manage_membership(scope_type, scope_id)
+					);
+
+				DROP POLICY IF EXISTS identity_scope ON users;
+				CREATE POLICY identity_scope ON users
+					USING (
+						app_is_platform_admin()
+						OR app_is_initial_bootstrap()
+						OR id::text = safe_app_setting('app.user_id')
+						OR normalized_email = safe_app_setting('app.login_email')
+						OR app_is_scope_manager()
+						OR EXISTS (
+							SELECT 1 FROM account_invitations invitation
+							WHERE invitation.token_hash = safe_app_setting('app.invitation_hash')
+							  AND invitation.email_normalized = users.normalized_email
+							  AND invitation.accepted_at IS NULL AND invitation.revoked_at IS NULL
+							  AND invitation.expires_at > statement_timestamp()
+						)
+					)
+					WITH CHECK (
+						app_is_platform_admin()
+						OR app_is_initial_bootstrap()
+						OR id::text = safe_app_setting('app.user_id')
+						OR app_is_scope_manager()
+						OR EXISTS (
+							SELECT 1 FROM account_invitations invitation
+							WHERE invitation.token_hash = safe_app_setting('app.invitation_hash')
+							  AND invitation.email_normalized = users.normalized_email
+							  AND invitation.accepted_at IS NULL AND invitation.revoked_at IS NULL
+							  AND invitation.expires_at > statement_timestamp()
+						)
+					);
+
+				DROP POLICY IF EXISTS tenant_scope ON control_plane_audit;
+				DROP POLICY IF EXISTS control_plane_audit_select ON control_plane_audit;
+				DROP POLICY IF EXISTS control_plane_audit_insert ON control_plane_audit;
+				CREATE POLICY control_plane_audit_select ON control_plane_audit FOR SELECT
+					USING (
+						app_is_platform_admin()
+						OR (app_scope_is_authorized() AND safe_app_setting('app.scope_type') = 'msp'
+							AND msp_id::text = safe_app_setting('app.msp_id'))
+						OR support_access_allowed(msp_id)
+					);
+				CREATE POLICY control_plane_audit_insert ON control_plane_audit FOR INSERT
+					WITH CHECK (
+						app_is_platform_admin()
+						OR (app_scope_is_authorized() AND msp_id::text = safe_app_setting('app.msp_id'))
+					);
+
+				DROP TRIGGER IF EXISTS recovery_mutation_gate_trigger ON authorization_migration_issues;
+				CREATE TRIGGER recovery_mutation_gate_trigger
+					BEFORE INSERT OR UPDATE OR DELETE ON authorization_migration_issues
+					FOR EACH STATEMENT EXECUTE FUNCTION enforce_recovery_mutation_gate();
+			`,
+			Down: `
+				SELECT 1;
+				-- Authorization hardening, issue evidence, and compatibility-field
+				-- disposition are intentionally retained. Reverting these controls would
+				-- recreate a privilege-escalation path and is not a safe automated down migration.
+			`,
+		},
 	}
 }
 

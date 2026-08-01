@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
 import { api } from '@/api/client';
 import { useAuth } from '@/hooks/useAuth';
+import { useWorkspace } from '@/hooks/useWorkspace';
 
 export default function SettingsPage() {
   const { user } = useAuth();
+  const { workspace } = useWorkspace();
   const [mfaStatus, setMfaStatus] = useState<{ enabled: boolean } | null>(null);
   const [enrollResult, setEnrollResult] = useState<{ secret: string; provisioning_uri: string; qr_code_url: string } | null>(null);
   const [verifyCode, setVerifyCode] = useState('');
@@ -71,7 +73,7 @@ export default function SettingsPage() {
           <h2 className="font-semibold mb-3">Profile</h2>
           <dl className="space-y-2 text-sm">
             <div className="flex justify-between"><dt className="text-slate-500">Email</dt><dd>{user?.email}</dd></div>
-            <div className="flex justify-between"><dt className="text-slate-500">Role</dt><dd className="capitalize">{user?.role}</dd></div>
+            <div className="flex justify-between"><dt className="text-slate-500">Roles</dt><dd className="capitalize">{workspace?.roles.join(', ')}</dd></div>
           </dl>
         </div>
 

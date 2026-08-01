@@ -6,7 +6,8 @@ type AuthContextType = {
   user: LoginResponse | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
+  refreshSession: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -32,13 +33,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(res);
   };
 
-  const logout = () => {
-    api.setToken(null);
-    setUser(null);
+  const logout = async () => {
+    try {
+      await api.logout();
+    } finally {
+      api.setToken(null);
+      setUser(null);
+    }
+  };
+
+  const refreshSession = async () => {
+    setUser(await api.me());
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, refreshSession }}>
       {children}
     </AuthContext.Provider>
   );

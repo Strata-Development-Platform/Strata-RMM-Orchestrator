@@ -85,7 +85,8 @@ func (s *APIServer) withTenantTransaction(next http.Handler) http.Handler {
 		tenantID, _ := r.Context().Value(ctxKeyTenantID).(string)
 		supportGrantID, _ := r.Context().Value(ctxKeySupportGrantID).(string)
 		role := ""
-		if isPlatformGlobal(getRoles(r)) {
+		authorization := authorizationFromRequest(r)
+		if authorization.IsPlatformGlobal() {
 			role = "platform_admin"
 		} else if tokenUse, _ := r.Context().Value(ctxKeyTokenUse).(string); tokenUse == "agent" {
 			role = "agent"
@@ -93,6 +94,10 @@ func (s *APIServer) withTenantTransaction(next http.Handler) http.Handler {
 		permission := "read"
 		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
 			permission = "write"
+		}
+		scopeManager := "false"
+		if authorization.CanManageSelectedScope() {
+			scopeManager = "true"
 		}
 
 		if _, err := tx.ExecContext(r.Context(), `
@@ -103,9 +108,12 @@ func (s *APIServer) withTenantTransaction(next http.Handler) http.Handler {
 				set_config('app.site_id', $4, true),
 				set_config('app.role', $5, true),
 				set_config('app.support_grant_id', $6, true),
-				set_config('app.permission', $7, true),
-				set_config('app.tenant_id', $8, true)
-		`, userID, mspID, clientID, siteID, role, supportGrantID, permission, tenantID); err != nil {
+					set_config('app.permission', $7, true),
+					set_config('app.tenant_id', $8, true),
+					set_config('app.scope_type', $9, true),
+					set_config('app.scope_manager', $10, true)
+			`, userID, mspID, clientID, siteID, role, supportGrantID, permission, tenantID,
+			string(authorization.Selected.Type), scopeManager); err != nil {
 			http.Error(w, "database security context unavailable", http.StatusServiceUnavailable)
 			return
 		}

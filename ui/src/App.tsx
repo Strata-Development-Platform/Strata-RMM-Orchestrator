@@ -43,8 +43,8 @@ function WorkspaceError() {
   );
 }
 
-function isProviderAdministrator(roles: string[] | undefined) {
-  return roles?.some(role => role === 'platform_owner' || role === 'platform_admin') ?? false;
+function isProviderAdministrator(platformRole: boolean | undefined) {
+  return platformRole ?? false;
 }
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -53,7 +53,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   if (authLoading || (user && workspaceLoading)) return <LoadingScreen />;
   if (!user) return <Navigate to="/login" replace />;
   if (error || !workspace) return <WorkspaceError />;
-  if (isProviderAdministrator(workspace.roles) && !workspace.setup_complete) {
+  if (isProviderAdministrator(workspace.platform_role) && !workspace.setup_complete) {
     return <Navigate to="/provider/setup" replace />;
   }
   return <Layout>{children}</Layout>;
@@ -65,7 +65,7 @@ function PlatformRoute({ children }: { children: React.ReactNode }) {
   if (authLoading || (user && workspaceLoading)) return <LoadingScreen />;
   if (!user) return <Navigate to="/login" replace />;
   if (error || !workspace) return <WorkspaceError />;
-  if (!isProviderAdministrator(workspace.roles)) return <Navigate to="/" replace />;
+  if (!isProviderAdministrator(workspace.platform_role)) return <Navigate to="/" replace />;
   if (!workspace.setup_complete) return <Navigate to="/provider/setup" replace />;
   return <Layout>{children}</Layout>;
 }
@@ -78,7 +78,7 @@ function CapabilityRoute({ permissions, children }: { permissions: string[]; chi
   }
   if (!user) return <Navigate to="/login" replace />;
   if (error || !workspace) return <WorkspaceError />;
-  const platformRole = isProviderAdministrator(workspace.roles);
+  const platformRole = isProviderAdministrator(workspace.platform_role);
   if (platformRole && !workspace.setup_complete) return <Navigate to="/provider/setup" replace />;
   const allowed = platformRole || permissions.some(permission => workspace?.permissions.includes(permission));
   if (!allowed) return <Navigate to="/" replace />;
@@ -91,7 +91,7 @@ function ProviderSetupRoute() {
   if (authLoading || (user && workspaceLoading)) return <LoadingScreen />;
   if (!user) return <Navigate to="/login" replace />;
   if (error || !workspace) return <WorkspaceError />;
-  if (!isProviderAdministrator(workspace.roles) || workspace.setup_complete) {
+  if (!isProviderAdministrator(workspace.platform_role) || workspace.setup_complete) {
     return <Navigate to="/" replace />;
   }
   return <ProviderSetupPage />;

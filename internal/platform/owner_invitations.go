@@ -653,7 +653,7 @@ func authorizeTopLevelPlatformRequest(w http.ResponseWriter, r *http.Request) bo
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authorization required"})
 		return false
 	}
-	if !isPlatformGlobal(getRoles(r)) {
+	if !authorizationFromRequest(r).IsPlatformGlobal() {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "top-level platform administrator required"})
 		return false
 	}
