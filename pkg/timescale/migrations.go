@@ -8,6 +8,10 @@ type Migration struct {
 	SQL     string
 }
 
+func (m Migration) String() string {
+	return fmt.Sprintf("v%d: %s", m.Version, m.Name)
+}
+
 func AllMigrations() []Migration {
 	return []Migration{
 		{
@@ -25,11 +29,12 @@ func AllMigrations() []Migration {
 			Name:    "backup_and_recovery_schema",
 			SQL:     Migration003,
 		},
+		{
+			Version: 4,
+			Name:    "dynamic_retention_policies",
+			SQL:     Migration004,
+		},
 	}
-}
-
-func (m Migration) String() string {
-	return fmt.Sprintf("v%d: %s", m.Version, m.Name)
 }
 
 const Migration001 = `
@@ -353,4 +358,80 @@ CREATE INDEX IF NOT EXISTS idx_recovery_operations_recovery_id
 
 CREATE INDEX IF NOT EXISTS idx_backup_audit_log_backup_id
     ON backup_audit_log (backup_id, created_at DESC);
+`
+const Migration004 = `
+-- TimescaleDB Migration 4: Dynamic Retention Policies
+-- Enables per-tenant hot/warm/cold tiered retention management
+
+-- Function to drop an existing retention policy for a hypertable
+CREATE OR REPLACE FUNCTION drop_retention_policy(p_hypertable_name TEXT, p_fail_on_none BOOLEAN DEFAULT TRUE)
+RETURNS VOID AS $$
+DECLARE
+    policy_job_id INT;
+BEGIN
+    SELECT job_id INTO policy_job_id
+    FROM timescaledb_information.jobs
+    WHERE proc_name = 'run_job'
+      AND config IS NOT NULL
+      AND config->>'hypertable_name' = p_hypertable_name;
+
+    IF policy_job_id IS NOT NULL THEN
+        PERFORM cancel_job(policy_job_id);
+        PERFORM delete_job(policy_job_id);
+    ELSIF p_fail_on_none THEN
+        RAISE EXCEPTION 'no retention policy found for hypertable %', p_hypertable_name;
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to set retention policy for a hypertable
+CREATE OR REPLACE FUNCTION set_retention_policy(
+    p_hypertable_name TEXT,
+    p_retention_period INTERVAL,
+    p_inplace BOOLEAN DEFAULT FALSE
+)
+RETURNS INT AS $$
+DECLARE
+    job_id INT;
+BEGIN
+    -- Drop existing policy if any
+    BEGIN
+        PERFORM drop_retention_policy(p_hypertable_name, FALSE);
+    EXCEPTION WHEN OTHERS THEN
+        -- Ignore errors if no existing policy
+    END;
+
+    -- Add new retention policy
+    SELECT add_retention_policy(p_hypertable_name, p_retention_period, inplace => p_inplace)
+    INTO job_id;
+
+    RETURN job_id;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to get current retention settings for a hypertable
+CREATE OR REPLACE FUNCTION get_retention_policy(p_hypertable_name TEXT)
+RETURNS TABLE(
+    hypertable_name TEXT,
+    retention_period INTERVAL,
+    retention_period_text TEXT,
+    job_id INT,
+    last_run_at TIMESTAMPTZ,
+    next_run_at TIMESTAMPTZ
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        j.config->>'hypertable_name'::TEXT,
+        (j.config->>'data_retention_period')::INTERVAL,
+        (j.config->>'data_retention_period')::TEXT,
+        j.job_id,
+        j.last_run_at,
+        j.next_run_at
+    FROM timescaledb_information.jobs j
+    WHERE j.proc_name = 'run_job'
+      AND j.config IS NOT NULL
+      AND j.config->>'hypertable_name' = p_hypertable_name;
+END;
+$$ LANGUAGE plpgsql;
 `
