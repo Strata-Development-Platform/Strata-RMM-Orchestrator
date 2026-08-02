@@ -23,13 +23,13 @@ type Engine struct {
 	notifier *Notifier
 	now      func() time.Time
 
-	mu            sync.RWMutex
-	rules         map[string]*Rule       // ruleID -> Rule
-	states        map[string]*AlertState // ruleID+deviceID -> state
-	subs          []*nats.Subscription
-	grouping      *GroupingEngine
-	maintenance   *MaintenanceEngine
-	maintenanceMu sync.RWMutex
+	mu                 sync.RWMutex
+	rules              map[string]*Rule       // ruleID -> Rule
+	states             map[string]*AlertState // ruleID+deviceID -> state
+	subs               []*nats.Subscription
+	grouping           *GroupingEngine
+	maintenance        *MaintenanceEngine
+	maintenanceMu      sync.RWMutex
 	maintenanceWindows map[string]*MaintenanceWindow // id -> window (for quick lookup)
 }
 
@@ -45,7 +45,7 @@ type alertStore interface {
 	UpdateAlertStatus(context.Context, string, string, AlertStatus) error
 	SaveCVEAlert(context.Context, *Alert, string) (*Alert, bool, error)
 	ResolveCVEAlert(context.Context, string, string, string, time.Time) (*Alert, error)
-	
+
 	// Maintenance window operations
 	SaveMaintenanceWindow(context.Context, *MaintenanceWindow) error
 	ListMaintenanceWindows(context.Context, string) ([]*MaintenanceWindow, error)
@@ -90,7 +90,7 @@ func (e *Engine) Start(ctx context.Context) error {
 	}
 	e.mu.Unlock()
 	e.restoreActiveAlerts(activeAlerts)
-	
+
 	if e.maintenance != nil {
 		if err := e.maintenance.Start(ctx); err != nil {
 			e.logger.Warn("failed to start maintenance engine", zap.Error(err))
@@ -234,13 +234,13 @@ func (e *Engine) evaluateThreshold(rule *Rule, tenantID, deviceID, metricName st
 		state = &AlertState{RuleID: rule.ID, TenantID: tenantID, DeviceID: deviceID, State: StateOK, MetricName: metricName}
 		e.states[key] = state
 	}
-	
+
 	_, _ = e.grouping.GetOrCreateGroup(rule.ID, tenantID, deviceID, metricName, rule.Severity, "", now)
-	
+
 	e.maintenanceMu.RLock()
 	isInMaintenance := e.maintenance != nil && e.maintenance.IsInMaintenance(tenantID, deviceID, now)
 	e.maintenanceMu.RUnlock()
-	
+
 	if shouldFire && state.State == StateOK {
 		if now.Sub(state.LastFired) < rule.Cooldown {
 			e.mu.Unlock()
@@ -332,7 +332,7 @@ func (e *Engine) evaluateHeartbeat(rule *Rule, tenantID, deviceID string, lastTi
 	} else if lastTime.After(state.LastHeard) {
 		state.LastHeard = lastTime
 	}
-	
+
 	if state.State == StateFiring {
 		now := e.now()
 		alertID, firedAt := state.AlertID, state.LastFired
@@ -465,18 +465,18 @@ func (e *Engine) checkStaleHeartbeats() {
 			now.Sub(state.LastFired) < rule.Cooldown {
 			continue
 		}
-		
+
 		e.maintenanceMu.RLock()
 		isInMaintenance := e.maintenance != nil && e.maintenance.IsInMaintenance(state.TenantID, state.DeviceID, now)
 		e.maintenanceMu.RUnlock()
-		
+
 		if isInMaintenance {
 			e.logger.Info("heartbeat alert silenced by maintenance window",
 				zap.String("rule", rule.ID),
 				zap.String("device", state.DeviceID))
 			continue
 		}
-		
+
 		alertID := uuid.NewString()
 		state.State = StateFiring
 		state.LastFired = now
@@ -524,19 +524,19 @@ func (e *Engine) FireCVEAlert(tenantID, deviceID, cveID, packageName, severity, 
 		e.logger.Error("reject CVE alert without correlation scope")
 		return
 	}
-	
+
 	now := e.now()
 	e.maintenanceMu.RLock()
 	isInMaintenance := e.maintenance != nil && e.maintenance.IsInMaintenance(tenantID, deviceID, now)
 	e.maintenanceMu.RUnlock()
-	
+
 	if isInMaintenance {
 		e.logger.Info("CVE alert silenced by maintenance window",
 			zap.String("cve", cveID),
 			zap.String("device", deviceID))
 		return
 	}
-	
+
 	alert := &Alert{
 		ID:         uuid.NewString(),
 		TenantID:   tenantID,

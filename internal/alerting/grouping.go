@@ -12,13 +12,13 @@ type AlertGroupKey struct {
 }
 
 type AlertGroup struct {
-	Key       AlertGroupKey `json:"key"`
-	Status    GroupStatus   `json:"status"`
-	AlertID   string        `json:"alert_id,omitempty"`
-	Count     int           `json:"count"`
-	FiredAt   time.Time     `json:"fired_at"`
-	LastFired time.Time     `json:"last_fired"`
-	MetricNames []string   `json:"metric_names,omitempty"`
+	Key         AlertGroupKey `json:"key"`
+	Status      GroupStatus   `json:"status"`
+	AlertID     string        `json:"alert_id,omitempty"`
+	Count       int           `json:"count"`
+	FiredAt     time.Time     `json:"fired_at"`
+	LastFired   time.Time     `json:"last_fired"`
+	MetricNames []string      `json:"metric_names,omitempty"`
 }
 
 type GroupStatus string

@@ -320,7 +320,7 @@ func (s *Store) ListMaintenanceWindows(ctx context.Context, tenantID string) ([]
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	
+
 	var windows []*MaintenanceWindow
 	for rows.Next() {
 		var w MaintenanceWindow
@@ -354,7 +354,7 @@ func (s *Store) GetActiveMaintenanceWindows(ctx context.Context, tenantID, devic
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	
+
 	var windows []*MaintenanceWindow
 	for rows.Next() {
 		var w MaintenanceWindow
