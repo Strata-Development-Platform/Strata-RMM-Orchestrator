@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"fmt"
 	"net"
 	"net/mail"
@@ -24,6 +25,7 @@ type OwnerActivationMail struct {
 
 type AccountMailer interface {
 	SendOwnerActivation(context.Context, OwnerActivationMail) error
+	SendReport(ctx context.Context, to string, subject string, body string, pdfAttachment []byte) error
 }
 
 type SMTPAccountMailerConfig struct {
@@ -153,6 +155,91 @@ func (m *SMTPAccountMailer) SendOwnerActivation(ctx context.Context, activation 
 	return nil
 }
 
+func (m *SMTPAccountMailer) SendReport(ctx context.Context, to string, subject string, body string, pdfAttachment []byte) error {
+	recipient, err := mail.ParseAddress(to)
+	if err != nil || recipient.Address == "" {
+		return fmt.Errorf("report recipient is invalid")
+	}
+	if containsControl(subject) || containsControl(body) {
+		return fmt.Errorf("report mail data is invalid")
+	}
+	if len(pdfAttachment) > 10*1024*1024 {
+		return fmt.Errorf("report attachment exceeds 10MB limit")
+	}
+	for _, value := range []string{m.fromAddress, recipient.Address, subject, body} {
+		if containsCRLF(value) {
+			return fmt.Errorf("report mail data is invalid")
+		}
+	}
+
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	connection, err := dialer.DialContext(ctx, "tcp", m.address)
+	if err != nil {
+		return fmt.Errorf("SMTP connection failed")
+	}
+	defer func() { _ = connection.Close() }()
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = connection.SetDeadline(deadline)
+	} else {
+		_ = connection.SetDeadline(time.Now().Add(30 * time.Second))
+	}
+
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, ServerName: m.serverName}
+	if m.implicitTLS {
+		tlsConnection := tls.Client(connection, tlsConfig)
+		if err := tlsConnection.HandshakeContext(ctx); err != nil {
+			return fmt.Errorf("SMTP TLS handshake failed")
+		}
+		connection = tlsConnection
+	}
+
+	client, err := smtp.NewClient(connection, m.serverName)
+	if err != nil {
+		return fmt.Errorf("SMTP session failed")
+	}
+	defer func() { _ = client.Close() }()
+	if !m.implicitTLS {
+		if supported, _ := client.Extension("STARTTLS"); !supported {
+			return fmt.Errorf("SMTP server does not support required TLS")
+		}
+		if err := client.StartTLS(tlsConfig); err != nil {
+			return fmt.Errorf("SMTP TLS negotiation failed")
+		}
+	}
+	if m.username != "" {
+		if err := client.Auth(smtp.PlainAuth("", m.username, m.password, m.serverName)); err != nil {
+			return fmt.Errorf("SMTP authentication failed")
+		}
+	}
+	if err := client.Mail(m.fromAddress); err != nil {
+		return fmt.Errorf("SMTP sender rejected")
+	}
+	if err := client.Rcpt(recipient.Address); err != nil {
+		return fmt.Errorf("SMTP recipient rejected")
+	}
+	wc, err := client.Data()
+	if err != nil {
+		return fmt.Errorf("SMTP message transfer failed")
+	}
+	message := buildReportMessage(m.fromAddress, recipient.Address, subject, body, pdfAttachment)
+	if !validSMTPMessage(message) {
+		_ = wc.Close()
+		return fmt.Errorf("SMTP message transfer failed")
+	}
+	if _, err := wc.Write([]byte(message)); err != nil {
+		_ = wc.Close()
+		return fmt.Errorf("SMTP message transfer failed")
+	}
+	if err := wc.Close(); err != nil {
+		_ = wc.Close()
+		return fmt.Errorf("SMTP message transfer failed")
+	}
+	if err := client.Quit(); err != nil {
+		return fmt.Errorf("SMTP delivery confirmation failed")
+	}
+	return nil
+}
+
 func buildOwnerActivationMessage(from, recipient string, activation OwnerActivationMail) string {
 	return "From: " + from + "\r\n" +
 		"To: " + recipient + "\r\n" +
@@ -164,4 +251,31 @@ func buildOwnerActivationMessage(from, recipient string, activation OwnerActivat
 		"Open this link to activate your account:\r\n\r\n" +
 		activation.ActivationURL + "\r\n\r\n" +
 		"This invitation expires at " + activation.ExpiresAt.UTC().Format(time.RFC3339) + ".\r\n"
+}
+
+func buildReportMessage(from, recipient, subject, body string, pdfAttachment []byte) string {
+	attachmentName := "report.pdf"
+	attachmentB64 := base64.StdEncoding.EncodeToString(pdfAttachment)
+	boundary := "----=_Boundary_1234567890"
+
+	message := "From: " + from + "\r\n" +
+		"To: " + recipient + "\r\n" +
+		"Subject: " + subject + "\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/mixed; boundary=\"" + boundary + "\"\r\n" +
+		"\r\n" +
+		"--" + boundary + "\r\n" +
+		"Content-Type: text/plain; charset=UTF-8\r\n" +
+		"Content-Transfer-Encoding: 7bit\r\n" +
+		"\r\n" +
+		body + "\r\n" +
+		"--" + boundary + "\r\n" +
+		"Content-Type: application/pdf; name=\"" + attachmentName + "\"\r\n" +
+		"Content-Transfer-Encoding: base64\r\n" +
+		"Content-Disposition: attachment; filename=\"" + attachmentName + "\"\r\n" +
+		"\r\n" +
+		attachmentB64 + "\r\n" +
+		"--" + boundary + "--\r\n"
+
+	return message
 }
