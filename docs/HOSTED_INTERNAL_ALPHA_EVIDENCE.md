@@ -2,6 +2,11 @@
 
 Candidate base: `05e6a9e8b1cc7a17177e9445c9670fccdcb95e57`.
 
+The broader product-completeness audit is maintained in
+[`FEATURE_COMPLETENESS_MATRIX.md`](FEATURE_COMPLETENESS_MATRIX.md). Hosted
+internal-alpha acceptance is intentionally narrower and must not be used as
+evidence that every capability in `FEATURE_SPECIFICATION.md` is complete.
+
 This record separates repository capability, automated execution, and hosted
 acceptance. A row is not accepted merely because its implementation exists.
 Exact-head run URLs and terminal results must be added to the draft pull request

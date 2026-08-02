@@ -28,6 +28,7 @@ Strata RMM is a multi-tenant remote monitoring and management platform for MSPs.
 - [Phase 8 production beta plan](PHASE_8_PRODUCTION_BETA.md)
 - [Phase 8 risk register](PHASE_8_RISK_REGISTER.md)
 - [Phase 8 acceptance matrix](PHASE_8_ACCEPTANCE_MATRIX.md)
+- [Feature completeness matrix](FEATURE_COMPLETENESS_MATRIX.md)
 - [Phase 8G security evidence](PHASE_8G_EVIDENCE.md)
 - [Internal alpha and beta operations](BETA_OPERATIONS.md)
 - [Hosted internal-alpha end-to-end evidence](HOSTED_INTERNAL_ALPHA_EVIDENCE.md)

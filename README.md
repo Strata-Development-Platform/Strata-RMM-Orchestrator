@@ -68,6 +68,11 @@ authentication, bootstrap, and supported deployment guidance.
 
 ## Features
 
+This section summarizes the intended product surface and includes capabilities
+that are partial or environment-dependent. Consult the
+[feature completeness matrix](docs/FEATURE_COMPLETENESS_MATRIX.md) before using
+it as release or acceptance evidence.
+
 **Agent Management**
 - Cross-platform (Windows MSI, Linux systemd, macOS binary)
 - Deployment ID onboarding — one ID per customer, auto-registers on first check-in
