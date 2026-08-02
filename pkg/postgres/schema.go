@@ -3526,6 +3526,428 @@ func Migrations() []Migration {
 					DROP COLUMN IF EXISTS bandwidth_mbps;
 			`,
 		},
+		{
+			ID:   86,
+			Name: "client_auth_providers",
+			Up: `
+-- Create client_auth_providers table for SSO provider configuration
+CREATE TABLE IF NOT EXISTS client_auth_providers (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    client_id UUID NOT NULL REFERENCES client_organizations(id) ON DELETE CASCADE,
+    provider_name TEXT NOT NULL CHECK (provider_name IN ('google', 'microsoft', 'okta', 'github', 'gitlab', 'saml')),
+    provider_id TEXT NOT NULL,
+    client_secret_hash TEXT NOT NULL,
+    discovery_url TEXT,
+    jwks_uri TEXT,
+    auth_endpoint TEXT,
+    token_endpoint TEXT,
+    user_info_endpoint TEXT,
+    redirect_uri TEXT NOT NULL,
+    is_active BOOLEAN DEFAULT true,
+    settings JSONB DEFAULT '{}',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(client_id, provider_name),
+    UNIQUE(client_id, provider_id)
+);
+
+-- Create client_sessions table for client session tracking
+CREATE TABLE IF NOT EXISTS client_sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    client_id UUID NOT NULL REFERENCES client_organizations(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    session_token TEXT NOT NULL UNIQUE,
+    session_data JSONB DEFAULT '{}',
+    ip_address INET,
+    user_agent TEXT,
+    last_activity_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Create client_portal_settings table for per-client portal settings
+CREATE TABLE IF NOT EXISTS client_portal_settings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    client_id UUID NOT NULL REFERENCES client_organizations(id) ON DELETE CASCADE UNIQUE,
+    allow_self_registration BOOLEAN DEFAULT false,
+    self_registration_domains TEXT[] DEFAULT '{}',
+    enable_sso BOOLEAN DEFAULT false,
+    enable_password_login BOOLEAN DEFAULT true,
+    branding_override JSONB DEFAULT '{}',
+    welcome_message TEXT,
+    support_email TEXT,
+    support_phone TEXT,
+    support_url TEXT,
+    logo_url TEXT,
+    favicon_url TEXT,
+    primary_color TEXT,
+    accent_color TEXT,
+    sidebar_bg TEXT,
+    header_bg TEXT,
+    login_bg TEXT,
+    portal_title TEXT,
+    welcome_text TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Create indexes for better query performance
+CREATE INDEX IF NOT EXISTS idx_client_auth_providers_client_id ON client_auth_providers(client_id);
+CREATE INDEX IF NOT EXISTS idx_client_auth_providers_provider_name ON client_auth_providers(provider_name);
+CREATE INDEX IF NOT EXISTS idx_client_sessions_client_id ON client_sessions(client_id);
+CREATE INDEX IF NOT EXISTS idx_client_sessions_session_token ON client_sessions(session_token);
+CREATE INDEX IF NOT EXISTS idx_client_sessions_expires_at ON client_sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_client_sessions_last_activity_at ON client_sessions(last_activity_at);
+
+-- Enable Row Level Security (RLS) for client data isolation
+ALTER TABLE client_auth_providers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE client_sessions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE client_portal_settings ENABLE ROW LEVEL SECURITY;
+
+-- RLS policies for client_auth_providers
+CREATE POLICY IF NOT EXISTS "Users can read auth providers for their client"
+    ON client_auth_providers FOR SELECT
+    USING (
+        EXISTS (
+            SELECT 1 FROM client_organizations c
+            WHERE c.id = client_auth_providers.client_id
+            AND (
+                c.id = NULLIF(current_setting('app.client_id', true), '')::UUID
+                OR c.msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID
+            )
+        )
+    );
+
+CREATE POLICY IF NOT EXISTS "Platform admins can manage all auth providers"
+    ON client_auth_providers FOR ALL
+    USING (
+        current_setting('app.role', true) IN ('platform_owner', 'platform_admin')
+    );
+
+CREATE POLICY IF NOT EXISTS "MSP admins can manage auth providers for their MSP clients"
+    ON client_auth_providers FOR ALL
+    USING (
+        EXISTS (
+            SELECT 1 FROM client_organizations c
+            WHERE c.id = client_auth_providers.client_id
+            AND c.msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID
+        )
+    );
+
+-- RLS policies for client_sessions
+CREATE POLICY IF NOT EXISTS "Users can read sessions for their client"
+    ON client_sessions FOR SELECT
+    USING (
+        EXISTS (
+            SELECT 1 FROM client_organizations c
+            WHERE c.id = client_sessions.client_id
+            AND (
+                c.id = NULLIF(current_setting('app.client_id', true), '')::UUID
+                OR c.msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID
+            )
+        )
+    );
+
+CREATE POLICY IF NOT EXISTS "Users can manage their own sessions"
+    ON client_sessions FOR ALL
+    USING (
+        EXISTS (
+            SELECT 1 FROM client_organizations c
+            WHERE c.id = client_sessions.client_id
+            AND (
+                c.id = NULLIF(current_setting('app.client_id', true), '')::UUID
+                OR c.msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID
+            )
+        )
+    );
+
+CREATE POLICY IF NOT EXISTS "Platform admins can manage all sessions"
+    ON client_sessions FOR ALL
+    USING (
+        current_setting('app.role', true) IN ('platform_owner', 'platform_admin')
+    );
+
+-- RLS policies for client_portal_settings
+CREATE POLICY IF NOT EXISTS "Users can read portal settings for their client"
+    ON client_portal_settings FOR SELECT
+    USING (
+        EXISTS (
+            SELECT 1 FROM client_organizations c
+            WHERE c.id = client_portal_settings.client_id
+            AND (
+                c.id = NULLIF(current_setting('app.client_id', true), '')::UUID
+                OR c.msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID
+            )
+        )
+    );
+
+CREATE POLICY IF NOT EXISTS "Platform admins can manage all portal settings"
+    ON client_portal_settings FOR ALL
+    USING (
+        current_setting('app.role', true) IN ('platform_owner', 'platform_admin')
+    );
+
+CREATE POLICY IF NOT EXISTS "MSP admins can manage portal settings for their MSP clients"
+    ON client_portal_settings FOR ALL
+    USING (
+        EXISTS (
+            SELECT 1 FROM client_organizations c
+            WHERE c.id = client_portal_settings.client_id
+            AND c.msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID
+        )
+    );
+
+-- Update updated_at trigger for all tables
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+   NEW.updated_at = NOW();
+   RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+CREATE TRIGGER IF NOT EXISTS update_client_auth_providers_updated_at
+    BEFORE UPDATE ON client_auth_providers
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER IF NOT EXISTS update_client_sessions_updated_at
+    BEFORE UPDATE ON client_sessions
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER IF NOT EXISTS update_client_portal_settings_updated_at
+    BEFORE UPDATE ON client_portal_settings
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+`,
+			Down: `
+-- Drop RLS policies for client_portal_settings
+DROP POLICY IF EXISTS "MSP admins can manage portal settings for their MSP clients" ON client_portal_settings;
+DROP POLICY IF NOT EXISTS "Platform admins can manage all portal settings" ON client_portal_settings;
+DROP POLICY IF NOT EXISTS "Users can read portal settings for their client" ON client_portal_settings;
+
+-- Drop RLS policies for client_sessions
+DROP POLICY IF NOT EXISTS "Users can manage their own sessions" ON client_sessions;
+DROP POLICY IF NOT EXISTS "Platform admins can manage all sessions" ON client_sessions;
+DROP POLICY IF NOT EXISTS "Users can read sessions for their client" ON client_sessions;
+
+-- Drop RLS policies for client_auth_providers
+DROP POLICY IF NOT EXISTS "MSP admins can manage auth providers for their MSP clients" ON client_auth_providers;
+DROP POLICY IF NOT EXISTS "Platform admins can manage all auth providers" ON client_auth_providers;
+DROP POLICY IF NOT EXISTS "Users can read auth providers for their client" ON client_auth_providers;
+
+-- Drop triggers
+DROP TRIGGER IF EXISTS update_client_portal_settings_updated_at ON client_portal_settings;
+DROP TRIGGER IF EXISTS update_client_sessions_updated_at ON client_sessions;
+DROP TRIGGER IF EXISTS update_client_auth_providers_updated_at ON client_auth_providers;
+
+-- Disable RLS for all tables
+ALTER TABLE client_portal_settings DISABLE ROW LEVEL SECURITY;
+ALTER TABLE client_sessions DISABLE ROW LEVEL SECURITY;
+ALTER TABLE client_auth_providers DISABLE ROW LEVEL SECURITY;
+
+-- Drop indexes
+DROP INDEX IF EXISTS idx_client_portal_settings_client_id;
+DROP INDEX IF EXISTS idx_client_sessions_last_activity_at;
+DROP INDEX IF EXISTS idx_client_sessions_expires_at;
+DROP INDEX IF EXISTS idx_client_sessions_session_token;
+DROP INDEX IF EXISTS idx_client_sessions_client_id;
+DROP INDEX IF EXISTS idx_client_auth_providers_provider_name;
+DROP INDEX IF EXISTS idx_client_auth_providers_client_id;
+
+-- Drop client_portal_settings table
+DROP TABLE IF EXISTS client_portal_settings;
+
+-- Drop client_sessions table
+DROP TABLE IF EXISTS client_sessions;
+
+-- Drop client_auth_providers table
+DROP TABLE IF EXISTS client_auth_providers;
+
+-- Drop helper function
+DROP FUNCTION IF EXISTS update_updated_at_column();
+`,
+		},
+		{
+			ID:   87,
+			Name: "client_portal_enhancements",
+			Up: `
+-- Add provider configuration columns for enhanced SSO support
+ALTER TABLE client_auth_providers ADD COLUMN IF NOT EXISTS issuer TEXT;
+ALTER TABLE client_auth_providers ADD COLUMN IF NOT EXISTS client_id TEXT;
+ALTER TABLE client_auth_providers ADD COLUMN IF NOT EXISTS scope TEXT DEFAULT 'openid profile email';
+ALTER TABLE client_auth_providers ADD COLUMN IF NOT EXISTS mapping JSONB DEFAULT '{}';
+ALTER TABLE client_auth_providers ADD COLUMN IF NOT EXISTS auto_provision BOOLEAN DEFAULT false;
+ALTER TABLE client_auth_providers ADD COLUMN IF NOT EXISTS auto_invite BOOLEAN DEFAULT false;
+
+-- Add session validation columns
+ALTER TABLE client_sessions ADD COLUMN IF NOT EXISTS mfa_enabled BOOLEAN DEFAULT false;
+ALTER TABLE client_sessions ADD COLUMN IF NOT EXISTS mfa_verified_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE client_sessions ADD COLUMN IF NOT EXISTS authenticated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+
+-- Add portal settings for security and compliance
+ALTER TABLE client_portal_settings ADD COLUMN IF NOT EXISTS session_timeout_minutes INTEGER DEFAULT 60;
+ALTER TABLE client_portal_settings ADD COLUMN IF NOT EXISTS max_concurrent_sessions INTEGER DEFAULT 5;
+ALTER TABLE client_portal_settings ADD COLUMN IF NOT EXISTS require_2fa BOOLEAN DEFAULT false;
+ALTER TABLE client_portal_settings ADD COLUMN IF NOT EXISTS login_attempts_before_lockout INTEGER DEFAULT 5;
+ALTER TABLE client_portal_settings ADD COLUMN IF NOT EXISTS lockout_duration_minutes INTEGER DEFAULT 15;
+ALTER TABLE client_portal_settings ADD COLUMN IF NOT EXISTS password_policy JSONB DEFAULT '{"min_length": 12, "require_uppercase": true, "require_lowercase": true, "require_numbers": true, "require_special": true}';
+ALTER TABLE client_portal_settings ADD COLUMN IF NOT EXISTS audit_log_retention_days INTEGER DEFAULT 365;
+
+-- Add logging columns to sessions for audit trail
+ALTER TABLE client_sessions ADD COLUMN IF NOT EXISTS session_type TEXT DEFAULT 'web';
+ALTER TABLE client_sessions ADD COLUMN IF NOT EXISTS auth_provider TEXT;
+ALTER TABLE client_sessions ADD COLUMN IF NOT EXISTS last_ip INET;
+ALTER TABLE client_sessions ADD COLUMN IF NOT EXISTS last_user_agent TEXT;
+ALTER TABLE client_sessions ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE client_sessions ADD COLUMN IF NOT EXISTS revocation_reason TEXT;
+
+-- Add provider configuration for custom SAML
+ALTER TABLE client_auth_providers ADD COLUMN IF NOT EXISTS saml_metadata_url TEXT;
+ALTER TABLE client_auth_providers ADD COLUMN IF NOT EXISTS saml_entity_id TEXT;
+ALTER TABLE client_auth_providers ADD COLUMN IF NOT EXISTS saml_name_id_format TEXT DEFAULT 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress';
+ALTER TABLE client_auth_providers ADD COLUMN IF NOT EXISTS saml_signature_cert TEXT;
+ALTER TABLE client_auth_providers ADD COLUMN IF NOT EXISTS saml_encryption_cert TEXT;
+ALTER TABLE client_auth_providers ADD COLUMN IF NOT EXISTS saml_requested_authn_context TEXT[];
+ALTER TABLE client_auth_providers ADD COLUMN IF NOT EXISTS saml_attribute_mapping JSONB DEFAULT '{}';
+
+-- Add audit columns
+ALTER TABLE client_auth_providers ADD COLUMN IF NOT EXISTS created_by UUID REFERENCES users(id);
+ALTER TABLE client_auth_providers ADD COLUMN IF NOT EXISTS updated_by UUID REFERENCES users(id);
+
+-- Add index for MFA verification tracking
+CREATE INDEX IF NOT EXISTS idx_client_sessions_mfa_verified ON client_sessions(mfa_verified_at) WHERE mfa_verified_at IS NOT NULL;
+
+-- Add index for active sessions
+CREATE INDEX IF NOT EXISTS idx_client_sessions_active ON client_sessions(client_id, expires_at) WHERE revoked_at IS NULL;
+`,
+			Down: `
+-- Drop indexes
+DROP INDEX IF EXISTS idx_client_sessions_mfa_verified;
+DROP INDEX IF EXISTS idx_client_sessions_active;
+
+-- Remove enhanced columns from client_auth_providers
+ALTER TABLE client_auth_providers DROP COLUMN IF EXISTS issuer;
+ALTER TABLE client_auth_providers DROP COLUMN IF EXISTS client_id;
+ALTER TABLE client_auth_providers DROP COLUMN IF EXISTS scope;
+ALTER TABLE client_auth_providers DROP COLUMN IF EXISTS mapping;
+ALTER TABLE client_auth_providers DROP COLUMN IF EXISTS auto_provision;
+ALTER TABLE client_auth_providers DROP COLUMN IF EXISTS auto_invite;
+ALTER TABLE client_auth_providers DROP COLUMN IF EXISTS saml_metadata_url;
+ALTER TABLE client_auth_providers DROP COLUMN IF EXISTS saml_entity_id;
+ALTER TABLE client_auth_providers DROP COLUMN IF EXISTS saml_name_id_format;
+ALTER TABLE client_auth_providers DROP COLUMN IF EXISTS saml_signature_cert;
+ALTER TABLE client_auth_providers DROP COLUMN IF EXISTS saml_encryption_cert;
+ALTER TABLE client_auth_providers DROP COLUMN IF EXISTS saml_requested_authn_context;
+ALTER TABLE client_auth_providers DROP COLUMN IF EXISTS saml_attribute_mapping;
+ALTER TABLE client_auth_providers DROP COLUMN IF EXISTS created_by;
+ALTER TABLE client_auth_providers DROP COLUMN IF EXISTS updated_by;
+
+-- Remove enhanced columns from client_sessions
+ALTER TABLE client_sessions DROP COLUMN IF EXISTS mfa_enabled;
+ALTER TABLE client_sessions DROP COLUMN IF EXISTS mfa_verified_at;
+ALTER TABLE client_sessions DROP COLUMN IF EXISTS authenticated_at;
+ALTER TABLE client_sessions DROP COLUMN IF EXISTS session_type;
+ALTER TABLE client_sessions DROP COLUMN IF EXISTS auth_provider;
+ALTER TABLE client_sessions DROP COLUMN IF EXISTS last_ip;
+ALTER TABLE client_sessions DROP COLUMN IF EXISTS last_user_agent;
+ALTER TABLE client_sessions DROP COLUMN IF EXISTS revoked_at;
+ALTER TABLE client_sessions DROP COLUMN IF EXISTS revocation_reason;
+
+-- Remove enhanced columns from client_portal_settings
+ALTER TABLE client_portal_settings DROP COLUMN IF EXISTS session_timeout_minutes;
+ALTER TABLE client_portal_settings DROP COLUMN IF EXISTS max_concurrent_sessions;
+ALTER TABLE client_portal_settings DROP COLUMN IF EXISTS require_2fa;
+ALTER TABLE client_portal_settings DROP COLUMN IF EXISTS login_attempts_before_lockout;
+ALTER TABLE client_portal_settings DROP COLUMN IF EXISTS lockout_duration_minutes;
+ALTER TABLE client_portal_settings DROP COLUMN IF EXISTS password_policy;
+ALTER TABLE client_portal_settings DROP COLUMN IF EXISTS audit_log_retention_days;
+`,
+		},
+		{
+			ID:   88,
+			Name: "client_session_activity",
+			Up: `
+-- Add session activity tracking table for audit and analytics
+CREATE TABLE IF NOT EXISTS client_session_activity (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id UUID NOT NULL REFERENCES client_sessions(id) ON DELETE CASCADE,
+    activity_type TEXT NOT NULL CHECK (activity_type IN ('login', 'logout', 'page_view', 'api_call', 'action')),
+    resource_type TEXT,
+    resource_id TEXT,
+    action TEXT,
+    metadata JSONB DEFAULT '{}',
+    ip_address INET,
+    user_agent TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Add client session activity index
+CREATE INDEX IF NOT EXISTS idx_client_session_activity_session_id ON client_session_activity(session_id);
+CREATE INDEX IF NOT EXISTS idx_client_session_activity_created_at ON client_session_activity(created_at);
+CREATE INDEX IF NOT EXISTS idx_client_session_activity_type ON client_session_activity(activity_type);
+
+-- Enable RLS for session activity
+ALTER TABLE client_session_activity ENABLE ROW LEVEL SECURITY;
+
+-- RLS policies for client_session_activity
+CREATE POLICY IF NOT EXISTS "Users can read activity for their client sessions"
+    ON client_session_activity FOR SELECT
+    USING (
+        EXISTS (
+            SELECT 1 FROM client_sessions cs
+            JOIN client_organizations c ON c.id = cs.client_id
+            WHERE cs.id = client_session_activity.session_id
+            AND (
+                c.id = NULLIF(current_setting('app.client_id', true), '')::UUID
+                OR c.msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID
+            )
+        )
+    );
+
+CREATE POLICY IF NOT EXISTS "Platform admins can read all activity"
+    ON client_session_activity FOR SELECT
+    USING (
+        current_setting('app.role', true) IN ('platform_owner', 'platform_admin')
+    );
+
+-- Create index on client_id for easier filtering
+CREATE INDEX IF NOT EXISTS idx_client_session_activity_client ON client_session_activity(
+    session_id
+) INCLUDE (activity_type, created_at);
+
+-- Add trigger to update updated_at
+CREATE TRIGGER IF NOT EXISTS update_client_session_activity_updated_at
+    BEFORE UPDATE ON client_session_activity
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+`,
+			Down: `
+-- Drop session activity trigger
+DROP TRIGGER IF EXISTS update_client_session_activity_updated_at ON client_session_activity;
+
+-- Drop RLS policies for client_session_activity
+DROP POLICY IF EXISTS "Platform admins can read all activity" ON client_session_activity;
+DROP POLICY IF EXISTS "Users can read activity for their client sessions" ON client_session_activity;
+
+-- Disable RLS
+ALTER TABLE client_session_activity DISABLE ROW LEVEL SECURITY;
+
+-- Drop indexes
+DROP INDEX IF EXISTS idx_client_session_activity_client;
+DROP INDEX IF EXISTS idx_client_session_activity_type;
+DROP INDEX IF EXISTS idx_client_session_activity_created_at;
+DROP INDEX IF EXISTS idx_client_session_activity_session_id;
+
+-- Drop function
+DROP FUNCTION IF EXISTS update_updated_at_column();
+
+-- Drop table
+DROP TABLE IF EXISTS client_session_activity;
+`,
+		},
 	}
 }
 
