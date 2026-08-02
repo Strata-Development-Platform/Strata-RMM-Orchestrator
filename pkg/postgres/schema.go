@@ -3365,6 +3365,167 @@ func Migrations() []Migration {
 				DROP TABLE IF EXISTS payment_methods;
 			`,
 		},
+		{
+			ID:   80,
+			Name: "device_relationships_table",
+			Up: `
+				CREATE TABLE IF NOT EXISTS device_relationships (
+					id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					msp_id                 UUID NOT NULL REFERENCES msp_tenants(id) ON DELETE CASCADE,
+					client_id              UUID REFERENCES client_organizations(id) ON DELETE CASCADE,
+					site_id                UUID REFERENCES sites(id) ON DELETE CASCADE,
+					source_device_id       UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+					target_device_id       UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+					relationship_type      TEXT NOT NULL CHECK (relationship_type IN (
+						'depends-on', 'dependency-of',
+						'child-of', 'parent-of',
+						'connected-to', 'connects-to',
+						'member-of', 'contains',
+						'backup-of', 'backup-for',
+						'failover-to', 'failover-from'
+					)),
+					metadata               JSONB DEFAULT '{}',
+					is_active              BOOLEAN NOT NULL DEFAULT true,
+					verified_at            TIMESTAMPTZ,
+					created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					CONSTRAINT no_self_relationship CHECK (source_device_id <> target_device_id),
+					UNIQUE (msp_id, source_device_id, target_device_id, relationship_type)
+				);
+
+				CREATE INDEX idx_device_relationships_source ON device_relationships(source_device_id);
+				CREATE INDEX idx_device_relationships_target ON device_relationships(target_device_id);
+				CREATE INDEX idx_device_relationships_msp ON device_relationships(msp_id);
+			`,
+			Down: `
+				DROP TABLE IF EXISTS device_relationships;
+			`,
+		},
+		{
+			ID:   81,
+			Name: "network_addresses_table",
+			Up: `
+				CREATE TABLE IF NOT EXISTS network_addresses (
+					id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					device_id        UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+					msp_id           UUID NOT NULL REFERENCES msp_tenants(id) ON DELETE CASCADE,
+					client_id        UUID REFERENCES client_organizations(id) ON DELETE CASCADE,
+					site_id          UUID REFERENCES sites(id) ON DELETE CASCADE,
+					ip_address       INET NOT NULL,
+					ip_family        INT NOT NULL DEFAULT 4 CHECK (ip_family IN (4, 6)),
+					network_type     TEXT NOT NULL DEFAULT 'internal' CHECK (network_type IN ('internal', 'external', 'management', 'storage')),
+					interface_name   TEXT,
+					vlan_id          INT,
+					subnet_cidr      TEXT,
+					is_primary       BOOLEAN NOT NULL DEFAULT false,
+					created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					UNIQUE (device_id, ip_address)
+				);
+
+				CREATE INDEX idx_network_addresses_device ON network_addresses(device_id);
+				CREATE INDEX idx_network_addresses_msp ON network_addresses(msp_id);
+			`,
+			Down: `
+				DROP TABLE IF EXISTS network_addresses;
+			`,
+		},
+		{
+			ID:   82,
+			Name: "device_packages_table",
+			Up: `
+				CREATE TABLE IF NOT EXISTS device_packages (
+					id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					device_id      UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+					msp_id         UUID NOT NULL REFERENCES msp_tenants(id) ON DELETE CASCADE,
+					name           TEXT NOT NULL,
+					version        TEXT NOT NULL,
+					release        TEXT,
+					arch           TEXT,
+					source         TEXT,
+					install_date   TIMESTAMPTZ,
+					package_type   TEXT NOT NULL DEFAULT 'deb' CHECK (package_type IN ('deb', 'rpm', 'msi', 'exe', 'npm', 'pip', 'go', 'other')),
+					status         TEXT NOT NULL DEFAULT 'installed' CHECK (status IN ('installed', 'pending', 'orphaned')),
+					created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+
+				CREATE INDEX idx_device_packages_device ON device_packages(device_id);
+				CREATE INDEX idx_device_packages_name ON device_packages(name);
+			`,
+			Down: `
+				DROP TABLE IF EXISTS device_packages;
+			`,
+		},
+		{
+			ID:   83,
+			Name: "device_services_table",
+			Up: `
+				CREATE TABLE IF NOT EXISTS device_services (
+					id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					device_id      UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+					msp_id         UUID NOT NULL REFERENCES msp_tenants(id) ON DELETE CASCADE,
+					name           TEXT NOT NULL,
+					port           INT,
+					protocol       TEXT NOT NULL DEFAULT 'tcp' CHECK (protocol IN ('tcp', 'udp', 'sctp')),
+					state          TEXT NOT NULL DEFAULT 'listening' CHECK (state IN ('listening', 'established', 'closed', 'waiting')),
+					process_name   TEXT,
+					binary_path    TEXT,
+					created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+
+				CREATE INDEX idx_device_services_device ON device_services(device_id);
+				CREATE UNIQUE INDEX idx_device_services_port ON device_services(device_id, port, protocol) WHERE port IS NOT NULL;
+			`,
+			Down: `
+				DROP TABLE IF EXISTS device_services;
+			`,
+		},
+		{
+			ID:   84,
+			Name: "device_mounts_table",
+			Up: `
+				CREATE TABLE IF NOT EXISTS device_mounts (
+					id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					device_id      UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+					msp_id         UUID NOT NULL REFERENCES msp_tenants(id) ON DELETE CASCADE,
+					mount_point    TEXT NOT NULL,
+					device_path    TEXT,
+					filesystem     TEXT NOT NULL,
+					size_bytes     BIGINT,
+					used_bytes     BIGINT,
+					available_bytes BIGINT,
+					mount_options  TEXT[],
+					created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					UNIQUE (device_id, mount_point)
+				);
+
+				CREATE INDEX idx_device_mounts_device ON device_mounts(device_id);
+			`,
+			Down: `
+				DROP TABLE IF EXISTS device_mounts;
+			`,
+		},
+		{
+			ID:   85,
+			Name: "enhance_topology_edges",
+			Up: `
+				ALTER TABLE topology_edges
+					ADD COLUMN IF NOT EXISTS src_device_id UUID REFERENCES devices(id) ON DELETE SET NULL,
+					ADD COLUMN IF NOT EXISTS dst_device_id UUID REFERENCES devices(id) ON DELETE SET NULL,
+					ADD COLUMN IF NOT EXISTS connection_type TEXT NOT NULL DEFAULT 'ethernet',
+					ADD COLUMN IF NOT EXISTS bandwidth_mbps INT;
+			`,
+			Down: `
+				ALTER TABLE topology_edges
+					DROP COLUMN IF EXISTS src_device_id,
+					DROP COLUMN IF EXISTS dst_device_id,
+					DROP COLUMN IF EXISTS connection_type,
+					DROP COLUMN IF EXISTS bandwidth_mbps;
+			`,
+		},
 	}
 }
 
