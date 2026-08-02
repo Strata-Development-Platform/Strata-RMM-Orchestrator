@@ -20,10 +20,10 @@ var ErrKeyNotFound = errors.New("encryption key not found")
 type KMSProvider string
 
 const (
-	KMSLocal  KMSProvider = "local"
-	KMSAWS    KMSProvider = "aws_kms"
-	KMSGCP    KMSProvider = "gcp_kms"
-	KMSAzure  KMSProvider = "azure_kv"
+	KMSLocal KMSProvider = "local"
+	KMSAWS   KMSProvider = "aws_kms"
+	KMSGCP   KMSProvider = "gcp_kms"
+	KMSAzure KMSProvider = "azure_kv"
 )
 
 type EncryptionScheme string

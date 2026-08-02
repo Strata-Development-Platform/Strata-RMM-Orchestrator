@@ -16,11 +16,11 @@ type Software struct {
 }
 
 type SoftwareInventory struct {
-	DeviceID  string     `json:"device_id"`
-	OS        string     `json:"os"`
-	OSVersion string     `json:"os_version"`
-	Packages  []Software `json:"packages"`
-	CollectedAt time.Time `json:"collected_at"`
+	DeviceID    string     `json:"device_id"`
+	OS          string     `json:"os"`
+	OSVersion   string     `json:"os_version"`
+	Packages    []Software `json:"packages"`
+	CollectedAt time.Time  `json:"collected_at"`
 }
 
 type SoftwareCollector struct{}

@@ -9,11 +9,11 @@ import (
 type InputType string
 
 const (
-	InputMouseMove   InputType = "mousemove"
-	InputMouseDown   InputType = "mousedown"
-	InputMouseUp     InputType = "mouseup"
-	InputKeyDown     InputType = "keydown"
-	InputKeyUp       InputType = "keyup"
+	InputMouseMove InputType = "mousemove"
+	InputMouseDown InputType = "mousedown"
+	InputMouseUp   InputType = "mouseup"
+	InputKeyDown   InputType = "keydown"
+	InputKeyUp     InputType = "keyup"
 )
 
 type MouseButtons int
@@ -34,12 +34,12 @@ const (
 )
 
 type InputEvent struct {
-	Type     InputType   `json:"type"`
-	X        float64     `json:"x,omitempty"`
-	Y        float64     `json:"y,omitempty"`
-	Button   MouseButtons `json:"button,omitempty"`
-	Key      string      `json:"key,omitempty"`
-	Mod      ModifierKeys `json:"mod,omitempty"`
+	Type   InputType    `json:"type"`
+	X      float64      `json:"x,omitempty"`
+	Y      float64      `json:"y,omitempty"`
+	Button MouseButtons `json:"button,omitempty"`
+	Key    string       `json:"key,omitempty"`
+	Mod    ModifierKeys `json:"mod,omitempty"`
 }
 
 type InputInjector interface {

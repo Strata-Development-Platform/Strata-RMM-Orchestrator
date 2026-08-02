@@ -201,11 +201,11 @@ func (de *DiscoveryEngine) discoverARPWindows(ctx context.Context) []DiscoveryRe
 			vendor := getVendorFromMAC(mac)
 
 			results = append(results, DiscoveryResult{
-				IP:       ip,
-				MAC:      normalizeWindowsMAC(mac),
-				Vendor:   vendor,
-				Type:     "device",
-				Via:      "arp",
+				IP:     ip,
+				MAC:    normalizeWindowsMAC(mac),
+				Vendor: vendor,
+				Type:   "device",
+				Via:    "arp",
 				Labels: map[string]string{
 					"discovery_method": "arp_table",
 					"os":               "windows",

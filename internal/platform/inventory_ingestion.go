@@ -277,7 +277,6 @@ func (s *APIServer) handleSubmitInventoryResult(w http.ResponseWriter, r *http.R
 			}
 		}
 	}
-	
 
 	// Audit evidence
 	entry := EndpointAuditEntry{

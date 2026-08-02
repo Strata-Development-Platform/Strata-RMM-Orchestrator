@@ -21,9 +21,9 @@ type RolloutConfig struct {
 }
 
 type RolloutCommand struct {
-	Action  string          `json:"action"`
-	Config  *RolloutConfig  `json:"config,omitempty"`
-	Version string          `json:"version,omitempty"`
+	Action  string         `json:"action"`
+	Config  *RolloutConfig `json:"config,omitempty"`
+	Version string         `json:"version,omitempty"`
 }
 
 type RolloutManager struct {

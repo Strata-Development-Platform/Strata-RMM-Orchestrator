@@ -378,14 +378,14 @@ func (s *APIServer) handleStartInteractiveRecording(w http.ResponseWriter, r *ht
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
-		"recording_id":   recordingID,
-		"session_id":     sessionID,
-		"tenant_id":      tenantID,
-		"storage_key":    storageKey,
-		"format":         format,
-		"started_at":     now.UTC().Format(time.RFC3339),
-		"expires_at":     expiresAt.UTC().Format(time.RFC3339),
-		"status":         "recording",
+		"recording_id": recordingID,
+		"session_id":   sessionID,
+		"tenant_id":    tenantID,
+		"storage_key":  storageKey,
+		"format":       format,
+		"started_at":   now.UTC().Format(time.RFC3339),
+		"expires_at":   expiresAt.UTC().Format(time.RFC3339),
+		"status":       "recording",
 	})
 
 	go func() {
@@ -427,13 +427,13 @@ func (s *APIServer) handleStopInteractiveRecording(w http.ResponseWriter, r *htt
 	rec.DurationMs = time.Since(rec.CreatedAt).Milliseconds()
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"recording_id":   rec.ID,
-		"session_id":     rec.SessionID,
-		"status":         "completed",
-		"duration_ms":    rec.DurationMs,
-		"storage_key":    rec.StorageKey,
-		"size_bytes":     rec.SizeBytes,
-		"format":         rec.Format,
+		"recording_id": rec.ID,
+		"session_id":   rec.SessionID,
+		"status":       "completed",
+		"duration_ms":  rec.DurationMs,
+		"storage_key":  rec.StorageKey,
+		"size_bytes":   rec.SizeBytes,
+		"format":       rec.Format,
 	})
 }
 

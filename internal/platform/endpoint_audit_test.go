@@ -7,7 +7,7 @@ import (
 
 func TestEndpointAuditEntryDefaults(t *testing.T) {
 	entry := &EndpointAuditEntry{
-		MSPID:    "00000000-0000-0000-0000-000000000001",
+		MSPID:       "00000000-0000-0000-0000-000000000001",
 		ActorUserID: "test-user",
 		Action:      "device.reboot",
 	}

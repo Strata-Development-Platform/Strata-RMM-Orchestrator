@@ -51,10 +51,10 @@ type Installer struct {
 
 func NewInstaller(nc *nats.Conn, logger *zap.Logger, tenantID, agentID string) *Installer {
 	return &Installer{
-		nc:       nc,
-		logger:   logger,
-		tenantID: tenantID,
-		agentID:  agentID,
+		nc:         nc,
+		logger:     logger,
+		tenantID:   tenantID,
+		agentID:    agentID,
 		httpClient: &http.Client{Timeout: 30 * time.Minute},
 	}
 }

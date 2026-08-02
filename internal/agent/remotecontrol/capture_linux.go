@@ -13,9 +13,9 @@ import (
 )
 
 type linuxX11Capturer struct {
-	display string
-	width   int
-	height  int
+	display    string
+	width      int
+	height     int
 	haveImport bool
 }
 

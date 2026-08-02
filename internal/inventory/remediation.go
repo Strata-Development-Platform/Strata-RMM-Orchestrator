@@ -14,12 +14,12 @@ import (
 type RemediationStatus string
 
 const (
-	RemediationPending   RemediationStatus = "pending"
-	RemediationRunning   RemediationStatus = "running"
-	RemediationSuccess   RemediationStatus = "success"
-	RemediationFailed    RemediationStatus = "failed"
-	RemediationRetrying  RemediationStatus = "retrying"
-	RemediationMaxRetry  RemediationStatus = "max_retries_exceeded"
+	RemediationPending  RemediationStatus = "pending"
+	RemediationRunning  RemediationStatus = "running"
+	RemediationSuccess  RemediationStatus = "success"
+	RemediationFailed   RemediationStatus = "failed"
+	RemediationRetrying RemediationStatus = "retrying"
+	RemediationMaxRetry RemediationStatus = "max_retries_exceeded"
 )
 
 // RemediationAttempt tracks a single patch attempt for a vulnerability
@@ -39,19 +39,19 @@ type RemediationAttempt struct {
 
 // RemediationPolicy defines auto-remediation settings per tenant
 type RemediationPolicy struct {
-	ID                       string        `json:"id"`
-	TenantID                 string        `json:"tenant_id"`
-	Enabled                  bool          `json:"enabled"`
-	SeverityThreshold        string        `json:"severity_threshold"` // critical, high, medium, low
-	AutoRemediate            bool          `json:"auto_remediate"`
-	MaxRetries               int           `json:"max_retries"`
-	RetryDelayHours          int           `json:"retry_delay_hours"`
-	AutoApprove              bool          `json:"auto_approve"`
-	RebootBehavior           string        `json:"reboot_behavior"` // automatic, prompt, ignore
-	MaintenanceWindowStart   string        `json:"maintenance_window_start"` // HH:MM format
-	MaintenanceWindowEnd     string        `json:"maintenance_window_end"`
-	CreatedAt                time.Time     `json:"created_at"`
-	UpdatedAt                time.Time     `json:"updated_at"`
+	ID                     string    `json:"id"`
+	TenantID               string    `json:"tenant_id"`
+	Enabled                bool      `json:"enabled"`
+	SeverityThreshold      string    `json:"severity_threshold"` // critical, high, medium, low
+	AutoRemediate          bool      `json:"auto_remediate"`
+	MaxRetries             int       `json:"max_retries"`
+	RetryDelayHours        int       `json:"retry_delay_hours"`
+	AutoApprove            bool      `json:"auto_approve"`
+	RebootBehavior         string    `json:"reboot_behavior"`          // automatic, prompt, ignore
+	MaintenanceWindowStart string    `json:"maintenance_window_start"` // HH:MM format
+	MaintenanceWindowEnd   string    `json:"maintenance_window_end"`
+	CreatedAt              time.Time `json:"created_at"`
+	UpdatedAt              time.Time `json:"updated_at"`
 }
 
 // RemediationEngine handles automatic vulnerability remediation
@@ -70,13 +70,13 @@ func NewRemediationEngine(db *sql.DB, logger *zap.Logger) *RemediationEngine {
 		logger:    logger,
 		patchExec: NewExecutor(),
 		policy: &RemediationPolicy{
-			Enabled:       false,
+			Enabled:           false,
 			SeverityThreshold: "critical",
-			AutoRemediate:   false,
-			MaxRetries:      3,
-			RetryDelayHours: 1,
-			AutoApprove:     true,
-			RebootBehavior:  "automatic",
+			AutoRemediate:     false,
+			MaxRetries:        3,
+			RetryDelayHours:   1,
+			AutoApprove:       true,
+			RebootBehavior:    "automatic",
 		},
 	}
 }
@@ -471,18 +471,18 @@ func (s RemediationStatus) String() string {
 
 // DeviceVulnerability extends VulnerabilityState with device details
 type DeviceVulnerability struct {
-	ID           string     `json:"id"`
-	DeviceID     string     `json:"device_id"`
-	TenantID     string     `json:"tenant_id"`
-	PackageName  string     `json:"package_name"`
-	CurrentVersion string   `json:"current_version"`
-	FixedIn      string     `json:"fixed_in"`
-	Severity     string     `json:"severity"`
-	Status       string     `json:"status"`
-	DetectedAt   time.Time  `json:"detected_at"`
-	ResolvedAt   *time.Time `json:"resolved_at,omitempty"`
-	OS           string     `json:"os,omitempty"`
-	OSVersion    string     `json:"os_version,omitempty"`
+	ID             string     `json:"id"`
+	DeviceID       string     `json:"device_id"`
+	TenantID       string     `json:"tenant_id"`
+	PackageName    string     `json:"package_name"`
+	CurrentVersion string     `json:"current_version"`
+	FixedIn        string     `json:"fixed_in"`
+	Severity       string     `json:"severity"`
+	Status         string     `json:"status"`
+	DetectedAt     time.Time  `json:"detected_at"`
+	ResolvedAt     *time.Time `json:"resolved_at,omitempty"`
+	OS             string     `json:"os,omitempty"`
+	OSVersion      string     `json:"os_version,omitempty"`
 }
 
 // PatchStatus constants from patch package

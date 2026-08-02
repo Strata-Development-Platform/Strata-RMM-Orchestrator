@@ -13,27 +13,27 @@ import (
 
 // FlowRecord represents a network flow record
 type FlowRecord struct {
-	Time       time.Time  `json:"time"`
-	SrcIP      string     `json:"src_ip"`
-	DstIP      string     `json:"dst_ip"`
-	SrcPort    int        `json:"src_port"`
-	DstPort    int        `json:"dst_port"`
-	Protocol   string     `json:"protocol"`
-	ProtocolID uint8      `json:"protocol_id"`
-	Bytes      int64      `json:"bytes"`
-	Packets    int64      `json:"packets"`
-	DurationMs uint32     `json:"duration_ms"`
-	Flags      uint8      `json:"flags,omitempty"`
-	InputIf    uint16     `json:"input_if,omitempty"`
-	OutputIf   uint16     `json:"output_if,omitempty"`
-	SrcMAC     string     `json:"src_mac,omitempty"`
-	DstMAC     string     `json:"dst_mac,omitempty"`
-	SrcAS      uint32     `json:"src_as,omitempty"`
-	DstAS      uint32     `json:"dst_as,omitempty"`
-	NextHop    string     `json:"next_hop,omitempty"`
-	User       string     `json:"user,omitempty"`
-	URL        string     `json:"url,omitempty"`
-	Labels     []string   `json:"labels,omitempty"`
+	Time       time.Time `json:"time"`
+	SrcIP      string    `json:"src_ip"`
+	DstIP      string    `json:"dst_ip"`
+	SrcPort    int       `json:"src_port"`
+	DstPort    int       `json:"dst_port"`
+	Protocol   string    `json:"protocol"`
+	ProtocolID uint8     `json:"protocol_id"`
+	Bytes      int64     `json:"bytes"`
+	Packets    int64     `json:"packets"`
+	DurationMs uint32    `json:"duration_ms"`
+	Flags      uint8     `json:"flags,omitempty"`
+	InputIf    uint16    `json:"input_if,omitempty"`
+	OutputIf   uint16    `json:"output_if,omitempty"`
+	SrcMAC     string    `json:"src_mac,omitempty"`
+	DstMAC     string    `json:"dst_mac,omitempty"`
+	SrcAS      uint32    `json:"src_as,omitempty"`
+	DstAS      uint32    `json:"dst_as,omitempty"`
+	NextHop    string    `json:"next_hop,omitempty"`
+	User       string    `json:"user,omitempty"`
+	URL        string    `json:"url,omitempty"`
+	Labels     []string  `json:"labels,omitempty"`
 }
 
 // FlowCollector handles flow collection (NetFlow, sFlow, IPFIX)

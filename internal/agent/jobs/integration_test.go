@@ -55,7 +55,7 @@ func testCommand(t *testing.T, eventID, targetID string) []byte {
 		ClientID: "10000000-0000-0000-0000-000000000002",
 		DeviceID: "device-1", AgentID: "agent-1", CorrelationID: "correlation-1",
 		Attempt: 1, IssuedAt: time.Now().UTC().Format(time.RFC3339),
-		ExpiresAt: time.Now().Add(time.Minute).UTC().Format(time.RFC3339),
+		ExpiresAt:   time.Now().Add(time.Minute).UTC().Format(time.RFC3339),
 		CommandType: "test", Payload: json.RawMessage(`{"value":"ok"}`),
 	})
 	if err != nil {

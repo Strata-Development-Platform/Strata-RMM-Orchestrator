@@ -977,16 +977,16 @@ func (s *APIServer) handleListAlertGroups(w http.ResponseWriter, r *http.Request
 	if !s.AuthorizeClientAccess(w, r, tenantID) {
 		return
 	}
-	
+
 	groups := s.alertEngine.GroupingEngine().GetAllGroups()
-	
+
 	var filteredGroups []*alerting.AlertGroup
 	for _, g := range groups {
 		if tenantID == "" || g.Key.DeviceID == tenantID {
 			filteredGroups = append(filteredGroups, g)
 		}
 	}
-	
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{"groups": filteredGroups, "count": len(filteredGroups)})
 }
 

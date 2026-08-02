@@ -16,45 +16,45 @@ import (
 type ComplianceFramework string
 
 const (
-	CIS       ComplianceFramework = "CIS"
-	HIPAA     ComplianceFramework = "HIPAA"
-	PCI_DSS   ComplianceFramework = "PCI-DSS"
-	GDPR      ComplianceFramework = "GDPR"
-	SOC2      ComplianceFramework = "SOC2"
-	NIST      ComplianceFramework = "NIST"
+	CIS     ComplianceFramework = "CIS"
+	HIPAA   ComplianceFramework = "HIPAA"
+	PCI_DSS ComplianceFramework = "PCI-DSS"
+	GDPR    ComplianceFramework = "GDPR"
+	SOC2    ComplianceFramework = "SOC2"
+	NIST    ComplianceFramework = "NIST"
 )
 
 // ComplianceReport represents a compliance report for a tenant
 type ComplianceReport struct {
-	ID               string             `json:"id"`
-	TenantID         string             `json:"tenant_id"`
-	Framework        ComplianceFramework `json:"framework"`
-	PeriodStart      time.Time          `json:"period_start"`
-	PeriodEnd        time.Time          `json:"period_end"`
-	GeneratedAt      time.Time          `json:"generated_at"`
-	TotalVulnerabilities int              `json:"total_vulnerabilities"`
-	CriticalCount    int                `json:"critical_count"`
-	HighCount        int                `json:"high_count"`
-	MediumCount      int                `json:"medium_count"`
-	LowCount         int                `json:"low_count"`
-	PendingCount     int                `json:"pending_count"`
-	RemediatedCount  int                `json:"remediated_count"`
-	IgnoredCount     int                `json:"ignored_count"`
-	Score            float64            `json:"score"`
-	Status           string             `json:"status"`
-	Findings         []ComplianceFinding `json:"findings,omitempty"`
-	Remediations     []string           `json:"remediations,omitempty"`
+	ID                   string              `json:"id"`
+	TenantID             string              `json:"tenant_id"`
+	Framework            ComplianceFramework `json:"framework"`
+	PeriodStart          time.Time           `json:"period_start"`
+	PeriodEnd            time.Time           `json:"period_end"`
+	GeneratedAt          time.Time           `json:"generated_at"`
+	TotalVulnerabilities int                 `json:"total_vulnerabilities"`
+	CriticalCount        int                 `json:"critical_count"`
+	HighCount            int                 `json:"high_count"`
+	MediumCount          int                 `json:"medium_count"`
+	LowCount             int                 `json:"low_count"`
+	PendingCount         int                 `json:"pending_count"`
+	RemediatedCount      int                 `json:"remediated_count"`
+	IgnoredCount         int                 `json:"ignored_count"`
+	Score                float64             `json:"score"`
+	Status               string              `json:"status"`
+	Findings             []ComplianceFinding `json:"findings,omitempty"`
+	Remediations         []string            `json:"remediations,omitempty"`
 }
 
 // ComplianceFinding represents a specific finding in a compliance report
 type ComplianceFinding struct {
-	ID              string `json:"id"`
-	Severity        string `json:"severity"`
-	PackageName     string `json:"package_name"`
-	CVEID           string `json:"cve_id"`
-	Description     string `json:"description"`
-	Remediation     string `json:"remediation"`
-	Status          string `json:"status"`
+	ID          string `json:"id"`
+	Severity    string `json:"severity"`
+	PackageName string `json:"package_name"`
+	CVEID       string `json:"cve_id"`
+	Description string `json:"description"`
+	Remediation string `json:"remediation"`
+	Status      string `json:"status"`
 }
 
 // ReportingEngine generates compliance reports
@@ -130,24 +130,24 @@ func (r *ReportingEngine) GenerateComplianceReport(ctx context.Context, tenantID
 	remediations := r.generateRemediations(framework, criticalCount, highCount, mediumCount)
 
 	report := &ComplianceReport{
-		ID:                  generateID(),
-		TenantID:            tenantID,
-		Framework:           framework,
-		PeriodStart:         periodStart,
-		PeriodEnd:           periodEnd,
-		GeneratedAt:         now,
+		ID:                   generateID(),
+		TenantID:             tenantID,
+		Framework:            framework,
+		PeriodStart:          periodStart,
+		PeriodEnd:            periodEnd,
+		GeneratedAt:          now,
 		TotalVulnerabilities: totalCount,
-		CriticalCount:       criticalCount,
-		HighCount:           highCount,
-		MediumCount:         mediumCount,
-		LowCount:            lowCount,
-		PendingCount:        pendingCount,
-		RemediatedCount:     remediatedCount,
-		IgnoredCount:        ignoredCount,
-		Score:               score,
-		Status:              r.getStatus(score),
-		Findings:            findings,
-		Remediations:        remediations,
+		CriticalCount:        criticalCount,
+		HighCount:            highCount,
+		MediumCount:          mediumCount,
+		LowCount:             lowCount,
+		PendingCount:         pendingCount,
+		RemediatedCount:      remediatedCount,
+		IgnoredCount:         ignoredCount,
+		Score:                score,
+		Status:               r.getStatus(score),
+		Findings:             findings,
+		Remediations:         remediations,
 	}
 
 	// Save report to database
@@ -589,5 +589,3 @@ func generateID() string {
 	// Simplified ID generation
 	return fmt.Sprintf("rep-%d", time.Now().UnixNano())
 }
-
-

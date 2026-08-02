@@ -6,8 +6,8 @@ import (
 
 func TestDefaultApprovalPolicyForDestructiveActions(t *testing.T) {
 	tests := []struct {
-		action           string
-		wantRequired     bool
+		action       string
+		wantRequired bool
 	}{
 		{"reboot", true},
 		{"shutdown", true},
@@ -72,9 +72,9 @@ func TestApprovalStateTransitions(t *testing.T) {
 
 func TestIsActionSupportedByCapabilities(t *testing.T) {
 	tests := []struct {
-		action     string
-		cap        *AgentCapability
-		want       bool
+		action string
+		cap    *AgentCapability
+		want   bool
 	}{
 		{
 			action: "refresh",

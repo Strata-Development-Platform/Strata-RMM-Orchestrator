@@ -15,21 +15,21 @@ const (
 )
 
 type Manifest struct {
-	Version        string            `json:"version"`
-	ReleaseDate    time.Time         `json:"release_date"`
-	Channel        Channel           `json:"channel"`
-	MinAgentVersion string           `json:"min_agent_version"`
-	RollbackVersion string           `json:"rollback_version,omitempty"`
-	Platforms      map[string]PlatformArtifact `json:"platforms"`
-	Changelog      string            `json:"changelog"`
-	Signature      CosignSignature   `json:"signature"`
+	Version         string                      `json:"version"`
+	ReleaseDate     time.Time                   `json:"release_date"`
+	Channel         Channel                     `json:"channel"`
+	MinAgentVersion string                      `json:"min_agent_version"`
+	RollbackVersion string                      `json:"rollback_version,omitempty"`
+	Platforms       map[string]PlatformArtifact `json:"platforms"`
+	Changelog       string                      `json:"changelog"`
+	Signature       CosignSignature             `json:"signature"`
 }
 
 type PlatformArtifact struct {
-	URL      string `json:"url"`
-	Checksum string `json:"checksum"`
+	URL          string `json:"url"`
+	Checksum     string `json:"checksum"`
 	ChecksumType string `json:"checksum_type"`
-	Size     int64  `json:"size"`
+	Size         int64  `json:"size"`
 }
 
 type CosignSignature struct {
@@ -39,25 +39,25 @@ type CosignSignature struct {
 }
 
 type UpdateState struct {
-	CurrentVersion string     `json:"current_version"`
-	PendingVersion string     `json:"pending_version,omitempty"`
+	CurrentVersion  string    `json:"current_version"`
+	PendingVersion  string    `json:"pending_version,omitempty"`
 	RollbackVersion string    `json:"rollback_version,omitempty"`
-	LastCheck      time.Time  `json:"last_check"`
-	Status         Status     `json:"status"`
-	FailedAttempts int        `json:"failed_attempts"`
-	UpdatedAt      time.Time  `json:"updated_at"`
+	LastCheck       time.Time `json:"last_check"`
+	Status          Status    `json:"status"`
+	FailedAttempts  int       `json:"failed_attempts"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 type Status string
 
 const (
-	StatusUpToDate  Status = "up_to_date"
-	StatusPending   Status = "pending"
+	StatusUpToDate    Status = "up_to_date"
+	StatusPending     Status = "pending"
 	StatusDownloading Status = "downloading"
-	StatusReady     Status = "ready"
-	StatusApplying  Status = "applying"
-	StatusFailed    Status = "failed"
-	StatusRolledBack Status = "rolled_back"
+	StatusReady       Status = "ready"
+	StatusApplying    Status = "applying"
+	StatusFailed      Status = "failed"
+	StatusRolledBack  Status = "rolled_back"
 )
 
 func ParseManifest(data []byte) (*Manifest, error) {

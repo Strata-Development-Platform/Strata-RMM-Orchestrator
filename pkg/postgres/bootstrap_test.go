@@ -16,7 +16,7 @@ func TestBootstrapAdminInputValidation(t *testing.T) {
 	}
 
 	tests := []struct {
-		name  string
+		name   string
 		mutate func(*BootstrapAdminInput)
 	}{
 		{name: "invalid email", mutate: func(in *BootstrapAdminInput) { in.Email = "not-an-email" }},

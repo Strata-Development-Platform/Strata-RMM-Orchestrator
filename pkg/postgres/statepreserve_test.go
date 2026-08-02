@@ -59,11 +59,11 @@ func TestSaveSnapshot(t *testing.T) {
 	ps, backupDir := setupPreserver(t)
 
 	snapshot := &StateSnapshot{
-		Timestamp:    time.Now().UTC(),
+		Timestamp:     time.Now().UTC(),
 		SchemaVersion: 1,
-		TableCount:   2,
+		TableCount:    2,
 		TableStats: map[string]TableStat{
-			"users": {Name: "users", RowCount: 100, SizeBytes: 8192},
+			"users":  {Name: "users", RowCount: 100, SizeBytes: 8192},
 			"orders": {Name: "orders", RowCount: 50, SizeBytes: 4096},
 		},
 		Indexes: []IndexStat{
@@ -127,15 +127,15 @@ func TestListSnapshots(t *testing.T) {
 	ps, _ := setupPreserver(t)
 
 	snapshot1 := &StateSnapshot{
-		Timestamp:    time.Now().UTC(),
+		Timestamp:     time.Now().UTC(),
 		SchemaVersion: 1,
-		TableStats:   map[string]TableStat{"users": {Name: "users"}},
+		TableStats:    map[string]TableStat{"users": {Name: "users"}},
 	}
 
 	snapshot2 := &StateSnapshot{
-		Timestamp:    time.Now().UTC(),
+		Timestamp:     time.Now().UTC(),
 		SchemaVersion: 2,
-		TableStats:   map[string]TableStat{"users": {Name: "users"}, "orders": {Name: "orders"}},
+		TableStats:    map[string]TableStat{"users": {Name: "users"}, "orders": {Name: "orders"}},
 	}
 
 	id1, err := ps.SaveSnapshot(snapshot1)
@@ -158,9 +158,9 @@ func TestDeleteSnapshot(t *testing.T) {
 	ps, backupDir := setupPreserver(t)
 
 	snapshot := &StateSnapshot{
-		Timestamp:    time.Now().UTC(),
+		Timestamp:     time.Now().UTC(),
 		SchemaVersion: 1,
-		TableStats:   map[string]TableStat{"users": {Name: "users"}},
+		TableStats:    map[string]TableStat{"users": {Name: "users"}},
 	}
 
 	id, err := ps.SaveSnapshot(snapshot)
@@ -226,9 +226,9 @@ func TestCompareSnapshots(t *testing.T) {
 		SchemaVersion: 2,
 		TableCount:    3,
 		TableStats: map[string]TableStat{
-			"users":     {Name: "users", RowCount: 150, SizeBytes: 12288},
-			"orders":    {Name: "orders", RowCount: 50, SizeBytes: 4096},
-			"products":  {Name: "products", RowCount: 25, SizeBytes: 2048},
+			"users":    {Name: "users", RowCount: 150, SizeBytes: 12288},
+			"orders":   {Name: "orders", RowCount: 50, SizeBytes: 4096},
+			"products": {Name: "products", RowCount: 25, SizeBytes: 2048},
 		},
 		Indexes: []IndexStat{
 			{Name: "idx_users_email", Table: "users", IsUnique: false, SizeBytes: 1024},
@@ -253,7 +253,7 @@ func TestCompareSnapshots(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, diff)
 	assert.Equal(t, int32(1), diff.SchemaVersionDiff) // 2 - 1
-	assert.Equal(t, 1, diff.TableCountDiff) // 3 - 2
+	assert.Equal(t, 1, diff.TableCountDiff)           // 3 - 2
 	assert.Contains(t, diff.AddedTables, "products")
 	assert.NotContains(t, diff.RemovedTables, "products")
 	assert.Contains(t, diff.ModifiedTables, "users")
@@ -273,9 +273,9 @@ func TestCompareSnapshotsMissingAfter(t *testing.T) {
 	ps, _ := setupPreserver(t)
 
 	snapshot := &StateSnapshot{
-		Timestamp:    time.Now().UTC(),
+		Timestamp:     time.Now().UTC(),
 		SchemaVersion: 1,
-		TableStats:   map[string]TableStat{"users": {Name: "users"}},
+		TableStats:    map[string]TableStat{"users": {Name: "users"}},
 	}
 	id, _ := ps.SaveSnapshot(snapshot)
 
@@ -295,8 +295,8 @@ func TestCompareSnapshotsIdentical(t *testing.T) {
 		TableStats: map[string]TableStat{
 			"users": {Name: "users", RowCount: 100, SizeBytes: 8192},
 		},
-		Indexes:      []IndexStat{},
-		ForeignKeys:  []ForeignKeyStat{},
+		Indexes:        []IndexStat{},
+		ForeignKeys:    []ForeignKeyStat{},
 		SequenceStates: []SequenceStat{},
 	}
 
@@ -350,9 +350,9 @@ func TestRestoreSnapshotContextCancelled(t *testing.T) {
 
 	// Create a snapshot to restore from
 	snapshot := &StateSnapshot{
-		Timestamp:    time.Now().UTC(),
+		Timestamp:     time.Now().UTC(),
 		SchemaVersion: 1,
-		TableStats:   map[string]TableStat{"users": {Name: "users"}},
+		TableStats:    map[string]TableStat{"users": {Name: "users"}},
 	}
 	id, err := ps.SaveSnapshot(snapshot)
 	require.NoError(t, err)
@@ -385,9 +385,9 @@ func TestRestoreSnapshotRequiresDB(t *testing.T) {
 
 	// Create a snapshot file
 	snapshot := &StateSnapshot{
-		Timestamp:    time.Now().UTC(),
+		Timestamp:     time.Now().UTC(),
 		SchemaVersion: 1,
-		TableStats:   map[string]TableStat{"users": {Name: "users"}},
+		TableStats:    map[string]TableStat{"users": {Name: "users"}},
 	}
 	id, err := ps.SaveSnapshot(snapshot)
 	require.NoError(t, err)
@@ -450,8 +450,8 @@ func TestSnapshotJSONRoundTrip(t *testing.T) {
 			{Name: "orders_id_seq", LastValue: 5000, IsCalled: true, CacheSize: 10},
 		},
 		Metadata: map[string]interface{}{
-			"source":           "test",
-			"description":      "test roundtrip",
+			"source":                "test",
+			"description":           "test roundtrip",
 			"schema_version_source": "schema_migrations",
 		},
 	}

@@ -34,8 +34,8 @@ func NewInjector() InputInjector {
 	return &darwinInjector{}
 }
 
-func (inj *darwinInjector) Init() error { return nil }
-func (inj *darwinInjector) SendMouseMove(x, y float64) error { return nil }
-func (inj *darwinInjector) SendMouseClick(button int, down bool) error { return nil }
+func (inj *darwinInjector) Init() error                                  { return nil }
+func (inj *darwinInjector) SendMouseMove(x, y float64) error             { return nil }
+func (inj *darwinInjector) SendMouseClick(button int, down bool) error   { return nil }
 func (inj *darwinInjector) SendKey(key string, down bool, mod int) error { return nil }
-func (inj *darwinInjector) Close() error { return nil }
+func (inj *darwinInjector) Close() error                                 { return nil }

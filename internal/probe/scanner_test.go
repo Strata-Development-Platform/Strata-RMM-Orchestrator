@@ -98,13 +98,13 @@ func TestDetectService(t *testing.T) {
 		port     int
 		protocol string
 	}{
-		{21, "tcp"}, // FTP
-		{22, "tcp"}, // SSH
-		{23, "tcp"}, // Telnet
-		{25, "tcp"}, // SMTP
-		{53, "udp"}, // DNS
-		{80, "tcp"}, // HTTP
-		{443, "tcp"}, // HTTPS
+		{21, "tcp"},   // FTP
+		{22, "tcp"},   // SSH
+		{23, "tcp"},   // Telnet
+		{25, "tcp"},   // SMTP
+		{53, "udp"},   // DNS
+		{80, "tcp"},   // HTTP
+		{443, "tcp"},  // HTTPS
 		{3306, "tcp"}, // MySQL
 		{5432, "tcp"}, // PostgreSQL
 		{6379, "tcp"}, // Redis

@@ -20,14 +20,14 @@ type Frame struct {
 }
 
 type CaptureConfig struct {
-	Width      int
-	Height     int
-	FPS        int
-	Quality    int
-	Format     string
-	Compress   bool
-	Region     *image.Rectangle
-	Scale      float64
+	Width    int
+	Height   int
+	FPS      int
+	Quality  int
+	Format   string
+	Compress bool
+	Region   *image.Rectangle
+	Scale    float64
 }
 
 type Capturer interface {
@@ -37,42 +37,42 @@ type Capturer interface {
 }
 
 type capturer struct {
-	width      int
-	height     int
-	fps        int
-	quality    int
-	format     string
-	compress   bool
-	region     *image.Rectangle
-	scale      float64
-	closed     bool
-	mu         sync.Mutex
-	seq        int64
+	width    int
+	height   int
+	fps      int
+	quality  int
+	format   string
+	compress bool
+	region   *image.Rectangle
+	scale    float64
+	closed   bool
+	mu       sync.Mutex
+	seq      int64
 }
 
 func NewCapturer() Capturer {
 	width, height := getPrimaryMonitorSize()
 	return &capturer{
-		width:     width,
-		height:    height,
-		fps:       30,
-		quality:   80,
-		format:    "jpeg",
-		compress:  true,
-		scale:     1.0,
+		width:    width,
+		height:   height,
+		fps:      30,
+		quality:  80,
+		format:   "jpeg",
+		compress: true,
+		scale:    1.0,
 	}
 }
 
 func NewCapturerWithConfig(config CaptureConfig) Capturer {
 	c := &capturer{
-		width:     config.Width,
-		height:    config.Height,
-		fps:       config.FPS,
-		quality:   config.Quality,
-		format:    config.Format,
-		compress:  config.Compress,
-		region:    config.Region,
-		scale:     config.Scale,
+		width:    config.Width,
+		height:   config.Height,
+		fps:      config.FPS,
+		quality:  config.Quality,
+		format:   config.Format,
+		compress: config.Compress,
+		region:   config.Region,
+		scale:    config.Scale,
 	}
 
 	if c.width == 0 || c.height == 0 {
@@ -222,9 +222,9 @@ func convertToYUV420(img image.Image) []byte {
 				c4 = img.At(x+1, y+1).(color.RGBA)
 			}
 
-			y2 := uint8((float64(c2.R)+float64(c2.G)+float64(c2.B))/3)
-			y3 := uint8((float64(c3.R)+float64(c3.G)+float64(c3.B))/3)
-			y4 := uint8((float64(c4.R)+float64(c4.G)+float64(c4.B))/3)
+			y2 := uint8((float64(c2.R) + float64(c2.G) + float64(c2.B)) / 3)
+			y3 := uint8((float64(c3.R) + float64(c3.G) + float64(c3.B)) / 3)
+			y4 := uint8((float64(c4.R) + float64(c4.G) + float64(c4.B)) / 3)
 
 			u := uint8(float64(c1.B-c1.R)/2 + 128)
 			v := uint8(float64(c1.R-c1.G)/4 + float64(c1.B-c1.G)/4 + 128)

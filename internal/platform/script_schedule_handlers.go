@@ -11,43 +11,43 @@ import (
 )
 
 type Schedule struct {
-	ID              string          `json:"id"`
-	TenantID        string          `json:"tenant_id"`
-	Name            string          `json:"name"`
-	Description     string          `json:"description"`
-	ScriptID        string          `json:"script_id"`
-	ScriptName      string          `json:"script_name,omitempty"`
-	ScheduleType    string          `json:"schedule_type"`
-	ScheduleParams  json.RawMessage `json:"schedule_params,omitempty"`
-	TargetDevices   json.RawMessage `json:"target_devices,omitempty"`
-	MaxRetries      int             `json:"max_retries"`
-	RetryInterval   int             `json:"retry_interval"`
-	Status          string          `json:"status"`
-	StartedAt       *time.Time      `json:"started_at,omitempty"`
-	CompletedAt     *time.Time      `json:"completed_at,omitempty"`
-	NextRunAt       *time.Time      `json:"next_run_at,omitempty"`
-	LastRunAt       *time.Time      `json:"last_run_at,omitempty"`
-	CreatedBy       *string         `json:"created_by,omitempty"`
-	CreatedAt       time.Time       `json:"created_at"`
-	UpdatedAt       time.Time       `json:"updated_at"`
+	ID             string          `json:"id"`
+	TenantID       string          `json:"tenant_id"`
+	Name           string          `json:"name"`
+	Description    string          `json:"description"`
+	ScriptID       string          `json:"script_id"`
+	ScriptName     string          `json:"script_name,omitempty"`
+	ScheduleType   string          `json:"schedule_type"`
+	ScheduleParams json.RawMessage `json:"schedule_params,omitempty"`
+	TargetDevices  json.RawMessage `json:"target_devices,omitempty"`
+	MaxRetries     int             `json:"max_retries"`
+	RetryInterval  int             `json:"retry_interval"`
+	Status         string          `json:"status"`
+	StartedAt      *time.Time      `json:"started_at,omitempty"`
+	CompletedAt    *time.Time      `json:"completed_at,omitempty"`
+	NextRunAt      *time.Time      `json:"next_run_at,omitempty"`
+	LastRunAt      *time.Time      `json:"last_run_at,omitempty"`
+	CreatedBy      *string         `json:"created_by,omitempty"`
+	CreatedAt      time.Time       `json:"created_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
 }
 
 type ScriptScheduleDeviceExecution struct {
-	ID              string          `json:"id"`
-	ScheduleID      string          `json:"schedule_id"`
-	DeviceID        string          `json:"device_id"`
-	Status          string          `json:"status"`
-	RetryCount      int             `json:"retry_count"`
-	Stdout          string          `json:"stdout,omitempty"`
-	Stderr          string          `json:"stderr,omitempty"`
-	ExitCode        *int            `json:"exit_code,omitempty"`
-	DurationMs      *int64          `json:"duration_ms,omitempty"`
-	StartedAt       *time.Time      `json:"started_at,omitempty"`
-	CompletedAt     *time.Time      `json:"completed_at,omitempty"`
-	NextRetryAt     *time.Time      `json:"next_retry_at,omitempty"`
-	LastRetryAt     *time.Time      `json:"last_retry_at,omitempty"`
-	CreatedAt       time.Time       `json:"created_at"`
-	UpdatedAt       time.Time       `json:"updated_at"`
+	ID          string     `json:"id"`
+	ScheduleID  string     `json:"schedule_id"`
+	DeviceID    string     `json:"device_id"`
+	Status      string     `json:"status"`
+	RetryCount  int        `json:"retry_count"`
+	Stdout      string     `json:"stdout,omitempty"`
+	Stderr      string     `json:"stderr,omitempty"`
+	ExitCode    *int       `json:"exit_code,omitempty"`
+	DurationMs  *int64     `json:"duration_ms,omitempty"`
+	StartedAt   *time.Time `json:"started_at,omitempty"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
+	NextRetryAt *time.Time `json:"next_retry_at,omitempty"`
+	LastRetryAt *time.Time `json:"last_retry_at,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
 func (s *APIServer) handleCreateScriptSchedule(w http.ResponseWriter, r *http.Request) {
@@ -149,16 +149,16 @@ func (s *APIServer) handleCreateScriptSchedule(w http.ResponseWriter, r *http.Re
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
-		"id":              scheduleID,
-		"name":            req.Name,
-		"script_id":       req.ScriptID,
-		"script_name":     scriptName,
-		"schedule_type":   req.ScheduleType,
-		"device_count":    len(req.DeviceIDs),
-		"max_retries":     req.MaxRetries,
-		"status":          "active",
-		"next_run_at":     nextRunAt,
-		"created_at":      createdAt,
+		"id":            scheduleID,
+		"name":          req.Name,
+		"script_id":     req.ScriptID,
+		"script_name":   scriptName,
+		"schedule_type": req.ScheduleType,
+		"device_count":  len(req.DeviceIDs),
+		"max_retries":   req.MaxRetries,
+		"status":        "active",
+		"next_run_at":   nextRunAt,
+		"created_at":    createdAt,
 	})
 }
 
@@ -206,16 +206,16 @@ func (s *APIServer) handleListScriptSchedules(w http.ResponseWriter, r *http.Req
 		}
 
 		s := map[string]interface{}{
-			"id":            id,
-			"name":          name,
-			"description":   desc,
-			"script_id":     scriptID,
-			"schedule_type": schedType,
-			"max_retries":   maxRetries,
+			"id":             id,
+			"name":           name,
+			"description":    desc,
+			"script_id":      scriptID,
+			"schedule_type":  schedType,
+			"max_retries":    maxRetries,
 			"retry_interval": retryInterval,
-			"status":        status,
-			"created_at":    createdAt,
-			"updated_at":    updatedAt,
+			"status":         status,
+			"created_at":     createdAt,
+			"updated_at":     updatedAt,
 		}
 		if createdBy.Valid {
 			s["created_by"] = createdBy.String
@@ -332,16 +332,16 @@ func (s *APIServer) handleUpdateScriptSchedule(w http.ResponseWriter, r *http.Re
 			return
 		}
 
-	_, err := s.requestDB(r).ExecContext(r.Context(), `
+		_, err := s.requestDB(r).ExecContext(r.Context(), `
 		UPDATE schedules SET status = $1, updated_at = NOW()
 		WHERE id = $2
 	`, req.Status, scheduleID)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
 
-	if req.Status == "active" {
+		if req.Status == "active" {
 			var params []byte
 			var scheduleType string
 			err := s.requestDB(r).QueryRowContext(r.Context(), `
@@ -413,7 +413,7 @@ func (s *APIServer) handleUpdateScriptSchedule(w http.ResponseWriter, r *http.Re
 
 	args = append(args, scheduleID)
 	query := fmt.Sprintf("UPDATE schedules SET %s, updated_at = NOW() WHERE id = $%d RETURNING id, updated_at",
-	joinUpdates(updates), len(args))
+		joinUpdates(updates), len(args))
 
 	var updatedAt time.Time
 	var id string
@@ -497,10 +497,10 @@ func (s *APIServer) handlePreviewScriptSchedule(w http.ResponseWriter, r *http.R
 	var executions []map[string]interface{}
 	for _, deviceID := range deviceIDs {
 		executions = append(executions, map[string]interface{}{
-			"device_id":    deviceID,
-			"status":       "pending",
-			"retry_count":  0,
-			"max_retries":  schedule.MaxRetries,
+			"device_id":      deviceID,
+			"status":         "pending",
+			"retry_count":    0,
+			"max_retries":    schedule.MaxRetries,
 			"retry_interval": schedule.RetryInterval,
 		})
 	}
@@ -571,15 +571,15 @@ func (s *APIServer) handleListScriptScheduleDevices(w http.ResponseWriter, r *ht
 		}
 
 		exec := map[string]interface{}{
-			"id":            id,
-			"schedule_id":   schedID,
-			"device_id":     deviceID,
-			"status":        status,
-			"retry_count":   retryCount,
-			"stdout":        stdout,
-			"stderr":        stderr,
-			"created_at":    createdAt,
-			"updated_at":    updatedAt,
+			"id":          id,
+			"schedule_id": schedID,
+			"device_id":   deviceID,
+			"status":      status,
+			"retry_count": retryCount,
+			"stdout":      stdout,
+			"stderr":      stderr,
+			"created_at":  createdAt,
+			"updated_at":  updatedAt,
 		}
 		if exitCode.Valid {
 			exec["exit_code"] = int(exitCode.Int64)
@@ -737,8 +737,8 @@ func calculateNextRun(scheduleType string, params json.RawMessage) time.Time {
 		return next
 	case "weekly":
 		var cfg struct {
-			Day   string `json:"day"`
-			Time  string `json:"time"`
+			Day  string `json:"day"`
+			Time string `json:"time"`
 		}
 		if params != nil && len(params) > 0 {
 			json.Unmarshal(params, &cfg)
@@ -759,8 +759,8 @@ func calculateNextRun(scheduleType string, params json.RawMessage) time.Time {
 		return next
 	case "monthly":
 		var cfg struct {
-			Date  int    `json:"date"`
-			Time  string `json:"time"`
+			Date int    `json:"date"`
+			Time string `json:"time"`
 		}
 		if params != nil && len(params) > 0 {
 			json.Unmarshal(params, &cfg)
