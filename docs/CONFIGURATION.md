@@ -157,9 +157,9 @@ the actor cannot assign outside the selected scope or escalate above its
 authority. Creation passwords are 12–72 bytes. User, memberships, compatibility
 mirrors, and audit evidence commit together. `memberships` is authoritative;
 `users.role`, `users.tenant_id`, and `user_tenant_access` are compatibility
-mirrors only. Do not issue concurrent membership replacements for the same
-user: target-user serialization is not implemented, and different concurrent
-role sets can leave more than one active role at a scope.
+mirrors only. Membership replacement locks the target user and changes only
+memberships the actor may manage in the selected scope; concurrent requests are
+serialized and unrelated memberships are preserved.
 
 ## Exhaustive Configuration Inventory
 
