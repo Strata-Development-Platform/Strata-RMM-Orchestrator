@@ -185,8 +185,8 @@ serialized and unrelated memberships are preserved.
 | `STORAGE_BUCKET` | — | `--storage-bucket` | string | `strata-recordings` | no | conditional | no | required if backend set | storage backend | flag > env > default | no | — |
 | `STORAGE_REGION` | — | `--storage-region` | string | — | no | conditional | no | — | storage backend | flag > env | no | — |
 | `STORAGE_ENDPOINT` | — | `--storage-endpoint` | string | — | no | conditional | no | — | storage backend | flag > env | no | — |
-| `STORAGE_ACCESS_KEY` | — | — | string | — | no | conditional | yes | — | storage backend | env | no | — |
-| `STORAGE_SECRET_KEY` | — | — | string | — | no | conditional | yes | — | storage backend | env | no | — |
+| `STORAGE_ACCESS_KEY` | `STORAGE_ACCESS_KEY_FILE` | — | string | — | no | conditional | yes | — | storage backend | env/file | no | — |
+| `STORAGE_SECRET_KEY` | `STORAGE_SECRET_KEY_FILE` | — | string | — | no | conditional | yes | — | storage backend | env/file | no | — |
 | `STORAGE_USE_SSL` | — | — | bool | `false` | no | no | no | strict boolean | storage backend | env > default | no | — |
 | `STORAGE_KMS_KEY_ID` | — | — | string | — | no | no | yes | — | encryption | env | no | — |
 | `JWT_SECRET` | — | — | string | — | yes | yes | yes | min 32 chars; prod rejects dev-/test- prefix | JWT auth | env | no (SIGUSR1 planned) | — |

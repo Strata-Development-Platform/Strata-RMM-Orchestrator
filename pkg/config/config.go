@@ -534,8 +534,16 @@ func LoadOrchestratorConfig() (*OrchestratorConfig, error) {
 	cfg.Storage.Bucket = envStr("STORAGE_BUCKET", "strata-recordings")
 	cfg.Storage.Region = os.Getenv("STORAGE_REGION")
 	cfg.Storage.Endpoint = os.Getenv("STORAGE_ENDPOINT")
-	cfg.Storage.AccessKey = os.Getenv("STORAGE_ACCESS_KEY")
-	cfg.Storage.SecretKey = os.Getenv("STORAGE_SECRET_KEY")
+	if value, err := secretEnv("STORAGE_ACCESS_KEY"); err != nil {
+		errs = append(errs, fmt.Sprintf("STORAGE_ACCESS_KEY: %v", err))
+	} else {
+		cfg.Storage.AccessKey = value
+	}
+	if value, err := secretEnv("STORAGE_SECRET_KEY"); err != nil {
+		errs = append(errs, fmt.Sprintf("STORAGE_SECRET_KEY: %v", err))
+	} else {
+		cfg.Storage.SecretKey = value
+	}
 	if v, err := envBoolStrict("STORAGE_USE_SSL"); err != nil {
 		errs = append(errs, fmt.Sprintf("STORAGE_USE_SSL: %v", err))
 	} else {
