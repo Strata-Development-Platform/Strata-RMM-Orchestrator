@@ -35,14 +35,14 @@ type ServiceInfo struct {
 
 // HostInfo represents discovered host information
 type HostInfo struct {
-	IP          string         `json:"ip"`
-	Hostname    string         `json:"hostname"`
-	MAC         string         `json:"mac,omitempty"`
-	OS          string         `json:"os,omitempty"`
-	OpenPorts   []PortScanResult `json:"open_ports,omitempty"`
-	Services    []ServiceInfo    `json:"services,omitempty"`
-	Uptime      int64            `json:"uptime,omitempty"`
-	Labels      map[string]string `json:"labels,omitempty"`
+	IP        string            `json:"ip"`
+	Hostname  string            `json:"hostname"`
+	MAC       string            `json:"mac,omitempty"`
+	OS        string            `json:"os,omitempty"`
+	OpenPorts []PortScanResult  `json:"open_ports,omitempty"`
+	Services  []ServiceInfo     `json:"services,omitempty"`
+	Uptime    int64             `json:"uptime,omitempty"`
+	Labels    map[string]string `json:"labels,omitempty"`
 }
 
 // TopologyInfo represents network topology information
@@ -312,7 +312,7 @@ func (s *Scanner) tryDNSVersion(ctx context.Context, conn net.Conn) string {
 		0x00, 0x00, // No additional
 		0x07, 'v', 'e', 'r', 's', 'i', 'o', 'n', // Query name
 		0x04, 'b', 'i', 'n', 'd',
-		0x00, // End of name
+		0x00,       // End of name
 		0x00, 0x10, // TXT record
 		0x00, 0x00, 0x01, 0x00, // IN class
 	}
@@ -522,15 +522,15 @@ func hexToIP(hex string) (string, error) {
 	}
 
 	ip := make([]byte, 4)
-	ip[0] = byte(val >> 24)
-	ip[1] = byte(val >> 16)
-	ip[2] = byte(val >> 8)
-	ip[3] = byte(val)
+	ip[0] = uint8((val >> 24) & 0xFF)
+	ip[1] = uint8((val >> 16) & 0xFF)
+	ip[2] = uint8((val >> 8) & 0xFF)
+	ip[3] = uint8(val & 0xFF)
 	return net.IP(ip).String(), nil
 }
 
-func hexToInt(hex string) (int, error) {
-	var val int
+func hexToInt(hex string) (uint32, error) {
+	var val uint32
 	_, err := fmt.Sscanf(hex, "%x", &val)
 	return val, err
 }
@@ -540,7 +540,7 @@ func getInterfaceIndex(name string) int {
 	if name == "" {
 		return 0
 	}
-	
+
 	var idx int
 	n, err := fmt.Sscanf(name, "%d", &idx)
 	if err != nil || n != 1 {
@@ -591,11 +591,16 @@ func (s *Scanner) parseARPLinux(ctx context.Context) ([]DiscoveryResult, error) 
 		hostname, _ := net.LookupAddr(ip)
 
 		results = append(results, DiscoveryResult{
-			IP:       ip,
-			MAC:      normalizeMAC(mac),
-			Hostname: func() string { if len(hostname) > 0 { return strings.TrimSuffix(hostname[0], ".") }; return "" }(),
-			Type:     "arp",
-			Via:      "arp",
+			IP:  ip,
+			MAC: normalizeMAC(mac),
+			Hostname: func() string {
+				if len(hostname) > 0 {
+					return strings.TrimSuffix(hostname[0], ".")
+				}
+				return ""
+			}(),
+			Type: "arp",
+			Via:  "arp",
 			Labels: map[string]string{
 				"discovery_method": "arp_table",
 			},
@@ -635,10 +640,10 @@ func (s *Scanner) parseARPWindows(ctx context.Context) ([]DiscoveryResult, error
 			mac := parts[1]
 
 			results = append(results, DiscoveryResult{
-				IP:       ip,
-				MAC:      normalizeWindowsMAC(mac),
-				Type:     "arp",
-				Via:      "arp",
+				IP:   ip,
+				MAC:  normalizeWindowsMAC(mac),
+				Type: "arp",
+				Via:  "arp",
 				Labels: map[string]string{
 					"discovery_method": "arp_table",
 				},
@@ -719,10 +724,10 @@ func (s *Scanner) pingScanSubnet(ctx context.Context, subnet string, timeout tim
 			defer func() { <-sem }()
 
 			ipBytes := make([]byte, 4)
-			ipBytes[0] = byte(a >> 24)
-			ipBytes[1] = byte(a >> 16)
-			ipBytes[2] = byte(a >> 8)
-			ipBytes[3] = byte(a)
+			ipBytes[0] = uint8((a >> 24) & 0xFF)
+			ipBytes[1] = uint8((a >> 16) & 0xFF)
+			ipBytes[2] = uint8((a >> 8) & 0xFF)
+			ipBytes[3] = uint8(a & 0xFF)
 			hostIP := net.IP(ipBytes).String()
 
 			if s.pingHost(ctx, hostIP, timeout) {
@@ -788,7 +793,12 @@ func (s *Scanner) getHostInfo(ctx context.Context, host string, timeout time.Dur
 	// Get hostname
 	hostname, err := net.LookupAddr(host)
 	if err == nil && len(hostname) > 0 {
-		info.Hostname = func() string { if len(hostname) > 0 { return strings.TrimSuffix(hostname[0], ".") }; return "" }()
+		info.Hostname = func() string {
+			if len(hostname) > 0 {
+				return strings.TrimSuffix(hostname[0], ".")
+			}
+			return ""
+		}()
 	}
 
 	// Try to discover MAC via ARP

@@ -16,13 +16,13 @@ import (
 )
 
 type CVESyncEngine struct {
-	db         *sql.DB
-	logger     *zap.Logger
-	httpClient *http.Client
-	nvdAPIKey  string
-	interval   time.Duration
-	mu         sync.Mutex
-	running    bool
+	db          *sql.DB
+	logger      *zap.Logger
+	httpClient  *http.Client
+	nvdAPIKey   string
+	interval    time.Duration
+	mu          sync.Mutex
+	running     bool
 	remediateFn func(deviceID, cveID, severity string)
 }
 
@@ -44,15 +44,15 @@ type OSVResponse struct {
 }
 
 type OSVVuln struct {
-	ID         string          `json:"id"`
-	Summary    string          `json:"summary"`
-	Details    string          `json:"details"`
-	Aliases    []string        `json:"aliases"`
-	Published  string          `json:"published"`
-	Modified   string          `json:"modified"`
-	Severity   []OSVSeverity   `json:"severity"`
-	Affected   []OSVAffected   `json:"affected"`
-	References []OSVReference  `json:"references"`
+	ID         string         `json:"id"`
+	Summary    string         `json:"summary"`
+	Details    string         `json:"details"`
+	Aliases    []string       `json:"aliases"`
+	Published  string         `json:"published"`
+	Modified   string         `json:"modified"`
+	Severity   []OSVSeverity  `json:"severity"`
+	Affected   []OSVAffected  `json:"affected"`
+	References []OSVReference `json:"references"`
 }
 
 type OSVSeverity struct {
@@ -61,14 +61,14 @@ type OSVSeverity struct {
 }
 
 type OSVAffected struct {
-	Package OSVPackage     `json:"package"`
-	Ranges  []OSVRange     `json:"ranges"`
-	Versions []string      `json:"versions"`
+	Package  OSVPackage `json:"package"`
+	Ranges   []OSVRange `json:"ranges"`
+	Versions []string   `json:"versions"`
 }
 
 type OSVRange struct {
-	Type   string        `json:"type"`
-	Events []OSVEvent    `json:"events"`
+	Type   string     `json:"type"`
+	Events []OSVEvent `json:"events"`
 }
 
 type OSVEvent struct {
@@ -82,9 +82,9 @@ type OSVReference struct {
 }
 
 type NVDBucket struct {
-	StartIndex int           `json:"startIndex"`
-	Total      int           `json:"total"`
-	Vulns      []NVDVuln     `json:"vulnerabilities"`
+	StartIndex int       `json:"startIndex"`
+	Total      int       `json:"total"`
+	Vulns      []NVDVuln `json:"vulnerabilities"`
 }
 
 type NVDVuln struct {
@@ -99,9 +99,9 @@ type NVDMetrics struct {
 }
 
 type NVDCVSS struct {
-	Score     float64 `json:"baseScore"`
-	Severity  string  `json:"baseSeverity"`
-	Vector    string  `json:"vectorString"`
+	Score    float64 `json:"baseScore"`
+	Severity string  `json:"baseSeverity"`
+	Vector   string  `json:"vectorString"`
 }
 
 type NVDDesc struct {
@@ -147,9 +147,9 @@ func NewCVESyncEngine(db *sql.DB, logger *zap.Logger) *CVESyncEngine {
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 			Transport: &http.Transport{
-				MaxIdleConns:        10,
-				IdleConnTimeout:     30 * time.Second,
-				DisableCompression:  false,
+				MaxIdleConns:       10,
+				IdleConnTimeout:    30 * time.Second,
+				DisableCompression: false,
 			},
 		},
 		interval: 6 * time.Hour,

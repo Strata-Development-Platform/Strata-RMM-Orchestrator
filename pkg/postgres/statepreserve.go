@@ -20,10 +20,10 @@ import (
 const statePreserveLockID = 0x5354415445505245 // "STATEPRE" as int64
 
 type TableStat struct {
-	Name       string    `json:"name"`
-	RowCount   int64     `json:"row_count"`
-	SizeBytes  int64     `json:"size_bytes"`
-	LastVacuum time.Time `json:"last_vacuum"`
+	Name        string    `json:"name"`
+	RowCount    int64     `json:"row_count"`
+	SizeBytes   int64     `json:"size_bytes"`
+	LastVacuum  time.Time `json:"last_vacuum"`
 	LastAnalyze time.Time `json:"last_analyze"`
 }
 
@@ -50,26 +50,26 @@ type SequenceStat struct {
 }
 
 type StateSnapshot struct {
-	Timestamp     time.Time           `json:"timestamp"`
-	SchemaVersion int32               `json:"schema_version"`
-	TableCount    int                 `json:"table_count"`
-	TableStats    map[string]TableStat `json:"table_stats"`
-	Indexes       []IndexStat         `json:"indexes"`
-	ForeignKeys   []ForeignKeyStat    `json:"foreign_keys"`
-	SequenceStates []SequenceStat     `json:"sequence_states"`
-	Metadata      map[string]interface{} `json:"metadata,omitempty"`
+	Timestamp      time.Time              `json:"timestamp"`
+	SchemaVersion  int32                  `json:"schema_version"`
+	TableCount     int                    `json:"table_count"`
+	TableStats     map[string]TableStat   `json:"table_stats"`
+	Indexes        []IndexStat            `json:"indexes"`
+	ForeignKeys    []ForeignKeyStat       `json:"foreign_keys"`
+	SequenceStates []SequenceStat         `json:"sequence_states"`
+	Metadata       map[string]interface{} `json:"metadata,omitempty"`
 }
 
 type StateDiff struct {
-	AddedTables         []string `json:"added_tables"`
-	RemovedTables       []string `json:"removed_tables"`
-	ModifiedTables      []string `json:"modified_tables"`
-	AddedIndexes        []string `json:"added_indexes"`
-	RemovedIndexes      []string `json:"removed_indexes"`
-	AddedForeignKeys    []string `json:"added_foreign_keys"`
-	RemovedForeignKeys  []string `json:"removed_foreign_keys"`
-	SchemaVersionDiff   int32    `json:"schema_version_diff"`
-	TableCountDiff      int      `json:"table_count_diff"`
+	AddedTables        []string `json:"added_tables"`
+	RemovedTables      []string `json:"removed_tables"`
+	ModifiedTables     []string `json:"modified_tables"`
+	AddedIndexes       []string `json:"added_indexes"`
+	RemovedIndexes     []string `json:"removed_indexes"`
+	AddedForeignKeys   []string `json:"added_foreign_keys"`
+	RemovedForeignKeys []string `json:"removed_foreign_keys"`
+	SchemaVersionDiff  int32    `json:"schema_version_diff"`
+	TableCountDiff     int      `json:"table_count_diff"`
 }
 
 type StatePreserver struct {
@@ -97,9 +97,9 @@ func (sp *StatePreserver) CreateSnapshot(ctx context.Context) (*StateSnapshot, e
 	sp.logger.Infow("creating state snapshot", "timestamp", time.Now().UTC())
 
 	snapshot := &StateSnapshot{
-		Timestamp:    time.Now().UTC(),
-		TableStats:   make(map[string]TableStat),
-		Metadata:     make(map[string]interface{}),
+		Timestamp:  time.Now().UTC(),
+		TableStats: make(map[string]TableStat),
+		Metadata:   make(map[string]interface{}),
 	}
 
 	version, err := sp.getSchemaVersion(ctx)
@@ -503,8 +503,6 @@ func (sp *StatePreserver) ValidateSnapshot(ctx context.Context) error {
 		}
 	}
 
-
-
 	for _, idx := range snapshot.Indexes {
 		if idx.Name == "" {
 			return fmt.Errorf("found index stat with empty name")
@@ -644,10 +642,10 @@ func (sp *StatePreserver) getTableStats(ctx context.Context) (map[string]TableSt
 		}
 
 		stats[name] = TableStat{
-			Name:       name,
-			RowCount:   rowCount,
-			SizeBytes:  sizeBytes,
-			LastVacuum: lastVacuum.Time,
+			Name:        name,
+			RowCount:    rowCount,
+			SizeBytes:   sizeBytes,
+			LastVacuum:  lastVacuum.Time,
 			LastAnalyze: lastAnalyze.Time,
 		}
 	}

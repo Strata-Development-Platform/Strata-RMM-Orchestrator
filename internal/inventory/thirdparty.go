@@ -14,15 +14,15 @@ import (
 )
 
 type ThirdPartyApp struct {
-	Name        string `json:"name"`
-	Vendor      string `json:"vendor"`
-	Platform    string `json:"platform"`
-	PackageType string `json:"package_type"`
-	DetectCmd   string `json:"detect_command"`
-	URLTemplate string `json:"url_template"`
-	VersionURL  string `json:"version_url"`
-	VersionRegex string `json:"version_regex"`
-	InstallArgs string `json:"install_args"`
+	Name           string `json:"name"`
+	Vendor         string `json:"vendor"`
+	Platform       string `json:"platform"`
+	PackageType    string `json:"package_type"`
+	DetectCmd      string `json:"detect_command"`
+	URLTemplate    string `json:"url_template"`
+	VersionURL     string `json:"version_url"`
+	VersionRegex   string `json:"version_regex"`
+	InstallArgs    string `json:"install_args"`
 	CurrentVersion string `json:"current_version,omitempty"`
 }
 
@@ -30,88 +30,88 @@ var ThirdPartyApps = []ThirdPartyApp{
 	{
 		Name: "Google Chrome", Vendor: "Google", Platform: "windows",
 		PackageType: "msi", InstallArgs: "/quiet /norestart",
-		URLTemplate: "https://dl.google.com/dl/chrome/install/googlechromestandaloneenterprise64.msi",
-		VersionURL:  "https://versionhistory.googleapis.com/v1/chrome/current",
+		URLTemplate:  "https://dl.google.com/dl/chrome/install/googlechromestandaloneenterprise64.msi",
+		VersionURL:   "https://versionhistory.googleapis.com/v1/chrome/current",
 		VersionRegex: `"version":\s*"(\d+\.\d+\.\d+\.\d+)"`,
-		DetectCmd:   "Get-ItemProperty 'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Google Chrome' | Select -ExpandProperty DisplayVersion",
+		DetectCmd:    "Get-ItemProperty 'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Google Chrome' | Select -ExpandProperty DisplayVersion",
 	},
 	{
 		Name: "Mozilla Firefox", Vendor: "Mozilla", Platform: "windows",
 		PackageType: "exe", InstallArgs: "-ms -ma",
-		URLTemplate: "https://download.mozilla.org/?product=firefox-msi-latest-ssl&os=win64&lang=en-US",
-		VersionURL:  "https://product-details.mozilla.org/1.0/firefox_versions.json",
+		URLTemplate:  "https://download.mozilla.org/?product=firefox-msi-latest-ssl&os=win64&lang=en-US",
+		VersionURL:   "https://product-details.mozilla.org/1.0/firefox_versions.json",
 		VersionRegex: `"LATEST_FIREFOX_VERSION":\s*"(\d+\.\d+(\.\d+)?)"`,
-		DetectCmd:   "Get-ItemProperty 'HKLM:\\Software\\Mozilla\\Mozilla Firefox' | Select -ExpandProperty CurrentVersion",
+		DetectCmd:    "Get-ItemProperty 'HKLM:\\Software\\Mozilla\\Mozilla Firefox' | Select -ExpandProperty CurrentVersion",
 	},
 	{
 		Name: "Adobe Acrobat Reader", Vendor: "Adobe", Platform: "windows",
 		PackageType: "msi", InstallArgs: "/quiet /norestart",
-		URLTemplate: "https://ardownload2.adobe.com/pub/adobe/reader/win/AcrobatDC/2300820544/AcroRdrDC2300820544_en_US.msi",
-		VersionURL:  "https://www.adobe.com/devnet-docs/acrobatetk/tools/ReleaseNotesDC/index.html",
+		URLTemplate:  "https://ardownload2.adobe.com/pub/adobe/reader/win/AcrobatDC/2300820544/AcroRdrDC2300820544_en_US.msi",
+		VersionURL:   "https://www.adobe.com/devnet-docs/acrobatetk/tools/ReleaseNotesDC/index.html",
 		VersionRegex: `DC.*?(\d{2}\.\d{3}\.\d{4}\.\d+)`,
-		DetectCmd:   "Get-ItemProperty 'HKLM:\\Software\\Adobe\\Acrobat Reader\\DC\\Installation' | Select -ExpandProperty Version",
+		DetectCmd:    "Get-ItemProperty 'HKLM:\\Software\\Adobe\\Acrobat Reader\\DC\\Installation' | Select -ExpandProperty Version",
 	},
 	{
 		Name: "7-Zip", Vendor: "Igor Pavlov", Platform: "windows",
 		PackageType: "exe", InstallArgs: "/S",
-		URLTemplate: "https://7-zip.org/a/7z2408-x64.exe",
-		VersionURL:  "https://7-zip.org/download.html",
+		URLTemplate:  "https://7-zip.org/a/7z2408-x64.exe",
+		VersionURL:   "https://7-zip.org/download.html",
 		VersionRegex: `Download 7-Zip (\d+\.\d+)`,
-		DetectCmd:   "Get-ItemProperty 'HKLM:\\Software\\7-Zip' | Select -ExpandProperty Version",
+		DetectCmd:    "Get-ItemProperty 'HKLM:\\Software\\7-Zip' | Select -ExpandProperty Version",
 	},
 	{
 		Name: "VLC Media Player", Vendor: "VideoLAN", Platform: "windows",
 		PackageType: "exe", InstallArgs: "/S",
-		URLTemplate: "https://get.videolan.org/vlc/3.0.20/win64/vlc-3.0.20-win64.exe",
-		VersionURL:  "https://download.videolan.org/pub/videolan/vlc/last/win64/",
+		URLTemplate:  "https://get.videolan.org/vlc/3.0.20/win64/vlc-3.0.20-win64.exe",
+		VersionURL:   "https://download.videolan.org/pub/videolan/vlc/last/win64/",
 		VersionRegex: `vlc-(\d+\.\d+\.\d+)-win64\.exe`,
-		DetectCmd:   "Get-ItemProperty 'HKLM:\\Software\\VideoLAN\\VLC' | Select -ExpandProperty Version",
+		DetectCmd:    "Get-ItemProperty 'HKLM:\\Software\\VideoLAN\\VLC' | Select -ExpandProperty Version",
 	},
 	{
 		Name: "Microsoft Teams", Vendor: "Microsoft", Platform: "windows",
 		PackageType: "exe", InstallArgs: "/quiet",
-		URLTemplate: "https://teams.microsoft.com/downloads/desktopurl?env=production&plat=windows&arch=x64&download=true",
-		VersionURL:  "https://config.teams.microsoft.com/config/v1/MicrosoftTeams/1415_1.0?environment=prod",
+		URLTemplate:  "https://teams.microsoft.com/downloads/desktopurl?env=production&plat=windows&arch=x64&download=true",
+		VersionURL:   "https://config.teams.microsoft.com/config/v1/MicrosoftTeams/1415_1.0?environment=prod",
 		VersionRegex: `versionString.*?(\d+\.\d+\.\d+\.\d+)`,
-		DetectCmd:   "Get-ItemProperty 'HKLM:\\Software\\Microsoft\\Teams' | Select -ExpandProperty Version",
+		DetectCmd:    "Get-ItemProperty 'HKLM:\\Software\\Microsoft\\Teams' | Select -ExpandProperty Version",
 	},
 	{
 		Name: "Zoom", Vendor: "Zoom Video", Platform: "windows",
 		PackageType: "msi", InstallArgs: "/quiet /norestart",
-		URLTemplate: "https://zoom.us/client/latest/ZoomInstallerFull.msi",
-		VersionURL:  "https://zoom.us/rest/download?os=win64",
+		URLTemplate:  "https://zoom.us/client/latest/ZoomInstallerFull.msi",
+		VersionURL:   "https://zoom.us/rest/download?os=win64",
 		VersionRegex: `"version":\s*"(\d+\.\d+\.\d+)`,
-		DetectCmd:   "Get-ItemProperty 'HKLM:\\Software\\Zoom\\Zoom' | Select -ExpandProperty Version",
+		DetectCmd:    "Get-ItemProperty 'HKLM:\\Software\\Zoom\\Zoom' | Select -ExpandProperty Version",
 	},
 	{
 		Name: "Notepad++", Vendor: "Notepad++", Platform: "windows",
 		PackageType: "exe", InstallArgs: "/S",
-		URLTemplate: "https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download/v8.7.1/npp.8.7.1.Installer.x64.exe",
-		VersionURL:  "https://api.github.com/repos/notepad-plus-plus/notepad-plus-plus/releases/latest",
+		URLTemplate:  "https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download/v8.7.1/npp.8.7.1.Installer.x64.exe",
+		VersionURL:   "https://api.github.com/repos/notepad-plus-plus/notepad-plus-plus/releases/latest",
 		VersionRegex: `"tag_name":\s*"v(\d+\.\d+(\.\d+)?)"`,
-		DetectCmd:   "Get-ItemProperty 'HKLM:\\Software\\Notepad++' | Select -ExpandProperty Version",
+		DetectCmd:    "Get-ItemProperty 'HKLM:\\Software\\Notepad++' | Select -ExpandProperty Version",
 	},
 	{
 		Name: "LibreOffice", Vendor: "The Document Foundation", Platform: "windows",
 		PackageType: "msi", InstallArgs: "/quiet /norestart",
-		URLTemplate: "https://download.documentfoundation.org/libreoffice/stable/24.8.0/win/x86_64/LibreOffice_24.8.0_Win_x86-64.msi",
-		VersionURL:  "https://www.libreoffice.org/download/download/",
+		URLTemplate:  "https://download.documentfoundation.org/libreoffice/stable/24.8.0/win/x86_64/LibreOffice_24.8.0_Win_x86-64.msi",
+		VersionURL:   "https://www.libreoffice.org/download/download/",
 		VersionRegex: `LibreOffice (\d+\.\d+\.\d+)`,
-		DetectCmd:   "Get-ItemProperty 'HKLM:\\Software\\LibreOffice' | Select -ExpandProperty Version",
+		DetectCmd:    "Get-ItemProperty 'HKLM:\\Software\\LibreOffice' | Select -ExpandProperty Version",
 	},
 }
 
 type ThirdPartyEngine struct {
-	db        *sql.DB
-	logger    *zap.Logger
+	db         *sql.DB
+	logger     *zap.Logger
 	httpClient *http.Client
-	tenantID  string
+	tenantID   string
 }
 
 func NewThirdPartyEngine(db *sql.DB, logger *zap.Logger) *ThirdPartyEngine {
 	return &ThirdPartyEngine{
-		db:     db,
-		logger: logger,
+		db:         db,
+		logger:     logger,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}
 }
@@ -299,4 +299,3 @@ func (e *ThirdPartyEngine) SyncApp(ctx context.Context, appName string) (string,
 	}
 	return "", fmt.Errorf("app not found: %s", appName)
 }
-

@@ -24,17 +24,17 @@ const maxActiveConnectionsWarn = 100
 
 // Valid statuses for PreflightCheck.
 const (
-	StatusPass     = "pass"
-	StatusFail     = "fail"
-	StatusWarn     = "warn"
+	StatusPass          = "pass"
+	StatusFail          = "fail"
+	StatusWarn          = "warn"
 	StatusNotApplicable = "not_applicable"
 )
 
 // ValidStatuses returns all allowed status strings.
 var ValidStatuses = map[string]bool{
-	StatusPass:      true,
-	StatusFail:      true,
-	StatusWarn:      true,
+	StatusPass:          true,
+	StatusFail:          true,
+	StatusWarn:          true,
 	StatusNotApplicable: true,
 }
 
@@ -68,22 +68,22 @@ type PreflightChecker struct {
 
 // OrchestratorConfig is a subset of the full config needed for preflight checks.
 type OrchestratorConfig struct {
-	NATSURL   string
-	NATSToken string
+	NATSURL        string
+	NATSToken      string
 	NATSTLSEnabled bool
 
-	DBDSN          string
-	DBMaxOpenConns int
-	DBMaxIdleConns int
+	DBDSN             string
+	DBMaxOpenConns    int
+	DBMaxIdleConns    int
 	DBConnMaxLifetime time.Duration
 
-	StorageBackend  string
-	StorageBucket   string
-	StorageEndpoint string
+	StorageBackend   string
+	StorageBucket    string
+	StorageEndpoint  string
 	StorageAccessKey string
 	StorageSecretKey string
-	StorageUseSSL   bool
-	StorageKMSKeyID string
+	StorageUseSSL    bool
+	StorageKMSKeyID  string
 
 	JWTSecret string
 
@@ -94,9 +94,9 @@ type OrchestratorConfig struct {
 
 	RuntimeMode string
 
-	SeedingSeedDev    bool
+	SeedingSeedDev       bool
 	SeedingDevAdminEmail string
-	SeedingDevAdminPwd string
+	SeedingDevAdminPwd   string
 }
 
 // NewPreflightChecker creates a checker. Pass nil cfg when NATS/storage checks
@@ -926,11 +926,11 @@ func parsePostgresVersion(s string) (PostgresVersion, error) {
 // ---------------------------------------------------------------------------
 
 var (
-	dsnPasswordRe   = regexp.MustCompile(`(postgresql?|postgres)://([^:]+):([^@]+)@`)
+	dsnPasswordRe     = regexp.MustCompile(`(postgresql?|postgres)://([^:]+):([^@]+)@`)
 	natsURLPasswordRe = regexp.MustCompile(`(nats|tls)://([^:]+):([^@]+)@`)
-	tokenRe         = regexp.MustCompile(`(Bearer|Token)\s+[A-Za-z0-9\-._~+/]+=*`)
-	apiKeyRe        = regexp.MustCompile(`((?:api[_-]?key|apikey|access[_-]?key|secret[_-]?key|auth[_-]?token)["']?\s*[:=]\s*["']?)[A-Za-z0-9\-._~+/=]{8,}`)
-	passwordQueryRe = regexp.MustCompile(`([&?]password=)[^&]*`)
+	tokenRe           = regexp.MustCompile(`(Bearer|Token)\s+[A-Za-z0-9\-._~+/]+=*`)
+	apiKeyRe          = regexp.MustCompile(`((?:api[_-]?key|apikey|access[_-]?key|secret[_-]?key|auth[_-]?token)["']?\s*[:=]\s*["']?)[A-Za-z0-9\-._~+/=]{8,}`)
+	passwordQueryRe   = regexp.MustCompile(`([&?]password=)[^&]*`)
 )
 
 // RedactCredentials replaces sensitive values in a string with redacted markers.

@@ -21,8 +21,8 @@ func newBootstrapAdminCommand(ctx context.Context, logger *zap.Logger) *cobra.Co
 	cmd := &cobra.Command{
 		Use:   "bootstrap-admin",
 		Short: "Create the first local platform administrator",
-		Long: "Creates the initial administrator exactly once. The password is read from a protected local file and is never accepted as a command-line argument.",
-		Args: cobra.NoArgs,
+		Long:  "Creates the initial administrator exactly once. The password is read from a protected local file and is never accepted as a command-line argument.",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			password, err := readBootstrapPassword(passwordFile)
 			if err != nil {

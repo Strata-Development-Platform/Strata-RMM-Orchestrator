@@ -51,8 +51,8 @@ func NewInjector() InputInjector {
 	return &softwareInjector{}
 }
 
-func (inj *softwareInjector) Init() error { return nil }
-func (inj *softwareInjector) SendMouseMove(x, y float64) error { return nil }
-func (inj *softwareInjector) SendMouseClick(button int, down bool) error { return nil }
+func (inj *softwareInjector) Init() error                                  { return nil }
+func (inj *softwareInjector) SendMouseMove(x, y float64) error             { return nil }
+func (inj *softwareInjector) SendMouseClick(button int, down bool) error   { return nil }
 func (inj *softwareInjector) SendKey(key string, down bool, mod int) error { return nil }
-func (inj *softwareInjector) Close() error { return nil }
+func (inj *softwareInjector) Close() error                                 { return nil }

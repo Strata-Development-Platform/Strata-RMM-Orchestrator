@@ -321,7 +321,7 @@ func TestAdversarial_PassesWhenAllChecksPass(t *testing.T) {
 	}
 
 	result := &PreflightResult{
-		Checks:   checks,
+		Checks:    checks,
 		Timestamp: time.Now(),
 	}
 	result.Pass = true
@@ -473,9 +473,9 @@ func TestCheckStorageWritable_LocalNoConfig(t *testing.T) {
 
 func TestCheckStorageWritable_RemoteNoAccessKey(t *testing.T) {
 	cfg := &OrchestratorConfig{
-		StorageBackend:  "s3",
+		StorageBackend:   "s3",
 		StorageAccessKey: "",
-		StorageBucket:   "my-bucket",
+		StorageBucket:    "my-bucket",
 	}
 	pc := NewPreflightChecker(nil, cfg, nil)
 	check := pc.CheckStorageWritable()

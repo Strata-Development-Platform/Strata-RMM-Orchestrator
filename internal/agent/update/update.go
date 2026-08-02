@@ -16,12 +16,12 @@ import (
 )
 
 type Client struct {
-	manifestURL string
-	httpClient  *http.Client
-	store       *Store
-	currentExe  string
-	dataDir     string
-	channel     Channel
+	manifestURL   string
+	httpClient    *http.Client
+	store         *Store
+	currentExe    string
+	dataDir       string
+	channel       Channel
 	checkInterval time.Duration
 }
 

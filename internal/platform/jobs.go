@@ -144,17 +144,17 @@ func (s *APIServer) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 
 		// Write outbox entry for each target
 		outboxPayload, err := json.Marshal(map[string]interface{}{
-			"job_id":    id,
-			"target_id": targetID,
-			"device_id": deviceID,
-			"agent_id":  agentID,
-			"msp_id":    mspID,
+			"job_id":         id,
+			"target_id":      targetID,
+			"device_id":      deviceID,
+			"agent_id":       agentID,
+			"msp_id":         mspID,
 			"correlation_id": correlationID,
-			"attempt":   1,
-			"issued_at": time.Now().UTC().Format(time.RFC3339),
-			"expires_at": expiresAt.UTC().Format(time.RFC3339),
-			"type":      req.Type,
-			"payload":   req.Payload,
+			"attempt":        1,
+			"issued_at":      time.Now().UTC().Format(time.RFC3339),
+			"expires_at":     expiresAt.UTC().Format(time.RFC3339),
+			"type":           req.Type,
+			"payload":        req.Payload,
 		})
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "encoding job target"})
@@ -217,7 +217,7 @@ func (s *APIServer) handleGetJob(w http.ResponseWriter, r *http.Request) {
 		targets = append(targets, map[string]interface{}{
 			"device_id": deviceID, "status": targetStatus,
 			"error_message": errMsg, "attempt": attempt, "exit_code": exitCode,
-			"started_at": nullTimeStr(startedAt),
+			"started_at":   nullTimeStr(startedAt),
 			"completed_at": nullTimeStr(completedAt),
 		})
 	}
@@ -286,7 +286,7 @@ func (s *APIServer) handleListJobs(w http.ResponseWriter, r *http.Request) {
 			"id": id, "type": jobType, "status": status, "priority": priority,
 			"max_devices": maxDev, "completed_count": compCount, "failed_count": failCount,
 			"correlation_id": correlationID,
-			"created_at": createdAt.UTC().Format(time.RFC3339),
+			"created_at":     createdAt.UTC().Format(time.RFC3339),
 		})
 	}
 	if jobs == nil {
@@ -522,15 +522,15 @@ func (so *ScheduleOrchestrator) ExecuteSchedule(scheduleID string) error {
 	db := so.db
 
 	var schedule struct {
-		ID              string          `json:"id"`
-		TenantID        string          `json:"tenant_id"`
-		ScriptID        string          `json:"script_id"`
-		ScheduleType    string          `json:"schedule_type"`
-		ScheduleParams  json.RawMessage `json:"schedule_params"`
-		TargetDevices   json.RawMessage `json:"target_devices"`
-		MaxRetries      int             `json:"max_retries"`
-		RetryInterval   int             `json:"retry_interval"`
-		NextRunAt       time.Time       `json:"next_run_at"`
+		ID             string          `json:"id"`
+		TenantID       string          `json:"tenant_id"`
+		ScriptID       string          `json:"script_id"`
+		ScheduleType   string          `json:"schedule_type"`
+		ScheduleParams json.RawMessage `json:"schedule_params"`
+		TargetDevices  json.RawMessage `json:"target_devices"`
+		MaxRetries     int             `json:"max_retries"`
+		RetryInterval  int             `json:"retry_interval"`
+		NextRunAt      time.Time       `json:"next_run_at"`
 	}
 
 	var params, devices []byte

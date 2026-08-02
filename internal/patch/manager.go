@@ -24,7 +24,7 @@ const (
 type PatchSeverity string
 
 const (
-	SeverityCritical PatchSeverity = "critical"
+	SeverityCritical  PatchSeverity = "critical"
 	SeverityImportant PatchSeverity = "important"
 	SeverityModerate  PatchSeverity = "moderate"
 	SeverityLow       PatchSeverity = "low"
@@ -42,63 +42,63 @@ const (
 )
 
 type Patch struct {
-	ID         string       `json:"id"`
-	TenantID   string       `json:"tenant_id"`
-	KB         string       `json:"kb"`
-	Title      string       `json:"title"`
-	Platform   Platform     `json:"platform"`
-	Severity   PatchSeverity `json:"severity"`
-	Description string      `json:"description"`
-	CVE        []string     `json:"cve"`
-	Published  time.Time    `json:"published"`
-	CreatedAt  time.Time    `json:"created_at"`
+	ID          string        `json:"id"`
+	TenantID    string        `json:"tenant_id"`
+	KB          string        `json:"kb"`
+	Title       string        `json:"title"`
+	Platform    Platform      `json:"platform"`
+	Severity    PatchSeverity `json:"severity"`
+	Description string        `json:"description"`
+	CVE         []string      `json:"cve"`
+	Published   time.Time     `json:"published"`
+	CreatedAt   time.Time     `json:"created_at"`
 }
 
 type PatchPolicy struct {
-	ID              string          `json:"id"`
-	TenantID        string          `json:"tenant_id"`
-	Name            string          `json:"name"`
-	Enabled         bool            `json:"enabled"`
-	Platforms       []Platform      `json:"platforms"`
-	ApprovalMode    string          `json:"approval_mode"` // auto, manual
-	Severity        PatchSeverity   `json:"severity"`
-	MaintenanceWin  string          `json:"maintenance_window"`
-	DeviceFilter    map[string]string `json:"device_filter"`
-	MaxRetries      int             `json:"max_retries"`
-	CreatedAt       time.Time       `json:"created_at"`
-	UpdatedAt       time.Time       `json:"updated_at"`
+	ID             string            `json:"id"`
+	TenantID       string            `json:"tenant_id"`
+	Name           string            `json:"name"`
+	Enabled        bool              `json:"enabled"`
+	Platforms      []Platform        `json:"platforms"`
+	ApprovalMode   string            `json:"approval_mode"` // auto, manual
+	Severity       PatchSeverity     `json:"severity"`
+	MaintenanceWin string            `json:"maintenance_window"`
+	DeviceFilter   map[string]string `json:"device_filter"`
+	MaxRetries     int               `json:"max_retries"`
+	CreatedAt      time.Time         `json:"created_at"`
+	UpdatedAt      time.Time         `json:"updated_at"`
 }
 
 type Deployment struct {
-	ID            string       `json:"id"`
-	PolicyID      string       `json:"policy_id"`
-	TenantID      string       `json:"tenant_id"`
-	Status        PatchStatus  `json:"status"`
-	DeviceCount   int          `json:"device_count"`
-	Installed     int          `json:"installed"`
-	Failed        int          `json:"failed"`
-	Pending       int          `json:"pending"`
-	ScheduledFor  time.Time    `json:"scheduled_for"`
-	StartedAt     *time.Time   `json:"started_at,omitempty"`
-	CompletedAt   *time.Time   `json:"completed_at,omitempty"`
-	CreatedAt     time.Time    `json:"created_at"`
+	ID           string      `json:"id"`
+	PolicyID     string      `json:"policy_id"`
+	TenantID     string      `json:"tenant_id"`
+	Status       PatchStatus `json:"status"`
+	DeviceCount  int         `json:"device_count"`
+	Installed    int         `json:"installed"`
+	Failed       int         `json:"failed"`
+	Pending      int         `json:"pending"`
+	ScheduledFor time.Time   `json:"scheduled_for"`
+	StartedAt    *time.Time  `json:"started_at,omitempty"`
+	CompletedAt  *time.Time  `json:"completed_at,omitempty"`
+	CreatedAt    time.Time   `json:"created_at"`
 }
 
 type DevicePatchState struct {
-	DeviceID     string       `json:"device_id"`
-	DeploymentID string       `json:"deployment_id"`
-	PatchID      string       `json:"patch_id"`
-	Status       PatchStatus  `json:"status"`
-	Attempts     int          `json:"attempts"`
-	Error        string       `json:"error,omitempty"`
-	UpdatedAt    time.Time    `json:"updated_at"`
+	DeviceID     string      `json:"device_id"`
+	DeploymentID string      `json:"deployment_id"`
+	PatchID      string      `json:"patch_id"`
+	Status       PatchStatus `json:"status"`
+	Attempts     int         `json:"attempts"`
+	Error        string      `json:"error,omitempty"`
+	UpdatedAt    time.Time   `json:"updated_at"`
 }
 
 type Manager struct {
-	nats     *nats.Conn
-	tsdb     *timescale.Client
-	logger   *zap.Logger
-	store    *Store
+	nats   *nats.Conn
+	tsdb   *timescale.Client
+	logger *zap.Logger
+	store  *Store
 
 	mu       sync.RWMutex
 	policies map[string]*PatchPolicy
@@ -149,11 +149,11 @@ func (m *Manager) Start(ctx context.Context) error {
 
 func (m *Manager) handlePatchResult(msg *nats.Msg) {
 	var result struct {
-		DeploymentID string     `json:"deployment_id"`
-		DeviceID     string     `json:"device_id"`
-		PatchID      string     `json:"patch_id"`
+		DeploymentID string      `json:"deployment_id"`
+		DeviceID     string      `json:"device_id"`
+		PatchID      string      `json:"patch_id"`
 		Status       PatchStatus `json:"status"`
-		Error        string     `json:"error,omitempty"`
+		Error        string      `json:"error,omitempty"`
 	}
 	if err := json.Unmarshal(msg.Data, &result); err != nil {
 		m.logger.Warn("invalid patch result", zap.Error(err))
@@ -175,11 +175,11 @@ func (m *Manager) handlePatchResult(msg *nats.Msg) {
 
 func (m *Manager) handlePatchInventory(msg *nats.Msg) {
 	var inv struct {
-		DeviceID  string           `json:"device_id"`
-		TenantID  string           `json:"tenant_id"`
-		OS        string           `json:"os"`
-		Installed []*Patch         `json:"installed"`
-		Missing   []*Patch         `json:"missing"`
+		DeviceID  string   `json:"device_id"`
+		TenantID  string   `json:"tenant_id"`
+		OS        string   `json:"os"`
+		Installed []*Patch `json:"installed"`
+		Missing   []*Patch `json:"missing"`
 	}
 	if err := json.Unmarshal(msg.Data, &inv); err != nil {
 		m.logger.Warn("invalid patch inventory", zap.Error(err))
@@ -246,8 +246,8 @@ func (m *Manager) executeDeployment(ctx context.Context, dep *Deployment) {
 	}
 
 	cmd := map[string]interface{}{
-		"type":      "patch_install",
-		"policy_id": dep.PolicyID,
+		"type":          "patch_install",
+		"policy_id":     dep.PolicyID,
 		"deployment_id": dep.ID,
 		"approval_mode": policy.ApprovalMode,
 		"max_retries":   policy.MaxRetries,

@@ -42,32 +42,32 @@ const (
 type TunnelState string
 
 const (
-	StatePending    TunnelState = "pending"
-	StateActive     TunnelState = "active"
-	StateClosed     TunnelState = "closed"
-	StateFailed     TunnelState = "failed"
+	StatePending TunnelState = "pending"
+	StateActive  TunnelState = "active"
+	StateClosed  TunnelState = "closed"
+	StateFailed  TunnelState = "failed"
 )
 
 type TunnelSession struct {
-	ID           string       `json:"id"`
-	TenantID     string       `json:"tenant_id"`
-	DeviceID     string       `json:"device_id"`
-	UserID       string       `json:"user_id"`
-	Protocol     Protocol     `json:"protocol"`
-	TargetPort   int          `json:"target_port"`
-	State        TunnelState  `json:"state"`
-	CreatedAt    time.Time    `json:"created_at"`
-	ClosedAt     *time.Time   `json:"closed_at,omitempty"`
-	BytesUp      int64        `json:"bytes_up"`
-	BytesDown    int64        `json:"bytes_down"`
+	ID         string      `json:"id"`
+	TenantID   string      `json:"tenant_id"`
+	DeviceID   string      `json:"device_id"`
+	UserID     string      `json:"user_id"`
+	Protocol   Protocol    `json:"protocol"`
+	TargetPort int         `json:"target_port"`
+	State      TunnelState `json:"state"`
+	CreatedAt  time.Time   `json:"created_at"`
+	ClosedAt   *time.Time  `json:"closed_at,omitempty"`
+	BytesUp    int64       `json:"bytes_up"`
+	BytesDown  int64       `json:"bytes_down"`
 }
 
 type Gateway struct {
-	nats         *nats.Conn
-	logger       *zap.Logger
-	addr         string
-	recorder     *Recorder
-	recStore     *RecordingStore
+	nats     *nats.Conn
+	logger   *zap.Logger
+	addr     string
+	recorder *Recorder
+	recStore *RecordingStore
 
 	mu           sync.RWMutex
 	sessions     map[string]*TunnelSession
@@ -330,8 +330,8 @@ func (r *dataRelay) close() {
 // Agent-side tunnel handler
 
 type AgentTunnel struct {
-	nats     *nats.Conn
-	logger   *zap.Logger
+	nats   *nats.Conn
+	logger *zap.Logger
 }
 
 func NewAgentTunnel(nc *nats.Conn, logger *zap.Logger) *AgentTunnel {

@@ -253,6 +253,11 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /api/v1/alerts/{tenantID}", s.handleListActiveAlerts)
 	mux.HandleFunc("GET /api/v1/alerts/{tenantID}/history", s.handleAlertHistory)
 	mux.HandleFunc("POST /api/v1/alerts/{tenantID}/{alertID}/acknowledge", s.handleAcknowledgeAlert)
+	mux.HandleFunc("GET /api/v1/alerts/{tenantID}/groups", s.handleListAlertGroups)
+
+	mux.HandleFunc("POST /api/v1/tenants/{tenantID}/maintenance-windows", s.handleCreateMaintenanceWindow)
+	mux.HandleFunc("GET /api/v1/tenants/{tenantID}/maintenance-windows", s.handleListMaintenanceWindows)
+	mux.HandleFunc("DELETE /api/v1/tenants/{tenantID}/maintenance-windows/{windowID}", s.handleDeleteMaintenanceWindow)
 
 	mux.HandleFunc("POST /api/v1/rules/{tenantID}", s.handleCreateRule)
 	mux.HandleFunc("GET /api/v1/rules/{tenantID}", s.handleListRules)
@@ -961,6 +966,28 @@ func (s *APIServer) handleAcknowledgeAlert(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "acknowledged"})
+}
+
+func (s *APIServer) handleListAlertGroups(w http.ResponseWriter, r *http.Request) {
+	if s.alertEngine == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "alerting not enabled"})
+		return
+	}
+	tenantID := r.PathValue("tenantID")
+	if !s.AuthorizeClientAccess(w, r, tenantID) {
+		return
+	}
+
+	groups := s.alertEngine.GroupingEngine().GetAllGroups()
+
+	var filteredGroups []*alerting.AlertGroup
+	for _, g := range groups {
+		if tenantID == "" || g.Key.DeviceID == tenantID {
+			filteredGroups = append(filteredGroups, g)
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"groups": filteredGroups, "count": len(filteredGroups)})
 }
 
 func (s *APIServer) handleCreateRule(w http.ResponseWriter, r *http.Request) {

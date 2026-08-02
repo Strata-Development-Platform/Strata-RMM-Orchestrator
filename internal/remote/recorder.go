@@ -15,11 +15,11 @@ import (
 type RecordingFormat string
 
 const (
-	FormatWebM  RecordingFormat = "webm"
-	FormatMP4   RecordingFormat = "mp4"
-	FormatMKV   RecordingFormat = "mkv"
-	FormatRaw   RecordingFormat = "raw"
-	FormatJPEG  RecordingFormat = "jpeg-sequence"
+	FormatWebM RecordingFormat = "webm"
+	FormatMP4  RecordingFormat = "mp4"
+	FormatMKV  RecordingFormat = "mkv"
+	FormatRaw  RecordingFormat = "raw"
+	FormatJPEG RecordingFormat = "jpeg-sequence"
 )
 
 type RecordingConfig struct {
@@ -34,39 +34,39 @@ type RecordingConfig struct {
 }
 
 type RecordingSession struct {
-	ID            string          `json:"id"`
-	SessionID     string          `json:"session_id"`
-	TenantID      string          `json:"tenant_id"`
-	DeviceID      string          `json:"device_id"`
-	UserID        string          `json:"user_id"`
-	StorageKey    string          `json:"storage_key"`
-	SizeBytes     int64           `json:"size_bytes"`
-	DurationMs    int64           `json:"duration_ms"`
-	Format        RecordingFormat `json:"format"`
-	ChecksumSHA256 string         `json:"checksum_sha256"`
-	FrameCount    int64           `json:"frame_count"`
-	FrameRate     int             `json:"frame_rate"`
-	Width         int             `json:"width"`
-	Height        int             `json:"height"`
-	StartTime     time.Time       `json:"start_time"`
-	EndTime       *time.Time      `json:"end_time,omitempty"`
-	FrameWidth    int             `json:"frame_width"`
-	FrameHeight   int             `json:"frame_height"`
+	ID             string          `json:"id"`
+	SessionID      string          `json:"session_id"`
+	TenantID       string          `json:"tenant_id"`
+	DeviceID       string          `json:"device_id"`
+	UserID         string          `json:"user_id"`
+	StorageKey     string          `json:"storage_key"`
+	SizeBytes      int64           `json:"size_bytes"`
+	DurationMs     int64           `json:"duration_ms"`
+	Format         RecordingFormat `json:"format"`
+	ChecksumSHA256 string          `json:"checksum_sha256"`
+	FrameCount     int64           `json:"frame_count"`
+	FrameRate      int             `json:"frame_rate"`
+	Width          int             `json:"width"`
+	Height         int             `json:"height"`
+	StartTime      time.Time       `json:"start_time"`
+	EndTime        *time.Time      `json:"end_time,omitempty"`
+	FrameWidth     int             `json:"frame_width"`
+	FrameHeight    int             `json:"frame_height"`
 }
 
 type Recorder struct {
-	backend     storage.Backend
-	logger      *zap.Logger
-	mode        RecorderMode
-	prefix      string
-	config      RecordingConfig
-	mu          sync.Mutex
+	backend storage.Backend
+	logger  *zap.Logger
+	mode    RecorderMode
+	prefix  string
+	config  RecordingConfig
+	mu      sync.Mutex
 }
 
 type RecorderMode int
 
 const (
-	ModeRaw  RecorderMode = iota
+	ModeRaw RecorderMode = iota
 	ModeVideo
 )
 
@@ -152,9 +152,9 @@ func (r *Recorder) RecordVideo(ctx context.Context, session *RecordingSession, f
 	pr, pw := io.Pipe()
 
 	type uploadResult struct {
-		key    string
-		cksum  string
-		err    error
+		key   string
+		cksum string
+		err   error
 	}
 
 	uploadCh := make(chan uploadResult, 1)

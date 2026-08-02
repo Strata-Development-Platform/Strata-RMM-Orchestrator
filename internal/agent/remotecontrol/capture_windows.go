@@ -34,8 +34,8 @@ func NewInjector() InputInjector {
 	return &windowsInjector{}
 }
 
-func (inj *windowsInjector) Init() error { return nil }
-func (inj *windowsInjector) SendMouseMove(x, y float64) error { return nil }
-func (inj *windowsInjector) SendMouseClick(button int, down bool) error { return nil }
+func (inj *windowsInjector) Init() error                                  { return nil }
+func (inj *windowsInjector) SendMouseMove(x, y float64) error             { return nil }
+func (inj *windowsInjector) SendMouseClick(button int, down bool) error   { return nil }
 func (inj *windowsInjector) SendKey(key string, down bool, mod int) error { return nil }
-func (inj *windowsInjector) Close() error { return nil }
+func (inj *windowsInjector) Close() error                                 { return nil }

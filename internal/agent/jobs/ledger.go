@@ -299,9 +299,9 @@ func MarshalResult(msgID, eventID, jobID, targetID, mspID, clientID, siteID, dev
 		"device_id": deviceID, "agent_id": agentID, "correlation_id": correlationID,
 		"attempt": attempt, "status": status, "exit_code": exitCode,
 		"result": json.RawMessage(resultJSON), "error": errorStr,
-		"started_at": startedAt.UTC().Format(time.RFC3339),
+		"started_at":   startedAt.UTC().Format(time.RFC3339),
 		"completed_at": completedAt.UTC().Format(time.RFC3339),
-		"duration_ms": completedAt.Sub(startedAt).Milliseconds(),
+		"duration_ms":  completedAt.Sub(startedAt).Milliseconds(),
 	}
 	data, err := json.Marshal(res)
 	return msgID, data, err
