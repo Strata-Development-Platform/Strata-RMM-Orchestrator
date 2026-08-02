@@ -313,6 +313,23 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /api/v1/reports/{tenantID}/compliance/{reportID}/export/csv", s.handleExportComplianceReportCSV)
 	mux.HandleFunc("GET /api/v1/reports/{tenantID}/compliance/{reportID}/export/json", s.handleExportComplianceReportJSON)
 
+	mux.HandleFunc("GET /api/v2/msps/{mspID}/billing/account", s.handleGetBillingAccount)
+	mux.HandleFunc("POST /api/v2/msps/{mspID}/billing/account", s.handleCreateBillingAccount)
+	mux.HandleFunc("DELETE /api/v2/msps/{mspID}/billing/account", s.handleDeleteBillingAccount)
+	mux.HandleFunc("GET /api/v2/msps/{mspID}/billing/subscriptions", s.handleGetSubscriptions)
+	mux.HandleFunc("POST /api/v2/msps/{mspID}/billing/subscriptions", s.handleCreateSubscription)
+	mux.HandleFunc("DELETE /api/v2/msps/{mspID}/billing/subscriptions/{subscriptionID}", s.handleCancelSubscription)
+	mux.HandleFunc("GET /api/v2/msps/{mspID}/billing/invoices", s.handleGetInvoices)
+	mux.HandleFunc("GET /api/v2/msps/{mspID}/billing/invoices/{invoiceID}", s.handleGetInvoice)
+	mux.HandleFunc("POST /api/v2/msps/{mspID}/billing/usage", s.handleSubmitUsage)
+	mux.HandleFunc("GET /api/v2/msps/{mspID}/billing/usage/{meterName}", s.handleGetUsage)
+	mux.HandleFunc("GET /api/v2/msps/{mspID}/billing/payment-methods", s.handleGetPaymentMethods)
+	mux.HandleFunc("POST /api/v2/msps/{mspID}/billing/payment-methods", s.handleAddPaymentMethod)
+	mux.HandleFunc("PATCH /api/v2/msps/{mspID}/billing/payment-methods/{paymentMethodID}", s.handleSetDefaultPaymentMethod)
+	mux.HandleFunc("DELETE /api/v2/msps/{mspID}/billing/payment-methods/{paymentMethodID}", s.handleDeletePaymentMethod)
+	mux.HandleFunc("GET /api/v2/msps/{mspID}/billing/reports/revenue", s.handleGetRevenueReport)
+	mux.HandleFunc("GET /api/v2/platform/billing/analytics", s.handleGetBillingAnalytics)
+
 	mux.HandleFunc("POST /api/v1/remote/{tenantID}/session", s.handleRemoteSessionStart)
 	mux.HandleFunc("POST /api/v1/remote/{tenantID}/session/{sessionID}/input", s.handleRemoteSessionInput)
 	mux.HandleFunc("DELETE /api/v1/remote/{tenantID}/session/{sessionID}", s.handleRemoteSessionStop)
@@ -2045,4 +2062,29 @@ func (s *APIServer) sendReportEmail(ctx context.Context, scheduleID, tenantID, n
 			s.logger.Info("report email sent", zap.String("to", recipient), zap.String("subject", subject))
 		}
 	}
+}
+
+func (s *APIServer) handleGetBillingAnalytics(w http.ResponseWriter, r *http.Request) {
+	var activeMSPs int
+	var totalMRR float64
+	var pastDueMRR float64
+
+	s.db.DB().QueryRowContext(r.Context(), `SELECT COUNT(DISTINCT msp_id) FROM billing_accounts WHERE status = 'active'`).Scan(&activeMSPs)
+	s.db.DB().QueryRowContext(r.Context(), `
+		SELECT COALESCE(SUM(p.monthly_price), 0) FROM subscriptions s
+		JOIN plans p ON s.plan_id = p.id
+		WHERE s.status = 'active' AND s.billing_period = 'monthly'
+	`).Scan(&totalMRR)
+	s.db.DB().QueryRowContext(r.Context(), `
+		SELECT COALESCE(SUM(p.monthly_price), 0) FROM subscriptions s
+		JOIN plans p ON s.plan_id = p.id
+		WHERE s.status = 'past_due' AND s.billing_period = 'monthly'
+	`).Scan(&pastDueMRR)
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"active_msp_count": activeMSPs,
+		"total_mrr":        totalMRR,
+		"past_due_mrr":     pastDueMRR,
+		"updated_at":       time.Now(),
+	})
 }
