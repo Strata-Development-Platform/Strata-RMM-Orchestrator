@@ -174,11 +174,13 @@ assignment set returns idempotent `status: exists`; any different or unavailable
 identity returns `409 email_conflict`. Passwords are bcrypt-hashed and never
 included in responses or audit details.
 
-Each request is atomic, but membership replacement is not serialized by a lock
-on the target user. Concurrent replacements with different roles for the same
-scope can therefore leave both role rows active because the database uniqueness
-key includes the role. Operators must avoid concurrent replacement for one user
-until target-user serialization and a dedicated regression test are added.
+Membership replacement locks the target user row before comparing or changing
+memberships. The mutation predicate independently requires
+`app_may_manage_membership(scope_type, scope_id)`, so the RLS self-read branch
+cannot cause a scoped administrator editing their own account to revoke an
+unrelated platform or tenant membership. Concurrent replacements serialize and
+leave one active role in each managed scope; database-backed tests exercise both
+properties.
 
 The `memberships` table is the sole authorization source. `users.role`,
 `users.tenant_id`, and `user_tenant_access` remain compatibility mirrors for
