@@ -69,7 +69,7 @@ longer exists.
 | User roles and permissions are derived from active, unexpired memberships applicable to one exact database-validated selected scope | Implemented; exact-head CI and review pending |
 | Singleton-platform membership is required for platform roles, and child/sibling membership never implies parent or global authority | Implemented; exact-head CI and review pending |
 | Protected requests revalidate active identity, membership, expiry, and hierarchy state instead of trusting JWT role claims | Implemented; stateless logout and the existing access-token design remain |
-| Scoped user creation/replacement validates role legality and actor authority and commits identity, memberships, mirrors, and audit together | Implemented per request; concurrent different replacements for one user are not serialized and require follow-up |
+| Scoped user creation/replacement validates role legality and actor authority, preserves unmanaged memberships, serializes target-user updates, and commits identity, memberships, mirrors, and audit together | Implemented; exact-head database-backed concurrency and scope-preservation evidence pending |
 | Incomplete provider administrators are server-gated with an exact recovery/setup allowlist and stable `provider_setup_required` response | Implemented; hosted browser/API exercise pending |
 | Migration 69 preserves rows, reports ambiguity, constrains new/changed membership state, and retains hardening on down migration | Implemented; operator review of `authorization_migration_issues` is required after upgrade |
 | Exact-head repository CI, security review, hosted adversarial exercises, and all remaining internal-alpha gates | Pending; opening a draft PR does not satisfy them |
