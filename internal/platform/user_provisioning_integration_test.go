@@ -70,7 +70,6 @@ func TestScopedMembershipReplacementPreservesUnmanagedAndSerializes(t *testing.T
 		t.Fatalf("commit membership replacement seed: %v", err)
 	}
 
-
 	tokenGenerator := auth.NewTokenGenerator(secret)
 	server := &APIServer{db: client, tokenGen: tokenGenerator}
 	mux := http.NewServeMux()
