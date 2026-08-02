@@ -15,16 +15,16 @@ import (
 )
 
 type Engine struct {
-	nats      *nats.Conn
-	tsdb      *timescale.Client
-	logger    *zap.Logger
-	store     *Store
-	notifier  *Notifier
+	nats     *nats.Conn
+	tsdb     *timescale.Client
+	logger   *zap.Logger
+	store    *Store
+	notifier *Notifier
 
-	mu       sync.RWMutex
-	rules    map[string]*Rule // ruleID -> Rule
-	states   map[string]*AlertState // ruleID+deviceID -> state
-	subs     []*nats.Subscription
+	mu     sync.RWMutex
+	rules  map[string]*Rule       // ruleID -> Rule
+	states map[string]*AlertState // ruleID+deviceID -> state
+	subs   []*nats.Subscription
 }
 
 func NewEngine(nc *nats.Conn, tsdb *timescale.Client, store *Store, notifier *Notifier, logger *zap.Logger) *Engine {
@@ -190,6 +190,7 @@ func (e *Engine) evaluateThreshold(rule *Rule, tenantID, deviceID, metricName st
 			Message:    rule.FormatMessage(deviceID, metricName, value),
 			Status:     AlertFiring,
 			FiredAt:    now,
+			Channels:   rule.Channels,
 		}
 		if err := e.fireAlert(alert); err != nil {
 			e.logger.Error("fire alert", zap.Error(err))
@@ -200,12 +201,12 @@ func (e *Engine) evaluateThreshold(rule *Rule, tenantID, deviceID, metricName st
 		state.ConsecutiveFires++
 	} else if !shouldFire && state.State == StateFiring {
 		alert := &Alert{
-			ID:       fmt.Sprintf("%s-%s-%s-%d", rule.ID, deviceID, metricName, now.UnixNano()),
-			RuleID:   rule.ID,
-			TenantID: tenantID,
-			DeviceID: deviceID,
-			Message:  fmt.Sprintf("Resolved: %s", rule.FormatMessage(deviceID, metricName, value)),
-			Status:   AlertResolved,
+			ID:         fmt.Sprintf("%s-%s-%s-%d", rule.ID, deviceID, metricName, now.UnixNano()),
+			RuleID:     rule.ID,
+			TenantID:   tenantID,
+			DeviceID:   deviceID,
+			Message:    fmt.Sprintf("Resolved: %s", rule.FormatMessage(deviceID, metricName, value)),
+			Status:     AlertResolved,
 			ResolvedAt: &now,
 		}
 		if err := e.resolveAlert(alert); err != nil {
@@ -225,11 +226,11 @@ func (e *Engine) evaluateHeartbeat(rule *Rule, tenantID, deviceID string, lastTi
 	state, exists := e.states[key]
 	if !exists {
 		state = &AlertState{
-			RuleID:     rule.ID,
-			TenantID:   tenantID,
-			DeviceID:   deviceID,
-			State:      StateOK,
-			LastHeard:  lastTime,
+			RuleID:    rule.ID,
+			TenantID:  tenantID,
+			DeviceID:  deviceID,
+			State:     StateOK,
+			LastHeard: lastTime,
 		}
 		e.states[key] = state
 	} else {
@@ -259,7 +260,7 @@ func (e *Engine) fireAlert(alert *Alert) error {
 		return fmt.Errorf("save alert: %w", err)
 	}
 	if err := e.notifier.Send(context.Background(), alert); err != nil {
-		return fmt.Errorf("send notification: %w", err)
+		e.logger.Warn("send notification", zap.Error(err), zap.String("alert_id", alert.ID))
 	}
 
 	subject := fmt.Sprintf("tenant.%s.alert.%s", alert.TenantID, alert.DeviceID)
@@ -338,6 +339,7 @@ func (e *Engine) checkStaleHeartbeats() {
 				Message:  fmt.Sprintf("Device %s has not reported for %v (timeout: %v)", state.DeviceID, sinceLast.Round(time.Second), rule.Timeout),
 				Status:   AlertFiring,
 				FiredAt:  now,
+				Channels: rule.Channels,
 			}
 			e.mu.RLock()
 			state.State = StateFiring
@@ -362,11 +364,11 @@ func (e *Engine) cleanupLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			e.mu.Lock()
-	for key, state := range e.states {
-		if state.State == StateOK && time.Since(state.LastFired) > 24*time.Hour {
-			delete(e.states, key)
-		}
-	}
+			for key, state := range e.states {
+				if state.State == StateOK && time.Since(state.LastFired) > 24*time.Hour {
+					delete(e.states, key)
+				}
+			}
 			e.mu.Unlock()
 		}
 	}

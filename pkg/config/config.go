@@ -102,6 +102,40 @@ type SMTPConfig struct {
 	ImplicitTLS bool
 }
 
+type AlertDeliveryConfig struct {
+	SlackURL        string
+	TeamsURL        string
+	WebhookURL      string
+	PagerDutyKey    string
+	EmailRecipients []string
+}
+
+func (a AlertDeliveryConfig) validate(smtp SMTPConfig) error {
+	var errs []string
+	for name, raw := range map[string]string{"Slack": a.SlackURL, "Teams": a.TeamsURL, "Webhook": a.WebhookURL} {
+		if raw == "" {
+			continue
+		}
+		u, err := url.Parse(raw)
+		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
+			errs = append(errs, name+" URL must be absolute HTTPS without credentials")
+		}
+	}
+	if len(a.EmailRecipients) > 0 && !smtp.Configured() {
+		errs = append(errs, "email recipients require SMTP configuration")
+	}
+	for _, recipient := range a.EmailRecipients {
+		parsed, err := mail.ParseAddress(recipient)
+		if err != nil || parsed.Address == "" {
+			errs = append(errs, "email recipient is invalid")
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "; "))
+	}
+	return nil
+}
+
 func (s SMTPConfig) Configured() bool {
 	return s.Host != "" || s.Port != 0 || s.Username != "" || s.Password != "" || s.FromAddress != "" || s.ImplicitTLS
 }
@@ -199,6 +233,7 @@ type OrchestratorConfig struct {
 	HTTP          HTTPConfig
 	Observability ObservabilityConfig
 	SMTP          SMTPConfig
+	AlertDelivery AlertDeliveryConfig
 	Seeding       SeedingConfig
 	Backup        BackupConfig
 	Version       string
@@ -265,6 +300,7 @@ func (c *OrchestratorConfig) Validate() error {
 	check("Seeding", c.Seeding.validate(c.RuntimeMode))
 	check("Backup", c.Backup.validate())
 	check("SMTP", c.SMTP.validate())
+	check("AlertDelivery", c.AlertDelivery.validate(c.SMTP))
 	if c.SMTP.Configured() && c.HTTP.PublicURL == "" {
 		errs = append(errs, "HTTP.PublicURL: required when SMTP delivery is configured")
 	} else if c.SMTP.Configured() {
@@ -562,6 +598,27 @@ func LoadOrchestratorConfig() (*OrchestratorConfig, error) {
 		cfg.Observability.MetricsToken = value
 	}
 	cfg.SMTP.Host = strings.TrimSpace(os.Getenv("STRATA_SMTP_HOST"))
+	if value, err := secretEnv("STRATA_ALERT_SLACK_URL"); err != nil {
+		errs = append(errs, fmt.Sprintf("STRATA_ALERT_SLACK_URL: %v", err))
+	} else {
+		cfg.AlertDelivery.SlackURL = value
+	}
+	if value, err := secretEnv("STRATA_ALERT_TEAMS_URL"); err != nil {
+		errs = append(errs, fmt.Sprintf("STRATA_ALERT_TEAMS_URL: %v", err))
+	} else {
+		cfg.AlertDelivery.TeamsURL = value
+	}
+	if value, err := secretEnv("STRATA_ALERT_WEBHOOK_URL"); err != nil {
+		errs = append(errs, fmt.Sprintf("STRATA_ALERT_WEBHOOK_URL: %v", err))
+	} else {
+		cfg.AlertDelivery.WebhookURL = value
+	}
+	if value, err := secretEnv("STRATA_ALERT_PAGERDUTY_KEY"); err != nil {
+		errs = append(errs, fmt.Sprintf("STRATA_ALERT_PAGERDUTY_KEY: %v", err))
+	} else {
+		cfg.AlertDelivery.PagerDutyKey = value
+	}
+	cfg.AlertDelivery.EmailRecipients = splitTrim(os.Getenv("STRATA_ALERT_EMAIL_RECIPIENTS"), ",")
 	if value, err := secretEnv("STRATA_SMTP_USERNAME"); err != nil {
 		errs = append(errs, fmt.Sprintf("STRATA_SMTP_USERNAME: %v", err))
 	} else {
@@ -814,8 +871,16 @@ func (c *OrchestratorConfig) RedactedSummary() map[string]interface{} {
 		"jwt_configured":           c.JWT.Secret != "",
 		"metrics_token_configured": c.Observability.MetricsToken != "",
 		"smtp_configured":          c.SMTP.Configured(),
+		"alert_delivery_channels":  len(c.AlertDelivery.EmailRecipients) + boolCount(c.AlertDelivery.SlackURL != "") + boolCount(c.AlertDelivery.TeamsURL != "") + boolCount(c.AlertDelivery.WebhookURL != "") + boolCount(c.AlertDelivery.PagerDutyKey != ""),
 		"seed_dev":                 c.Seeding.SeedDev,
 	}
+}
+
+func boolCount(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 func redactURL(raw string) string {

@@ -33,27 +33,27 @@ const (
 )
 
 type Rule struct {
-	ID        string    `json:"id"`
-	TenantID  string    `json:"tenant_id"`
-	Name      string    `json:"name"`
-	Type      RuleType  `json:"type"`
-	Enabled   bool      `json:"enabled"`
-	Severity  Severity  `json:"severity"`
+	ID       string   `json:"id"`
+	TenantID string   `json:"tenant_id"`
+	Name     string   `json:"name"`
+	Type     RuleType `json:"type"`
+	Enabled  bool     `json:"enabled"`
+	Severity Severity `json:"severity"`
 
 	MetricName string    `json:"metric_name,omitempty"`
 	Condition  Condition `json:"condition,omitempty"`
 	Threshold  float64   `json:"threshold,omitempty"`
 
-	Timeout    time.Duration `json:"timeout,omitempty"`
+	Timeout time.Duration `json:"timeout,omitempty"`
 
-	DeviceID   string        `json:"device_id,omitempty"`
-	Cooldown   time.Duration `json:"cooldown"`
+	DeviceID string        `json:"device_id,omitempty"`
+	Cooldown time.Duration `json:"cooldown"`
 
-	Channels   []ChannelType `json:"channels"`
-	Template   string        `json:"template,omitempty"`
+	Channels []ChannelType `json:"channels"`
+	Template string        `json:"template,omitempty"`
 
-	CreatedAt  time.Time     `json:"created_at"`
-	UpdatedAt  time.Time     `json:"updated_at"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 func (r *Rule) MatchesMetric(name string) bool {
@@ -106,22 +106,23 @@ const (
 type AlertStatus string
 
 const (
-	AlertFiring      AlertStatus = "firing"
-	AlertResolved    AlertStatus = "resolved"
+	AlertFiring       AlertStatus = "firing"
+	AlertResolved     AlertStatus = "resolved"
 	AlertAcknowledged AlertStatus = "acknowledged"
 )
 
 type Alert struct {
-	ID           string       `json:"id"`
-	RuleID       string       `json:"rule_id"`
-	TenantID     string       `json:"tenant_id"`
-	DeviceID     string       `json:"device_id"`
-	MetricName   string       `json:"metric_name,omitempty"`
-	Value        float64      `json:"value,omitempty"`
-	Severity     Severity     `json:"severity"`
-	Message      string       `json:"message"`
-	Status       AlertStatus  `json:"status"`
-	FiredAt      time.Time    `json:"fired_at"`
-	ResolvedAt   *time.Time   `json:"resolved_at,omitempty"`
-	AcknowledgedAt *time.Time `json:"acknowledged_at,omitempty"`
+	ID             string        `json:"id"`
+	RuleID         string        `json:"rule_id"`
+	TenantID       string        `json:"tenant_id"`
+	DeviceID       string        `json:"device_id"`
+	MetricName     string        `json:"metric_name,omitempty"`
+	Value          float64       `json:"value,omitempty"`
+	Severity       Severity      `json:"severity"`
+	Message        string        `json:"message"`
+	Status         AlertStatus   `json:"status"`
+	FiredAt        time.Time     `json:"fired_at"`
+	ResolvedAt     *time.Time    `json:"resolved_at,omitempty"`
+	AcknowledgedAt *time.Time    `json:"acknowledged_at,omitempty"`
+	Channels       []ChannelType `json:"-"`
 }

@@ -3,6 +3,7 @@ package alerting
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -50,6 +51,9 @@ func (s *Store) LoadRules(ctx context.Context) ([]*Rule, error) {
 
 		r.Timeout = time.Duration(timeoutSecs) * time.Second
 		r.Cooldown = time.Duration(cooldownSecs) * time.Second
+		if err := json.Unmarshal(channelsJSON, &r.Channels); err != nil {
+			return nil, fmt.Errorf("decode rule channels: %w", err)
+		}
 
 		rules = append(rules, &r)
 	}
@@ -63,7 +67,11 @@ func (s *Store) SaveRule(ctx context.Context, rule *Rule) error {
 	}
 	rule.UpdatedAt = now
 
-	_, err := s.db.ExecContext(ctx, `
+	channelsJSON, err := json.Marshal(rule.Channels)
+	if err != nil {
+		return fmt.Errorf("encode rule channels: %w", err)
+	}
+	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO alert_rules (id, tenant_id, name, type, enabled, severity, metric_name, condition, threshold, timeout, device_id, cooldown, channels, template, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		ON CONFLICT (id) DO UPDATE SET
@@ -76,7 +84,7 @@ func (s *Store) SaveRule(ctx context.Context, rule *Rule) error {
 	`, rule.ID, rule.TenantID, rule.Name, rule.Type, rule.Enabled, rule.Severity,
 		rule.MetricName, rule.Condition, rule.Threshold,
 		int64(rule.Timeout.Seconds()), rule.DeviceID, int64(rule.Cooldown.Seconds()),
-		"{}", rule.Template, rule.CreatedAt, rule.UpdatedAt,
+		channelsJSON, rule.Template, rule.CreatedAt, rule.UpdatedAt,
 	)
 	return err
 }
@@ -101,10 +109,14 @@ func (s *Store) ListRules(ctx context.Context, tenantID string) ([]*Rule, error)
 	var rules []*Rule
 	for rows.Next() {
 		var r Rule
+		var channelsJSON []byte
 		if err := rows.Scan(&r.ID, &r.TenantID, &r.Name, &r.Type, &r.Enabled, &r.Severity,
 			&r.MetricName, &r.Condition, &r.Threshold, &r.Timeout, &r.DeviceID,
-			&r.Cooldown, &r.Channels, &r.Template, &r.CreatedAt, &r.UpdatedAt); err != nil {
+			&r.Cooldown, &channelsJSON, &r.Template, &r.CreatedAt, &r.UpdatedAt); err != nil {
 			return nil, err
+		}
+		if err := json.Unmarshal(channelsJSON, &r.Channels); err != nil {
+			return nil, fmt.Errorf("decode rule channels: %w", err)
 		}
 		rules = append(rules, &r)
 	}

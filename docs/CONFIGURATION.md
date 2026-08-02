@@ -100,6 +100,25 @@ supported. `_FILE` values must name an absolute canonical regular file no
 larger than 16 KiB; one trailing newline is removed. Do not set both the direct
 variable and its `_FILE` variant.
 
+### Alert notification delivery
+
+Alert rules may select `slack`, `webhook`, `email`, `teams`, and `pagerduty`.
+Only configured channels are enabled. Webhook destinations must use HTTPS and
+delivery rejects non-2xx responses. Email reuses the TLS-only SMTP transport
+above and requires at least one configured recipient.
+
+| Setting | Purpose |
+|---|---|
+| `STRATA_ALERT_SLACK_URL` / `STRATA_ALERT_SLACK_URL_FILE` | Slack incoming-webhook URL. |
+| `STRATA_ALERT_TEAMS_URL` / `STRATA_ALERT_TEAMS_URL_FILE` | Microsoft Teams workflow/webhook URL. |
+| `STRATA_ALERT_WEBHOOK_URL` / `STRATA_ALERT_WEBHOOK_URL_FILE` | Generic JSON webhook URL. |
+| `STRATA_ALERT_PAGERDUTY_KEY` / `STRATA_ALERT_PAGERDUTY_KEY_FILE` | PagerDuty Events API v2 routing key. |
+| `STRATA_ALERT_EMAIL_RECIPIENTS` | Comma-separated SMTP recipients. Requires the complete `STRATA_SMTP_*` configuration. |
+
+Secrets should use the `_FILE` forms. If a rule selects a channel that is not
+configured, the alert remains persisted and published, and the orchestrator
+records a delivery error rather than reporting false success.
+
 Example using protected credentials:
 
 ```bash
