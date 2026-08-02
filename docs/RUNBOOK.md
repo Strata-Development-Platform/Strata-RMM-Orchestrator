@@ -406,6 +406,32 @@ curl localhost:8080/api/v1/alerts/CLIENT_ID
 curl -X POST localhost:8080/api/v1/alerts/CLIENT_ID/ALERT_ID/acknowledge
 ```
 
+## Policy lifecycle
+
+Policy mutations require an authorized platform or MSP managing scope and an
+`X-MSP-ID` matching the selected MSP. Supported categories are `patch`,
+`alerting`, `monitoring`, `software`, `script`, and `maintenance`. Supported
+scope levels are `msp`, `client`, `site`, and `device`.
+
+The lifecycle is intentionally explicit:
+
+1. `POST /api/v1/policies` creates version 1 as a draft.
+2. `POST /api/v1/policies/POLICY_ID/validate` validates configuration and scope.
+3. `POST /api/v1/policies/POLICY_ID/preview` returns ordered inheritance layers
+   and the recursively merged effective configuration.
+4. `POST /api/v1/policies/POLICY_ID/publish` atomically activates the version
+   and records an immutable revision.
+5. `GET /api/v1/policies/POLICY_ID/revisions` returns the publication history.
+
+`PUT /api/v1/policies/POLICY_ID` creates the next working revision and resets
+validation/preview evidence. When editing a published policy, its last
+published snapshot remains effective until the new draft is published.
+Deleting a never-published draft removes it; deleting a published policy
+archives it with its revision history intact.
+
+Automatic endpoint enforcement and scheduled re-evaluation are not provided by
+this lifecycle slice and must not be inferred from a successful preview.
+
 ## Patch Management
 
 ### Create patch policy

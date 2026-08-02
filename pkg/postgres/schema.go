@@ -3049,6 +3049,97 @@ func Migrations() []Migration {
 				ALTER TABLE alerts DROP COLUMN IF EXISTS correlation_key;
 			`,
 		},
+		{
+			ID:   71,
+			Name: "policy_lifecycle_and_revisions",
+			Up: `
+				ALTER TABLE policies ADD COLUMN IF NOT EXISTS device_id UUID REFERENCES devices(id) ON DELETE CASCADE;
+				ALTER TABLE policies ADD COLUMN IF NOT EXISTS validated_at TIMESTAMPTZ;
+				ALTER TABLE policies ADD COLUMN IF NOT EXISTS previewed_at TIMESTAMPTZ;
+				ALTER TABLE policies ADD COLUMN IF NOT EXISTS published_version INT;
+				ALTER TABLE policies ADD COLUMN IF NOT EXISTS published_config JSONB;
+				CREATE INDEX IF NOT EXISTS idx_policies_device ON policies(device_id);
+
+				CREATE TABLE IF NOT EXISTS policy_revisions (
+					id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					policy_id UUID NOT NULL REFERENCES policies(id) ON DELETE CASCADE,
+					msp_id UUID NOT NULL REFERENCES msp_tenants(id) ON DELETE CASCADE,
+					version INT NOT NULL,
+					name TEXT NOT NULL,
+					category TEXT NOT NULL,
+					description TEXT NOT NULL,
+					config JSONB NOT NULL,
+					scope_level TEXT NOT NULL,
+					client_id UUID,
+					site_id UUID,
+					device_id UUID,
+					published_by TEXT NOT NULL,
+					published_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					UNIQUE(policy_id, version)
+				);
+				CREATE INDEX IF NOT EXISTS idx_policy_revisions_policy ON policy_revisions(policy_id, version DESC);
+
+				UPDATE policies
+				SET published_version = version, published_config = config,
+				    validated_at = COALESCE(validated_at, updated_at),
+				    previewed_at = COALESCE(previewed_at, updated_at)
+				WHERE status = 'active' AND published_version IS NULL;
+				INSERT INTO policy_revisions (
+					policy_id,msp_id,version,name,category,description,config,scope_level,
+					client_id,site_id,device_id,published_by,published_at
+				)
+				SELECT id,msp_id,version,name,category,description,config,scope_level,
+				       client_id,site_id,device_id,'migration-71',updated_at
+				FROM policies
+				WHERE status = 'active' AND msp_id IS NOT NULL
+				ON CONFLICT (policy_id, version) DO NOTHING;
+
+				ALTER TABLE policies ENABLE ROW LEVEL SECURITY;
+				DROP POLICY IF EXISTS policy_scope ON policies;
+				CREATE POLICY policy_scope ON policies
+					USING (
+						app_is_platform_admin()
+						OR (app_scope_is_authorized() AND safe_app_setting('app.scope_type') = 'msp'
+							AND msp_id::text = safe_app_setting('app.msp_id'))
+						OR support_access_allowed(msp_id)
+					)
+					WITH CHECK (
+						app_is_platform_admin()
+						OR (app_is_scope_manager() AND safe_app_setting('app.scope_type') = 'msp'
+							AND msp_id::text = safe_app_setting('app.msp_id'))
+					);
+				ALTER TABLE policies FORCE ROW LEVEL SECURITY;
+
+				ALTER TABLE policy_revisions ENABLE ROW LEVEL SECURITY;
+				CREATE POLICY policy_revision_scope ON policy_revisions
+					USING (
+						app_is_platform_admin()
+						OR (app_scope_is_authorized() AND safe_app_setting('app.scope_type') = 'msp'
+							AND msp_id::text = safe_app_setting('app.msp_id'))
+						OR support_access_allowed(msp_id)
+					)
+					WITH CHECK (
+						app_is_platform_admin()
+						OR (app_is_scope_manager() AND safe_app_setting('app.scope_type') = 'msp'
+							AND msp_id::text = safe_app_setting('app.msp_id'))
+					);
+				ALTER TABLE policy_revisions FORCE ROW LEVEL SECURITY;
+			`,
+			Down: `
+				ALTER TABLE policies NO FORCE ROW LEVEL SECURITY;
+				DROP POLICY IF EXISTS policy_scope ON policies;
+				ALTER TABLE policies DISABLE ROW LEVEL SECURITY;
+				UPDATE policies SET config=published_config, version=published_version, status='active'
+				WHERE published_version IS NOT NULL AND status='draft';
+				DROP TABLE IF EXISTS policy_revisions;
+				DROP INDEX IF EXISTS idx_policies_device;
+				ALTER TABLE policies DROP COLUMN IF EXISTS published_config;
+				ALTER TABLE policies DROP COLUMN IF EXISTS published_version;
+				ALTER TABLE policies DROP COLUMN IF EXISTS previewed_at;
+				ALTER TABLE policies DROP COLUMN IF EXISTS validated_at;
+				ALTER TABLE policies DROP COLUMN IF EXISTS device_id;
+			`,
+		},
 	}
 }
 
