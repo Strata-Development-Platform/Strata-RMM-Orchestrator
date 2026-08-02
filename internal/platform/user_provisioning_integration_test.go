@@ -23,26 +23,53 @@ func TestScopedMembershipReplacementPreservesUnmanagedAndSerializes(t *testing.T
 		mspB     = "71000000-0000-0000-0000-000000000005"
 	)
 
-	if _, err := raw.Exec(`
-		UPDATE platforms
-		SET setup_completed_at = NOW(), setup_completed_by = $1
-		WHERE id = $2;
-		INSERT INTO tenants (id, name, slug, plan)
-		VALUES ($3, 'Membership tenant', 'membership-replacement', 'enterprise');
-		INSERT INTO msp_tenants (id, name, slug, is_active, onboarding_status) VALUES
-			($4, 'MSP A', 'membership-msp-a', true, 'active'),
-			($5, 'MSP B', 'membership-msp-b', true, 'active');
-		INSERT INTO users (id, tenant_id, email, password_hash, role, email_verified_at) VALUES
-			($1, $3, 'membership-actor@example.test', '$2a$10$test', 'admin', NOW()),
-			($6, $3, 'membership-target@example.test', '$2a$10$test', 'viewer', NOW());
-		INSERT INTO memberships (user_id, scope_type, scope_id, role, status) VALUES
-			($1, 'platform', $2, 'platform_owner', 'active'),
-			($1, 'msp', $4, 'msp_owner', 'active'),
-			($6, 'msp', $4, 'msp_viewer', 'active'),
-			($6, 'msp', $5, 'msp_viewer', 'active')
-	`, actorID, postgres.SingletonPlatformID, tenantID, mspA, mspB, targetID); err != nil {
-		t.Fatalf("seed membership replacement test: %v", err)
+	seed, err := raw.Begin()
+	if err != nil {
+		t.Fatal(err)
 	}
+	seedSteps := []struct {
+		query string
+		args  []interface{}
+	}{
+		{
+			query: `UPDATE platforms SET setup_completed_at = NOW(), setup_completed_by = $1 WHERE id = $2`,
+			args:  []interface{}{actorID, postgres.SingletonPlatformID},
+		},
+		{
+			query: `INSERT INTO tenants (id, name, slug, plan) VALUES ($1, 'Membership tenant', 'membership-replacement', 'enterprise')`,
+			args:  []interface{}{tenantID},
+		},
+		{
+			query: `INSERT INTO msp_tenants (id, name, slug, is_active, onboarding_status) VALUES
+				($1, 'MSP A', 'membership-msp-a', true, 'active'),
+				($2, 'MSP B', 'membership-msp-b', true, 'active')`,
+			args: []interface{}{mspA, mspB},
+		},
+		{
+			query: `INSERT INTO users (id, tenant_id, email, password_hash, role, email_verified_at) VALUES
+				($1, $2, 'membership-actor@example.test', '$2a$10$test', 'admin', NOW()),
+				($3, $2, 'membership-target@example.test', '$2a$10$test', 'viewer', NOW())`,
+			args: []interface{}{actorID, tenantID, targetID},
+		},
+		{
+			query: `INSERT INTO memberships (user_id, scope_type, scope_id, role, status) VALUES
+				($1, 'platform', $2, 'platform_owner', 'active'),
+				($1, 'msp', $3, 'msp_owner', 'active'),
+				($4, 'msp', $3, 'msp_viewer', 'active'),
+				($4, 'msp', $5, 'msp_viewer', 'active')`,
+			args: []interface{}{actorID, postgres.SingletonPlatformID, mspA, targetID, mspB},
+		},
+	}
+	for _, step := range seedSteps {
+		if _, err := seed.Exec(step.query, step.args...); err != nil {
+			_ = seed.Rollback()
+			t.Fatalf("seed membership replacement test: %v", err)
+		}
+	}
+	if err := seed.Commit(); err != nil {
+		t.Fatalf("commit membership replacement seed: %v", err)
+	}
+
 
 	tokenGenerator := auth.NewTokenGenerator(secret)
 	server := &APIServer{db: client, tokenGen: tokenGenerator}
