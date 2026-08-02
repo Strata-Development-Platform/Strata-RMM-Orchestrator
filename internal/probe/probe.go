@@ -21,6 +21,7 @@ type Probe struct {
 	mu        sync.RWMutex
 	targets   []SNMPTarget
 	discovery *DiscoveryEngine
+	scanner   *Scanner
 	flow      *FlowCollector
 	cancel    context.CancelFunc
 }
@@ -93,6 +94,9 @@ func (p *Probe) Start(ctx context.Context) error {
 		go p.flow.Start(ctx)
 		p.Logger.Info("flow collector started", zap.Int("port", p.Config.FlowPort))
 	}
+
+	// Initialize scanner for on-demand port scanning
+	p.scanner = NewScanner(p)
 
 	go p.healthReportLoop(ctx)
 
@@ -221,4 +225,44 @@ func (p *Probe) healthReportLoop(ctx context.Context) {
 			p.NATS.Publish(subject, data)
 		}
 	}
+}
+
+// ScanPorts performs a port scan on the specified host
+func (p *Probe) ScanPorts(ctx context.Context, host string, ports []int, protocol string) ([]PortScanResult, error) {
+	if p.scanner == nil {
+		p.scanner = NewScanner(p)
+	}
+	return p.scanner.ScanPorts(ctx, host, ports, protocol)
+}
+
+// ScanService performs service detection on a specific port
+func (p *Probe) ScanService(ctx context.Context, host string, port int) (*ServiceInfo, error) {
+	if p.scanner == nil {
+		p.scanner = NewScanner(p)
+	}
+	return p.scanner.ScanService(ctx, host, port)
+}
+
+// DiscoverTopology discovers network topology
+func (p *Probe) DiscoverTopology(ctx context.Context, subnet string) (*TopologyInfo, error) {
+	if p.scanner == nil {
+		p.scanner = NewScanner(p)
+	}
+	return p.scanner.DiscoverTopology(ctx, subnet)
+}
+
+// GetGateways retrieves gateway information
+func (p *Probe) GetGateways(ctx context.Context) ([]GatewayInfo, error) {
+	if p.scanner == nil {
+		p.scanner = NewScanner(p)
+	}
+	return p.scanner.GetGateways(ctx)
+}
+
+// RunFullDiscovery performs comprehensive network discovery
+func (p *Probe) RunFullDiscovery(ctx context.Context, subnet string) ([]HostInfo, error) {
+	if p.scanner == nil {
+		p.scanner = NewScanner(p)
+	}
+	return p.scanner.RunFullDiscovery(ctx, subnet)
 }
