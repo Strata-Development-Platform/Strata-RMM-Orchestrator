@@ -368,10 +368,10 @@ ORDER BY dv.severity DESC;
 
 ### Create a threshold rule
 ```bash
-curl -X POST localhost:8080/api/v1/rules/TENANT_ID \
+curl -X POST localhost:8080/api/v1/rules/CLIENT_ID \
   -H 'Content-Type: application/json' \
   -d '{
-    "id": "cpu-critical",
+    "id": "22222222-2222-4222-8222-222222222222",
     "name": "CPU > 90%",
     "type": "threshold",
     "enabled": true,
@@ -385,10 +385,10 @@ curl -X POST localhost:8080/api/v1/rules/TENANT_ID \
 
 ### Create a heartbeat rule
 ```bash
-curl -X POST localhost:8080/api/v1/rules/TENANT_ID \
+curl -X POST localhost:8080/api/v1/rules/CLIENT_ID \
   -H 'Content-Type: application/json' \
   -d '{
-    "id": "heartbeat-5m",
+    "id": "11111111-1111-4111-8111-111111111111",
     "name": "Heartbeat 5min",
     "type": "heartbeat",
     "severity": "critical",
@@ -398,12 +398,12 @@ curl -X POST localhost:8080/api/v1/rules/TENANT_ID \
 
 ### View active alerts
 ```bash
-curl localhost:8080/api/v1/alerts/TENANT_ID
+curl localhost:8080/api/v1/alerts/CLIENT_ID
 ```
 
 ### Acknowledge alert
 ```bash
-curl -X POST localhost:8080/api/v1/alerts/ALERT_ID/acknowledge
+curl -X POST localhost:8080/api/v1/alerts/CLIENT_ID/ALERT_ID/acknowledge
 ```
 
 ## Patch Management

@@ -252,7 +252,7 @@ func (s *APIServer) Start(ctx context.Context) error {
 
 	mux.HandleFunc("GET /api/v1/alerts/{tenantID}", s.handleListActiveAlerts)
 	mux.HandleFunc("GET /api/v1/alerts/{tenantID}/history", s.handleAlertHistory)
-	mux.HandleFunc("POST /api/v1/alerts/{alertID}/acknowledge", s.handleAcknowledgeAlert)
+	mux.HandleFunc("POST /api/v1/alerts/{tenantID}/{alertID}/acknowledge", s.handleAcknowledgeAlert)
 
 	mux.HandleFunc("POST /api/v1/rules/{tenantID}", s.handleCreateRule)
 	mux.HandleFunc("GET /api/v1/rules/{tenantID}", s.handleListRules)
@@ -894,6 +894,9 @@ func (s *APIServer) handleListActiveAlerts(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	tenantID := r.PathValue("tenantID")
+	if !s.AuthorizeClientAccess(w, r, tenantID) {
+		return
+	}
 	alerts, err := s.alertEngine.GetActiveAlerts(r.Context(), tenantID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -911,6 +914,9 @@ func (s *APIServer) handleAlertHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tenantID := r.PathValue("tenantID")
+	if !s.AuthorizeClientAccess(w, r, tenantID) {
+		return
+	}
 	limit := intQueryParam(r, "limit", 50)
 	offset := intQueryParam(r, "offset", 0)
 	alerts, err := s.alertEngine.GetAlertHistory(r.Context(), tenantID, limit, offset)
@@ -929,8 +935,12 @@ func (s *APIServer) handleAcknowledgeAlert(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "alerting not enabled"})
 		return
 	}
+	tenantID := r.PathValue("tenantID")
+	if _, ok := s.authorizeClientManage(w, r, tenantID); !ok {
+		return
+	}
 	alertID := r.PathValue("alertID")
-	if err := s.alertEngine.AcknowledgeAlert(r.Context(), alertID); err != nil {
+	if err := s.alertEngine.AcknowledgeAlert(r.Context(), tenantID, alertID); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
@@ -943,12 +953,19 @@ func (s *APIServer) handleCreateRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tenantID := r.PathValue("tenantID")
+	if _, ok := s.authorizeClientManage(w, r, tenantID); !ok {
+		return
+	}
 	var rule alerting.Rule
 	if err := json.NewDecoder(r.Body).Decode(&rule); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid rule"})
 		return
 	}
 	rule.TenantID = tenantID
+	if err := rule.Validate(); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 	if err := s.alertEngine.AddRule(r.Context(), &rule); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -962,6 +979,9 @@ func (s *APIServer) handleListRules(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tenantID := r.PathValue("tenantID")
+	if !s.AuthorizeClientAccess(w, r, tenantID) {
+		return
+	}
 	rules, err := s.alertEngine.ListRules(r.Context(), tenantID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -979,7 +999,11 @@ func (s *APIServer) handleDeleteRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ruleID := r.PathValue("ruleID")
-	if err := s.alertEngine.RemoveRule(r.Context(), ruleID); err != nil {
+	tenantID := r.PathValue("tenantID")
+	if _, ok := s.authorizeClientManage(w, r, tenantID); !ok {
+		return
+	}
+	if err := s.alertEngine.RemoveRule(r.Context(), tenantID, ruleID); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}

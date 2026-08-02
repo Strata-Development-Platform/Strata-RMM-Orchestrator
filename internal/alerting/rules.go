@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type RuleType string
@@ -56,6 +58,70 @@ type Rule struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+func (r *Rule) Validate() error {
+	var problems []string
+	if r.ID != "" {
+		if _, err := uuid.Parse(r.ID); err != nil {
+			problems = append(problems, "id must be a UUID")
+		}
+	}
+	if _, err := uuid.Parse(r.TenantID); err != nil {
+		problems = append(problems, "tenant_id must be a UUID")
+	}
+	if strings.TrimSpace(r.Name) == "" || len(r.Name) > 200 {
+		problems = append(problems, "name must contain 1-200 characters")
+	}
+	switch r.Type {
+	case RuleTypeThreshold:
+		if strings.TrimSpace(r.MetricName) == "" {
+			problems = append(problems, "threshold rules require metric_name")
+		}
+		switch r.Condition {
+		case ConditionGT, ConditionGTE, ConditionLT, ConditionLTE, ConditionEQ, ConditionNEQ:
+		default:
+			problems = append(problems, "threshold rules require a valid condition")
+		}
+	case RuleTypeHeartbeat:
+		if r.Timeout <= 0 {
+			problems = append(problems, "heartbeat rules require a positive timeout")
+		}
+		if r.DeviceID != "" {
+			if _, err := uuid.Parse(r.DeviceID); err != nil {
+				problems = append(problems, "device_id must be a UUID")
+			}
+		}
+	default:
+		problems = append(problems, "type must be threshold or heartbeat")
+	}
+	switch r.Severity {
+	case SeverityCritical, SeverityWarning, SeverityInfo:
+	default:
+		problems = append(problems, "severity must be critical, warning, or info")
+	}
+	if r.Cooldown < 0 {
+		problems = append(problems, "cooldown must not be negative")
+	}
+	seenChannels := map[ChannelType]bool{}
+	for _, channel := range r.Channels {
+		switch channel {
+		case ChannelSlack, ChannelWebhook, ChannelMail, ChannelTeams, ChannelPager:
+		default:
+			problems = append(problems, fmt.Sprintf("unsupported notification channel %q", channel))
+		}
+		if seenChannels[channel] {
+			problems = append(problems, fmt.Sprintf("duplicate notification channel %q", channel))
+		}
+		seenChannels[channel] = true
+	}
+	if len(r.Template) > 4000 {
+		problems = append(problems, "template must not exceed 4000 characters")
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("invalid alert rule: %s", strings.Join(problems, "; "))
+	}
+	return nil
+}
+
 func (r *Rule) MatchesMetric(name string) bool {
 	if r.MetricName == "" {
 		return false
@@ -94,6 +160,8 @@ type AlertState struct {
 	LastFired        time.Time
 	LastHeard        time.Time
 	ConsecutiveFires int
+	AlertID          string
+	MetricName       string
 }
 
 type State string
@@ -124,5 +192,6 @@ type Alert struct {
 	FiredAt        time.Time     `json:"fired_at"`
 	ResolvedAt     *time.Time    `json:"resolved_at,omitempty"`
 	AcknowledgedAt *time.Time    `json:"acknowledged_at,omitempty"`
+	CorrelationKey string        `json:"correlation_key,omitempty"`
 	Channels       []ChannelType `json:"-"`
 }

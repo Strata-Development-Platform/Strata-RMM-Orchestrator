@@ -138,7 +138,7 @@ const endpoints = [
   { method: 'GET', path: '/api/v1/heartbeat/{tid}/{did}', desc: 'Device heartbeat' },
   { method: 'GET', path: '/api/v1/alerts/{tid}', desc: 'Active alerts' },
   { method: 'GET', path: '/api/v1/alerts/{tid}/history', desc: 'Alert history' },
-  { method: 'POST', path: '/api/v1/alerts/{id}/acknowledge', desc: 'Acknowledge alert' },
+  { method: 'POST', path: '/api/v1/alerts/{tid}/{id}/acknowledge', desc: 'Acknowledge alert' },
   { method: 'GET', path: '/api/v1/rules/{tid}', desc: 'List alert rules' },
   { method: 'POST', path: '/api/v1/rules/{tid}', desc: 'Create alert rule' },
   { method: 'DELETE', path: '/api/v1/rules/{tid}/{rid}', desc: 'Delete alert rule' },
