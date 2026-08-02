@@ -17,9 +17,10 @@ Status meanings:
   automation, but acceptance requires representative infrastructure and is not
   claimed by CI alone.
 
-This audit was performed against candidate head
-`5fe7af09971d6e4bcc26570b239aa2c78e1d7d90`, based on
-`05e6a9e8b1cc7a17177e9445c9670fccdcb95e57`.
+The last fully exact-head-verified audit candidate recorded here was
+`5fe7af09971d6e4bcc26570b239aa2c78e1d7d90`. Rows explicitly marked as under
+verification describe the current draft and are not acceptance evidence until
+its exact-head workflows are terminal and successful.
 
 ## Internal-alpha boundary
 
