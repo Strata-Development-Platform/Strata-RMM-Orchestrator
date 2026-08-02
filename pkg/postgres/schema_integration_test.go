@@ -47,6 +47,8 @@ func TestTenantRLSMigration(t *testing.T) {
 		userA   = "30000000-0000-0000-0000-000000000001"
 		userB   = "30000000-0000-0000-0000-000000000003"
 		grantID = "30000000-0000-0000-0000-000000000002"
+		policyA = "40000000-0000-0000-0000-000000000001"
+		policyB = "40000000-0000-0000-0000-000000000002"
 	)
 
 	seed, err := db.Begin()
@@ -123,6 +125,22 @@ func TestTenantRLSMigration(t *testing.T) {
 		_ = seed.Rollback()
 		t.Fatalf("seed memberships: %v", err)
 	}
+	if _, err := seed.Exec(`
+		INSERT INTO policies (id,msp_id,name,category,config,status,published_version,published_config)
+		VALUES ($1,$2,'Policy A','patch','{"enabled":true}','active',1,'{"enabled":true}'),
+		       ($3,$4,'Policy B','patch','{"enabled":true}','active',1,'{"enabled":true}')
+	`, policyA, mspA, policyB, mspB); err != nil {
+		_ = seed.Rollback()
+		t.Fatalf("seed policies: %v", err)
+	}
+	if _, err := seed.Exec(`
+		INSERT INTO policy_revisions (policy_id,msp_id,version,name,category,description,config,scope_level,published_by)
+		VALUES ($1,$2,1,'Policy A','patch','','{"enabled":true}','msp','ci'),
+		       ($3,$4,1,'Policy B','patch','','{"enabled":true}','msp','ci')
+	`, policyA, mspA, policyB, mspB); err != nil {
+		_ = seed.Rollback()
+		t.Fatalf("seed policy revisions: %v", err)
+	}
 	if err := seed.Commit(); err != nil {
 		t.Fatalf("commit seed: %v", err)
 	}
@@ -139,6 +157,10 @@ func TestTenantRLSMigration(t *testing.T) {
 	assertTenantTableCount(t, db, "usage_snapshots", mspB, userB, "", 1)
 	assertTenantTableCount(t, db, "control_plane_audit", mspA, userA, "", 1)
 	assertTenantTableCount(t, db, "control_plane_audit", mspB, userB, "", 1)
+	assertTenantTableCount(t, db, "policies", mspA, userA, "", 1)
+	assertTenantTableCount(t, db, "policies", mspB, userB, "", 1)
+	assertTenantTableCount(t, db, "policy_revisions", mspA, userA, "", 1)
+	assertTenantTableCount(t, db, "policy_revisions", mspB, userB, "", 1)
 
 	tx, err := db.Begin()
 	if err != nil {
@@ -185,7 +207,7 @@ func TestTenantRLSMigration(t *testing.T) {
 	if !forceRLS {
 		t.Fatal("plan_entitlements must force row-level security")
 	}
-	for _, table := range []string{"usage_snapshots", "control_plane_audit"} {
+	for _, table := range []string{"usage_snapshots", "control_plane_audit", "policies", "policy_revisions"} {
 		if err := db.QueryRow(`
 			SELECT relforcerowsecurity FROM pg_class WHERE oid = $1::regclass
 		`, table).Scan(&forceRLS); err != nil {
@@ -199,7 +221,7 @@ func TestTenantRLSMigration(t *testing.T) {
 
 func assertTenantTableCount(t *testing.T, db *sql.DB, table, mspID, userID, grantID string, want int) {
 	t.Helper()
-	if table != "usage_snapshots" && table != "control_plane_audit" {
+	if table != "usage_snapshots" && table != "control_plane_audit" && table != "policies" && table != "policy_revisions" {
 		t.Fatalf("unsupported test table %q", table)
 	}
 	tx, err := db.Begin()
@@ -222,6 +244,10 @@ func assertTenantTableCount(t *testing.T, db *sql.DB, table, mspID, userID, gran
 	query := `SELECT COUNT(*) FROM usage_snapshots`
 	if table == "control_plane_audit" {
 		query = `SELECT COUNT(*) FROM control_plane_audit`
+	} else if table == "policies" {
+		query = `SELECT COUNT(*) FROM policies`
+	} else if table == "policy_revisions" {
+		query = `SELECT COUNT(*) FROM policy_revisions`
 	}
 	var got int
 	if err := tx.QueryRow(query).Scan(&got); err != nil {
