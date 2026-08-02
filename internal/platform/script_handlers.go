@@ -372,4 +372,26 @@ func (s *APIServer) handleScriptResultNATS(msg *nats.Msg) {
 	if err != nil {
 		s.logger.Error("update script execution", zap.Error(err))
 	}
+
+	if result.Type == "script_result" {
+		var scheduleID, deviceID string
+		var payload map[string]interface{}
+		if err := json.Unmarshal(msg.Data, &payload); err == nil {
+			scheduleID, _ = payload["schedule_id"].(string)
+			deviceID, _ = payload["device_id"].(string)
+		}
+		if scheduleID != "" {
+			so := NewScheduleOrchestrator(s.nats, s.db.DB(), s.logger)
+			so.ProcessScheduleDeviceResult(map[string]interface{}{
+				"execution_id": result.ExecutionID,
+				"schedule_id":  scheduleID,
+				"device_id":    deviceID,
+				"status":       result.Status,
+				"stdout":       result.Stdout,
+				"stderr":       result.Stderr,
+				"exit_code":    result.ExitCode,
+				"duration_ms":  result.DurationMs,
+			})
+		}
+	}
 }

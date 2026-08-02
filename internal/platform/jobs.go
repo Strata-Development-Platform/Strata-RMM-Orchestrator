@@ -1,7 +1,9 @@
 package platform
 
 import (
+	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -9,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/nats-io/nats.go"
 	"go.uber.org/zap"
 )
 
@@ -503,4 +506,291 @@ func nullTimeStr(t *time.Time) string {
 		return ""
 	}
 	return t.UTC().Format(time.RFC3339)
+}
+
+type ScheduleOrchestrator struct {
+	nc     *nats.Conn
+	db     *sql.DB
+	logger *zap.Logger
+}
+
+func NewScheduleOrchestrator(nc *nats.Conn, db *sql.DB, logger *zap.Logger) *ScheduleOrchestrator {
+	return &ScheduleOrchestrator{nc: nc, db: db, logger: logger}
+}
+
+func (so *ScheduleOrchestrator) ExecuteSchedule(scheduleID string) error {
+	db := so.db
+
+	var schedule struct {
+		ID              string          `json:"id"`
+		TenantID        string          `json:"tenant_id"`
+		ScriptID        string          `json:"script_id"`
+		ScheduleType    string          `json:"schedule_type"`
+		ScheduleParams  json.RawMessage `json:"schedule_params"`
+		TargetDevices   json.RawMessage `json:"target_devices"`
+		MaxRetries      int             `json:"max_retries"`
+		RetryInterval   int             `json:"retry_interval"`
+		NextRunAt       time.Time       `json:"next_run_at"`
+	}
+
+	var params, devices []byte
+	err := db.QueryRowContext(context.Background(), `
+		SELECT id, tenant_id, script_id, schedule_type, schedule_params, target_devices,
+		       max_retries, retry_interval, next_run_at
+		FROM schedules WHERE id = $1 AND status = 'active'
+	`, scheduleID).Scan(&schedule.ID, &schedule.TenantID, &schedule.ScriptID,
+		&schedule.ScheduleType, &params, &devices, &schedule.MaxRetries,
+		&schedule.RetryInterval, &schedule.NextRunAt)
+	if err != nil {
+		return fmt.Errorf("schedule not found or not active: %w", err)
+	}
+
+	if params != nil && len(params) > 0 {
+		schedule.ScheduleParams = params
+	}
+	if devices != nil && len(devices) > 0 {
+		schedule.TargetDevices = devices
+	}
+
+	var deviceIDs []string
+	if err := json.Unmarshal(devices, &deviceIDs); err != nil {
+		return fmt.Errorf("failed to parse device list: %w", err)
+	}
+
+	if len(deviceIDs) == 0 {
+		return fmt.Errorf("no devices to execute schedule on")
+	}
+
+	var script struct {
+		Name     string `json:"name"`
+		Language string `json:"language"`
+		Content  string `json:"content"`
+		Timeout  int    `json:"timeout_sec"`
+	}
+
+	err = db.QueryRowContext(context.Background(), `
+		SELECT name, language, content, timeout_sec FROM scripts WHERE id = $1
+	`, schedule.ScriptID).Scan(&script.Name, &script.Language, &script.Content, &script.Timeout)
+	if err != nil {
+		return fmt.Errorf("script not found: %w", err)
+	}
+
+	for _, deviceID := range deviceIDs {
+		execID := uuid.New().String()
+
+		_, err := db.ExecContext(context.Background(), `
+			INSERT INTO schedule_device_executions (id, schedule_id, device_id, status)
+			VALUES ($1, $2, $3, 'pending')
+			ON CONFLICT (schedule_id, device_id) DO UPDATE SET status = 'pending',
+			           retry_count = 0, started_at = NULL, completed_at = NULL
+		`, execID, schedule.ID, deviceID)
+		if err != nil {
+			so.logger.Warn("create schedule execution", zap.Error(err))
+			continue
+		}
+
+		cmdPayload, _ := json.Marshal(map[string]interface{}{
+			"type":         "script_exec",
+			"execution_id": execID,
+			"schedule_id":  schedule.ID,
+			"device_id":    deviceID,
+			"language":     script.Language,
+			"content":      script.Content,
+			"parameters":   schedule.ScheduleParams,
+			"timeout":      script.Timeout,
+			"max_retries":  schedule.MaxRetries,
+			"retry_count":  0,
+		})
+
+		subject := fmt.Sprintf("tenant.%s.cmd.%s", schedule.TenantID, deviceID)
+		if err := so.nc.Publish(subject, cmdPayload); err != nil {
+			so.logger.Warn("publish schedule command", zap.Error(err))
+			db.ExecContext(context.Background(), `
+				UPDATE schedule_device_executions SET status = 'failed', stderr = 'NATS publish failed'
+				WHERE id = $1
+			`, execID)
+		}
+	}
+
+	_, err = db.ExecContext(context.Background(), `
+		UPDATE schedules SET last_run_at = NOW(), status = 'running'
+		WHERE id = $1
+	`, schedule.ID)
+	if err != nil {
+		so.logger.Warn("update schedule status", zap.Error(err))
+	}
+
+	return nil
+}
+
+func (so *ScheduleOrchestrator) ProcessScheduleDeviceResult(result map[string]interface{}) error {
+	execID, ok := result["execution_id"].(string)
+	if !ok || execID == "" {
+		return fmt.Errorf("invalid execution_id")
+	}
+
+	_, _ = result["schedule_id"].(string)
+	deviceID, _ := result["device_id"].(string)
+	status, _ := result["status"].(string)
+	stdout, _ := result["stdout"].(string)
+	stderr, _ := result["stderr"].(string)
+	exitCode, _ := result["exit_code"].(int)
+	durationMs, _ := result["duration_ms"].(int64)
+
+	now := time.Now()
+	_, err := so.db.ExecContext(context.Background(), `
+		UPDATE schedule_device_executions SET status = $1, stdout = $2, stderr = $3,
+		           exit_code = $4, duration_ms = $5, completed_at = $6,
+		           last_retry_at = CASE WHEN $7 THEN NOW() ELSE last_retry_at END
+		WHERE id = $8
+	`, status, stdout, stderr, exitCode, durationMs, now,
+		status == "failed", execID)
+	if err != nil {
+		return fmt.Errorf("update execution: %w", err)
+	}
+
+	var scheduleID2 string
+	err = so.db.QueryRowContext(context.Background(), `
+		SELECT schedule_id FROM schedule_device_executions WHERE id = $1
+	`, execID).Scan(&scheduleID2)
+	if err != nil {
+		return fmt.Errorf("get schedule id: %w", err)
+	}
+
+	var schedStatus string
+	err = so.db.QueryRowContext(context.Background(), `
+		SELECT status FROM schedules WHERE id = $1
+	`, scheduleID2).Scan(&schedStatus)
+	if err != nil {
+		return fmt.Errorf("get schedule status: %w", err)
+	}
+
+	if schedStatus != "running" && schedStatus != "active" {
+		return nil
+	}
+
+	var maxRetries, retryCount int
+	var execStatus string
+	err = so.db.QueryRowContext(context.Background(), `
+		SELECT status, retry_count FROM schedule_device_executions WHERE id = $1
+	`, execID).Scan(&execStatus, &retryCount)
+	if err != nil {
+		return fmt.Errorf("get execution status: %w", err)
+	}
+
+	if execStatus == "failed" && retryCount < maxRetries {
+		_, err = so.db.ExecContext(context.Background(), `
+			UPDATE schedule_device_executions SET status = 'pending', next_retry_at = NOW() + INTERVAL '30 seconds'
+			WHERE id = $1
+		`, execID)
+		if err != nil {
+			so.logger.Warn("schedule retry", zap.Error(err))
+		}
+		return nil
+	}
+
+	if execStatus == "failed" && retryCount >= maxRetries {
+		so.logger.Info("schedule device execution max retries reached",
+			zap.String("exec_id", execID), zap.String("device_id", deviceID),
+			zap.String("schedule_id", scheduleID2), zap.Int("retry_count", retryCount))
+	}
+
+	if execStatus == "completed" {
+		allCompleted, err := so.checkScheduleCompletion(scheduleID2)
+		if err != nil {
+			so.logger.Warn("check schedule completion", zap.Error(err))
+		} else if allCompleted {
+			so.logger.Info("schedule completed successfully",
+				zap.String("schedule_id", scheduleID2))
+		}
+	}
+
+	return nil
+}
+
+func (so *ScheduleOrchestrator) checkScheduleCompletion(scheduleID string) (bool, error) {
+	var total, completed, failed int
+	err := so.db.QueryRowContext(context.Background(), `
+		SELECT COUNT(*) as total,
+		       SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
+		       SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed
+		FROM schedule_device_executions WHERE schedule_id = $1
+	`, scheduleID).Scan(&total, &completed, &failed)
+	if err != nil {
+		return false, err
+	}
+
+	if completed+failed == total && total > 0 {
+		so.db.ExecContext(context.Background(), `
+			UPDATE schedules SET status = 'completed', completed_at = NOW()
+			WHERE id = $1
+		`, scheduleID)
+		return true, nil
+	}
+
+	return false, nil
+}
+
+func (so *ScheduleOrchestrator) ResumeSchedule(scheduleID string) error {
+	var status string
+	err := so.db.QueryRowContext(context.Background(), `
+		SELECT status FROM schedules WHERE id = $1
+	`, scheduleID).Scan(&status)
+	if err != nil {
+		return fmt.Errorf("schedule not found: %w", err)
+	}
+
+	if status != "paused" {
+		return fmt.Errorf("schedule must be paused to resume")
+	}
+
+	_, err = so.db.ExecContext(context.Background(), `
+		UPDATE schedules SET status = 'active', started_at = NOW()
+		WHERE id = $1
+	`, scheduleID)
+	if err != nil {
+		return fmt.Errorf("update schedule status: %w", err)
+	}
+
+	_, err = so.db.ExecContext(context.Background(), `
+		UPDATE schedule_device_executions SET status = 'pending'
+		WHERE schedule_id = $1 AND status = 'paused'
+	`, scheduleID)
+	if err != nil {
+		return fmt.Errorf("resume device executions: %w", err)
+	}
+
+	return nil
+}
+
+func (so *ScheduleOrchestrator) PauseSchedule(scheduleID string) error {
+	var status string
+	err := so.db.QueryRowContext(context.Background(), `
+		SELECT status FROM schedules WHERE id = $1
+	`, scheduleID).Scan(&status)
+	if err != nil {
+		return fmt.Errorf("schedule not found: %w", err)
+	}
+
+	if status != "active" {
+		return fmt.Errorf("schedule must be active to pause")
+	}
+
+	_, err = so.db.ExecContext(context.Background(), `
+		UPDATE schedules SET status = 'paused', updated_at = NOW()
+		WHERE id = $1
+	`, scheduleID)
+	if err != nil {
+		return fmt.Errorf("update schedule status: %w", err)
+	}
+
+	_, err = so.db.ExecContext(context.Background(), `
+		UPDATE schedule_device_executions SET status = 'paused'
+		WHERE schedule_id = $1 AND status IN ('pending', 'running')
+	`, scheduleID)
+	if err != nil {
+		return fmt.Errorf("pause device executions: %w", err)
+	}
+
+	return nil
 }

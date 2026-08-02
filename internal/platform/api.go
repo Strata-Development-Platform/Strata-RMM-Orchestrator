@@ -308,6 +308,16 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /api/v1/scripts/{tenantID}/executions", s.handleScriptExecutions)
 	mux.HandleFunc("GET /api/v1/scripts/{tenantID}/executions/{execID}", s.handleGetExecution)
 
+	mux.HandleFunc("POST /api/v1/tenants/{tenantID}/scripts/schedule", s.handleCreateScriptSchedule)
+	mux.HandleFunc("GET /api/v1/tenants/{tenantID}/scripts/schedules", s.handleListScriptSchedules)
+	mux.HandleFunc("GET /api/v1/tenants/{tenantID}/scripts/schedules/{scheduleID}", s.handleGetScriptSchedule)
+	mux.HandleFunc("PUT /api/v1/tenants/{tenantID}/scripts/schedules/{scheduleID}", s.handleUpdateScriptSchedule)
+	mux.HandleFunc("DELETE /api/v1/tenants/{tenantID}/scripts/schedules/{scheduleID}", s.handleDeleteScriptSchedule)
+	mux.HandleFunc("POST /api/v1/tenants/{tenantID}/scripts/schedules/{scheduleID}/preview", s.handlePreviewScriptSchedule)
+	mux.HandleFunc("GET /api/v1/tenants/{tenantID}/scripts/schedules/{scheduleID}/devices", s.handleListScriptScheduleDevices)
+	mux.HandleFunc("POST /api/v1/tenants/{tenantID}/scripts/schedules/{scheduleID}/devices/{execID}/retry", s.handleRetryScriptScheduleDevice)
+	mux.HandleFunc("GET /api/v1/tenants/{tenantID}/scripts/schedules/executions", s.handleListScriptScheduleExecutions)
+
 	mux.HandleFunc("GET /api/v1/software/packages/{tenantID}", s.handleListPackages)
 	mux.HandleFunc("POST /api/v1/software/packages/{tenantID}", s.handleCreatePackage)
 	mux.HandleFunc("DELETE /api/v1/software/packages/{tenantID}/{pkgID}", s.handleDeletePackage)
