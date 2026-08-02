@@ -330,6 +330,18 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /api/v2/msps/{mspID}/billing/reports/revenue", s.handleGetRevenueReport)
 	mux.HandleFunc("GET /api/v2/platform/billing/analytics", s.handleGetBillingAnalytics)
 
+	// Device CMDB routes
+	mux.HandleFunc("GET /api/v1/devices/relationships", s.handleGetDeviceRelationships)
+	mux.HandleFunc("POST /api/v1/devices/relationships", s.handleCreateDeviceRelationship)
+	mux.HandleFunc("DELETE /api/v1/devices/relationships/{relationshipID}", s.handleDeleteDeviceRelationship)
+	mux.HandleFunc("GET /api/v1/devices/{deviceID}/dependencies", s.handleGetDeviceDependencies)
+	mux.HandleFunc("GET /api/v1/devices/{deviceID}/impact", s.handleGetDeviceImpact)
+	mux.HandleFunc("GET /api/v1/devices/addresses", s.handleGetNetworkAddresses)
+	mux.HandleFunc("POST /api/v1/devices/addresses", s.handleSubmitNetworkAddress)
+	mux.HandleFunc("GET /api/v1/devices/{deviceID}/packages", s.handleGetDevicePackages)
+	mux.HandleFunc("POST /api/v1/devices/{deviceID}/packages", s.handleSubmitDevicePackages)
+	mux.HandleFunc("GET /api/v1/devices/{deviceID}/services", s.handleGetDeviceServices)
+
 	mux.HandleFunc("POST /api/v1/remote/{tenantID}/session", s.handleRemoteSessionStart)
 	mux.HandleFunc("POST /api/v1/remote/{tenantID}/session/{sessionID}/input", s.handleRemoteSessionInput)
 	mux.HandleFunc("DELETE /api/v1/remote/{tenantID}/session/{sessionID}", s.handleRemoteSessionStop)

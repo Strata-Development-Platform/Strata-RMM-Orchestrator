@@ -790,3 +790,486 @@ func parseInt(s string, def int) int {
 	}
 	return n
 }
+
+// CMDB - Device Relationships
+
+func (s *APIServer) handleGetDeviceRelationships(w http.ResponseWriter, r *http.Request) {
+	mspID := r.PathValue("mspID")
+
+	rows, err := s.requestDB(r).QueryContext(r.Context(), `
+		SELECT id, source_device_id, target_device_id, relationship_type, metadata,
+		       is_active, verified_at, created_at
+		FROM device_relationships WHERE msp_id = $1
+		ORDER BY created_at DESC
+	`, mspID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	var relationships []map[string]interface{}
+	for rows.Next() {
+		var id, srcID, tgtID, relType string
+		var metadata []byte
+		var isActive bool
+		var verifiedAt sql.NullTime
+		var createdAt time.Time
+
+		err := rows.Scan(&id, &srcID, &tgtID, &relType, &metadata, &isActive, &verifiedAt, &createdAt)
+		if err != nil {
+			continue
+		}
+
+		rel := map[string]interface{}{
+			"id":                id,
+			"source_device_id":  srcID,
+			"target_device_id":  tgtID,
+			"relationship_type": relType,
+			"is_active":         isActive,
+			"created_at":        createdAt,
+		}
+		if verifiedAt.Valid {
+			rel["verified_at"] = verifiedAt.Time
+		}
+		if metadata != nil && len(metadata) > 0 {
+			var meta map[string]interface{}
+			if err := json.Unmarshal(metadata, &meta); err == nil {
+				rel["metadata"] = meta
+			}
+		}
+		relationships = append(relationships, rel)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"relationships": relationships})
+}
+
+func (s *APIServer) handleCreateDeviceRelationship(w http.ResponseWriter, r *http.Request) {
+	mspID := r.PathValue("mspID")
+
+	var req struct {
+		SourceDeviceID   string                 `json:"source_device_id"`
+		TargetDeviceID   string                 `json:"target_device_id"`
+		RelationshipType string                 `json:"relationship_type"`
+		ClientID         string                 `json:"client_id,omitempty"`
+		SiteID           string                 `json:"site_id,omitempty"`
+		Metadata         map[string]interface{} `json:"metadata,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+
+	if req.SourceDeviceID == "" || req.TargetDeviceID == "" || req.RelationshipType == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "source_device_id, target_device_id, and relationship_type required"})
+		return
+	}
+
+	var id string
+	metadataJSON, _ := json.Marshal(req.Metadata)
+	err := s.requestDB(r).QueryRowContext(r.Context(), `
+		INSERT INTO device_relationships (msp_id, client_id, site_id, source_device_id, target_device_id, relationship_type, metadata)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (msp_id, source_device_id, target_device_id, relationship_type) DO UPDATE SET
+			client_id = $2,
+			site_id = $3,
+			metadata = $7,
+			is_active = true,
+			updated_at = NOW()
+		RETURNING id
+	`, mspID, req.ClientID, req.SiteID, req.SourceDeviceID, req.TargetDeviceID, req.RelationshipType, metadataJSON).Scan(&id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]interface{}{
+		"id":  id,
+		"msg": "device relationship created/updated",
+	})
+}
+
+func (s *APIServer) handleDeleteDeviceRelationship(w http.ResponseWriter, r *http.Request) {
+	relationshipID := r.PathValue("relationshipID")
+	mspID := r.PathValue("mspID")
+
+	_, err := s.requestDB(r).ExecContext(r.Context(), `
+		UPDATE device_relationships SET is_active = false WHERE id = $1 AND msp_id = $2
+	`, relationshipID, mspID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"msg": "device relationship deactivated",
+	})
+}
+
+func (s *APIServer) handleGetDeviceDependencies(w http.ResponseWriter, r *http.Request) {
+	deviceID := r.PathValue("deviceID")
+	mspID := r.PathValue("mspID")
+
+	rows, err := s.requestDB(r).QueryContext(r.Context(), `
+		SELECT id, source_device_id, target_device_id, relationship_type, metadata, is_active
+		FROM device_relationships
+		WHERE (source_device_id = $1 OR target_device_id = $1) AND msp_id = $2
+		ORDER BY created_at DESC
+	`, deviceID, mspID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	var dependencies []map[string]interface{}
+	for rows.Next() {
+		var id, srcID, tgtID, relType string
+		var metadata []byte
+		var isActive bool
+
+		err := rows.Scan(&id, &srcID, &tgtID, &relType, &metadata, &isActive)
+		if err != nil {
+			continue
+		}
+
+		dep := map[string]interface{}{
+			"id":                id,
+			"source_device_id":  srcID,
+			"target_device_id":  tgtID,
+			"relationship_type": relType,
+			"is_active":         isActive,
+		}
+		if metadata != nil && len(metadata) > 0 {
+			var meta map[string]interface{}
+			if err := json.Unmarshal(metadata, &meta); err == nil {
+				dep["metadata"] = meta
+			}
+		}
+		dependencies = append(dependencies, dep)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"device_id":    deviceID,
+		"dependencies": dependencies,
+		"count":        len(dependencies),
+	})
+}
+
+func (s *APIServer) handleGetDeviceImpact(w http.ResponseWriter, r *http.Request) {
+	deviceID := r.PathValue("deviceID")
+	mspID := r.PathValue("mspID")
+
+	rows, err := s.requestDB(r).QueryContext(r.Context(), `
+		SELECT source_device_id, relationship_type
+		FROM device_relationships
+		WHERE target_device_id = $1 AND msp_id = $2 AND is_active = true
+	`, deviceID, mspID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	var impacted []map[string]interface{}
+	for rows.Next() {
+		var srcID, relType string
+		if err := rows.Scan(&srcID, &relType); err != nil {
+			continue
+		}
+		impacted = append(impacted, map[string]interface{}{
+			"affected_device_id": srcID,
+			"relationship_type":  relType,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"device_id":        deviceID,
+		"impacted_by":      deviceID,
+		"affected_count":   len(impacted),
+		"affected_devices": impacted,
+	})
+}
+
+// CMDB - Network Addresses
+
+func (s *APIServer) handleGetNetworkAddresses(w http.ResponseWriter, r *http.Request) {
+	mspID := r.PathValue("mspID")
+
+	rows, err := s.requestDB(r).QueryContext(r.Context(), `
+		SELECT id, device_id, ip_address, ip_family, network_type, interface_name,
+		       vlan_id, subnet_cidr, is_primary, created_at
+		FROM network_addresses WHERE msp_id = $1
+		ORDER BY created_at DESC
+	`, mspID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	var addresses []map[string]interface{}
+	for rows.Next() {
+		var id, deviceID string
+		var ipAddress string
+		var ipFamily, vlanID int
+		var networkType, interfaceName, subnetCIDR string
+		var isPrimary bool
+		var createdAt time.Time
+
+		err := rows.Scan(&id, &deviceID, &ipAddress, &ipFamily, &networkType, &interfaceName, &vlanID, &subnetCIDR, &isPrimary, &createdAt)
+		if err != nil {
+			continue
+		}
+
+		addr := map[string]interface{}{
+			"id":           id,
+			"device_id":    deviceID,
+			"ip_address":   ipAddress,
+			"ip_family":    ipFamily,
+			"network_type": networkType,
+			"is_primary":   isPrimary,
+			"created_at":   createdAt,
+		}
+		if interfaceName != "" {
+			addr["interface_name"] = interfaceName
+		}
+		if subnetCIDR != "" {
+			addr["subnet_cidr"] = subnetCIDR
+		}
+		if vlanID > 0 {
+			addr["vlan_id"] = vlanID
+		}
+		addresses = append(addresses, addr)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"addresses": addresses,
+		"count":     len(addresses),
+	})
+}
+
+func (s *APIServer) handleSubmitNetworkAddress(w http.ResponseWriter, r *http.Request) {
+	mspID := r.PathValue("mspID")
+
+	var req struct {
+		DeviceID      string `json:"device_id"`
+		IPAddress     string `json:"ip_address"`
+		IPFamily      int    `json:"ip_family,omitempty"`
+		NetworkType   string `json:"network_type"`
+		InterfaceName string `json:"interface_name,omitempty"`
+		VlanID        int    `json:"vlan_id,omitempty"`
+		SubnetCIDR    string `json:"subnet_cidr,omitempty"`
+		IsPrimary     bool   `json:"is_primary"`
+		ClientID      string `json:"client_id,omitempty"`
+		SiteID        string `json:"site_id,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+
+	if req.DeviceID == "" || req.IPAddress == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "device_id and ip_address required"})
+		return
+	}
+	if req.IPFamily == 0 {
+		req.IPFamily = 4
+	}
+	if req.NetworkType == "" {
+		req.NetworkType = "internal"
+	}
+
+	var id string
+	err := s.requestDB(r).QueryRowContext(r.Context(), `
+		INSERT INTO network_addresses (msp_id, client_id, site_id, device_id, ip_address, ip_family, network_type, interface_name, vlan_id, subnet_cidr, is_primary)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		ON CONFLICT (device_id, ip_address) DO UPDATE SET
+			client_id = $2,
+			site_id = $3,
+			network_type = $7,
+			interface_name = $8,
+			vlan_id = $9,
+			subnet_cidr = $10,
+			is_primary = $11,
+			updated_at = NOW()
+		RETURNING id
+	`, mspID, req.ClientID, req.SiteID, req.DeviceID, req.IPAddress, req.IPFamily, req.NetworkType, req.InterfaceName, req.VlanID, req.SubnetCIDR, req.IsPrimary).Scan(&id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]interface{}{
+		"id":  id,
+		"msg": "network address added/updated",
+	})
+}
+
+// CMDB - Device Inventory
+
+func (s *APIServer) handleGetDevicePackages(w http.ResponseWriter, r *http.Request) {
+	deviceID := r.PathValue("deviceID")
+	mspID := r.PathValue("mspID")
+
+	rows, err := s.requestDB(r).QueryContext(r.Context(), `
+		SELECT id, device_id, name, version, release, arch, source, install_date, package_type, status, created_at
+		FROM device_packages WHERE device_id = $1 AND msp_id = $2
+		ORDER BY created_at DESC
+	`, deviceID, mspID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	var packagesList []map[string]interface{}
+	for rows.Next() {
+		var id, devID, name, version, release, arch, source, pkgType, status string
+		var installDate time.Time
+		var createdAt time.Time
+
+		err := rows.Scan(&id, &devID, &name, &version, &release, &arch, &source, &installDate, &pkgType, &status, &createdAt)
+		if err != nil {
+			continue
+		}
+
+		pkg := map[string]interface{}{
+			"id":         id,
+			"device_id":  devID,
+			"name":       name,
+			"version":    version,
+			"status":     status,
+			"created_at": createdAt,
+		}
+		if release != "" {
+			pkg["release"] = release
+		}
+		if arch != "" {
+			pkg["arch"] = arch
+		}
+		if source != "" {
+			pkg["source"] = source
+		}
+		if !installDate.IsZero() {
+			pkg["install_date"] = installDate
+		}
+		packagesList = append(packagesList, pkg)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"device_id": deviceID,
+		"packages":  packagesList,
+		"count":     len(packagesList),
+	})
+}
+
+func (s *APIServer) handleSubmitDevicePackages(w http.ResponseWriter, r *http.Request) {
+	deviceID := r.PathValue("deviceID")
+	mspID := r.PathValue("mspID")
+
+	var req struct {
+		Packages []struct {
+			Name        string `json:"name"`
+			Version     string `json:"version"`
+			Release     string `json:"release,omitempty"`
+			Arch        string `json:"arch,omitempty"`
+			Source      string `json:"source,omitempty"`
+			InstallDate string `json:"install_date,omitempty"`
+			PackageType string `json:"package_type,omitempty"`
+		} `json:"packages"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+
+	if len(req.Packages) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "packages array required"})
+		return
+	}
+
+	for _, pkg := range req.Packages {
+		if pkg.Name == "" || pkg.Version == "" {
+			continue
+		}
+		if pkg.PackageType == "" {
+			req.Packages[0].PackageType = "deb"
+		}
+
+		var installDate time.Time
+		if pkg.InstallDate != "" {
+			installDate, _ = time.Parse(time.RFC3339, pkg.InstallDate)
+		}
+
+		s.requestDB(r).ExecContext(r.Context(), `
+			INSERT INTO device_packages (device_id, msp_id, name, version, release, arch, source, install_date, package_type, status)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'installed')
+			ON CONFLICT (device_id, name) DO UPDATE SET
+				version = $4,
+				release = $5,
+				arch = $6,
+				source = $7,
+				install_date = $8,
+				updated_at = NOW()
+		`, deviceID, mspID, pkg.Name, pkg.Version, pkg.Release, pkg.Arch, pkg.Source, installDate)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"device_id": deviceID,
+		"msg":       fmt.Sprintf("synced %d packages", len(req.Packages)),
+	})
+}
+
+func (s *APIServer) handleGetDeviceServices(w http.ResponseWriter, r *http.Request) {
+	deviceID := r.PathValue("deviceID")
+	mspID := r.PathValue("mspID")
+
+	rows, err := s.requestDB(r).QueryContext(r.Context(), `
+		SELECT id, device_id, name, port, protocol, state, process_name, binary_path, created_at
+		FROM device_services WHERE device_id = $1 AND msp_id = $2
+		ORDER BY created_at DESC
+	`, deviceID, mspID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	var services []map[string]interface{}
+	for rows.Next() {
+		var id, devID, name, protocol, state, procName, binPath string
+		var port int
+		var createdAt time.Time
+
+		err := rows.Scan(&id, &devID, &name, &port, &protocol, &state, &procName, &binPath, &createdAt)
+		if err != nil {
+			continue
+		}
+
+		svc := map[string]interface{}{
+			"id":         id,
+			"device_id":  devID,
+			"name":       name,
+			"protocol":   protocol,
+			"state":      state,
+			"created_at": createdAt,
+		}
+		if port > 0 {
+			svc["port"] = port
+		}
+		if procName != "" {
+			svc["process_name"] = procName
+		}
+		if binPath != "" {
+			svc["binary_path"] = binPath
+		}
+		services = append(services, svc)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"device_id": deviceID,
+		"services":  services,
+		"count":     len(services),
+	})
+}
