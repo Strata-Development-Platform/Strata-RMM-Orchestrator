@@ -486,6 +486,29 @@ func TestSMTPConfigurationRequiresCompleteTLSDeliveryInputs(t *testing.T) {
 	}
 }
 
+func TestAlertDeliveryConfigurationFailsClosed(t *testing.T) {
+	newConfig := func() *OrchestratorConfig {
+		return &OrchestratorConfig{
+			RuntimeMode: ModeDevelopment,
+			JWT:         JWTConfig{Secret: "abcdefghijklmnopqrstuvwxyz123456"},
+			DB:          DatabaseConfig{DSN: "postgres://h:1/d", MaxOpenConns: 5, MaxIdleConns: 2, ConnMaxLifetime: 10},
+			NATS:        NATSConfig{URL: "nats://localhost:4222", ReconnectWait: 5, MaxReconnects: -1},
+			HTTP:        HTTPConfig{APIAddr: ":8080", ReadTimeout: 5, WriteTimeout: 5, MaxBodySizeBytes: 1000},
+		}
+	}
+	cfg := newConfig()
+	cfg.AlertDelivery.SlackURL = "http://insecure.example.test/hook"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "AlertDelivery") {
+		t.Fatalf("insecure alert URL accepted: %v", err)
+	}
+
+	cfg = newConfig()
+	cfg.AlertDelivery.EmailRecipients = []string{"ops@example.test"}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "require SMTP") {
+		t.Fatalf("alert email without SMTP accepted: %v", err)
+	}
+}
+
 func TestLoadSMTPPasswordFromProtectedFile(t *testing.T) {
 	secretPath := filepath.Join(t.TempDir(), "smtp-password")
 	if err := os.WriteFile(secretPath, []byte("smtp-password\n"), 0o600); err != nil {

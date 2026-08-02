@@ -183,7 +183,16 @@ func NewCommand(ctx context.Context, version, commit string, logger *zap.Logger)
 			advanceStage(10)
 			logger.Info("starting alerting engine")
 			alertStore := alerting.NewStore(tsdb.DB())
-			alertNotifier := alerting.NewNotifier()
+			alertNotifier, err := alerting.NewNotifier(alerting.NotifierConfig{
+				SlackURL: cfg.AlertDelivery.SlackURL, TeamsURL: cfg.AlertDelivery.TeamsURL,
+				WebhookURL: cfg.AlertDelivery.WebhookURL, PagerDutyKey: cfg.AlertDelivery.PagerDutyKey,
+				SMTPAddress:  net.JoinHostPort(cfg.SMTP.Host, fmt.Sprintf("%d", cfg.SMTP.Port)),
+				SMTPUsername: cfg.SMTP.Username, SMTPPassword: cfg.SMTP.Password, SMTPFrom: cfg.SMTP.FromAddress,
+				SMTPRecipients: cfg.AlertDelivery.EmailRecipients, SMTPImplicitTLS: cfg.SMTP.ImplicitTLS,
+			})
+			if err != nil {
+				return fmt.Errorf("stage %d: configuring alert delivery: %w", atomic.LoadInt32(&startupStage), err)
+			}
 			alertEngine := alerting.NewEngine(nc, tsdb, alertStore, alertNotifier, logger)
 			if err := alertEngine.Start(ctx); err != nil {
 				return fmt.Errorf("stage %d: starting alerting engine: %w", atomic.LoadInt32(&startupStage), err)
