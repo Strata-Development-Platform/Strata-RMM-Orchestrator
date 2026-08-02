@@ -85,7 +85,9 @@ jobs:
               verify_manifest_entry "$package"
             done
           done
-          dpkg-deb --contents dist/strata-rmm-orchestrator_*.deb | grep -q './usr/share/strata-rmm/ui/index.html'
+          for package in dist/strata-rmm-orchestrator_*.deb; do
+            dpkg-deb --contents "$package" | grep -q './usr/share/strata-rmm/ui/index.html'
+          done
       - name: Upload snapshot evidence
         uses: actions/upload-artifact@v4
         with:
