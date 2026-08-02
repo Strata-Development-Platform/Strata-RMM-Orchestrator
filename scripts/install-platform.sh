@@ -93,6 +93,9 @@ install_docker() {
   openssl rand -hex 32 > "$secrets_dir/nats_token"
   openssl rand -hex 48 > "$secrets_dir/jwt_secret"
   openssl rand -hex 32 > "$secrets_dir/metrics_token"
+  printf 'strata%s\n' "$(openssl rand -hex 8)" > "$secrets_dir/storage_access_key"
+  openssl rand -base64 36 | tr -d '\n' > "$secrets_dir/storage_secret_key"
+  printf '\n' >> "$secrets_dir/storage_secret_key"
   prompt_admin_password "$admin_password"
 
   openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 -out "$secrets_dir/platform_ca.key" >/dev/null 2>&1
@@ -130,12 +133,12 @@ ENV
     printf 'Docker installation configuration prepared and validated.\n'
     return
   fi
-  "${compose[@]}" up -d postgres nats
+  "${compose[@]}" up -d postgres nats minio
   "${compose[@]}" run --rm --no-deps     -v "$admin_password:/run/bootstrap/admin-password:ro"     orchestrator orchestrator bootstrap-admin --email "$ADMIN_EMAIL"     --tenant-name "$PLATFORM_NAME" --password-file /run/bootstrap/admin-password
   rm -f "$admin_password"
 
   "${compose[@]}" up -d
-  wait_for_url "https://$DOMAIN/ready" 90 || die "platform did not become ready; inspect Docker Compose logs"
+  wait_for_url "https://$DOMAIN/health/ready" 90 || die "platform did not become ready; inspect Docker Compose logs"
   printf 'Installation complete. Sign in at https://%s with %s\n' "$DOMAIN" "$ADMIN_EMAIL"
 }
 
@@ -196,7 +199,7 @@ ENV
 
   systemctl daemon-reload
   systemctl enable --now strata-rmm.service
-  wait_for_url "http://127.0.0.1:8080/ready" 60 || die "native orchestrator did not become ready"
+  wait_for_url "http://127.0.0.1:8080/health/ready" 60 || die "native orchestrator did not become ready"
   printf 'Native orchestrator installed. Configure HTTPS and the web console for https://%s.\n' "$DOMAIN"
 }
 

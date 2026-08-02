@@ -147,6 +147,28 @@ func TestLoadMetricsTokenFromEnvironment(t *testing.T) {
 	}
 }
 
+func TestLoadStorageCredentialsFromFiles(t *testing.T) {
+	dir := t.TempDir()
+	accessPath := filepath.Join(dir, "storage-access")
+	secretPath := filepath.Join(dir, "storage-secret")
+	if err := os.WriteFile(accessPath, []byte("hosted-alpha-access\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(secretPath, []byte("hosted-alpha-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	setenv(t, "STORAGE_ACCESS_KEY_FILE", accessPath)
+	setenv(t, "STORAGE_SECRET_KEY_FILE", secretPath)
+
+	cfg, err := LoadOrchestratorConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Storage.AccessKey != "hosted-alpha-access" || cfg.Storage.SecretKey != "hosted-alpha-secret" {
+		t.Fatalf("storage credentials were not loaded from protected files")
+	}
+}
+
 func TestProductionRequiresMetricsToken(t *testing.T) {
 	cfg := productionConfig(NATSConfig{
 		URL: "tls://nats.example.com:4222", Token: "validtok", TLSEnabled: true,
