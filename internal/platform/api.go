@@ -258,6 +258,9 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("POST /api/v1/tenants/{tenantID}/maintenance-windows", s.handleCreateMaintenanceWindow)
 	mux.HandleFunc("GET /api/v1/tenants/{tenantID}/maintenance-windows", s.handleListMaintenanceWindows)
 	mux.HandleFunc("DELETE /api/v1/tenants/{tenantID}/maintenance-windows/{windowID}", s.handleDeleteMaintenanceWindow)
+	mux.HandleFunc("GET /api/v1/tenants/{tenantID}/retention", s.handleGetRetention)
+	mux.HandleFunc("PATCH /api/v1/tenants/{tenantID}/retention", s.handleUpdateRetention)
+	mux.HandleFunc("GET /api/v1/retention/policies", s.handleListRetentionPolicies)
 
 	mux.HandleFunc("POST /api/v1/rules/{tenantID}", s.handleCreateRule)
 	mux.HandleFunc("GET /api/v1/rules/{tenantID}", s.handleListRules)
@@ -364,7 +367,7 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /api/v1/device-groups", s.handleListDeviceGroups)
 	mux.HandleFunc("DELETE /api/v1/device-groups/{groupID}", s.handleDeleteDeviceGroup)
 	mux.HandleFunc("POST /api/v1/policies", s.handleCreatePolicy)
-	mux.HandleFunc("GET /api/v1/policies", s.handleListPolicies)
+	mux.HandleFunc("GET /api/v1/policies", s.handleListRetentionPolicies)
 	mux.HandleFunc("GET /api/v1/policies/{policyID}", s.handleGetPolicy)
 	mux.HandleFunc("PUT /api/v1/policies/{policyID}", s.handleUpdatePolicy)
 	mux.HandleFunc("POST /api/v1/policies/{policyID}/validate", s.handleValidatePolicy)
@@ -1764,5 +1767,222 @@ func (s *APIServer) handleDeploymentHistory(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"history": history,
 		"count":   len(history),
+	})
+}
+
+// RetentionRequest represents a request to update retention settings
+type RetentionRequest struct {
+	MetricsDays       *int `json:"metrics_days,omitempty"`
+	HeartbeatsDays    *int `json:"heartbeats_days,omitempty"`
+	AlertsDays        *int `json:"alerts_days,omitempty"`
+	SNMPPollsDays     *int `json:"snmp_polls_days,omitempty"`
+	FlowRecordsDays   *int `json:"flow_records_days,omitempty"`
+	TopologyEdgesDays *int `json:"topology_edges_days,omitempty"`
+}
+
+// RetentionPolicySettings holds retention days per hypertable
+type RetentionPolicySettings struct {
+	MetricsDays       int `json:"metrics_days"`
+	HeartbeatsDays    int `json:"heartbeats_days"`
+	AlertsDays        int `json:"alerts_days"`
+	SNMPPollsDays     int `json:"snmp_polls_days"`
+	FlowRecordsDays   int `json:"flow_records_days"`
+	TopologyEdgesDays int `json:"topology_edges_days"`
+}
+
+func (s *APIServer) handleGetRetention(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.PathValue("tenantID")
+	if tenantID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tenantID is required"})
+		return
+	}
+
+	row := s.db.DB().QueryRowContext(r.Context(), `
+		SELECT metrics_days, heartbeats_days, alerts_days, snmp_polls_days,
+		       flow_records_days, topology_edges_days
+		FROM tenant_retention_settings
+		WHERE tenant_id = $1
+	`, tenantID)
+
+	var settings RetentionPolicySettings
+	err := row.Scan(&settings.MetricsDays, &settings.HeartbeatsDays,
+		&settings.AlertsDays, &settings.SNMPPollsDays,
+		&settings.FlowRecordsDays, &settings.TopologyEdgesDays)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			settings = RetentionPolicySettings{
+				MetricsDays:       365,
+				HeartbeatsDays:    90,
+				AlertsDays:        365,
+				SNMPPollsDays:     90,
+				FlowRecordsDays:   30,
+				TopologyEdgesDays: 90,
+			}
+		} else {
+			s.logger.Error("getting retention settings", zap.Error(err), zap.String("tenant_id", tenantID))
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to get retention settings"})
+			return
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"tenant_id":  tenantID,
+		"settings":   settings,
+		"default":    err == sql.ErrNoRows,
+		"updated_at": time.Now(),
+	})
+}
+
+func (s *APIServer) handleUpdateRetention(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.PathValue("tenantID")
+	if tenantID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tenantID is required"})
+		return
+	}
+
+	var req RetentionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	validate := func(field string, days int) error {
+		if days < 1 || days > 10000 {
+			return fmt.Errorf("retention for %s must be between 1 and 10000", field)
+		}
+		return nil
+	}
+
+	newSettings := RetentionPolicySettings{
+		MetricsDays:       365,
+		HeartbeatsDays:    90,
+		AlertsDays:        365,
+		SNMPPollsDays:     90,
+		FlowRecordsDays:   30,
+		TopologyEdgesDays: 90,
+	}
+
+	if req.MetricsDays != nil {
+		if err := validate("metrics_days", *req.MetricsDays); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		newSettings.MetricsDays = *req.MetricsDays
+	}
+	if req.HeartbeatsDays != nil {
+		if err := validate("heartbeats_days", *req.HeartbeatsDays); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		newSettings.HeartbeatsDays = *req.HeartbeatsDays
+	}
+	if req.AlertsDays != nil {
+		if err := validate("alerts_days", *req.AlertsDays); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		newSettings.AlertsDays = *req.AlertsDays
+	}
+	if req.SNMPPollsDays != nil {
+		if err := validate("snmp_polls_days", *req.SNMPPollsDays); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		newSettings.SNMPPollsDays = *req.SNMPPollsDays
+	}
+	if req.FlowRecordsDays != nil {
+		if err := validate("flow_records_days", *req.FlowRecordsDays); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		newSettings.FlowRecordsDays = *req.FlowRecordsDays
+	}
+	if req.TopologyEdgesDays != nil {
+		if err := validate("topology_edges_days", *req.TopologyEdgesDays); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		newSettings.TopologyEdgesDays = *req.TopologyEdgesDays
+	}
+
+	_, err := s.db.DB().ExecContext(r.Context(), `
+		INSERT INTO tenant_retention_settings (
+			tenant_id, metrics_days, heartbeats_days, alerts_days,
+			snmp_polls_days, flow_records_days, topology_edges_days
+		) VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (tenant_id) DO UPDATE SET
+			metrics_days = EXCLUDED.metrics_days,
+			heartbeats_days = EXCLUDED.heartbeats_days,
+			alerts_days = EXCLUDED.alerts_days,
+			snmp_polls_days = EXCLUDED.snmp_polls_days,
+			flow_records_days = EXCLUDED.flow_records_days,
+			topology_edges_days = EXCLUDED.topology_edges_days,
+			updated_at = NOW()
+	`, tenantID, newSettings.MetricsDays, newSettings.HeartbeatsDays,
+		newSettings.AlertsDays, newSettings.SNMPPollsDays,
+		newSettings.FlowRecordsDays, newSettings.TopologyEdgesDays)
+	if err != nil {
+		s.logger.Error("updating retention settings", zap.Error(err), zap.String("tenant_id", tenantID))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to update retention settings"})
+		return
+	}
+
+	// Apply retention policies to TimescaleDB
+	if req.MetricsDays != nil {
+		if err := s.db.SetRetentionPolicy(r.Context(), *req.MetricsDays); err != nil {
+			s.logger.Error("applying metrics retention", zap.Error(err))
+		}
+	}
+	if req.HeartbeatsDays != nil {
+		if err := s.db.SetHeartbeatsRetention(r.Context(), *req.HeartbeatsDays); err != nil {
+			s.logger.Error("applying heartbeats retention", zap.Error(err))
+		}
+	}
+	if req.AlertsDays != nil {
+		if err := s.db.SetAlertsRetention(r.Context(), *req.AlertsDays); err != nil {
+			s.logger.Error("applying alerts retention", zap.Error(err))
+		}
+	}
+	if req.SNMPPollsDays != nil {
+		if err := s.db.SetSNMPPollsRetention(r.Context(), *req.SNMPPollsDays); err != nil {
+			s.logger.Error("applying snmp retention", zap.Error(err))
+		}
+	}
+	if req.FlowRecordsDays != nil {
+		if err := s.db.SetFlowRecordsRetention(r.Context(), *req.FlowRecordsDays); err != nil {
+			s.logger.Error("applying flow retention", zap.Error(err))
+		}
+	}
+	if req.TopologyEdgesDays != nil {
+		if err := s.db.SetTopologyEdgesRetention(r.Context(), *req.TopologyEdgesDays); err != nil {
+			s.logger.Error("applying topology retention", zap.Error(err))
+		}
+	}
+
+	policies, err := s.db.GetAllRetentionPolicies(r.Context())
+	if err != nil {
+		s.logger.Error("getting retention policies", zap.Error(err))
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"tenant_id":  tenantID,
+		"settings":   newSettings,
+		"policies":   policies,
+		"message":    "retention settings updated",
+		"updated_at": time.Now(),
+	})
+}
+
+func (s *APIServer) handleListRetentionPolicies(w http.ResponseWriter, r *http.Request) {
+	policies, err := s.db.GetAllRetentionPolicies(r.Context())
+	if err != nil {
+		s.logger.Error("getting all retention policies", zap.Error(err))
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to get retention policies"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"policies": policies,
+		"count":    len(policies),
 	})
 }

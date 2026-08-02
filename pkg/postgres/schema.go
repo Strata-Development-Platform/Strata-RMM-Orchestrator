@@ -3150,6 +3150,34 @@ func Migrations() []Migration {
 				ALTER TABLE policies DROP COLUMN IF EXISTS device_id;
 			`,
 		},
+		{
+			ID:   72,
+			Name: "tenant_retention_settings",
+			Up: `
+				CREATE TABLE IF NOT EXISTS tenant_retention_settings (
+					tenant_id     UUID PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
+					metrics_days  INT NOT NULL DEFAULT 365 CHECK (metrics_days >= 1 AND metrics_days <= 10000),
+					heartbeats_days INT NOT NULL DEFAULT 90 CHECK (heartbeats_days >= 1 AND heartbeats_days <= 10000),
+					alerts_days   INT NOT NULL DEFAULT 365 CHECK (alerts_days >= 1 AND alerts_days <= 10000),
+					snmp_polls_days INT NOT NULL DEFAULT 90 CHECK (snmp_polls_days >= 1 AND snmp_polls_days <= 10000),
+					flow_records_days INT NOT NULL DEFAULT 30 CHECK (flow_records_days >= 1 AND flow_records_days <= 10000),
+					topology_edges_days INT NOT NULL DEFAULT 90 CHECK (topology_edges_days >= 1 AND topology_edges_days <= 10000),
+					created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+
+				-- Insert default retention for existing tenants
+				INSERT INTO tenant_retention_settings (tenant_id)
+				SELECT id FROM tenants
+				ON CONFLICT (tenant_id) DO NOTHING;
+
+				CREATE INDEX IF NOT EXISTS idx_tenant_retention_updated
+					ON tenant_retention_settings (updated_at);
+			`,
+			Down: `
+				DROP TABLE IF EXISTS tenant_retention_settings;
+			`,
+		},
 	}
 }
 

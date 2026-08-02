@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -267,6 +268,152 @@ func (c *Client) QueryAggregated(ctx context.Context, tenantID, deviceID, metric
 	}
 
 	return result, nil
+}
+
+// RetentionPolicy represents a retention policy for a hypertable
+type RetentionPolicy struct {
+	HypertableName  string        `json:"hypertable_name"`
+	RetentionPeriod time.Duration `json:"retention_period"`
+	JobID           int           `json:"job_id"`
+	LastRunAt       *time.Time    `json:"last_run_at,omitempty"`
+	NextRunAt       *time.Time    `json:"next_run_at,omitempty"`
+}
+
+// SetRetentionPolicy applies a retention policy to the metrics hypertable.
+// It drops any existing policy first, then creates a new one.
+func (c *Client) SetRetentionPolicy(ctx context.Context, retentionDays int) error {
+	if retentionDays < 1 || retentionDays > 10000 {
+		return fmt.Errorf("retention_days must be between 1 and 10000, got %d", retentionDays)
+	}
+	_, err := c.db.ExecContext(ctx, `SELECT set_retention_policy('metrics', ($1 || ' days')::INTERVAL)`, retentionDays)
+	return err
+}
+
+// SetHeartbeatsRetention applies a retention policy to the heartbeats hypertable.
+func (c *Client) SetHeartbeatsRetention(ctx context.Context, retentionDays int) error {
+	if retentionDays < 1 || retentionDays > 10000 {
+		return fmt.Errorf("retention_days must be between 1 and 10000, got %d", retentionDays)
+	}
+	_, err := c.db.ExecContext(ctx, `SELECT set_retention_policy('heartbeats', ($1 || ' days')::INTERVAL)`, retentionDays)
+	return err
+}
+
+// SetAlertsRetention applies a retention policy to the alerts_ts hypertable.
+func (c *Client) SetAlertsRetention(ctx context.Context, retentionDays int) error {
+	if retentionDays < 1 || retentionDays > 10000 {
+		return fmt.Errorf("retention_days must be between 1 and 10000, got %d", retentionDays)
+	}
+	_, err := c.db.ExecContext(ctx, `SELECT set_retention_policy('alerts_ts', ($1 || ' days')::INTERVAL)`, retentionDays)
+	return err
+}
+
+// SetSNMPPollsRetention applies a retention policy to the snmp_polls hypertable.
+func (c *Client) SetSNMPPollsRetention(ctx context.Context, retentionDays int) error {
+	if retentionDays < 1 || retentionDays > 10000 {
+		return fmt.Errorf("retention_days must be between 1 and 10000, got %d", retentionDays)
+	}
+	_, err := c.db.ExecContext(ctx, `SELECT set_retention_policy('snmp_polls', ($1 || ' days')::INTERVAL)`, retentionDays)
+	return err
+}
+
+// SetFlowRecordsRetention applies a retention policy to the flow_records hypertable.
+func (c *Client) SetFlowRecordsRetention(ctx context.Context, retentionDays int) error {
+	if retentionDays < 1 || retentionDays > 10000 {
+		return fmt.Errorf("retention_days must be between 1 and 10000, got %d", retentionDays)
+	}
+	_, err := c.db.ExecContext(ctx, `SELECT set_retention_policy('flow_records', ($1 || ' days')::INTERVAL)`, retentionDays)
+	return err
+}
+
+// SetTopologyEdgesRetention applies a retention policy to the topology_edges hypertable.
+func (c *Client) SetTopologyEdgesRetention(ctx context.Context, retentionDays int) error {
+	if retentionDays < 1 || retentionDays > 10000 {
+		return fmt.Errorf("retention_days must be between 1 and 10000, got %d", retentionDays)
+	}
+	_, err := c.db.ExecContext(ctx, `SELECT set_retention_policy('topology_edges', ($1 || ' days')::INTERVAL)`, retentionDays)
+	return err
+}
+
+// GetRetentionPolicy returns the retention policy for the metrics hypertable.
+func (c *Client) GetRetentionPolicy(ctx context.Context) (*RetentionPolicy, error) {
+	row := c.db.QueryRowContext(ctx, `SELECT * FROM get_retention_policy('metrics')`)
+	return scanRetentionPolicy(row)
+}
+
+// GetHeartbeatsRetentionPolicy returns the retention policy for the heartbeats hypertable.
+func (c *Client) GetHeartbeatsRetentionPolicy(ctx context.Context) (*RetentionPolicy, error) {
+	row := c.db.QueryRowContext(ctx, `SELECT * FROM get_retention_policy('heartbeats')`)
+	return scanRetentionPolicy(row)
+}
+
+// GetAllRetentionPolicies returns retention policies for all hypertables.
+func (c *Client) GetAllRetentionPolicies(ctx context.Context) ([]RetentionPolicy, error) {
+	tables := []string{"metrics", "heartbeats", "alerts_ts", "snmp_polls", "flow_records", "topology_edges"}
+	var results []RetentionPolicy
+	for _, table := range tables {
+		row := c.db.QueryRowContext(ctx, `SELECT * FROM get_retention_policy($1)`, table)
+		policy, err := scanRetentionPolicy(row)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				continue
+			}
+			return nil, fmt.Errorf("getting retention policy for %s: %w", table, err)
+		}
+		if policy != nil {
+			results = append(results, *policy)
+		}
+	}
+	return results, nil
+}
+
+func scanRetentionPolicy(row scannable) (*RetentionPolicy, error) {
+	var p RetentionPolicy
+	var name, periodText, periodTextStr string
+	var jobID sql.NullInt64
+	var lastRun, nextRun sql.NullTime
+
+	err := row.Scan(&name, &periodText, &periodTextStr, &jobID, &lastRun, &nextRun)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	var period time.Duration
+	if periodText != "" {
+		// Parse the interval text back to duration
+		daysStr := strings.TrimSuffix(strings.TrimPrefix(periodTextStr, "("), ")")
+		// Try to extract days from the string
+		for _, unit := range []string{"day", "days"} {
+			if strings.HasSuffix(daysStr, " "+unit) || strings.HasSuffix(daysStr, unit) {
+				// Extract number
+				var days int
+				n, _ := fmt.Sscanf(daysStr, "%d", &days)
+				if n == 1 {
+					period = time.Duration(days) * 24 * time.Hour
+				}
+				break
+			}
+		}
+	}
+
+	p.HypertableName = name
+	p.RetentionPeriod = period
+	if jobID.Valid {
+		p.JobID = int(jobID.Int64)
+	}
+	if lastRun.Valid {
+		p.LastRunAt = &lastRun.Time
+	}
+	if nextRun.Valid {
+		p.NextRunAt = &nextRun.Time
+	}
+	return &p, nil
+}
+
+type scannable interface {
+	Scan(dest ...interface{}) error
 }
 
 func mapToJSON(m map[string]string) string {
