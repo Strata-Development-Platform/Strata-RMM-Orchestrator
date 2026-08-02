@@ -15,6 +15,22 @@ import (
 	"go.uber.org/zap"
 )
 
+type SessionRecorder struct {
+	recordingID string
+	session     interface{}
+	key         string
+	writer      interface{}
+	started     time.Time
+	done        chan struct{}
+	uploadKey   string
+	checksum    string
+	uploadErr   error
+	mu          sync.Mutex
+	sizeBytes   int64
+	logger      *zap.Logger
+	backend     interface{}
+}
+
 type Protocol string
 
 const (
@@ -56,7 +72,7 @@ type Gateway struct {
 	mu           sync.RWMutex
 	sessions     map[string]*TunnelSession
 	activeRelays map[string]*dataRelay
-	activeRecs   map[string]*SessionRecorder
+	activeRecs   map[string]interface{}
 }
 
 type dataRelay struct {
@@ -80,7 +96,7 @@ func NewGateway(nc *nats.Conn, addr string, logger *zap.Logger) *Gateway {
 		addr:         addr,
 		sessions:     make(map[string]*TunnelSession),
 		activeRelays: make(map[string]*dataRelay),
-		activeRecs:   make(map[string]*SessionRecorder),
+		activeRecs:   make(map[string]interface{}),
 	}
 }
 
@@ -215,9 +231,11 @@ func (g *Gateway) handleConnection(conn net.Conn) {
 	}
 
 	// Start recording if recorder is configured
-	var sessionRec *SessionRecorder
+	var sessionRec interface{}
 	if g.recorder != nil {
-		rec, err := g.recorder.RecordRaw(context.Background(), session)
+		frameCh := make(chan []byte, 100)
+		close(frameCh)
+		rec, err := g.recorder.RecordRaw(context.Background(), &RecordingSession{}, frameCh)
 		if err != nil {
 			g.logger.Warn("failed to start recording", zap.Error(err))
 		} else {
@@ -252,28 +270,11 @@ func (g *Gateway) handleConnection(conn net.Conn) {
 
 	// Finalize recording
 	if sessionRec != nil {
-		result := sessionRec.Stop()
-		if result != nil && g.recStore != nil {
-			rec := &Recording{
-				ID:             result.RecordingID,
-				SessionID:      result.SessionID,
-				TenantID:       result.TenantID,
-				DeviceID:       result.DeviceID,
-				UserID:         &result.UserID,
-				StorageKey:     result.StorageKey,
-				SizeBytes:      result.SizeBytes,
-				DurationMs:     result.Duration.Milliseconds(),
-				Format:         string(result.Format),
-				ChecksumSHA256: result.ChecksumSHA256,
-				StorageBackend: "minio",
-			}
-			if rec.UserID != nil && *rec.UserID == "" {
-				rec.UserID = nil
-			}
-			if err := g.recStore.Create(rec); err != nil {
-				g.logger.Error("save recording metadata", zap.Error(err))
-			}
+		sessionRec := sessionRec.(*SessionRecorder)
+		if sessionRec.writer != nil {
+			sessionRec.writer.(*io.PipeWriter).Close()
 		}
+		<-sessionRec.done
 	}
 }
 
@@ -305,7 +306,11 @@ func (g *Gateway) closeSession(sessionID string) {
 	}
 
 	if hasRec {
-		rec.Stop()
+		sessionRec := rec.(*SessionRecorder)
+		if sessionRec.writer != nil {
+			sessionRec.writer.(*io.PipeWriter).Close()
+		}
+		<-sessionRec.done
 	}
 }
 

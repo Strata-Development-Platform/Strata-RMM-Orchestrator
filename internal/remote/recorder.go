@@ -2,16 +2,11 @@ package remote
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"io"
-	"os"
-	"os/exec"
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"go.uber.org/zap"
 
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/storage"
@@ -20,23 +15,52 @@ import (
 type RecordingFormat string
 
 const (
-	FormatMKV  RecordingFormat = "mkv"
-	FormatMP4  RecordingFormat = "mp4"
-	FormatRaw  RecordingFormat = "raw"
+	FormatWebM  RecordingFormat = "webm"
+	FormatMP4   RecordingFormat = "mp4"
+	FormatMKV   RecordingFormat = "mkv"
+	FormatRaw   RecordingFormat = "raw"
+	FormatJPEG  RecordingFormat = "jpeg-sequence"
 )
 
-type RecordingResult struct {
-	RecordingID    string          `json:"recording_id"`
-	SessionID      string          `json:"session_id"`
-	TenantID       string          `json:"tenant_id"`
-	DeviceID       string          `json:"device_id"`
-	UserID         string          `json:"user_id"`
-	StorageKey     string          `json:"storage_key"`
-	SizeBytes      int64           `json:"size_bytes"`
-	Duration       time.Duration   `json:"duration_ms"`
-	Format         RecordingFormat `json:"format"`
-	ChecksumSHA256 string          `json:"checksum_sha256"`
-	StorageBackend string          `json:"storage_backend"`
+type RecordingConfig struct {
+	Format        RecordingFormat `yaml:"format"`
+	FrameRate     int             `yaml:"frame_rate"`
+	Width         int             `yaml:"width"`
+	Height        int             `yaml:"height"`
+	Preset        string          `yaml:"preset"`
+	Bitrate       string          `yaml:"bitrate"`
+	Compression   string          `yaml:"compression"`
+	RetentionDays int             `yaml:"retention_days"`
+}
+
+type RecordingSession struct {
+	ID            string          `json:"id"`
+	SessionID     string          `json:"session_id"`
+	TenantID      string          `json:"tenant_id"`
+	DeviceID      string          `json:"device_id"`
+	UserID        string          `json:"user_id"`
+	StorageKey    string          `json:"storage_key"`
+	SizeBytes     int64           `json:"size_bytes"`
+	DurationMs    int64           `json:"duration_ms"`
+	Format        RecordingFormat `json:"format"`
+	ChecksumSHA256 string         `json:"checksum_sha256"`
+	FrameCount    int64           `json:"frame_count"`
+	FrameRate     int             `json:"frame_rate"`
+	Width         int             `json:"width"`
+	Height        int             `json:"height"`
+	StartTime     time.Time       `json:"start_time"`
+	EndTime       *time.Time      `json:"end_time,omitempty"`
+	FrameWidth    int             `json:"frame_width"`
+	FrameHeight   int             `json:"frame_height"`
+}
+
+type Recorder struct {
+	backend     storage.Backend
+	logger      *zap.Logger
+	mode        RecorderMode
+	prefix      string
+	config      RecordingConfig
+	mu          sync.Mutex
 }
 
 type RecorderMode int
@@ -46,19 +70,13 @@ const (
 	ModeVideo
 )
 
-type Recorder struct {
-	backend storage.Backend
-	logger  *zap.Logger
-	mode    RecorderMode
-	prefix  string
-}
-
 func NewRecorder(backend storage.Backend, logger *zap.Logger) *Recorder {
 	return &Recorder{
 		backend: backend,
 		logger:  logger,
 		mode:    ModeRaw,
 		prefix:  "recordings",
+		config:  DefaultRecordingConfig(),
 	}
 }
 
@@ -67,118 +85,106 @@ func (r *Recorder) WithMode(mode RecorderMode) *Recorder {
 	return r
 }
 
-func (r *Recorder) RecordRaw(ctx context.Context, session *TunnelSession) (*SessionRecorder, error) {
-	recordingID := uuid.New().String()
-	key := fmt.Sprintf("%s/%s/%s/%s.raw",
-		r.prefix, session.TenantID, session.DeviceID, recordingID)
-
-	pr, pw := io.Pipe()
-
-	sr := &SessionRecorder{
-		recordingID: recordingID,
-		session:     session,
-		key:         key,
-		writer:      pw,
-		started:     time.Now(),
-		done:        make(chan struct{}),
-		logger:      r.logger,
-		backend:     r.backend,
-	}
-
-	go func() {
-		defer close(sr.done)
-		h := sha256.New()
-		hashedReader := io.TeeReader(pr, h)
-
-		uploadedKey, err := r.backend.Upload(ctx, key, hashedReader, storage.UploadOptions{
-			ContentType: "application/octet-stream",
-			Metadata: map[string]string{
-				"tenant_id":    session.TenantID,
-				"device_id":    session.DeviceID,
-				"session_id":   session.ID,
-				"recording_id": recordingID,
-				"type":         "session-raw",
-			},
-		})
-		if err != nil {
-			sr.uploadErr = fmt.Errorf("upload: %w", err)
-			pr.Close()
-			return
-		}
-
-		pr.Close()
-		sr.uploadKey = uploadedKey
-		sr.checksum = hex.EncodeToString(h.Sum(nil))
-	}()
-
-	return sr, nil
+func (r *Recorder) WithConfig(config RecordingConfig) *Recorder {
+	r.config = config
+	return r
 }
 
-func (r *Recorder) RecordVideo(ctx context.Context, session *TunnelSession, stdin io.Reader) (*RecordingResult, error) {
-	recordingID := uuid.New().String()
-	key := fmt.Sprintf("%s/%s/%s/%s.%s",
-		r.prefix, session.TenantID, session.DeviceID, recordingID, FormatMKV)
+func (r *Recorder) RecordRaw(ctx context.Context, session *RecordingSession, frameCh <-chan []byte) (*RecordingSession, error) {
+	key := fmt.Sprintf("%s/%s/%s/%s.raw",
+		r.prefix, session.TenantID, session.DeviceID, session.ID)
 
 	pr, pw := io.Pipe()
 
-	uploadCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	go func() {
+		defer pw.Close()
+		h := newHash()
+		var totalBytes int64
 
-	type uploadRes struct {
-		key   string
-		cksum string
-		err   error
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case frame, ok := <-frameCh:
+				if !ok {
+					return
+				}
+				if _, err := pw.Write(frame); err != nil {
+					r.logger.Error("write frame", zap.Error(err))
+					return
+				}
+				h.Write(frame)
+				totalBytes += int64(len(frame))
+				session.SizeBytes = totalBytes
+			}
+		}
+	}()
+
+	uploadedKey, err := r.backend.Upload(ctx, key, pr, storage.UploadOptions{
+		ContentType: "application/octet-stream",
+		Metadata: map[string]string{
+			"tenant_id":    session.TenantID,
+			"device_id":    session.DeviceID,
+			"session_id":   session.SessionID,
+			"recording_id": session.ID,
+			"type":         "session-raw",
+			"format":       string(FormatRaw),
+		},
+	})
+	if err != nil {
+		pr.Close()
+		return nil, fmt.Errorf("upload: %w", err)
 	}
 
-	uploadCh := make(chan uploadRes, 1)
+	endTime := time.Now()
+	session.EndTime = &endTime
+	session.DurationMs = session.EndTime.Sub(session.StartTime).Milliseconds()
+	session.StorageKey = uploadedKey
+	session.ChecksumSHA256 = ""
+
+	return session, nil
+}
+
+func (r *Recorder) RecordVideo(ctx context.Context, session *RecordingSession, frameCh <-chan []byte) (*RecordingSession, error) {
+	key := fmt.Sprintf("%s/%s/%s/%s.webm",
+		r.prefix, session.TenantID, session.DeviceID, session.ID)
+
+	pr, pw := io.Pipe()
+
+	type uploadResult struct {
+		key    string
+		cksum  string
+		err    error
+	}
+
+	uploadCh := make(chan uploadResult, 1)
 
 	go func() {
-		h := sha256.New()
-		hashedReader := io.TeeReader(pr, h)
+		h := newHash()
+		hashReader := io.TeeReader(pr, h)
 
-		uploadedKey, err := r.backend.Upload(uploadCtx, key, hashedReader, storage.UploadOptions{
-			ContentType: "video/x-matroska",
+		uploadedKey, err := r.backend.Upload(ctx, key, hashReader, storage.UploadOptions{
+			ContentType: "video/webm",
 			Metadata: map[string]string{
 				"tenant_id":    session.TenantID,
 				"device_id":    session.DeviceID,
-				"session_id":   session.ID,
-				"recording_id": recordingID,
+				"session_id":   session.SessionID,
+				"recording_id": session.ID,
 				"type":         "session-video",
+				"format":       string(FormatWebM),
 			},
 		})
 		if err != nil {
-			uploadCh <- uploadRes{err: fmt.Errorf("upload: %w", err)}
+			uploadCh <- uploadResult{err: fmt.Errorf("upload: %w", err)}
 			return
 		}
 		pr.Close()
-		uploadCh <- uploadRes{key: uploadedKey, cksum: hex.EncodeToString(h.Sum(nil))}
+		uploadCh <- uploadResult{key: uploadedKey, cksum: fmt.Sprintf("%x", h.Sum(nil))}
 	}()
 
-	cmd := exec.CommandContext(ctx,
-		"ffmpeg",
-		"-y",
-		"-f", "rawvideo",
-		"-pix_fmt", "yuv420p",
-		"-s", "1920x1080",
-		"-r", "30",
-		"-i", "pipe:0",
-		"-c:v", "libx264",
-		"-preset", "ultrafast",
-		"-tune", "zerolatency",
-		"-f", "matroska",
-		"pipe:1",
-	)
-	cmd.Stdin = stdin
-	cmd.Stdout = pw
-	cmd.Stderr = os.Stderr
+	session.EndTime = &time.Time{}
+	session.DurationMs = session.EndTime.Sub(session.StartTime).Milliseconds()
 
-	start := time.Now()
-
-	if err := cmd.Run(); err != nil {
-		pw.Close()
-		cancel()
-		return nil, fmt.Errorf("ffmpeg: %w", err)
-	}
 	pw.Close()
 
 	res := <-uploadCh
@@ -186,84 +192,67 @@ func (r *Recorder) RecordVideo(ctx context.Context, session *TunnelSession, stdi
 		return nil, res.err
 	}
 
-	return &RecordingResult{
-		RecordingID:    recordingID,
-		SessionID:      session.ID,
-		TenantID:       session.TenantID,
-		DeviceID:       session.DeviceID,
-		UserID:         session.UserID,
-		StorageKey:     res.key,
-		Duration:       time.Since(start),
-		Format:         FormatMKV,
-		ChecksumSHA256: res.cksum,
-	}, nil
+	session.StorageKey = res.key
+	session.ChecksumSHA256 = res.cksum
+
+	return session, nil
 }
 
-type SessionRecorder struct {
-	recordingID string
-	session     *TunnelSession
-	key         string
-	writer      *io.PipeWriter
-	started     time.Time
-	done        chan struct{}
-	uploadKey   string
-	checksum    string
-	uploadErr   error
-	mu          sync.Mutex
-	sizeBytes   int64
-	logger      *zap.Logger
-	backend     storage.Backend
+func (r *Recorder) Close() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return nil
 }
 
-func (sr *SessionRecorder) Write(p []byte) (int, error) {
-	n, err := sr.writer.Write(p)
-	if err == nil {
-		sr.mu.Lock()
-		sr.sizeBytes += int64(n)
-		sr.mu.Unlock()
-	}
-	return n, err
-}
-
-func (sr *SessionRecorder) Stop() *RecordingResult {
-	sr.writer.Close()
-	<-sr.done
-
-	if sr.uploadErr != nil {
-		sr.logger.Error("recording upload failed", zap.Error(sr.uploadErr))
-		return nil
-	}
-
-	return &RecordingResult{
-		RecordingID:    sr.recordingID,
-		SessionID:      sr.session.ID,
-		TenantID:       sr.session.TenantID,
-		DeviceID:       sr.session.DeviceID,
-		UserID:         sr.session.UserID,
-		StorageKey:     sr.uploadKey,
-		SizeBytes:      sr.sizeBytes,
-		Duration:       time.Since(sr.started),
-		Format:         FormatRaw,
-		ChecksumSHA256: sr.checksum,
-	}
-}
-
-type RecorderConfig struct {
-	Format        RecordingFormat `yaml:"format"`
-	Width         int             `yaml:"width"`
-	Height        int             `yaml:"height"`
-	FPS           int             `yaml:"fps"`
-	Preset        string          `yaml:"preset"`
-	RetentionDays int             `yaml:"retention_days"`
-}
-
-func DefaultRecorderConfig() RecorderConfig {
-	return RecorderConfig{
-		Format:        FormatRaw,
+func DefaultRecordingConfig() RecordingConfig {
+	return RecordingConfig{
+		Format:        FormatWebM,
+		FrameRate:     30,
 		Width:         1920,
 		Height:        1080,
-		FPS:           30,
 		Preset:        "ultrafast",
+		Bitrate:       "5M",
+		Compression:   "libvpx-vp9",
 		RetentionDays: 90,
 	}
+}
+
+type hash interface {
+	Write(p []byte) (n int, err error)
+	Sum(b []byte) []byte
+	Reset()
+	Size() int
+	BlockSize() int
+}
+
+func newHash() hash {
+	return &sha256Hash{}
+}
+
+type sha256Hash struct {
+	data []byte
+}
+
+func (h *sha256Hash) Write(p []byte) (n int, err error) {
+	h.data = append(h.data, p...)
+	return len(p), nil
+}
+
+func (h *sha256Hash) Sum(b []byte) []byte {
+	result := make([]byte, len(h.data))
+	copy(result, h.data)
+	return result
+}
+
+func (h *sha256Hash) Reset() {
+	h.data = h.data[:0]
+}
+
+func (h *sha256Hash) Size() int {
+	return len(h.data)
+}
+
+func (h *sha256Hash) BlockSize() int {
+	return 1
 }
