@@ -121,6 +121,7 @@ services:
     environment:
       STRATA_DOMAIN: ${STRATA_DOMAIN}
       ACME_EMAIL: ${ACME_EMAIL}
+      ACME_CA_DIRECTORY: ${ACME_CA_DIRECTORY}
     ports:
       - "80:80"
       - "443:443"

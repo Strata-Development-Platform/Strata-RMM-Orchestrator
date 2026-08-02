@@ -85,6 +85,8 @@ nfpms:
     contents:
       - src: deploy/strata-rmm.service
         dst: /usr/lib/systemd/system/strata-rmm.service
+      - src: ui/dist
+        dst: /usr/share/strata-rmm/ui
 
   - id: agent-packages
     package_name: strata-rmm-agent

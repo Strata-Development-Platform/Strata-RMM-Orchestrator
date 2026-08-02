@@ -1,6 +1,7 @@
 {
 	admin off
 	email {$ACME_EMAIL}
+	acme_ca {$ACME_CA_DIRECTORY}
 }
 
 {$STRATA_DOMAIN} {
