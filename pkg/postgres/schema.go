@@ -3512,6 +3512,19 @@ func Migrations() []Migration {
 			ID:   85,
 			Name: "enhance_topology_edges",
 			Up: `
+				CREATE TABLE IF NOT EXISTS topology_edges (
+					id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					tenant_id     UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+					src_device_id UUID REFERENCES devices(id) ON DELETE SET NULL,
+					dst_device_id UUID REFERENCES devices(id) ON DELETE SET NULL,
+					connection_type TEXT NOT NULL DEFAULT 'ethernet',
+					bandwidth_mbps  INT,
+					recorded_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+
+				CREATE INDEX IF NOT EXISTS idx_topology_edges_tenant ON topology_edges(tenant_id);
+				CREATE INDEX IF NOT EXISTS idx_topology_edges_recorded ON topology_edges(recorded_at);
+
 				ALTER TABLE topology_edges
 					ADD COLUMN IF NOT EXISTS src_device_id UUID REFERENCES devices(id) ON DELETE SET NULL,
 					ADD COLUMN IF NOT EXISTS dst_device_id UUID REFERENCES devices(id) ON DELETE SET NULL,
@@ -3519,11 +3532,7 @@ func Migrations() []Migration {
 					ADD COLUMN IF NOT EXISTS bandwidth_mbps INT;
 			`,
 			Down: `
-				ALTER TABLE topology_edges
-					DROP COLUMN IF EXISTS src_device_id,
-					DROP COLUMN IF EXISTS dst_device_id,
-					DROP COLUMN IF EXISTS connection_type,
-					DROP COLUMN IF EXISTS bandwidth_mbps;
+				DROP TABLE IF EXISTS topology_edges;
 			`,
 		},
 		{
