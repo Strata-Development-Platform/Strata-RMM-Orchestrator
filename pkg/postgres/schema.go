@@ -3035,6 +3035,20 @@ func Migrations() []Migration {
 				-- recreate a privilege-escalation path and is not a safe automated down migration.
 			`,
 		},
+		{
+			ID:   70,
+			Name: "correlate_alert_lifecycle",
+			Up: `
+				ALTER TABLE alerts ADD COLUMN IF NOT EXISTS correlation_key TEXT;
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_alerts_tenant_correlation
+					ON alerts(tenant_id, correlation_key)
+					WHERE correlation_key IS NOT NULL AND status IN ('firing', 'acknowledged');
+			`,
+			Down: `
+				DROP INDEX IF EXISTS idx_alerts_tenant_correlation;
+				ALTER TABLE alerts DROP COLUMN IF EXISTS correlation_key;
+			`,
+		},
 	}
 }
 

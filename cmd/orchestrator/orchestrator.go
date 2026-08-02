@@ -206,8 +206,8 @@ func NewCommand(ctx context.Context, version, commit string, logger *zap.Logger)
 				WithAlertCallback(func(tenantID, deviceID, cveID, pkg, severity, currentVer, fixedVer string) {
 					alertEngine.FireCVEAlert(tenantID, deviceID, cveID, pkg, severity, currentVer, fixedVer)
 				}).
-				WithResolveCallback(func(deviceID, cveID string) {
-					alertEngine.ResolveCVEAlert(deviceID, cveID)
+				WithResolveCallback(func(tenantID, deviceID, cveID, packageName string) {
+					alertEngine.ResolveCVEAlert(tenantID, deviceID, cveID, packageName)
 				})
 			if err := vulnEngine.Start(ctx); err != nil {
 				logger.Warn("starting vulnerability engine", zap.Error(err))
