@@ -128,13 +128,18 @@ func TestTenantRLSMigration(t *testing.T) {
 	if _, err := seed.Exec(`
 		INSERT INTO policies (id,msp_id,name,category,config,status,published_version,published_config)
 		VALUES ($1,$2,'Policy A','patch','{"enabled":true}','active',1,'{"enabled":true}'),
-		       ($3,$4,'Policy B','patch','{"enabled":true}','active',1,'{"enabled":true}');
+		       ($3,$4,'Policy B','patch','{"enabled":true}','active',1,'{"enabled":true}')
+	`, policyA, mspA, policyB, mspB); err != nil {
+		_ = seed.Rollback()
+		t.Fatalf("seed policies: %v", err)
+	}
+	if _, err := seed.Exec(`
 		INSERT INTO policy_revisions (policy_id,msp_id,version,name,category,description,config,scope_level,published_by)
 		VALUES ($1,$2,1,'Policy A','patch','','{"enabled":true}','msp','ci'),
 		       ($3,$4,1,'Policy B','patch','','{"enabled":true}','msp','ci')
 	`, policyA, mspA, policyB, mspB); err != nil {
 		_ = seed.Rollback()
-		t.Fatalf("seed policies: %v", err)
+		t.Fatalf("seed policy revisions: %v", err)
 	}
 	if err := seed.Commit(); err != nil {
 		t.Fatalf("commit seed: %v", err)
