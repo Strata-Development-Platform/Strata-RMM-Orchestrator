@@ -115,7 +115,7 @@ export default function UserManagementPage() {
   );
 }
 
-function ClientMembershipEditor({ user, customers, onSave }: { user: User; customers: TenantInfo[]; onSave: () => void }) {
+export function ClientMembershipEditor({ user, customers, onSave }: { user: User; customers: TenantInfo[]; onSave: () => void }) {
   const { showToast } = useToast();
   const fixedMemberships = useMemo(() => (user.memberships || []).filter(membership => membership.scope_type !== 'client'), [user.memberships]);
   const initialClientRoles = useMemo(() => Object.fromEntries(
