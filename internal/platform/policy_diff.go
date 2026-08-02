@@ -5,18 +5,18 @@ import (
 )
 
 type policyDiff struct {
-	PolicyID  string                 `json:"policy_id"`
-	Version1  int                    `json:"version_1"`
-	Version2  int                    `json:"version_2"`
-	Changes   []policyChange         `json:"changes"`
-	IsChanged bool                   `json:"is_changed"`
+	PolicyID  string         `json:"policy_id"`
+	Version1  int            `json:"version_1"`
+	Version2  int            `json:"version_2"`
+	Changes   []policyChange `json:"changes"`
+	IsChanged bool           `json:"is_changed"`
 }
 
 type policyChange struct {
-	Path      string                 `json:"path"`
-	OldValue  interface{}            `json:"old_value,omitempty"`
-	NewValue  interface{}            `json:"new_value,omitempty"`
-	Changed   bool                   `json:"changed"`
+	Path     string      `json:"path"`
+	OldValue interface{} `json:"old_value,omitempty"`
+	NewValue interface{} `json:"new_value,omitempty"`
+	Changed  bool        `json:"changed"`
 }
 
 func computePolicyDiff(layers []policyLayer, v1, v2 int) policyDiff {

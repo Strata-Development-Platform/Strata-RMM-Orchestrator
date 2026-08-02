@@ -19,10 +19,10 @@ type policyRecord struct {
 	PublishedVersion                                           *int
 	ValidatedAt, PreviewedAt                                   *time.Time
 	CreatedAt, UpdatedAt                                       time.Time
-	MaintenanceStart    *string
-	MaintenanceEnd      *string
-	MaintenanceDays     *[]string
-	MaintenanceTimezone string
+	MaintenanceStart                                           *string
+	MaintenanceEnd                                             *string
+	MaintenanceDays                                            *[]string
+	MaintenanceTimezone                                        string
 }
 
 func (p policyRecord) input() policyInput {
@@ -182,7 +182,7 @@ func (s *APIServer) handleListPolicies(w http.ResponseWriter, r *http.Request) {
 			"client_id": clientID, "site_id": siteID, "device_id": deviceID,
 			"published_version": publishedVersion, "maintenance_start": maintenanceStart,
 			"maintenance_end": maintenanceEnd, "maintenance_days": maintenanceDays, "maintenance_timezone": maintenanceTimezone,
-			"validated":         validatedAt != nil, "previewed": previewedAt != nil,
+			"validated": validatedAt != nil, "previewed": previewedAt != nil,
 			"created_at": createdAt.UTC().Format(time.RFC3339), "updated_at": updatedAt.UTC().Format(time.RFC3339)})
 	}
 	if err := rows.Err(); err != nil {
@@ -470,7 +470,7 @@ func (p policyRecord) policyResponse() map[string]interface{} {
 		"parent_id": p.ParentID, "validated": p.ValidatedAt != nil, "previewed": p.PreviewedAt != nil,
 		"published_version": p.PublishedVersion, "maintenance_start": p.MaintenanceStart,
 		"maintenance_end": p.MaintenanceEnd, "maintenance_days": p.MaintenanceDays, "maintenance_timezone": p.MaintenanceTimezone,
-		"created_at":        p.CreatedAt.UTC().Format(time.RFC3339), "updated_at": p.UpdatedAt.UTC().Format(time.RFC3339)}
+		"created_at": p.CreatedAt.UTC().Format(time.RFC3339), "updated_at": p.UpdatedAt.UTC().Format(time.RFC3339)}
 }
 
 func (s *APIServer) validatePolicyScope(r *http.Request, mspID string, input policyInput) error {
@@ -647,22 +647,22 @@ func (s *APIServer) handleEffectiveConfig(w http.ResponseWriter, r *http.Request
 	sourceAttr := []map[string]interface{}{}
 	for _, layer := range layers {
 		sourceAttr = append(sourceAttr, map[string]interface{}{
-			"id":                  layer.ID,
-			"scope_level":         layer.ScopeLevel,
-			"version":             layer.Version,
-			"maintenance_start":   layer.MaintenanceStart,
-			"maintenance_end":     layer.MaintenanceEnd,
-			"maintenance_days":    layer.MaintenanceDays,
+			"id":                   layer.ID,
+			"scope_level":          layer.ScopeLevel,
+			"version":              layer.Version,
+			"maintenance_start":    layer.MaintenanceStart,
+			"maintenance_end":      layer.MaintenanceEnd,
+			"maintenance_days":     layer.MaintenanceDays,
 			"maintenance_timezone": layer.MaintenanceTimezone,
 		})
 	}
 	response := map[string]interface{}{
-		"policy_id":          record.ID,
-		"target":             map[string]string{"client_id": targetPolicy.ClientID, "site_id": targetPolicy.SiteID, "device_id": targetPolicy.DeviceID},
-		"effective_config":   effective,
+		"policy_id":             record.ID,
+		"target":                map[string]string{"client_id": targetPolicy.ClientID, "site_id": targetPolicy.SiteID, "device_id": targetPolicy.DeviceID},
+		"effective_config":      effective,
 		"effective_maintenance": effectiveMgmt,
-		"source_layers":      sourceAttr,
-		"layers":             layers,
+		"source_layers":         sourceAttr,
+		"layers":                layers,
 	}
 	writeJSON(w, http.StatusOK, response)
 }

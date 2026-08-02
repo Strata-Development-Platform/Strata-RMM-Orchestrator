@@ -15,19 +15,19 @@ var policyCategories = map[string]bool{
 var policyScopeRank = map[string]int{"msp": 1, "client": 2, "site": 3, "device": 4}
 
 type policyInput struct {
-	Name        string                 `json:"name"`
-	Category    string                 `json:"category"`
-	Description string                 `json:"description"`
-	Config      map[string]interface{} `json:"config"`
-	ScopeLevel  string                 `json:"scope_level"`
-	ClientID    string                 `json:"client_id,omitempty"`
-	SiteID      string                 `json:"site_id,omitempty"`
-	DeviceID    string                 `json:"device_id,omitempty"`
-	ParentID    string                 `json:"parent_id,omitempty"`
-	MaintenanceStart  *string                `json:"maintenance_start,omitempty"`
-	MaintenanceEnd    *string                `json:"maintenance_end,omitempty"`
-	MaintenanceDays   *[]string              `json:"maintenance_days,omitempty"`
-	MaintenanceTimezone string              `json:"maintenance_timezone,omitempty"`
+	Name                string                 `json:"name"`
+	Category            string                 `json:"category"`
+	Description         string                 `json:"description"`
+	Config              map[string]interface{} `json:"config"`
+	ScopeLevel          string                 `json:"scope_level"`
+	ClientID            string                 `json:"client_id,omitempty"`
+	SiteID              string                 `json:"site_id,omitempty"`
+	DeviceID            string                 `json:"device_id,omitempty"`
+	ParentID            string                 `json:"parent_id,omitempty"`
+	MaintenanceStart    *string                `json:"maintenance_start,omitempty"`
+	MaintenanceEnd      *string                `json:"maintenance_end,omitempty"`
+	MaintenanceDays     *[]string              `json:"maintenance_days,omitempty"`
+	MaintenanceTimezone string                 `json:"maintenance_timezone,omitempty"`
 }
 
 type policyLayer struct {
