@@ -29,7 +29,7 @@ func (s *Store) LoadRules(ctx context.Context) ([]*Rule, error) {
 	if err != nil {
 		return nil, fmt.Errorf("query rules: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var rules []*Rule
 	for rows.Next() {
@@ -108,7 +108,7 @@ func (s *Store) ListRules(ctx context.Context, tenantID string) ([]*Rule, error)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var rules []*Rule
 	for rows.Next() {
@@ -198,7 +198,7 @@ func (s *Store) GetActiveAlerts(ctx context.Context, tenantID string) ([]*Alert,
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var alerts []*Alert
 	for rows.Next() {
@@ -223,7 +223,7 @@ func (s *Store) LoadActiveAlertStates(ctx context.Context) ([]*Alert, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var alerts []*Alert
 	for rows.Next() {
 		var alert Alert
@@ -250,7 +250,7 @@ func (s *Store) GetAlertHistory(ctx context.Context, tenantID string, limit, off
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var alerts []*Alert
 	for rows.Next() {

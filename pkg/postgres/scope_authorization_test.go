@@ -7,9 +7,15 @@ import (
 
 func TestMigration69ScopeAuthorizationContract(t *testing.T) {
 	migrations := Migrations()
-	migration := migrations[len(migrations)-1]
-	if migration.ID != 69 || migration.Name != "enforce_scope_bound_authorization" {
-		t.Fatalf("last migration = %d/%q", migration.ID, migration.Name)
+	var migration *Migration
+	for i := range migrations {
+		if migrations[i].ID == 69 {
+			migration = &migrations[i]
+			break
+		}
+	}
+	if migration == nil || migration.Name != "enforce_scope_bound_authorization" {
+		t.Fatalf("migration 69 not found with expected name")
 	}
 	for _, fragment := range []string{
 		"authorization_migration_issues",
