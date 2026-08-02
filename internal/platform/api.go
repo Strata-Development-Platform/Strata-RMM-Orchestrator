@@ -447,6 +447,21 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /api/v2/msps/{mspID}/clients/{clientID}", s.handleGetClient)
 	mux.HandleFunc("POST /api/v2/msps/{mspID}/clients/{clientID}/archive", s.handleArchiveClient)
 
+	// v2 API — Client portal authentication providers
+	mux.HandleFunc("GET /api/v2/clients/{clientID}/auth/providers", s.handleListAuthProviders)
+	mux.HandleFunc("POST /api/v2/clients/{clientID}/auth/providers", s.handleCreateAuthProvider)
+
+	// v2 API — Client portal sessions
+	mux.HandleFunc("POST /api/v2/clients/{clientID}/sessions", s.handleCreateClientSession)
+	mux.HandleFunc("GET /api/v2/clients/{clientID}/sessions", s.handleListClientSessions)
+	mux.HandleFunc("DELETE /api/v2/clients/{clientID}/sessions/{sessionID}", s.handleRevokeClientSession)
+
+	// v2 API — Client portal profile and settings
+	mux.HandleFunc("GET /api/v2/clients/{clientID}/profile", s.handleGetClientProfile)
+	mux.HandleFunc("PATCH /api/v2/clients/{clientID}/profile", s.handleUpdateClientProfile)
+	mux.HandleFunc("GET /api/v2/clients/{clientID}/settings", s.handleGetClientSettings)
+	mux.HandleFunc("PATCH /api/v2/clients/{clientID}/settings", s.handleUpdateClientSettings)
+
 	// v2 API — Site management
 	mux.HandleFunc("GET /api/v2/clients/{clientID}/sites", s.handleListSites)
 	mux.HandleFunc("POST /api/v2/clients/{clientID}/sites", s.handleCreateSite)
