@@ -341,7 +341,8 @@ func (s *APIServer) handleUpdateScriptSchedule(w http.ResponseWriter, r *http.Re
 			return
 		}
 
-		if req.Status == "active" {
+		switch req.Status {
+		case "active":
 			var params []byte
 			var scheduleType string
 			err := s.requestDB(r).QueryRowContext(r.Context(), `
@@ -357,7 +358,7 @@ func (s *APIServer) handleUpdateScriptSchedule(w http.ResponseWriter, r *http.Re
 					WHERE schedule_id = $1 AND status IN ('completed', 'failed')
 				`, scheduleID)
 			}
-		} else if req.Status == "completed" || req.Status == "failed" {
+		case "completed", "failed":
 			s.requestDB(r).ExecContext(r.Context(), `
 				UPDATE schedule_device_executions SET status = $1 WHERE schedule_id = $2
 			`, req.Status, scheduleID)
