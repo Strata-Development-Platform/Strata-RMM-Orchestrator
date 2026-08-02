@@ -18,6 +18,7 @@ import (
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/inventory"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/observability"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/remote"
+	"github.com/strata-rmm/strata-rmm-orchestrator/internal/reporting"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/auth"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/encrypt"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/storage"
@@ -76,6 +77,8 @@ type APIServer struct {
 	remoteSessions       map[string]remoteSessionBinding
 	remoteSessionTTL     time.Duration
 	remoteSessionNow     func() time.Time
+	reportEngine         *reporting.ReportEngine
+	inventoryEngine      *inventory.ReportingEngine
 }
 
 func NewAPIServer(addr string, db *timescale.Client, nc *nats.Conn, logger *zap.Logger, tokenGen *auth.TokenGenerator) (*APIServer, error) {
@@ -120,6 +123,16 @@ func (s *APIServer) WithProductionMode(production bool) *APIServer {
 func (s *APIServer) WithAccountMailer(publicURL string, mailer AccountMailer) *APIServer {
 	s.publicURL, _ = activationOrigin(publicURL)
 	s.accountMailer = mailer
+	return s
+}
+
+func (s *APIServer) WithReportEngine(e *reporting.ReportEngine) *APIServer {
+	s.reportEngine = e
+	return s
+}
+
+func (s *APIServer) WithInventoryEngine(e *inventory.ReportingEngine) *APIServer {
+	s.inventoryEngine = e
 	return s
 }
 
@@ -289,7 +302,16 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("POST /api/v1/reports/{tenantID}/schedules", s.handleCreateSchedule)
 	mux.HandleFunc("GET /api/v1/reports/{tenantID}/schedules", s.handleListSchedules)
 	mux.HandleFunc("DELETE /api/v1/reports/{tenantID}/schedules/{scheduleID}", s.handleDeleteSchedule)
+	mux.HandleFunc("PATCH /api/v1/reports/{tenantID}/schedules/{scheduleID}", s.handleUpdateSchedule)
+	mux.HandleFunc("PATCH /api/v1/reports/{tenantID}/schedules/{scheduleID}/enable", s.handleToggleSchedule)
+	mux.HandleFunc("POST /api/v1/reports/{tenantID}/schedules/{scheduleID}/trigger", s.handleTriggerSchedule)
 	mux.HandleFunc("POST /api/v1/reports/{tenantID}/generate", s.handleGenerateReport)
+	mux.HandleFunc("GET /api/v1/reports/{tenantID}/{reportID}/download", s.handleDownloadReport)
+	mux.HandleFunc("POST /api/v1/reports/{tenantID}/compliance", s.handleGenerateComplianceReport)
+	mux.HandleFunc("GET /api/v1/reports/{tenantID}/compliance", s.handleListComplianceReports)
+	mux.HandleFunc("GET /api/v1/reports/{tenantID}/compliance/{reportID}", s.handleGetComplianceReport)
+	mux.HandleFunc("GET /api/v1/reports/{tenantID}/compliance/{reportID}/export/csv", s.handleExportComplianceReportCSV)
+	mux.HandleFunc("GET /api/v1/reports/{tenantID}/compliance/{reportID}/export/json", s.handleExportComplianceReportJSON)
 
 	mux.HandleFunc("POST /api/v1/remote/{tenantID}/session", s.handleRemoteSessionStart)
 	mux.HandleFunc("POST /api/v1/remote/{tenantID}/session/{sessionID}/input", s.handleRemoteSessionInput)
@@ -1985,4 +2007,42 @@ func (s *APIServer) handleListRetentionPolicies(w http.ResponseWriter, r *http.R
 		"policies": policies,
 		"count":    len(policies),
 	})
+}
+
+func (s *APIServer) sendReportEmail(ctx context.Context, scheduleID, tenantID, name string, pdfData []byte) {
+	var tenantName string
+	s.db.DB().QueryRowContext(ctx, `SELECT name FROM tenants WHERE id = $1`, tenantID).Scan(&tenantName)
+
+	var sectionsJSON []byte
+	s.db.DB().QueryRowContext(ctx, `SELECT sections FROM report_schedules WHERE id = $1`, scheduleID).Scan(&sectionsJSON)
+
+	var secs []reporting.ReportSection
+	if err := json.Unmarshal(sectionsJSON, &secs); err != nil {
+		return
+	}
+
+	var sectionsStr []string
+	for _, s := range secs {
+		sectionsStr = append(sectionsStr, string(s))
+	}
+
+	body := fmt.Sprintf("Hello,\n\nThe scheduled report \"%s\" for %s has been generated.\n\nSections: %s\n\nReports are available for download in the Strata RMM portal.\n\n--\nStrata RMM - Automated Report Delivery",
+		name, tenantName, sectionsStr)
+
+	s.db.DB().QueryRowContext(ctx, `SELECT recipients FROM report_schedules WHERE id = $1`, scheduleID).Scan(&sectionsJSON)
+
+	var recipients []string
+	if err := json.Unmarshal(sectionsJSON, &recipients); err != nil {
+		s.logger.Error("unmarshal recipients", zap.Error(err))
+		return
+	}
+
+	subject := fmt.Sprintf("Report: %s - %s", tenantName, name)
+	for _, recipient := range recipients {
+		if err := s.accountMailer.SendReport(ctx, recipient, subject, body, pdfData); err != nil {
+			s.logger.Error("send report email", zap.String("to", recipient), zap.String("subject", subject), zap.Error(err))
+		} else {
+			s.logger.Info("report email sent", zap.String("to", recipient), zap.String("subject", subject))
+		}
+	}
 }

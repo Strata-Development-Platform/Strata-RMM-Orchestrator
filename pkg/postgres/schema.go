@@ -700,6 +700,38 @@ func Migrations() []Migration {
 			`,
 		},
 		{
+			ID:   73,
+			Name: "create_compliance_reports_table",
+			Up: `
+				CREATE TABLE IF NOT EXISTS compliance_reports (
+					id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					tenant_id         UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+					framework         TEXT NOT NULL CHECK (framework IN ('CIS', 'HIPAA', 'PCI-DSS', 'GDPR', 'SOC2', 'NIST')),
+					period_start      TIMESTAMPTZ NOT NULL,
+					period_end        TIMESTAMPTZ NOT NULL,
+					generated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					total_vulnerabilities INT NOT NULL DEFAULT 0,
+					critical_count    INT NOT NULL DEFAULT 0,
+					high_count        INT NOT NULL DEFAULT 0,
+					medium_count      INT NOT NULL DEFAULT 0,
+					low_count         INT NOT NULL DEFAULT 0,
+					pending_count     INT NOT NULL DEFAULT 0,
+					remediated_count  INT NOT NULL DEFAULT 0,
+					ignored_count     INT NOT NULL DEFAULT 0,
+					score             REAL NOT NULL DEFAULT 0,
+					status            TEXT NOT NULL,
+					findings          JSONB NOT NULL DEFAULT '[]',
+					remediations      JSONB NOT NULL DEFAULT '[]'
+				);
+				CREATE INDEX IF NOT EXISTS idx_compliance_reports_tenant ON compliance_reports(tenant_id);
+				CREATE INDEX IF NOT EXISTS idx_compliance_reports_framework ON compliance_reports(framework);
+				CREATE INDEX IF NOT EXISTS idx_compliance_reports_generated_at ON compliance_reports(generated_at DESC);
+			`,
+			Down: `
+				DROP TABLE IF EXISTS compliance_reports CASCADE;
+			`,
+		},
+		{
 			ID:   25,
 			Name: "add_agent_version_and_update_source",
 			Up: `

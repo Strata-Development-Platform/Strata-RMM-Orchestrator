@@ -219,6 +219,10 @@ func NewCommand(ctx context.Context, version, commit string, logger *zap.Logger)
 			cveSync.Start(ctx)
 			logger.Info("CVE sync engine started")
 
+			reportingEngine := inventory.NewReportingEngine(tsdb.DB(), logger)
+			reportingEngine.StartScheduler(ctx)
+			logger.Info("reporting engine started")
+
 			thirdParty := inventory.NewThirdPartyEngine(tsdb.DB(), logger)
 			go thirdParty.Start(ctx)
 			logger.Info("third-party patching engine started")
@@ -335,7 +339,7 @@ func NewCommand(ctx context.Context, version, commit string, logger *zap.Logger)
 				reportEngine := reporting.NewReportEngine(tsdb.DB(), logger, sb, cfg.Storage.Bucket)
 				go reportEngine.Start(ctx)
 				logger.Info("report engine started")
-				api = api.WithRecordingStore(recStore).WithStorageBackend(sb)
+				api = api.WithRecordingStore(recStore).WithStorageBackend(sb).WithReportEngine(reportEngine).WithInventoryEngine(reportingEngine)
 				api.RegisterHealth("storage", func(ctx context.Context) error {
 					_, err := sb.Stat(ctx, "health-check")
 					if err != nil && err != storage.ErrNotFound {
