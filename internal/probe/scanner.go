@@ -63,7 +63,7 @@ type InterfaceInfo struct {
 type AddressInfo struct {
 	IP        string `json:"ip"`
 	Network   string `json:"network"`
-	broadcast string `json:"broadcast,omitempty"`
+	Broadcast string `json:"broadcast,omitempty"`
 }
 
 // GatewayInfo represents gateway information
@@ -445,7 +445,7 @@ func (s *Scanner) DiscoverTopology(ctx context.Context, subnet string) (*Topolog
 					ifaceInfo.Addresses = append(ifaceInfo.Addresses, AddressInfo{
 						IP:        ip.String(),
 						Network:   ipNet.String(),
-						broadcast: getBroadcastIP(ipNet),
+						Broadcast: getBroadcastIP(ipNet),
 					})
 				}
 			}
