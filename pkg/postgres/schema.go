@@ -3058,6 +3058,10 @@ func Migrations() []Migration {
 				ALTER TABLE policies ADD COLUMN IF NOT EXISTS previewed_at TIMESTAMPTZ;
 				ALTER TABLE policies ADD COLUMN IF NOT EXISTS published_version INT;
 				ALTER TABLE policies ADD COLUMN IF NOT EXISTS published_config JSONB;
+				ALTER TABLE policies ADD COLUMN IF NOT EXISTS maintenance_start TIME;
+				ALTER TABLE policies ADD COLUMN IF NOT EXISTS maintenance_end TIME;
+				ALTER TABLE policies ADD COLUMN IF NOT EXISTS maintenance_days JSONB DEFAULT '["monday","tuesday","wednesday","thursday","friday"]';
+				ALTER TABLE policies ADD COLUMN IF NOT EXISTS maintenance_timezone TEXT DEFAULT 'UTC';
 				CREATE INDEX IF NOT EXISTS idx_policies_device ON policies(device_id);
 
 				CREATE TABLE IF NOT EXISTS policy_revisions (
@@ -3075,6 +3079,10 @@ func Migrations() []Migration {
 					device_id UUID,
 					published_by TEXT NOT NULL,
 					published_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					maintenance_start TIME,
+					maintenance_end TIME,
+					maintenance_days JSONB DEFAULT '["monday","tuesday","wednesday","thursday","friday"]',
+					maintenance_timezone TEXT DEFAULT 'UTC',
 					UNIQUE(policy_id, version)
 				);
 				CREATE INDEX IF NOT EXISTS idx_policy_revisions_policy ON policy_revisions(policy_id, version DESC);
@@ -3086,10 +3094,12 @@ func Migrations() []Migration {
 				WHERE status = 'active' AND published_version IS NULL;
 				INSERT INTO policy_revisions (
 					policy_id,msp_id,version,name,category,description,config,scope_level,
-					client_id,site_id,device_id,published_by,published_at
+					client_id,site_id,device_id,published_by,published_at,
+					maintenance_start,maintenance_end,maintenance_days,maintenance_timezone
 				)
 				SELECT id,msp_id,version,name,category,description,config,scope_level,
-				       client_id,site_id,device_id,'migration-71',updated_at
+				       client_id,site_id,device_id,'migration-71',updated_at,
+				       NULL,NULL,'["monday","tuesday","wednesday","thursday","friday"]','UTC'
 				FROM policies
 				WHERE status = 'active' AND msp_id IS NOT NULL
 				ON CONFLICT (policy_id, version) DO NOTHING;
