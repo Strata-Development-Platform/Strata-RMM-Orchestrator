@@ -16,13 +16,21 @@ Never pipe the installer directly from the network into a privileged shell. Obta
 - inbound TCP 4222 for TLS-secured endpoint-agent messaging;
 - outbound HTTPS for release and certificate services.
 
+Automatic HTTPS uses the Let's Encrypt production directory by default. Use
+`--acme-ca staging` only for issuance rehearsals; staging certificates are not
+trusted by browsers. The installer verifies public DNS before mutation, and the
+host must continue to accept inbound TCP 80 and 443 so Caddy can issue and renew
+certificates. Certificate account and key material persist in the Compose
+`caddy_data` volume across same-version redeployments.
+
 ### Native installation
 
 - a verified versioned `.deb` or `.rpm` orchestrator package;
 - an existing TLS-enabled PostgreSQL/TimescaleDB service;
 - an existing authenticated, TLS-enabled NATS JetStream service;
 - a protected DSN file, NATS token file, and NATS CA certificate;
-- an operator-managed HTTPS reverse proxy and web-console deployment.
+- either a trusted, distribution-installed Caddy service for automatic HTTPS,
+  or an operator-managed HTTPS reverse proxy.
 
 The native installer does not silently create insecure plaintext dependencies.
 
@@ -66,7 +74,8 @@ The Docker installer:
 9. creates the first administrator under a separate bootstrap lock;
 10. records the bootstrap audit event;
 11. removes the temporary bootstrap password copy;
-12. starts the HTTPS web console and waits for readiness.
+12. starts the HTTPS web console, waits for readiness, and verifies the public
+    certificate hostname and that it remains valid for at least seven days.
 
 After success, visit `https://rmm.example.com` and sign in with the administrator email and the password you supplied.
 
@@ -144,9 +153,32 @@ sudo bash ./scripts/install-platform.sh \
   --nats-ca-file /secure/nats-ca.crt
 ```
 
-The installer copies protected inputs into `/etc/strata-rmm/secrets`, generates JWT and metrics secrets, writes a non-secret environment mapping, runs the one-time bootstrap, and enables `strata-rmm.service`.
+The installer copies protected inputs into `/etc/strata-rmm/secrets`, generates JWT and metrics secrets, writes a non-secret environment mapping, runs the one-time bootstrap, and enables `strata-rmm.service`. The package contains the version-matched web console under `/usr/share/strata-rmm/ui`.
 
-Native mode verifies the local API readiness endpoint. You must separately deploy the version-matched web console and HTTPS reverse proxy before exposing it to users. Until that is done, the native path is not a complete browser installation.
+The compatibility default is `--https-mode external`. To make the native
+installation browser-ready with automatic Let's Encrypt certificates, install
+Caddy from a trusted distribution or Caddy repository first, ensure DNS points
+to the host and ports 80/443 are free, then add:
+
+```bash
+  --https-mode automatic \
+  --acme-email certificates@example.com
+```
+
+The installer does not download or execute a mutable proxy installer. In
+automatic mode it validates its generated configuration, preserves an existing
+configuration under `/etc/caddy/Caddyfile.strata-backup.*`, restarts Caddy, and
+verifies public readiness and the production certificate. Because this mode
+owns the complete Caddyfile, use `--https-mode external` on a shared proxy. If
+proxy startup or verification fails, it restores the immediately preceding
+configuration, or removes the new configuration and stops Caddy on a first
+install. Package, database migration, bootstrap, and orchestrator-service
+changes are not rolled back.
+
+With `--https-mode external`, native mode verifies only the local API readiness
+endpoint. Configure an external HTTPS proxy to serve the packaged console and
+forward `/api/*`, `/health*`, and `/ready*` to `127.0.0.1:8080` before exposing
+it to users.
 
 ## One-time administrator bootstrap
 
@@ -192,6 +224,8 @@ Back up these items through a protected, encrypted operator process:
 - `deploy/docker/secrets/platform_ca.key`;
 - runtime secret files;
 - `deploy/docker/.install.env`;
+- the Docker `caddy_data` volume, or `/var/lib/caddy` and `/etc/caddy` for a
+  native automatic-HTTPS installation;
 - PostgreSQL data and the configured backup repository.
 
 Do not copy them into Git, tickets, chat, logs, or CI artifacts.
@@ -225,6 +259,16 @@ Native status:
 ```bash
 systemctl status strata-rmm.service
 journalctl -u strata-rmm.service --since "15 minutes ago"
+```
+
+Automatic HTTPS status:
+
+```bash
+systemctl status caddy.service
+journalctl -u caddy.service --since "15 minutes ago"
+curl --fail --show-error https://rmm.example.com/health/ready
+openssl s_client -connect rmm.example.com:443 -servername rmm.example.com \
+  -verify_hostname rmm.example.com -verify_return_error </dev/null
 ```
 
 Redact DSNs, tokens, certificate private keys, and environment contents before sharing diagnostics.

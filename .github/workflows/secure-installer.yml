@@ -31,6 +31,9 @@ jobs:
           ! grep -Eq 'VERSION=.*latest|releases/latest|ExecutionPolicy Bypass|SkipCertificateCheck|reboot($|[[:space:]])' scripts/install-platform.sh
           grep -q 'STRATA_BOOTSTRAP_PASSWORD_FILE' scripts/install-platform.sh
           grep -q -- '--prepare-only' scripts/install-platform.sh
+          grep -q -- '--https-mode' scripts/install-platform.sh
+          grep -q 'ACME_CA_DIRECTORY' scripts/install-platform.sh
+          ! grep -Eq 'curl[^|]*\|[[:space:]]*(sh|bash)|wget[^|]*\|[[:space:]]*(sh|bash)' scripts/install-platform.sh
       - name: Run ShellCheck
         uses: ludeeus/action-shellcheck@master
         with:
@@ -91,12 +94,21 @@ jobs:
             --mode docker \
             --domain rmm.example.test \
             --admin-email owner@example.test \
+            --acme-ca staging \
             --prepare-only
           test "$(sudo stat -c '%a' deploy/docker/secrets/postgres_password)" = 600
           test "$(sudo stat -c '%a' deploy/docker/secrets/jwt_secret)" = 600
           sudo test -s deploy/docker/secrets/platform_ca.crt
           sudo test -s deploy/docker/secrets/nats_server.crt
           sudo test -s deploy/docker/secrets/postgres_server.crt
+          sudo grep -q 'acme-staging-v02.api.letsencrypt.org' deploy/docker/.install.env
+          sudo docker compose --env-file deploy/docker/.install.env -f deploy/docker/docker-compose.install.yml config --quiet
+          sudo docker run --rm \
+            --env STRATA_DOMAIN=rmm.example.test \
+            --env ACME_EMAIL=owner@example.test \
+            --env ACME_CA_DIRECTORY=https://acme-staging-v02.api.letsencrypt.org/directory \
+            --volume "$PWD/ui/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2.8.4-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
       - name: Build orchestrator and web-console images
         run: |
           sudo docker compose \

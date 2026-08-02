@@ -6,6 +6,8 @@ MODE="docker"
 DOMAIN=""
 ADMIN_EMAIL=""
 ACME_EMAIL=""
+ACME_CA="production"
+HTTPS_MODE=""
 PLATFORM_NAME="Platform Administration"
 PACKAGE_FILE=""
 DATABASE_DSN_FILE=""
@@ -24,11 +26,19 @@ Usage:
   sudo ./scripts/install-platform.sh --mode docker --domain rmm.example.com \
     --admin-email owner@example.com [--acme-email owner@example.com]
 
+  Automatic HTTPS uses Let's Encrypt production by default. Add
+    --acme-ca staging
+  for non-production issuance tests.
+
   sudo ./scripts/install-platform.sh --mode native --domain rmm.example.com \
     --admin-email owner@example.com --package-file ./strata-rmm-orchestrator_VERSION_ARCH.deb \
     --database-dsn-file /secure/postgres-dsn --nats-url tls://broker.example.com:4222 \
     --nats-advertise-url tls://broker.example.com:4222 \
     --nats-token-file /secure/nats-token --nats-ca-file /secure/nats-ca.crt
+
+  Native HTTPS modes:
+    --https-mode automatic  Use an installed Caddy package and packaged web UI.
+    --https-mode external   Leave TLS and the web console to an external proxy.
 
 The administrator password is prompted without echo. For unattended installation,
 set STRATA_BOOTSTRAP_PASSWORD_FILE to a protected regular file instead.
@@ -80,6 +90,52 @@ wait_for_url() {
   return 1
 }
 
+acme_directory_url() {
+  case "$ACME_CA" in
+    production) printf '%s' 'https://acme-v02.api.letsencrypt.org/directory' ;;
+    staging) printf '%s' 'https://acme-staging-v02.api.letsencrypt.org/directory' ;;
+    *) die "--acme-ca must be production or staging" ;;
+  esac
+}
+
+require_domain_resolution() {
+  getent ahosts "$DOMAIN" 2>/dev/null | awk '{print $1}' | grep -q . || die "domain does not resolve: $DOMAIN"
+}
+
+verify_public_https() {
+  local cert_file curl_args=(--fail --silent --show-error)
+  [[ "$ACME_CA" == "production" ]] || curl_args+=(--insecure)
+  wait_for_url_with_args "https://$DOMAIN/health/ready" 90 "${curl_args[@]}" || return 1
+  if [[ "$ACME_CA" == "production" ]]; then
+    cert_file="$(mktemp)"
+    if ! openssl s_client -connect "$DOMAIN:443" -servername "$DOMAIN" \
+      -verify_hostname "$DOMAIN" -verify_return_error -showcerts \
+      </dev/null >"$cert_file" 2>/dev/null ||
+      ! openssl x509 -in "$cert_file" -checkend 604800 -noout >/dev/null 2>&1; then
+      rm -f "$cert_file"
+      return 1
+    fi
+    rm -f "$cert_file"
+  fi
+}
+
+require_public_ports_available() {
+  if command -v ss >/dev/null 2>&1 &&
+    ! systemctl is-active --quiet caddy.service 2>/dev/null &&
+    ss -H -ltn | awk '{print $4}' | grep -Eq '(^|:)(80|443)$'; then
+    die "TCP port 80 or 443 is already in use; stop the conflicting service or use --https-mode external"
+  fi
+}
+
+wait_for_url_with_args() {
+  local url="$1" attempts="$2"; shift 2
+  for ((i=1; i<=attempts; i++)); do
+    curl "$@" "$url" >/dev/null 2>&1 && return 0
+    sleep 2
+  done
+  return 1
+}
+
 install_docker() {
   require_command docker; require_command openssl; require_command curl
   docker compose version >/dev/null 2>&1 || die "Docker Compose v2 is required"
@@ -121,9 +177,11 @@ NATS
   unset postgres_password nats_token
   chmod 0600 "$secrets_dir"/*
 
+  [[ "$PREPARE_ONLY" == "true" ]] || require_domain_resolution
   cat > "$COMPOSE_DIR/.install.env" <<ENV
 STRATA_DOMAIN=$DOMAIN
 ACME_EMAIL=$ACME_EMAIL
+ACME_CA_DIRECTORY=$(acme_directory_url)
 ENV
   chmod 0600 "$COMPOSE_DIR/.install.env"
 
@@ -138,7 +196,7 @@ ENV
   rm -f "$admin_password"
 
   "${compose[@]}" up -d
-  wait_for_url "https://$DOMAIN/health/ready" 90 || die "platform did not become ready; inspect Docker Compose logs"
+  verify_public_https || die "public HTTPS readiness or certificate verification failed for $DOMAIN"
   printf 'Installation complete. Sign in at https://%s with %s\n' "$DOMAIN" "$ADMIN_EMAIL"
 }
 
@@ -151,6 +209,12 @@ install_native() {
   [[ -f "$NATS_CA_FILE" ]] || die "--nats-ca-file is required"
   [[ "$NATS_URL" == tls://* || "$NATS_URL" == nats+tls://* ]] || die "native NATS URL must use TLS"
   [[ "$NATS_ADVERTISE_URL" == tls://* || "$NATS_ADVERTISE_URL" == nats+tls://* ]] || die "native advertised NATS URL must use TLS"
+
+  if [[ "$HTTPS_MODE" == "automatic" ]]; then
+    require_command caddy
+    require_domain_resolution
+    require_public_ports_available
+  fi
 
   case "$PACKAGE_FILE" in
     *.deb) require_command apt-get; apt-get install -y "$PACKAGE_FILE" ;;
@@ -200,7 +264,61 @@ ENV
   systemctl daemon-reload
   systemctl enable --now strata-rmm.service
   wait_for_url "http://127.0.0.1:8080/health/ready" 60 || die "native orchestrator did not become ready"
-  printf 'Native orchestrator installed. Configure HTTPS and the web console for https://%s.\n' "$DOMAIN"
+  if [[ "$HTTPS_MODE" == "automatic" ]]; then
+    [[ -f /usr/share/strata-rmm/ui/index.html ]] || die "native package does not contain the version-matched web console"
+    install -d -m 0755 /etc/caddy
+    local caddy_candidate caddy_backup=""
+    caddy_candidate="$(mktemp /etc/caddy/Caddyfile.strata.XXXXXX)"
+    cat > "$caddy_candidate" <<CADDY
+# Managed by Strata RMM installer
+{
+  admin off
+  email $ACME_EMAIL
+  acme_ca $(acme_directory_url)
+}
+
+$DOMAIN {
+  encode zstd gzip
+  @api path /api/* /health /health/* /ready /ready/*
+  handle @api {
+    reverse_proxy 127.0.0.1:8080
+  }
+  handle {
+    root * /usr/share/strata-rmm/ui
+    try_files {path} /index.html
+    file_server
+  }
+  header {
+    Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    X-Content-Type-Options "nosniff"
+    X-Frame-Options "DENY"
+    Referrer-Policy "strict-origin-when-cross-origin"
+    -Server
+  }
+}
+CADDY
+    chmod 0644 "$caddy_candidate"
+    caddy validate --config "$caddy_candidate" --adapter caddyfile >/dev/null || { rm -f "$caddy_candidate"; die "generated Caddy configuration is invalid"; }
+    if [[ -f /etc/caddy/Caddyfile ]]; then
+      caddy_backup="$(mktemp /etc/caddy/Caddyfile.strata-backup.XXXXXX)"
+      install -m 0600 /etc/caddy/Caddyfile "$caddy_backup"
+    fi
+    install -m 0644 "$caddy_candidate" /etc/caddy/Caddyfile
+    rm -f "$caddy_candidate"
+    if ! systemctl enable --now caddy.service || ! systemctl restart caddy.service || ! verify_public_https; then
+      if [[ -n "$caddy_backup" ]]; then
+        install -m 0644 "$caddy_backup" /etc/caddy/Caddyfile
+        systemctl restart caddy.service || true
+      else
+        rm -f /etc/caddy/Caddyfile
+        systemctl stop caddy.service || true
+      fi
+      die "automatic HTTPS failed; the previous Caddy configuration was restored when available"
+    fi
+    printf 'Native installation complete. Sign in at https://%s with %s\n' "$DOMAIN" "$ADMIN_EMAIL"
+  else
+    printf 'Native orchestrator installed. Configure the version-matched web console and HTTPS proxy for https://%s.\n' "$DOMAIN"
+  fi
 }
 
 while (( $# > 0 )); do
@@ -209,6 +327,8 @@ while (( $# > 0 )); do
     --domain) DOMAIN="${2:-}"; shift 2 ;;
     --admin-email) ADMIN_EMAIL="${2:-}"; shift 2 ;;
     --acme-email) ACME_EMAIL="${2:-}"; shift 2 ;;
+    --acme-ca) ACME_CA="${2:-}"; shift 2 ;;
+    --https-mode) HTTPS_MODE="${2:-}"; shift 2 ;;
     --platform-name) PLATFORM_NAME="${2:-}"; shift 2 ;;
     --package-file) PACKAGE_FILE="${2:-}"; shift 2 ;;
     --database-dsn-file) DATABASE_DSN_FILE="${2:-}"; shift 2 ;;
@@ -226,6 +346,10 @@ done
 [[ "$DOMAIN" =~ ^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$ ]] || die "a valid public --domain is required"
 [[ "$ADMIN_EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] || die "a valid --admin-email is required"
 ACME_EMAIL="${ACME_EMAIL:-$ADMIN_EMAIL}"
+HTTPS_MODE="${HTTPS_MODE:-$(if [[ "$MODE" == "docker" ]]; then printf automatic; else printf external; fi)}"
+[[ "$HTTPS_MODE" == "automatic" || "$HTTPS_MODE" == "external" ]] || die "--https-mode must be automatic or external"
+[[ "$ACME_CA" == "production" || "$ACME_CA" == "staging" ]] || die "--acme-ca must be production or staging"
+[[ "$MODE" != "docker" || "$HTTPS_MODE" == "automatic" ]] || die "Docker mode currently requires --https-mode automatic"
 
 [[ $EUID -eq 0 ]] || die "installation must run as root"
 if [[ "$MODE" == "docker" ]]; then install_docker; else install_native; fi

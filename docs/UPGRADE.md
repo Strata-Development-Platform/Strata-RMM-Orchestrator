@@ -8,8 +8,8 @@ Do not install from `latest`, an unpinned container tag, or an asset whose check
 
 | Deployment | Supported artifact | Upgrade mechanism |
 |---|---|---|
-| Debian/Ubuntu host | `strata-rmm-orchestrator_<version>_<arch>.deb` | `apt`/local package install with an explicit version |
-| RPM-based host | `strata-rmm-orchestrator_<version>_<arch>.rpm` | `dnf`/local package install with an explicit version |
+| Debian/Ubuntu host | `strata-rmm-orchestrator_<version>_<arch>.deb` (binary, service, and matching web console) | `apt`/local package install with an explicit version |
+| RPM-based host | `strata-rmm-orchestrator_<version>_<arch>.rpm` (binary, service, and matching web console) | `dnf`/local package install with an explicit version |
 | Endpoint host | `strata-rmm-agent` package or OS archive | Managed agent rollout; do not mass-upgrade outside a deployment ring |
 | Application updater | `strata-rmm-orchestrator-<version>-linux-<arch>` | Check, download, checksum verification, staged apply |
 | Docker/Kubernetes | Image pinned by version and digest | Deployment controller or orchestrator-specific rollout |
@@ -38,6 +38,12 @@ The secure clean-installer will configure the service account, environment file,
 
 7. Run the documented preflight/migration procedure for that release.
 8. Restart `strata-rmm.service`, then verify readiness and authenticated smoke tests.
+
+If native automatic HTTPS is enabled, preserve `/etc/caddy` and
+`/var/lib/caddy`, validate the installed Caddyfile, restart Caddy, and verify
+the public hostname after the package upgrade. A same-version reinstall
+replaces the packaged console with the package payload and retains Caddy's ACME
+account and certificates.
 
 Never pipe a network download directly into a privileged shell.
 

@@ -774,6 +774,33 @@ SELECT query, calls, mean_exec_time FROM pg_stat_statements
 ORDER BY mean_exec_time DESC LIMIT 10;
 ```
 
+## Automatic HTTPS and certificate renewal
+
+Caddy manages the public Let's Encrypt certificate in Docker installations and
+in native installations created with `--https-mode automatic`. It renews the
+certificate before expiry; do not replace this with a cron-driven ACME client.
+
+When issuance or renewal fails:
+
+1. Confirm the public A/AAAA records resolve to the intended host and remove a
+   stale AAAA record if IPv6 traffic cannot reach it.
+2. Confirm inbound TCP 80 and 443 reach Caddy and are not intercepted by a
+   different proxy. Keep both ports available for future renewal challenges.
+3. Inspect sanitized Caddy logs. Do not share ACME account keys or storage
+   contents.
+4. Confirm the configured ACME directory. The staging directory is for
+   rehearsals only and its certificates are deliberately not browser-trusted.
+5. Verify the public chain and hostname with `openssl s_client
+   -verify_hostname`; do not use `curl --insecure` as production evidence.
+
+Docker keeps ACME state in the `caddy_data` volume. Native Caddy normally keeps
+it under `/var/lib/caddy`; confirm the actual service environment before backup
+or restore. Back up that state and the active Caddyfile together. A native
+installer failure restores the immediately preceding Caddyfile when available,
+but does not revert the installed Strata package, migrations, bootstrap, or
+orchestrator service. After any restore, restart Caddy and verify
+`https://<domain>/health/ready` plus the certificate hostname and expiry.
+
 ## Phase 8D Platform Alerts
 
 Every alert below includes an owner and this runbook anchor. Silence an alert
