@@ -221,11 +221,11 @@ The server rejects inactive/mismatched scopes, illegal role/scope combinations,
 duplicate scopes, assignments outside the actor's selected scope, and owner
 escalation. Do not repair a failed operation with direct inserts: identity,
 memberships, compatibility mirrors, and audit evidence are designed to commit
-or roll back together. Serialize membership replacement operationally for each
-target user. The current handler does not lock the user row, and concurrent
-requests with different roles for the same scope can leave both roles active.
-If overlapping requests occurred, inspect the authoritative rows below and use
-one subsequent membership replacement after the competing requests finish.
+or roll back together. The handler locks the target identity, explicitly limits
+revocation to memberships the actor may manage in the selected scope, and
+serializes concurrent replacements. If an installation predating this hardening
+accepted overlapping requests, inspect the authoritative rows below and use one
+subsequent membership replacement to reconcile the managed scope.
 
 Confirm successful changes and their sanitized audit evidence:
 
