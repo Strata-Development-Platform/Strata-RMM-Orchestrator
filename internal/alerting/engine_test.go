@@ -43,6 +43,18 @@ func (*memoryAlertStore) GetAlertHistory(context.Context, string, int, int) ([]*
 func (*memoryAlertStore) UpdateAlertStatus(context.Context, string, string, AlertStatus) error {
 	return nil
 }
+func (*memoryAlertStore) SaveMaintenanceWindow(context.Context, *MaintenanceWindow) error {
+	return nil
+}
+func (*memoryAlertStore) ListMaintenanceWindows(context.Context, string) ([]*MaintenanceWindow, error) {
+	return nil, nil
+}
+func (*memoryAlertStore) DeleteMaintenanceWindow(context.Context, string) error {
+	return nil
+}
+func (*memoryAlertStore) GetActiveMaintenanceWindows(context.Context, string, string) ([]*MaintenanceWindow, error) {
+	return nil, nil
+}
 
 func (s *memoryAlertStore) SaveAlert(_ context.Context, alert *Alert) error {
 	s.mu.Lock()
@@ -260,5 +272,271 @@ func TestRuleValidationRejectsIncompleteRules(t *testing.T) {
 	rule.Channels = []ChannelType{ChannelSlack, ChannelSlack}
 	if err := rule.Validate(); err == nil {
 		t.Fatal("invalid rule passed validation")
+	}
+}
+
+func TestAlertGroupingCreatesAndUpdatesGroups(t *testing.T) {
+	grouping := NewGroupingEngine()
+	
+	group1, created1 := grouping.GetOrCreateGroup("rule1", "tenant1", "device1", "cpu", SeverityCritical, "", time.Now())
+	if !created1 {
+		t.Fatal("first group should be created")
+	}
+	if group1.Key.RuleID != "rule1" || group1.Key.DeviceID != "device1" {
+		t.Fatalf("unexpected group key: %+v", group1.Key)
+	}
+	if group1.Count != 1 {
+		t.Fatalf("expected count 1, got %d", group1.Count)
+	}
+	
+	group2, created2 := grouping.GetOrCreateGroup("rule1", "tenant1", "device1", "memory", SeverityCritical, "", time.Now())
+	if created2 {
+		t.Fatal("second call should not create new group")
+	}
+	if group1 != group2 {
+		t.Fatal("should return same group")
+	}
+	if group2.Count != 2 {
+		t.Fatalf("expected count 2 after second alert, got %d", group2.Count)
+	}
+}
+
+func TestAlertGroupingTracksMultipleMetrics(t *testing.T) {
+	grouping := NewGroupingEngine()
+	
+	grouping.GetOrCreateGroup("rule1", "tenant1", "device1", "cpu", SeverityCritical, "", time.Now())
+	grouping.GetOrCreateGroup("rule1", "tenant1", "device1", "memory", SeverityCritical, "", time.Now())
+	grouping.GetOrCreateGroup("rule1", "tenant1", "device1", "disk", SeverityCritical, "", time.Now())
+	
+	group := grouping.GetGroup("rule1", "device1")
+	if len(group.MetricNames) != 3 {
+		t.Fatalf("expected 3 metrics, got %d", len(group.MetricNames))
+	}
+	
+	if group.Status != GroupActive {
+		t.Fatalf("expected active status, got %s", group.Status)
+	}
+}
+
+func TestAlertGroupingResolve(t *testing.T) {
+	grouping := NewGroupingEngine()
+	grouping.GetOrCreateGroup("rule1", "tenant1", "device1", "cpu", SeverityCritical, "", time.Now())
+	
+	grouping.ResolveGroup("rule1", "device1", time.Now())
+	
+	group := grouping.GetGroup("rule1", "device1")
+	if group.Status != GroupResolved {
+		t.Fatalf("expected resolved status, got %s", group.Status)
+	}
+}
+
+func TestMaintenanceEngineCreatesAndListsWindows(t *testing.T) {
+	store := newMemoryMaintenanceStore()
+	maintenance := NewMaintenanceEngine(store)
+	
+	start := time.Now().Add(-time.Hour)
+	end := time.Now().Add(time.Hour)
+	
+	window, err := maintenance.CreateWindow(context.Background(), "tenant1", "test-window", start, end, []string{"device1", "device2"})
+	if err != nil {
+		t.Fatalf("failed to create window: %v", err)
+	}
+	
+	if window.Name != "test-window" {
+		t.Fatalf("expected name test-window, got %s", window.Name)
+	}
+	
+	windows, err := maintenance.ListWindows(context.Background(), "tenant1")
+	if err != nil {
+		t.Fatalf("failed to list windows: %v", err)
+	}
+	
+	if len(windows) != 1 {
+		t.Fatalf("expected 1 window, got %d", len(windows))
+	}
+	
+	if windows[0].ID != window.ID {
+		t.Fatalf("expected window ID %s, got %s", window.ID, windows[0].ID)
+	}
+}
+
+func TestMaintenanceEngineChecksMaintenanceWindow(t *testing.T) {
+	store := newMemoryMaintenanceStore()
+	maintenance := NewMaintenanceEngine(store)
+	
+	start := time.Now().Add(-time.Hour)
+	end := time.Now().Add(time.Hour)
+	
+	maintenance.CreateWindow(context.Background(), "tenant1", "test-window", start, end, []string{"device1"})
+	
+	if !maintenance.IsInMaintenance("tenant1", "device1", time.Now()) {
+		t.Fatal("device1 should be in maintenance window")
+	}
+	
+	if maintenance.IsInMaintenance("tenant1", "device2", time.Now()) {
+		t.Fatal("device2 should not be in maintenance window")
+	}
+	
+	if maintenance.IsInMaintenance("tenant2", "device1", time.Now()) {
+		t.Fatal("different tenant should not be in maintenance window")
+	}
+}
+
+type memoryMaintenanceStore struct {
+	mu      sync.Mutex
+	windows map[string]*MaintenanceWindow
+}
+
+func newMemoryMaintenanceStore() *memoryMaintenanceStore {
+	return &memoryMaintenanceStore{windows: make(map[string]*MaintenanceWindow)}
+}
+
+func (s *memoryMaintenanceStore) SaveMaintenanceWindow(_ context.Context, window *MaintenanceWindow) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.windows[window.ID] = window
+	return nil
+}
+
+func (s *memoryMaintenanceStore) ListMaintenanceWindows(_ context.Context, tenantID string) ([]*MaintenanceWindow, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	
+	var result []*MaintenanceWindow
+	for _, w := range s.windows {
+		if tenantID == "" || w.TenantID == tenantID {
+			result = append(result, w)
+		}
+	}
+	return result, nil
+}
+
+func (s *memoryMaintenanceStore) DeleteMaintenanceWindow(_ context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.windows, id)
+	return nil
+}
+
+func (s *memoryMaintenanceStore) GetActiveMaintenanceWindows(_ context.Context, tenantID, deviceID string) ([]*MaintenanceWindow, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	
+	var result []*MaintenanceWindow
+	for _, w := range s.windows {
+		if w.TenantID != tenantID {
+			continue
+		}
+		now := time.Now()
+		if (now.Equal(w.StartTime) || now.After(w.StartTime)) && (now.Equal(w.EndTime) || now.Before(w.EndTime)) {
+			if len(w.DeviceIDs) == 0 {
+				result = append(result, w)
+			} else {
+				for _, d := range w.DeviceIDs {
+					if d == deviceID {
+						result = append(result, w)
+						break
+					}
+				}
+			}
+		}
+	}
+	return result, nil
+}
+
+func TestEngineSilencesAlertsDuringMaintenance(t *testing.T) {
+	store := newMemoryAlertStore()
+	maintenanceStore := newMemoryMaintenanceStore()
+	
+	start := time.Now().Add(-time.Hour)
+	end := time.Now().Add(time.Hour)
+	
+	window := &MaintenanceWindow{
+		ID:        uuid.NewString(),
+		TenantID:  "tenant1",
+		Name:      "test-window",
+		StartTime: start,
+		EndTime:   end,
+		DeviceIDs: []string{"device1"},
+	}
+	maintenanceStore.SaveMaintenanceWindow(context.Background(), window)
+	
+	maintenance := NewMaintenanceEngine(maintenanceStore)
+	maintenance.LoadWindows([]*MaintenanceWindow{window})
+	
+	engine := NewEngine(nil, nil, store, nil, zap.NewNop())
+	engine.WithMaintenanceEngine(maintenance)
+	
+	rule := &Rule{
+		ID: uuid.NewString(), TenantID: "tenant1", Name: "CPU high",
+		Type: RuleTypeThreshold, Enabled: true, Severity: SeverityCritical,
+		MetricName: "cpu.percent", Condition: ConditionGTE, Threshold: 90,
+		Cooldown: 5 * time.Minute,
+	}
+	engine.rules[rule.ID] = rule
+	
+	deviceID := "device1"
+	
+	engine.evaluateThreshold(rule, "tenant1", deviceID, "cpu.percent", 95, time.Now().UnixNano())
+	
+	if len(store.saves) != 0 {
+		t.Fatalf("alert should be silenced during maintenance, got %d saves", len(store.saves))
+	}
+	
+	group := engine.GroupingEngine().GetGroup(rule.ID, deviceID)
+	if group == nil {
+		t.Fatal("group should still be created even if silenced")
+	}
+	if group.Status != GroupSilenced {
+		t.Fatalf("expected silenced status, got %s", group.Status)
+	}
+}
+
+func TestEngineResumesAlertingAfterMaintenance(t *testing.T) {
+	store := newMemoryAlertStore()
+	maintenanceStore := newMemoryMaintenanceStore()
+	
+	start := time.Now().Add(-time.Hour)
+	end := time.Now().Add(-time.Minute)
+	
+	window := &MaintenanceWindow{
+		ID:        uuid.NewString(),
+		TenantID:  "tenant1",
+		Name:      "test-window",
+		StartTime: start,
+		EndTime:   end,
+		DeviceIDs: []string{"device1"},
+	}
+	maintenanceStore.SaveMaintenanceWindow(context.Background(), window)
+	
+	maintenance := NewMaintenanceEngine(maintenanceStore)
+	maintenance.LoadWindows([]*MaintenanceWindow{window})
+	
+	engine := NewEngine(nil, nil, store, nil, zap.NewNop())
+	engine.WithMaintenanceEngine(maintenance)
+	
+	rule := &Rule{
+		ID: uuid.NewString(), TenantID: "tenant1", Name: "CPU high",
+		Type: RuleTypeThreshold, Enabled: true, Severity: SeverityCritical,
+		MetricName: "cpu.percent", Condition: ConditionGTE, Threshold: 90,
+		Cooldown: 5 * time.Minute,
+	}
+	engine.rules[rule.ID] = rule
+	
+	deviceID := "device1"
+	
+	engine.evaluateThreshold(rule, "tenant1", deviceID, "cpu.percent", 95, time.Now().UnixNano())
+	
+	if len(store.saves) != 1 {
+		t.Fatalf("alert should fire after maintenance, got %d saves", len(store.saves))
+	}
+	
+	if store.saves[0].Status != AlertFiring {
+		t.Fatalf("expected firing status, got %s", store.saves[0].Status)
+	}
+	
+	group := engine.GroupingEngine().GetGroup(rule.ID, deviceID)
+	if group.Status != GroupActive {
+		t.Fatalf("expected active status after maintenance, got %s", group.Status)
 	}
 }

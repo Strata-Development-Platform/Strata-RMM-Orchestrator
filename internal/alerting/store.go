@@ -283,6 +283,104 @@ func (s *Store) UpdateAlertStatus(ctx context.Context, tenantID, alertID string,
 	return requireAffected(err, result, "alert")
 }
 
+func (s *Store) SaveMaintenanceWindow(ctx context.Context, window *MaintenanceWindow) error {
+	deviceIDsJSON, err := json.Marshal(window.DeviceIDs)
+	if err != nil {
+		return fmt.Errorf("encode device IDs: %w", err)
+	}
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO maintenance_windows (id, tenant_id, name, start_time, end_time, device_ids, tags)
+		VALUES ($1, $2, $3, $4, $5, $6::jsonb, '{}'::jsonb)
+		ON CONFLICT (id) DO UPDATE SET
+			name = EXCLUDED.name,
+			start_time = EXCLUDED.start_time,
+			end_time = EXCLUDED.end_time,
+			device_ids = EXCLUDED.device_ids,
+			tags = EXCLUDED.tags
+		WHERE maintenance_windows.id = EXCLUDED.id
+	`, window.ID, window.TenantID, window.Name, window.StartTime, window.EndTime, deviceIDsJSON)
+	return err
+}
+
+func (s *Store) ListMaintenanceWindows(ctx context.Context, tenantID string) ([]*MaintenanceWindow, error) {
+	var rows *sql.Rows
+	var err error
+	if tenantID == "" {
+		rows, err = s.db.QueryContext(ctx, `
+			SELECT id, tenant_id, name, start_time, end_time, device_ids::text, created_at
+			FROM maintenance_windows ORDER BY start_time DESC
+		`)
+	} else {
+		rows, err = s.db.QueryContext(ctx, `
+			SELECT id, tenant_id, name, start_time, end_time, device_ids::text, created_at
+			FROM maintenance_windows WHERE tenant_id = $1 ORDER BY start_time DESC
+		`, tenantID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	
+	var windows []*MaintenanceWindow
+	for rows.Next() {
+		var w MaintenanceWindow
+		var deviceIDsStr string
+		if err := rows.Scan(&w.ID, &w.TenantID, &w.Name, &w.StartTime, &w.EndTime, &deviceIDsStr, &w.CreatedAt); err != nil {
+			return nil, err
+		}
+		if deviceIDsStr != "" {
+			_ = json.Unmarshal([]byte(deviceIDsStr), &w.DeviceIDs)
+		}
+		windows = append(windows, &w)
+	}
+	return windows, rows.Err()
+}
+
+func (s *Store) DeleteMaintenanceWindow(ctx context.Context, id string) error {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM maintenance_windows WHERE id = $1`, id)
+	return requireAffected(err, result, "maintenance window")
+}
+
+func (s *Store) GetActiveMaintenanceWindows(ctx context.Context, tenantID, deviceID string) ([]*MaintenanceWindow, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, tenant_id, name, start_time, end_time, device_ids::text, created_at
+		FROM maintenance_windows 
+		WHERE tenant_id = $1 
+		AND NOW() >= start_time 
+		AND NOW() <= end_time
+		ORDER BY start_time
+	`, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	
+	var windows []*MaintenanceWindow
+	for rows.Next() {
+		var w MaintenanceWindow
+		var deviceIDsStr string
+		if err := rows.Scan(&w.ID, &w.TenantID, &w.Name, &w.StartTime, &w.EndTime, &deviceIDsStr, &w.CreatedAt); err != nil {
+			return nil, err
+		}
+		if deviceIDsStr != "" {
+			_ = json.Unmarshal([]byte(deviceIDsStr), &w.DeviceIDs)
+		}
+		if len(w.DeviceIDs) == 0 || containsStringInSlice(w.DeviceIDs, deviceID) {
+			windows = append(windows, &w)
+		}
+	}
+	return windows, rows.Err()
+}
+
+func containsStringInSlice(slice []string, s string) bool {
+	for _, item := range slice {
+		if item == s {
+			return true
+		}
+	}
+	return false
+}
+
 func requireAffected(err error, result sql.Result, resource string) error {
 	if err != nil {
 		return err

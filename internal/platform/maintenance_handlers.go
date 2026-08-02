@@ -2,7 +2,6 @@ package platform
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"time"
 
@@ -11,9 +10,12 @@ import (
 )
 
 func (s *APIServer) handleCreateMaintenanceWindow(w http.ResponseWriter, r *http.Request) {
-	clientID := r.URL.Query().Get("client_id")
-	if clientID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "client_id required"})
+	tenantID := r.PathValue("tenantID")
+	if tenantID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tenant_id required"})
+		return
+	}
+	if !s.AuthorizeClientAccess(w, r, tenantID) {
 		return
 	}
 
@@ -45,10 +47,11 @@ func (s *APIServer) handleCreateMaintenanceWindow(w http.ResponseWriter, r *http
 
 	id := uuid.New().String()
 
+	deviceIDsJSON, _ := json.Marshal(req.DeviceIDs)
 	_, err = s.requestDB(r).ExecContext(r.Context(), `
-		INSERT INTO maintenance_windows (id, tenant_id, name, start_time, end_time, tags)
-		VALUES ($1, $2, $3, $4, $5, $6::jsonb)
-	`, id, clientID, req.Name, startTime, endTime, "{}")
+		INSERT INTO maintenance_windows (id, tenant_id, name, start_time, end_time, device_ids, tags)
+		VALUES ($1, $2, $3, $4, $5, $6::jsonb, '{}'::jsonb)
+	`, id, tenantID, req.Name, startTime, endTime, deviceIDsJSON)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -58,9 +61,12 @@ func (s *APIServer) handleCreateMaintenanceWindow(w http.ResponseWriter, r *http
 }
 
 func (s *APIServer) handleListMaintenanceWindows(w http.ResponseWriter, r *http.Request) {
-	clientID := r.URL.Query().Get("client_id")
-	if clientID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "client_id required"})
+	tenantID := r.PathValue("tenantID")
+	if tenantID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tenant_id required"})
+		return
+	}
+	if !s.AuthorizeClientAccess(w, r, tenantID) {
 		return
 	}
 
@@ -68,7 +74,7 @@ func (s *APIServer) handleListMaintenanceWindows(w http.ResponseWriter, r *http.
 		SELECT id, tenant_id, name, start_time, end_time, device_ids::text, created_at
 		FROM maintenance_windows WHERE tenant_id = $1
 		ORDER BY start_time DESC LIMIT 100
-	`, clientID)
+	`, tenantID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -83,11 +89,15 @@ func (s *APIServer) handleListMaintenanceWindows(w http.ResponseWriter, r *http.
 		if err := rows.Scan(&id, &tenantID, &name, &startTime, &endTime, &deviceIDsStr, &createdAt); err != nil {
 			continue
 		}
-		_ = fmt.Sprintf("%s", deviceIDsStr)
+		var deviceIDs []string
+		if deviceIDsStr != "" {
+			_ = json.Unmarshal([]byte(deviceIDsStr), &deviceIDs)
+		}
 		windows = append(windows, map[string]interface{}{
 			"id": id, "tenant_id": tenantID, "name": name,
 			"start_time": startTime.UTC().Format(time.RFC3339),
 			"end_time":   endTime.UTC().Format(time.RFC3339),
+			"device_ids": deviceIDs,
 			"created_at": createdAt.UTC().Format(time.RFC3339),
 		})
 	}
@@ -180,9 +190,10 @@ func (s *APIServer) handleDeleteDeviceGroup(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *APIServer) handleDeleteMaintenanceWindow(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.PathValue("tenantID")
 	windowID := r.PathValue("windowID")
 
-	res, err := s.requestDB(r).ExecContext(r.Context(), `DELETE FROM maintenance_windows WHERE id = $1`, windowID)
+	res, err := s.requestDB(r).ExecContext(r.Context(), `DELETE FROM maintenance_windows WHERE id = $1 AND tenant_id = $2`, windowID, tenantID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return

@@ -23,10 +23,14 @@ type Engine struct {
 	notifier *Notifier
 	now      func() time.Time
 
-	mu     sync.RWMutex
-	rules  map[string]*Rule       // ruleID -> Rule
-	states map[string]*AlertState // ruleID+deviceID -> state
-	subs   []*nats.Subscription
+	mu            sync.RWMutex
+	rules         map[string]*Rule       // ruleID -> Rule
+	states        map[string]*AlertState // ruleID+deviceID -> state
+	subs          []*nats.Subscription
+	grouping      *GroupingEngine
+	maintenance   *MaintenanceEngine
+	maintenanceMu sync.RWMutex
+	maintenanceWindows map[string]*MaintenanceWindow // id -> window (for quick lookup)
 }
 
 type alertStore interface {
@@ -41,6 +45,12 @@ type alertStore interface {
 	UpdateAlertStatus(context.Context, string, string, AlertStatus) error
 	SaveCVEAlert(context.Context, *Alert, string) (*Alert, bool, error)
 	ResolveCVEAlert(context.Context, string, string, string, time.Time) (*Alert, error)
+	
+	// Maintenance window operations
+	SaveMaintenanceWindow(context.Context, *MaintenanceWindow) error
+	ListMaintenanceWindows(context.Context, string) ([]*MaintenanceWindow, error)
+	DeleteMaintenanceWindow(context.Context, string) error
+	GetActiveMaintenanceWindows(context.Context, string, string) ([]*MaintenanceWindow, error)
 }
 
 func NewEngine(nc *nats.Conn, tsdb *timescale.Client, store alertStore, notifier *Notifier, logger *zap.Logger) *Engine {
@@ -53,7 +63,14 @@ func NewEngine(nc *nats.Conn, tsdb *timescale.Client, store alertStore, notifier
 		now:      time.Now,
 		rules:    make(map[string]*Rule),
 		states:   make(map[string]*AlertState),
+		grouping: NewGroupingEngine(),
 	}
+}
+
+func (e *Engine) WithMaintenanceEngine(m *MaintenanceEngine) *Engine {
+	e.maintenance = m
+	e.maintenanceWindows = make(map[string]*MaintenanceWindow)
+	return e
 }
 
 func (e *Engine) Start(ctx context.Context) error {
@@ -73,6 +90,12 @@ func (e *Engine) Start(ctx context.Context) error {
 	}
 	e.mu.Unlock()
 	e.restoreActiveAlerts(activeAlerts)
+	
+	if e.maintenance != nil {
+		if err := e.maintenance.Start(ctx); err != nil {
+			e.logger.Warn("failed to start maintenance engine", zap.Error(err))
+		}
+	}
 	e.logger.Info("alerting state loaded", zap.Int("rules", len(rules)), zap.Int("active_alerts", len(activeAlerts)))
 
 	metricsSub, err := e.nats.Subscribe("tenant.*.agent.*.metrics", e.handleMetrics)
@@ -211,9 +234,26 @@ func (e *Engine) evaluateThreshold(rule *Rule, tenantID, deviceID, metricName st
 		state = &AlertState{RuleID: rule.ID, TenantID: tenantID, DeviceID: deviceID, State: StateOK, MetricName: metricName}
 		e.states[key] = state
 	}
+	
+	_, _ = e.grouping.GetOrCreateGroup(rule.ID, tenantID, deviceID, metricName, rule.Severity, "", now)
+	
+	e.maintenanceMu.RLock()
+	isInMaintenance := e.maintenance != nil && e.maintenance.IsInMaintenance(tenantID, deviceID, now)
+	e.maintenanceMu.RUnlock()
+	
 	if shouldFire && state.State == StateOK {
 		if now.Sub(state.LastFired) < rule.Cooldown {
 			e.mu.Unlock()
+			return
+		}
+		if isInMaintenance {
+			e.mu.Unlock()
+			e.logger.Info("alert silenced by maintenance window",
+				zap.String("rule", rule.ID),
+				zap.String("device", deviceID),
+				zap.String("metric", metricName),
+				zap.Float64("value", value))
+			e.grouping.UpdateGroupStatus(rule.ID, deviceID, GroupSilenced, "")
 			return
 		}
 		alertID := uuid.NewString()
@@ -267,6 +307,7 @@ func (e *Engine) evaluateThreshold(rule *Rule, tenantID, deviceID, metricName st
 			e.restoreFiringTransition(key, alertID, metricName)
 			return
 		}
+		e.grouping.ResolveGroup(rule.ID, deviceID, now)
 	} else if shouldFire && state.State == StateFiring {
 		state.ConsecutiveFires++
 		e.mu.Unlock()
@@ -291,6 +332,7 @@ func (e *Engine) evaluateHeartbeat(rule *Rule, tenantID, deviceID string, lastTi
 	} else if lastTime.After(state.LastHeard) {
 		state.LastHeard = lastTime
 	}
+	
 	if state.State == StateFiring {
 		now := e.now()
 		alertID, firedAt := state.AlertID, state.LastFired
@@ -315,6 +357,7 @@ func (e *Engine) evaluateHeartbeat(rule *Rule, tenantID, deviceID string, lastTi
 			e.logger.Error("resolve heartbeat alert", zap.Error(err))
 			e.restoreFiringTransition(key, alertID, "")
 		}
+		e.grouping.ResolveGroup(rule.ID, deviceID, now)
 		return
 	}
 	e.mu.Unlock()
@@ -422,6 +465,18 @@ func (e *Engine) checkStaleHeartbeats() {
 			now.Sub(state.LastFired) < rule.Cooldown {
 			continue
 		}
+		
+		e.maintenanceMu.RLock()
+		isInMaintenance := e.maintenance != nil && e.maintenance.IsInMaintenance(state.TenantID, state.DeviceID, now)
+		e.maintenanceMu.RUnlock()
+		
+		if isInMaintenance {
+			e.logger.Info("heartbeat alert silenced by maintenance window",
+				zap.String("rule", rule.ID),
+				zap.String("device", state.DeviceID))
+			continue
+		}
+		
 		alertID := uuid.NewString()
 		state.State = StateFiring
 		state.LastFired = now
@@ -469,7 +524,19 @@ func (e *Engine) FireCVEAlert(tenantID, deviceID, cveID, packageName, severity, 
 		e.logger.Error("reject CVE alert without correlation scope")
 		return
 	}
+	
 	now := e.now()
+	e.maintenanceMu.RLock()
+	isInMaintenance := e.maintenance != nil && e.maintenance.IsInMaintenance(tenantID, deviceID, now)
+	e.maintenanceMu.RUnlock()
+	
+	if isInMaintenance {
+		e.logger.Info("CVE alert silenced by maintenance window",
+			zap.String("cve", cveID),
+			zap.String("device", deviceID))
+		return
+	}
+	
 	alert := &Alert{
 		ID:         uuid.NewString(),
 		TenantID:   tenantID,
@@ -581,4 +648,51 @@ func (e *Engine) GetAlertHistory(ctx context.Context, tenantID string, limit, of
 
 func (e *Engine) AcknowledgeAlert(ctx context.Context, tenantID, alertID string) error {
 	return e.store.UpdateAlertStatus(ctx, tenantID, alertID, AlertAcknowledged)
+}
+
+func (e *Engine) CreateMaintenanceWindow(ctx context.Context, tenantID, name string, startTime, endTime time.Time, deviceIDs []string) (*MaintenanceWindow, error) {
+	if e.maintenance == nil {
+		return nil, fmt.Errorf("maintenance engine not initialized")
+	}
+	return e.maintenance.CreateWindow(ctx, tenantID, name, startTime, endTime, deviceIDs)
+}
+
+func (e *Engine) DeleteMaintenanceWindow(ctx context.Context, windowID string) error {
+	if e.maintenance == nil {
+		return fmt.Errorf("maintenance engine not initialized")
+	}
+	return e.maintenance.DeleteWindow(ctx, windowID)
+}
+
+func (e *Engine) ListMaintenanceWindows(ctx context.Context, tenantID string) ([]*MaintenanceWindow, error) {
+	if e.maintenance == nil {
+		return nil, fmt.Errorf("maintenance engine not initialized")
+	}
+	return e.maintenance.ListWindows(ctx, tenantID)
+}
+
+func (e *Engine) IsDeviceInMaintenance(ctx context.Context, tenantID, deviceID string) (bool, error) {
+	if e.maintenance == nil {
+		return false, fmt.Errorf("maintenance engine not initialized")
+	}
+	windows, err := e.maintenance.GetActiveWindows(ctx, tenantID, deviceID)
+	if err != nil {
+		return false, err
+	}
+	return len(windows) > 0, nil
+}
+
+func (e *Engine) GetMaintenanceWindowsForDevice(ctx context.Context, tenantID, deviceID string) ([]*MaintenanceWindow, error) {
+	if e.maintenance == nil {
+		return nil, fmt.Errorf("maintenance engine not initialized")
+	}
+	return e.maintenance.GetActiveWindows(ctx, tenantID, deviceID)
+}
+
+func (e *Engine) GroupingEngine() *GroupingEngine {
+	return e.grouping
+}
+
+func (e *Engine) MaintenanceEngine() *MaintenanceEngine {
+	return e.maintenance
 }
