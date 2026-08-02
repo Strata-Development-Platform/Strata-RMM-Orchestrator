@@ -221,19 +221,20 @@ func TestTokenPurposeSeparation(t *testing.T) {
 
 	tests := []struct {
 		name   string
+		method string
 		path   string
 		token  string
 		status int
 	}{
-		{name: "user on user route", path: "/api/v1/auth/me", token: userToken, status: http.StatusOK},
-		{name: "agent on user route", path: "/api/v1/auth/me", token: agentToken, status: http.StatusForbidden},
-		{name: "agent on agent route", path: "/api/v1/agent/config", token: agentToken, status: http.StatusOK},
-		{name: "user on agent route", path: "/api/v1/agent/config", token: userToken, status: http.StatusForbidden},
+		{name: "user on user route", method: "GET", path: "/api/v1/auth/me", token: userToken, status: http.StatusOK},
+		{name: "agent on user route", method: "GET", path: "/api/v1/auth/me", token: agentToken, status: http.StatusForbidden},
+		{name: "agent on agent route", method: "POST", path: "/api/v1/agent/config", token: agentToken, status: http.StatusOK},
+		{name: "user on agent route", method: "POST", path: "/api/v1/agent/config", token: userToken, status: http.StatusForbidden},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			req := httptest.NewRequest("POST", test.path, nil)
+			req := httptest.NewRequest(test.method, test.path, nil)
 			req.Header.Set("Authorization", "Bearer "+test.token)
 			w := httptest.NewRecorder()
 			server := &APIServer{tokenGen: gen, allowClaimPrincipal: true}

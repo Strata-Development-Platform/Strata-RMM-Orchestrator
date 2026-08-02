@@ -9,6 +9,9 @@ import (
 
 func (s *APIServer) handleGetBillingAccount(w http.ResponseWriter, r *http.Request) {
 	mspID := r.PathValue("mspID")
+	if !s.AuthorizeMSPAccess(w, r, mspID) {
+		return
+	}
 
 	var id, provider, providerCustomerID, providerSubscriptionID string
 	var paymentProviderID, billingCycle, status, billingEmail string
@@ -110,6 +113,9 @@ func (s *APIServer) handleDeleteBillingAccount(w http.ResponseWriter, r *http.Re
 
 func (s *APIServer) handleGetSubscriptions(w http.ResponseWriter, r *http.Request) {
 	mspID := r.PathValue("mspID")
+	if !s.AuthorizeMSPAccess(w, r, mspID) {
+		return
+	}
 
 	rows, err := s.requestDB(r).QueryContext(r.Context(), `
 		SELECT s.id, s.msp_id, s.plan_id, p.name as plan_name, s.status, s.billing_period,
@@ -217,8 +223,11 @@ func (s *APIServer) handleCreateSubscription(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *APIServer) handleCancelSubscription(w http.ResponseWriter, r *http.Request) {
-	subscriptionID := r.PathValue("subscriptionID")
 	mspID := r.PathValue("mspID")
+	if !s.AuthorizeMSPManage(w, r, mspID) {
+		return
+	}
+	subscriptionID := r.PathValue("subscriptionID")
 
 	var currentPeriodEnd time.Time
 	err := s.requestDB(r).QueryRowContext(r.Context(), `SELECT current_period_end FROM subscriptions WHERE id = $1 AND msp_id = $2`, subscriptionID, mspID).Scan(&currentPeriodEnd)
@@ -253,6 +262,9 @@ func (s *APIServer) handleCancelSubscription(w http.ResponseWriter, r *http.Requ
 
 func (s *APIServer) handleGetInvoices(w http.ResponseWriter, r *http.Request) {
 	mspID := r.PathValue("mspID")
+	if !s.AuthorizeMSPAccess(w, r, mspID) {
+		return
+	}
 
 	rows, err := s.requestDB(r).QueryContext(r.Context(), `
 		SELECT id, msp_id, subscription_id, invoice_number, period_start, period_end,
@@ -307,8 +319,11 @@ func (s *APIServer) handleGetInvoices(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *APIServer) handleGetInvoice(w http.ResponseWriter, r *http.Request) {
-	invoiceID := r.PathValue("invoiceID")
 	mspID := r.PathValue("mspID")
+	if !s.AuthorizeMSPAccess(w, r, mspID) {
+		return
+	}
+	invoiceID := r.PathValue("invoiceID")
 
 	var id, mspID2, subscriptionID, invoiceNumber string
 	var periodStart, periodEnd, paidAt, dueAt, createdAt time.Time
@@ -448,6 +463,9 @@ func (s *APIServer) handleGetUsage(w http.ResponseWriter, r *http.Request) {
 
 func (s *APIServer) handleGetPaymentMethods(w http.ResponseWriter, r *http.Request) {
 	mspID := r.PathValue("mspID")
+	if !s.AuthorizeMSPAccess(w, r, mspID) {
+		return
+	}
 
 	rows, err := s.requestDB(r).QueryContext(r.Context(), `
 		SELECT id, msp_id, provider_payment_method_id, type, card_brand, last_four,
@@ -537,8 +555,11 @@ func (s *APIServer) handleAddPaymentMethod(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *APIServer) handleSetDefaultPaymentMethod(w http.ResponseWriter, r *http.Request) {
-	paymentMethodID := r.PathValue("paymentMethodID")
 	mspID := r.PathValue("mspID")
+	if !s.AuthorizeMSPManage(w, r, mspID) {
+		return
+	}
+	paymentMethodID := r.PathValue("paymentMethodID")
 
 	_, err := s.requestDB(r).ExecContext(r.Context(), `
 		UPDATE payment_methods SET is_default = false WHERE msp_id = $1
@@ -562,8 +583,11 @@ func (s *APIServer) handleSetDefaultPaymentMethod(w http.ResponseWriter, r *http
 }
 
 func (s *APIServer) handleDeletePaymentMethod(w http.ResponseWriter, r *http.Request) {
-	paymentMethodID := r.PathValue("paymentMethodID")
 	mspID := r.PathValue("mspID")
+	if !s.AuthorizeMSPManage(w, r, mspID) {
+		return
+	}
+	paymentMethodID := r.PathValue("paymentMethodID")
 
 	var isDefault bool
 	err := s.requestDB(r).QueryRowContext(r.Context(), `SELECT is_default FROM payment_methods WHERE id = $1 AND msp_id = $2`, paymentMethodID, mspID).Scan(&isDefault)
@@ -591,6 +615,9 @@ func (s *APIServer) handleDeletePaymentMethod(w http.ResponseWriter, r *http.Req
 
 func (s *APIServer) handleGetRevenueReport(w http.ResponseWriter, r *http.Request) {
 	mspID := r.PathValue("mspID")
+	if !s.AuthorizeMSPAccess(w, r, mspID) {
+		return
+	}
 
 	var totalRevenue float64
 	var subscriptionRevenue float64

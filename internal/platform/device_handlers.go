@@ -794,7 +794,11 @@ func parseInt(s string, def int) int {
 // CMDB - Device Relationships
 
 func (s *APIServer) handleGetDeviceRelationships(w http.ResponseWriter, r *http.Request) {
-	mspID := r.PathValue("mspID")
+	mspID, _ := r.Context().Value(ctxKeyMSPID).(string)
+	if mspID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "MSP context required"})
+		return
+	}
 
 	rows, err := s.requestDB(r).QueryContext(r.Context(), `
 		SELECT id, source_device_id, target_device_id, relationship_type, metadata,
@@ -845,7 +849,11 @@ func (s *APIServer) handleGetDeviceRelationships(w http.ResponseWriter, r *http.
 }
 
 func (s *APIServer) handleCreateDeviceRelationship(w http.ResponseWriter, r *http.Request) {
-	mspID := r.PathValue("mspID")
+	mspID, _ := r.Context().Value(ctxKeyMSPID).(string)
+	if mspID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "MSP context required"})
+		return
+	}
 
 	var req struct {
 		SourceDeviceID   string                 `json:"source_device_id"`
@@ -890,8 +898,12 @@ func (s *APIServer) handleCreateDeviceRelationship(w http.ResponseWriter, r *htt
 }
 
 func (s *APIServer) handleDeleteDeviceRelationship(w http.ResponseWriter, r *http.Request) {
+	mspID, _ := r.Context().Value(ctxKeyMSPID).(string)
+	if mspID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "MSP context required"})
+		return
+	}
 	relationshipID := r.PathValue("relationshipID")
-	mspID := r.PathValue("mspID")
 
 	_, err := s.requestDB(r).ExecContext(r.Context(), `
 		UPDATE device_relationships SET is_active = false WHERE id = $1 AND msp_id = $2
@@ -908,7 +920,11 @@ func (s *APIServer) handleDeleteDeviceRelationship(w http.ResponseWriter, r *htt
 
 func (s *APIServer) handleGetDeviceDependencies(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.PathValue("deviceID")
-	mspID := r.PathValue("mspID")
+	mspID, _ := r.Context().Value(ctxKeyMSPID).(string)
+	if mspID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "MSP context required"})
+		return
+	}
 
 	rows, err := s.requestDB(r).QueryContext(r.Context(), `
 		SELECT id, source_device_id, target_device_id, relationship_type, metadata, is_active
@@ -958,7 +974,11 @@ func (s *APIServer) handleGetDeviceDependencies(w http.ResponseWriter, r *http.R
 
 func (s *APIServer) handleGetDeviceImpact(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.PathValue("deviceID")
-	mspID := r.PathValue("mspID")
+	mspID, _ := r.Context().Value(ctxKeyMSPID).(string)
+	if mspID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "MSP context required"})
+		return
+	}
 
 	rows, err := s.requestDB(r).QueryContext(r.Context(), `
 		SELECT source_device_id, relationship_type
@@ -994,7 +1014,11 @@ func (s *APIServer) handleGetDeviceImpact(w http.ResponseWriter, r *http.Request
 // CMDB - Network Addresses
 
 func (s *APIServer) handleGetNetworkAddresses(w http.ResponseWriter, r *http.Request) {
-	mspID := r.PathValue("mspID")
+	mspID, _ := r.Context().Value(ctxKeyMSPID).(string)
+	if mspID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "MSP context required"})
+		return
+	}
 
 	rows, err := s.requestDB(r).QueryContext(r.Context(), `
 		SELECT id, device_id, ip_address, ip_family, network_type, interface_name,
@@ -1050,7 +1074,11 @@ func (s *APIServer) handleGetNetworkAddresses(w http.ResponseWriter, r *http.Req
 }
 
 func (s *APIServer) handleSubmitNetworkAddress(w http.ResponseWriter, r *http.Request) {
-	mspID := r.PathValue("mspID")
+	mspID, _ := r.Context().Value(ctxKeyMSPID).(string)
+	if mspID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "MSP context required"})
+		return
+	}
 
 	var req struct {
 		DeviceID      string `json:"device_id"`
@@ -1110,7 +1138,11 @@ func (s *APIServer) handleSubmitNetworkAddress(w http.ResponseWriter, r *http.Re
 
 func (s *APIServer) handleGetDevicePackages(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.PathValue("deviceID")
-	mspID := r.PathValue("mspID")
+	mspID, _ := r.Context().Value(ctxKeyMSPID).(string)
+	if mspID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "MSP context required"})
+		return
+	}
 
 	rows, err := s.requestDB(r).QueryContext(r.Context(), `
 		SELECT id, device_id, name, version, release, arch, source, install_date, package_type, status, created_at
@@ -1166,7 +1198,11 @@ func (s *APIServer) handleGetDevicePackages(w http.ResponseWriter, r *http.Reque
 
 func (s *APIServer) handleSubmitDevicePackages(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.PathValue("deviceID")
-	mspID := r.PathValue("mspID")
+	mspID, _ := r.Context().Value(ctxKeyMSPID).(string)
+	if mspID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "MSP context required"})
+		return
+	}
 
 	var req struct {
 		Packages []struct {
@@ -1223,7 +1259,11 @@ func (s *APIServer) handleSubmitDevicePackages(w http.ResponseWriter, r *http.Re
 
 func (s *APIServer) handleGetDeviceServices(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.PathValue("deviceID")
-	mspID := r.PathValue("mspID")
+	mspID, _ := r.Context().Value(ctxKeyMSPID).(string)
+	if mspID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "MSP context required"})
+		return
+	}
 
 	rows, err := s.requestDB(r).QueryContext(r.Context(), `
 		SELECT id, device_id, name, port, protocol, state, process_name, binary_path, created_at
