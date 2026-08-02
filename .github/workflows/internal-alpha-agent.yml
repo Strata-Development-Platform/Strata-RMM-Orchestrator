@@ -29,7 +29,7 @@ jobs:
           trap 'rm -f "$password_file"; sudo docker compose --env-file deploy/docker/.install.env -f deploy/docker/docker-compose.install.yml down --volumes 2>/dev/null || true; sudo rm -rf deploy/docker/secrets deploy/docker/.install.env' EXIT
           printf '%s' 'ci-only-internal-alpha-password' > "$password_file"
           chmod 0600 "$password_file"
-          sudo env STRATA_BOOTSTRAP_PASSWORD_FILE="$password_file" ./scripts/install-platform.sh \
+          sudo env STRATA_BOOTSTRAP_PASSWORD_FILE="$password_file" bash ./scripts/install-platform.sh \
             --mode docker --domain alpha.example.test --admin-email owner@example.test --prepare-only
           [ "$(sudo stat -c '%a' deploy/docker/secrets/storage_secret_key)" = 600 ]
           sudo grep -q 'STORAGE_BACKEND: minio' deploy/docker/docker-compose.install.yml
@@ -41,7 +41,7 @@ jobs:
           trap 'rm -f "$password_file"; sudo docker compose --env-file deploy/docker/.install.env -f deploy/docker/docker-compose.install.yml down --volumes 2>/dev/null || true; sudo rm -rf deploy/docker/secrets deploy/docker/.install.env' EXIT
           printf '%s' 'ci-only-internal-alpha-password' > "$password_file"
           chmod 0600 "$password_file"
-          sudo env STRATA_BOOTSTRAP_PASSWORD_FILE="$password_file" ./scripts/install-platform.sh \
+          sudo env STRATA_BOOTSTRAP_PASSWORD_FILE="$password_file" bash ./scripts/install-platform.sh \
             --mode docker --domain alpha.example.test --admin-email owner@example.test --prepare-only
           compose=(sudo docker compose --env-file deploy/docker/.install.env -f deploy/docker/docker-compose.install.yml)
           "${compose[@]}" up -d minio
