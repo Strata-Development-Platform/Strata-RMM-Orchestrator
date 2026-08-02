@@ -3210,6 +3210,161 @@ func Migrations() []Migration {
 				DROP TABLE IF EXISTS tenant_retention_settings;
 			`,
 		},
+		{
+			ID:   74,
+			Name: "billing_accounts_table",
+			Up: `
+				CREATE TABLE IF NOT EXISTS billing_accounts (
+					id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					msp_id                 UUID NOT NULL REFERENCES msp_tenants(id) ON DELETE CASCADE,
+					provider               TEXT NOT NULL CHECK (provider IN ('stripe', 'chargebee', 'custom')),
+					provider_customer_id   TEXT NOT NULL,
+					provider_subscription_id TEXT,
+					payment_provider_id    TEXT,
+					billing_cycle          TEXT NOT NULL DEFAULT 'monthly' CHECK (billing_cycle IN ('monthly', 'annual')),
+					status                 TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'past_due', 'suspended', 'cancelled')),
+					billing_email          TEXT,
+					created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					UNIQUE (msp_id)
+				);
+
+				CREATE INDEX IF NOT EXISTS idx_billing_accounts_msp ON billing_accounts(msp_id);
+				CREATE INDEX IF NOT EXISTS idx_billing_accounts_status ON billing_accounts(status);
+			`,
+			Down: `
+				DROP TABLE IF EXISTS billing_accounts;
+			`,
+		},
+		{
+			ID:   75,
+			Name: "subscriptions_table",
+			Up: `
+				CREATE TABLE IF NOT EXISTS subscriptions (
+					id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					msp_id                 UUID NOT NULL REFERENCES msp_tenants(id) ON DELETE CASCADE,
+					plan_id                UUID NOT NULL REFERENCES plans(id),
+					status                 TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'past_due', 'cancelled', 'expired')),
+					billing_period         TEXT NOT NULL CHECK (billing_period IN ('monthly', 'annual')),
+					started_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					current_period_end     TIMESTAMPTZ NOT NULL,
+					cancelled_at           TIMESTAMPTZ,
+					cancel_at_period_end   BOOLEAN NOT NULL DEFAULT false,
+					created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+
+				CREATE INDEX IF NOT EXISTS idx_subscriptions_msp ON subscriptions(msp_id);
+				CREATE INDEX IF NOT EXISTS idx_subscriptions_status ON subscriptions(status);
+				CREATE INDEX IF NOT EXISTS idx_subscriptions_period_end ON subscriptions(current_period_end);
+			`,
+			Down: `
+				DROP TABLE IF EXISTS subscriptions;
+			`,
+		},
+		{
+			ID:   76,
+			Name: "invoices_table",
+			Up: `
+				CREATE TABLE IF NOT EXISTS invoices (
+					id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					msp_id             UUID NOT NULL REFERENCES msp_tenants(id) ON DELETE CASCADE,
+					subscription_id    UUID REFERENCES subscriptions(id) ON DELETE SET NULL,
+					invoice_number     TEXT NOT NULL,
+					period_start       TIMESTAMPTZ NOT NULL,
+					period_end         TIMESTAMPTZ NOT NULL,
+					subtotal           DECIMAL(10,2) NOT NULL,
+					tax                DECIMAL(10,2) DEFAULT 0,
+					total              DECIMAL(10,2) NOT NULL,
+					currency           TEXT NOT NULL DEFAULT 'USD',
+					status             TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','issued','paid','past_due','cancelled','void')),
+					paid_at            TIMESTAMPTZ,
+					due_at             TIMESTAMPTZ,
+					invoice_pdf_url    TEXT,
+					external_invoice_id TEXT,
+					created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+
+				CREATE INDEX IF NOT EXISTS idx_invoices_msp ON invoices(msp_id);
+				CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(status);
+				CREATE INDEX IF NOT EXISTS idx_invoices_number ON invoices(invoice_number);
+				CREATE INDEX IF NOT EXISTS idx_invoices_period ON invoices(period_start, period_end);
+			`,
+			Down: `
+				DROP TABLE IF EXISTS invoices;
+			`,
+		},
+		{
+			ID:   77,
+			Name: "invoice_items_table",
+			Up: `
+				CREATE TABLE IF NOT EXISTS invoice_items (
+					id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					invoice_id   UUID NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+					description  TEXT NOT NULL,
+					quantity     INT NOT NULL DEFAULT 1,
+					unit_price   DECIMAL(10,2) NOT NULL,
+					total        DECIMAL(10,2) NOT NULL,
+					metadata     JSONB DEFAULT '{}',
+					created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+
+				CREATE INDEX IF NOT EXISTS idx_invoice_items_invoice ON invoice_items(invoice_id);
+			`,
+			Down: `
+				DROP TABLE IF EXISTS invoice_items;
+			`,
+		},
+		{
+			ID:   78,
+			Name: "usage_records_table",
+			Up: `
+				CREATE TABLE IF NOT EXISTS usage_records (
+					id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					msp_id       UUID NOT NULL REFERENCES msp_tenants(id) ON DELETE CASCADE,
+					meter_name   TEXT NOT NULL,
+					quantity     INT NOT NULL DEFAULT 1,
+					unit         TEXT NOT NULL,
+					recorded_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					source       TEXT NOT NULL,
+					external_id  TEXT,
+					created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+
+				CREATE INDEX IF NOT EXISTS idx_usage_records_msp ON usage_records(msp_id);
+				CREATE INDEX IF NOT EXISTS idx_usage_records_meter ON usage_records(meter_name);
+				CREATE INDEX IF NOT EXISTS idx_usage_records_recorded_at ON usage_records(recorded_at);
+			`,
+			Down: `
+				DROP TABLE IF EXISTS usage_records;
+			`,
+		},
+		{
+			ID:   79,
+			Name: "payment_methods_table",
+			Up: `
+				CREATE TABLE IF NOT EXISTS payment_methods (
+					id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					msp_id                 UUID NOT NULL REFERENCES msp_tenants(id) ON DELETE CASCADE,
+					provider_payment_method_id TEXT NOT NULL,
+					type                   TEXT NOT NULL CHECK (type IN ('card','bank','paypal')),
+					card_brand             TEXT,
+					last_four              TEXT,
+					exp_month              INT,
+					exp_year               INT,
+					is_default             BOOLEAN NOT NULL DEFAULT false,
+					provider_data          JSONB DEFAULT '{}',
+					created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+
+				CREATE INDEX IF NOT EXISTS idx_payment_methods_msp ON payment_methods(msp_id);
+				CREATE INDEX IF NOT EXISTS idx_payment_methods_is_default ON payment_methods(is_default);
+			`,
+			Down: `
+				DROP TABLE IF EXISTS payment_methods;
+			`,
+		},
 	}
 }
 
