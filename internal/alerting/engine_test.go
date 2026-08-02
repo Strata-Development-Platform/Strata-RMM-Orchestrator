@@ -367,7 +367,10 @@ func TestMaintenanceEngineChecksMaintenanceWindow(t *testing.T) {
 	start := time.Now().Add(-time.Hour)
 	end := time.Now().Add(time.Hour)
 
-	maintenance.CreateWindow(context.Background(), "tenant1", "test-window", start, end, []string{"device1"})
+	_, err := maintenance.CreateWindow(context.Background(), "tenant1", "test-window", start, end, []string{"device1"})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if !maintenance.IsInMaintenance("tenant1", "device1", time.Now()) {
 		t.Fatal("device1 should be in maintenance window")
@@ -459,7 +462,9 @@ func TestEngineSilencesAlertsDuringMaintenance(t *testing.T) {
 		EndTime:   end,
 		DeviceIDs: []string{"device1"},
 	}
-	maintenanceStore.SaveMaintenanceWindow(context.Background(), window)
+	if err := maintenanceStore.SaveMaintenanceWindow(context.Background(), window); err != nil {
+		t.Fatal(err)
+	}
 
 	maintenance := NewMaintenanceEngine(maintenanceStore)
 	maintenance.LoadWindows([]*MaintenanceWindow{window})
@@ -507,7 +512,9 @@ func TestEngineResumesAlertingAfterMaintenance(t *testing.T) {
 		EndTime:   end,
 		DeviceIDs: []string{"device1"},
 	}
-	maintenanceStore.SaveMaintenanceWindow(context.Background(), window)
+	if err := maintenanceStore.SaveMaintenanceWindow(context.Background(), window); err != nil {
+		t.Fatal(err)
+	}
 
 	maintenance := NewMaintenanceEngine(maintenanceStore)
 	maintenance.LoadWindows([]*MaintenanceWindow{window})
