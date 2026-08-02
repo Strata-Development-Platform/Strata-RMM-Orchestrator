@@ -12,6 +12,10 @@
 - Configuration inventory covers all 53 settings across orchestrator, agent, and probe
 
 ### Changed
+
+- Membership replacement now locks the target identity and explicitly limits
+  revocation to memberships manageable in the selected scope, preserving
+  unrelated self-memberships and serializing concurrent role replacements.
 - TrustedProxies removed from HTTPConfig and WithHTTPConfig (deferred to later phase)
 
 ## Unreleased

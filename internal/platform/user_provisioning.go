@@ -169,8 +169,16 @@ func (s *APIServer) handleAdminUpdateUserTenants(w http.ResponseWriter, r *http.
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "transactional membership update unavailable"})
 		return
 	}
+	// Serialize every membership replacement for this identity. Without the row
+	// lock, two independently valid replacements can both revoke the previous
+	// role and then insert different active roles for the same scope.
 	var exists bool
-	if err := tx.QueryRowContext(r.Context(), `SELECT EXISTS (SELECT 1 FROM users WHERE id = $1)`, userID).Scan(&exists); err != nil || !exists {
+	if err := tx.QueryRowContext(r.Context(), `
+		SELECT true
+		FROM users
+		WHERE id = $1
+		FOR UPDATE
+	`, userID).Scan(&exists); err != nil || !exists {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
 		return
 	}
@@ -188,7 +196,9 @@ func (s *APIServer) handleAdminUpdateUserTenants(w http.ResponseWriter, r *http.
 	if _, err := tx.ExecContext(r.Context(), `
 		UPDATE memberships
 		SET status = 'revoked'
-		WHERE user_id = $1 AND status = 'active'
+		WHERE user_id = $1
+		  AND status = 'active'
+		  AND app_may_manage_membership(scope_type, scope_id)
 	`, userID); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "membership revocation failed"})
 		return

@@ -113,6 +113,7 @@ jobs:
           set -o pipefail
           go test ./internal/platform -count=1 -race
           go test -tags=dbintegration ./pkg/postgres -count=1 -race -run TestTenantRLSMigration -v
+          go test -tags=dbintegration ./internal/platform -count=1 -race -run TestScopedMembershipReplacementPreservesUnmanagedAndSerializes -v
 
   durable-jobs-integration:
     name: Durable Jobs Integration
