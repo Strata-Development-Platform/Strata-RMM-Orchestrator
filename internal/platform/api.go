@@ -366,6 +366,8 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("POST /api/v1/policies/{policyID}/preview", s.handlePreviewPolicy)
 	mux.HandleFunc("POST /api/v1/policies/{policyID}/publish", s.handlePublishPolicy)
 	mux.HandleFunc("GET /api/v1/policies/{policyID}/revisions", s.handlePolicyRevisions)
+	mux.HandleFunc("POST /api/v1/policies/{policyID}/diff", s.handlePolicyDiff)
+	mux.HandleFunc("POST /api/v1/policies/{policyID}/effective", s.handleEffectiveConfig)
 	mux.HandleFunc("DELETE /api/v1/policies/{policyID}", s.handleDeletePolicy)
 
 	// v2 API — Platform MSP management

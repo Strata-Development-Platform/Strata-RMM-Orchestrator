@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -18,11 +19,17 @@ type policyRecord struct {
 	PublishedVersion                                           *int
 	ValidatedAt, PreviewedAt                                   *time.Time
 	CreatedAt, UpdatedAt                                       time.Time
+	MaintenanceStart                                           *string
+	MaintenanceEnd                                             *string
+	MaintenanceDays                                            *[]string
+	MaintenanceTimezone                                        string
 }
 
 func (p policyRecord) input() policyInput {
 	return policyInput{Name: p.Name, Category: p.Category, Description: p.Description, Config: p.Config,
-		ScopeLevel: p.ScopeLevel, ClientID: p.ClientID, SiteID: p.SiteID, DeviceID: p.DeviceID, ParentID: p.ParentID}
+		ScopeLevel: p.ScopeLevel, ClientID: p.ClientID, SiteID: p.SiteID, DeviceID: p.DeviceID, ParentID: p.ParentID,
+		MaintenanceStart: p.MaintenanceStart, MaintenanceEnd: p.MaintenanceEnd,
+		MaintenanceDays: p.MaintenanceDays, MaintenanceTimezone: p.MaintenanceTimezone}
 }
 
 func (s *APIServer) handleCreatePolicy(w http.ResponseWriter, r *http.Request) {
@@ -49,14 +56,23 @@ func (s *APIServer) handleCreatePolicy(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "config is not valid JSON"})
 		return
 	}
+	maintenanceDaysJSON := "null"
+	if req.MaintenanceDays != nil {
+		if d, err := json.Marshal(req.MaintenanceDays); err == nil {
+			maintenanceDaysJSON = string(d)
+		}
+	}
 	id := uuid.NewString()
 	actor, _ := r.Context().Value(ctxKeyUserID).(string)
 	_, err = s.requestDB(r).ExecContext(r.Context(), `
-		INSERT INTO policies (id, msp_id, client_id, site_id, device_id, name, category, description, config, scope_level, parent_id, created_by)
+		INSERT INTO policies (id, msp_id, client_id, site_id, device_id, name, category, description, config, scope_level, parent_id, created_by,
+		                      maintenance_start, maintenance_end, maintenance_days, maintenance_timezone)
 		VALUES ($1, $2, NULLIF($3, '')::uuid, NULLIF($4, '')::uuid, NULLIF($5, '')::uuid,
-		        $6, $7, $8, $9, $10, NULLIF($11, '')::uuid, $12)
+		        $6, $7, $8, $9, $10, NULLIF($11, '')::uuid, $12,
+		        $13, $14, $15::jsonb, $16)
 	`, id, mspID, req.ClientID, req.SiteID, req.DeviceID, req.Name, req.Category,
-		req.Description, configJSON, req.ScopeLevel, req.ParentID, actor)
+		req.Description, configJSON, req.ScopeLevel, req.ParentID, actor,
+		req.MaintenanceStart, req.MaintenanceEnd, maintenanceDaysJSON, req.MaintenanceTimezone)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create policy failed"})
 		return
@@ -92,14 +108,22 @@ func (s *APIServer) handleUpdatePolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	configJSON, _ := json.Marshal(req.Config)
+	maintenanceDaysJSON := "null"
+	if req.MaintenanceDays != nil {
+		if d, err := json.Marshal(req.MaintenanceDays); err == nil {
+			maintenanceDaysJSON = string(d)
+		}
+	}
 	result, err := s.requestDB(r).ExecContext(r.Context(), `
 		UPDATE policies SET name=$1, category=$2, description=$3, config=$4, scope_level=$5,
 		 client_id=NULLIF($6, '')::uuid, site_id=NULLIF($7, '')::uuid, device_id=NULLIF($8, '')::uuid,
 		 parent_id=NULLIF($9, '')::uuid, status='draft', version=version+1,
-		 validated_at=NULL, previewed_at=NULL, updated_at=NOW()
+		 validated_at=NULL, previewed_at=NULL, updated_at=NOW(),
+		 maintenance_start=$12, maintenance_end=$13, maintenance_days=$14::jsonb, maintenance_timezone=$15
 		WHERE id=$10 AND msp_id=$11
 	`, req.Name, req.Category, req.Description, configJSON, req.ScopeLevel, req.ClientID,
-		req.SiteID, req.DeviceID, req.ParentID, record.ID, record.MSPID)
+		req.SiteID, req.DeviceID, req.ParentID, record.ID, record.MSPID,
+		req.MaintenanceStart, req.MaintenanceEnd, maintenanceDaysJSON, req.MaintenanceTimezone)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "update policy failed"})
 		return
@@ -119,7 +143,8 @@ func (s *APIServer) handleListPolicies(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.requestDB(r).QueryContext(r.Context(), `
 		SELECT id, name, category, description, scope_level, status, version,
 		       COALESCE(client_id::text, ''), COALESCE(site_id::text, ''), COALESCE(device_id::text, ''),
-		       published_version, validated_at, previewed_at, created_at, updated_at
+		       published_version, validated_at, previewed_at, created_at, updated_at,
+		       maintenance_start, maintenance_end, maintenance_days::text, maintenance_timezone
 		FROM policies WHERE msp_id = $1 ORDER BY category, name, version DESC
 	`, mspID)
 	if err != nil {
@@ -129,21 +154,35 @@ func (s *APIServer) handleListPolicies(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = rows.Close() }()
 	policies := []map[string]interface{}{}
 	for rows.Next() {
-		var id, name, category, description, scope, status, clientID, siteID, deviceID string
+		var id, name, category, description, scope, status, clientID, siteID, deviceID, maintenanceDaysText, maintenanceTimezone string
 		var version int
 		var publishedVersion *int
 		var validatedAt, previewedAt *time.Time
 		var createdAt, updatedAt time.Time
+		var maintenanceStart, maintenanceEnd *string
 		if err := rows.Scan(&id, &name, &category, &description, &scope, &status, &version,
-			&clientID, &siteID, &deviceID, &publishedVersion, &validatedAt, &previewedAt, &createdAt, &updatedAt); err != nil {
+			&clientID, &siteID, &deviceID, &publishedVersion, &validatedAt, &previewedAt, &createdAt, &updatedAt,
+			&maintenanceStart, &maintenanceEnd, &maintenanceDaysText, &maintenanceTimezone); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "scan policy failed"})
 			return
+		}
+		var maintenanceDays *[]string
+		if maintenanceDaysText != "" && maintenanceDaysText != "null" {
+			var days []string
+			if err := json.Unmarshal([]byte(maintenanceDaysText), &days); err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "parse maintenance_days failed"})
+				return
+			}
+			if len(days) > 0 {
+				maintenanceDays = &days
+			}
 		}
 		policies = append(policies, map[string]interface{}{"id": id, "name": name, "category": category,
 			"description": description, "scope_level": scope, "status": status, "version": version,
 			"client_id": clientID, "site_id": siteID, "device_id": deviceID,
-			"published_version": publishedVersion,
-			"validated":         validatedAt != nil, "previewed": previewedAt != nil,
+			"published_version": publishedVersion, "maintenance_start": maintenanceStart,
+			"maintenance_end": maintenanceEnd, "maintenance_days": maintenanceDays, "maintenance_timezone": maintenanceTimezone,
+			"validated": validatedAt != nil, "previewed": previewedAt != nil,
 			"created_at": createdAt.UTC().Format(time.RFC3339), "updated_at": updatedAt.UTC().Format(time.RFC3339)})
 	}
 	if err := rows.Err(); err != nil {
@@ -272,21 +311,29 @@ func (s *APIServer) handlePublishPolicy(w http.ResponseWriter, r *http.Request) 
 	}
 	actor, _ := r.Context().Value(ctxKeyUserID).(string)
 	configJSON, _ := json.Marshal(record.Config)
+	maintenanceDaysJSON := "null"
+	if record.MaintenanceDays != nil {
+		if d, err := json.Marshal(record.MaintenanceDays); err == nil {
+			maintenanceDaysJSON = string(d)
+		}
+	}
 	var published int
 	err = s.requestDB(r).QueryRowContext(r.Context(), `
 		WITH activated AS (
 			UPDATE policies SET status='active', published_version=version,
 			       published_config=config, updated_at=NOW()
 			WHERE id=$1 AND msp_id=$2 AND status='draft' AND version=$3
-			RETURNING id
+			RETURNING id, maintenance_start, maintenance_end, maintenance_days::text, maintenance_timezone
 		), revision AS (
-			INSERT INTO policy_revisions (policy_id,msp_id,version,name,category,description,config,scope_level,client_id,site_id,device_id,published_by)
-			SELECT $1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,'')::uuid,NULLIF($10,'')::uuid,NULLIF($11,'')::uuid,$12
-			FROM activated RETURNING id
+			INSERT INTO policy_revisions (policy_id,msp_id,version,name,category,description,config,scope_level,client_id,site_id,device_id,published_by,
+			                              maintenance_start,maintenance_end,maintenance_days,maintenance_timezone)
+			SELECT $1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,'')::uuid,NULLIF($10,'')::uuid,NULLIF($11,'')::uuid,$12,
+			       m.maintenance_start, m.maintenance_end, $13::jsonb, $14
+			FROM activated m RETURNING id
 		)
 		SELECT COUNT(*) FROM revision
 	`, record.ID, record.MSPID, record.Version, record.Name, record.Category, record.Description,
-		configJSON, record.ScopeLevel, record.ClientID, record.SiteID, record.DeviceID, actor).Scan(&published)
+		configJSON, record.ScopeLevel, record.ClientID, record.SiteID, record.DeviceID, actor, maintenanceDaysJSON, record.MaintenanceTimezone).Scan(&published)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "publish policy failed"})
 		return
@@ -309,7 +356,8 @@ func (s *APIServer) handlePolicyRevisions(w http.ResponseWriter, r *http.Request
 	}
 	rows, err := s.requestDB(r).QueryContext(r.Context(), `
 		SELECT version,name,category,description,config::text,scope_level,
-		       COALESCE(client_id::text,''),COALESCE(site_id::text,''),COALESCE(device_id::text,''),published_by,published_at
+		       COALESCE(client_id::text,''),COALESCE(site_id::text,''),COALESCE(device_id::text,''),
+		       published_by,published_at,maintenance_start,maintenance_end,maintenance_days::text,maintenance_timezone
 		FROM policy_revisions WHERE policy_id=$1 AND msp_id=$2 ORDER BY version DESC
 	`, record.ID, record.MSPID)
 	if err != nil {
@@ -320,19 +368,33 @@ func (s *APIServer) handlePolicyRevisions(w http.ResponseWriter, r *http.Request
 	revisions := []map[string]interface{}{}
 	for rows.Next() {
 		var version int
-		var name, category, description, configText, scope, clientID, siteID, deviceID, actor string
+		var name, category, description, configText, scope, clientID, siteID, deviceID, actor, maintenanceDaysText, maintenanceTimezone string
 		var publishedAt time.Time
+		var maintenanceStart, maintenanceEnd *string
 		if err := rows.Scan(&version, &name, &category, &description, &configText, &scope,
-			&clientID, &siteID, &deviceID, &actor, &publishedAt); err != nil {
+			&clientID, &siteID, &deviceID, &actor, &publishedAt, &maintenanceStart, &maintenanceEnd, &maintenanceDaysText, &maintenanceTimezone); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "scan policy revision failed"})
 			return
 		}
 		var config map[string]interface{}
 		_ = json.Unmarshal([]byte(configText), &config)
+		var maintenanceDays *[]string
+		if maintenanceDaysText != "" && maintenanceDaysText != "null" {
+			var days []string
+			if err := json.Unmarshal([]byte(maintenanceDaysText), &days); err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "parse maintenance_days failed"})
+				return
+			}
+			if len(days) > 0 {
+				maintenanceDays = &days
+			}
+		}
 		revisions = append(revisions, map[string]interface{}{"version": version, "name": name,
 			"category": category, "description": description, "config": config, "scope_level": scope,
 			"client_id": clientID, "site_id": siteID, "device_id": deviceID,
-			"published_by": actor, "published_at": publishedAt.UTC().Format(time.RFC3339)})
+			"published_by": actor, "published_at": publishedAt.UTC().Format(time.RFC3339),
+			"maintenance_start": maintenanceStart, "maintenance_end": maintenanceEnd,
+			"maintenance_days": maintenanceDays, "maintenance_timezone": maintenanceTimezone})
 	}
 	if err := rows.Err(); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "list policy revisions failed"})
@@ -371,21 +433,32 @@ func (s *APIServer) loadPolicy(r *http.Request, policyID string) (policyRecord, 
 		return policyRecord{}, sql.ErrNoRows
 	}
 	var record policyRecord
-	var configText string
+	var configText, maintenanceDaysText string
 	err := s.requestDB(r).QueryRowContext(r.Context(), `
 		SELECT id,msp_id,name,category,description,config::text,scope_level,status,version,
 		       COALESCE(client_id::text,''),COALESCE(site_id::text,''),COALESCE(device_id::text,''),
-		       COALESCE(parent_id::text,''),published_version,validated_at,previewed_at,created_at,updated_at
+		       COALESCE(parent_id::text,''),published_version,validated_at,previewed_at,created_at,updated_at,
+		       maintenance_start,maintenance_end,maintenance_days::text,maintenance_timezone
 		FROM policies WHERE id=$1
 	`, policyID).Scan(&record.ID, &record.MSPID, &record.Name, &record.Category, &record.Description,
 		&configText, &record.ScopeLevel, &record.Status, &record.Version, &record.ClientID,
 		&record.SiteID, &record.DeviceID, &record.ParentID, &record.PublishedVersion, &record.ValidatedAt, &record.PreviewedAt,
-		&record.CreatedAt, &record.UpdatedAt)
+		&record.CreatedAt, &record.UpdatedAt,
+		&record.MaintenanceStart, &record.MaintenanceEnd, &maintenanceDaysText, &record.MaintenanceTimezone)
 	if err != nil {
 		return policyRecord{}, err
 	}
 	if err := json.Unmarshal([]byte(configText), &record.Config); err != nil {
 		return policyRecord{}, err
+	}
+	if maintenanceDaysText != "" && maintenanceDaysText != "null" {
+		var days []string
+		if err := json.Unmarshal([]byte(maintenanceDaysText), &days); err != nil {
+			return policyRecord{}, err
+		}
+		if len(days) > 0 {
+			record.MaintenanceDays = &days
+		}
 	}
 	return record, nil
 }
@@ -395,8 +468,9 @@ func (p policyRecord) policyResponse() map[string]interface{} {
 		"description": p.Description, "config": p.Config, "scope_level": p.ScopeLevel, "status": p.Status,
 		"version": p.Version, "client_id": p.ClientID, "site_id": p.SiteID, "device_id": p.DeviceID,
 		"parent_id": p.ParentID, "validated": p.ValidatedAt != nil, "previewed": p.PreviewedAt != nil,
-		"published_version": p.PublishedVersion,
-		"created_at":        p.CreatedAt.UTC().Format(time.RFC3339), "updated_at": p.UpdatedAt.UTC().Format(time.RFC3339)}
+		"published_version": p.PublishedVersion, "maintenance_start": p.MaintenanceStart,
+		"maintenance_end": p.MaintenanceEnd, "maintenance_days": p.MaintenanceDays, "maintenance_timezone": p.MaintenanceTimezone,
+		"created_at": p.CreatedAt.UTC().Format(time.RFC3339), "updated_at": p.UpdatedAt.UTC().Format(time.RFC3339)}
 }
 
 func (s *APIServer) validatePolicyScope(r *http.Request, mspID string, input policyInput) error {
@@ -435,7 +509,8 @@ func (s *APIServer) loadPolicyLayers(r *http.Request, current policyRecord, targ
 	rows, err := s.requestDB(r).QueryContext(r.Context(), `
 		SELECT id,scope_level,
 		       CASE WHEN id=$3 THEN version ELSE published_version END,
-		       (CASE WHEN id=$3 THEN config ELSE published_config END)::text
+		       (CASE WHEN id=$3 THEN config ELSE published_config END)::text,
+		       maintenance_start, maintenance_end, maintenance_days::text, maintenance_timezone
 		FROM policies
 		WHERE msp_id=$1 AND category=$2 AND status <> 'archived'
 		  AND (published_version IS NOT NULL OR id=$3)
@@ -452,14 +527,174 @@ func (s *APIServer) loadPolicyLayers(r *http.Request, current policyRecord, targ
 	layers := []policyLayer{}
 	for rows.Next() {
 		var layer policyLayer
-		var configText string
-		if err := rows.Scan(&layer.ID, &layer.ScopeLevel, &layer.Version, &configText); err != nil {
+		var configText, maintenanceDaysText string
+		if err := rows.Scan(&layer.ID, &layer.ScopeLevel, &layer.Version, &configText,
+			&layer.MaintenanceStart, &layer.MaintenanceEnd, &maintenanceDaysText, &layer.MaintenanceTimezone); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal([]byte(configText), &layer.Config); err != nil {
 			return nil, err
 		}
+		if maintenanceDaysText != "" && maintenanceDaysText != "null" {
+			var days []string
+			if err := json.Unmarshal([]byte(maintenanceDaysText), &days); err != nil {
+				return nil, err
+			}
+			if len(days) > 0 {
+				layer.MaintenanceDays = &days
+			}
+		}
 		layers = append(layers, layer)
 	}
 	return layers, rows.Err()
+}
+
+func (s *APIServer) handlePolicyDiff(w http.ResponseWriter, r *http.Request) {
+	mspID := r.Header.Get("X-MSP-ID")
+	if !s.AuthorizeMSPAccess(w, r, mspID) {
+		return
+	}
+	record, err := s.loadPolicy(r, r.PathValue("policyID"))
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "policy not found"})
+		return
+	}
+	if record.Category != "maintenance_window" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "diff is only supported for maintenance_window policies"})
+		return
+	}
+	v1, err := parseIntParam(r, "v1")
+	if err != nil || v1 <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "valid v1 version is required"})
+		return
+	}
+	v2, err := parseIntParam(r, "v2")
+	if err != nil || v2 <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "valid v2 version is required"})
+		return
+	}
+	layers, err := s.loadPolicyLayers(r, record, record.input())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "load policy layers failed"})
+		return
+	}
+	diff := computePolicyDiff(layers, v1, v2)
+	if !diff.IsChanged && len(diff.Changes) == 0 {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"policy_id": diff.PolicyID, "version_1": diff.Version1,
+			"version_2": diff.Version2, "changes": []interface{}{}, "is_changed": false})
+		return
+	}
+	writeJSON(w, http.StatusOK, diff)
+}
+
+func (s *APIServer) handleEffectiveConfig(w http.ResponseWriter, r *http.Request) {
+	mspID := r.Header.Get("X-MSP-ID")
+	if !s.AuthorizeMSPAccess(w, r, mspID) {
+		return
+	}
+	record, err := s.loadPolicy(r, r.PathValue("policyID"))
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "policy not found"})
+		return
+	}
+	if record.Category != "maintenance_window" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "effective config is only supported for maintenance_window policies"})
+		return
+	}
+	var target struct {
+		ClientID string `json:"client_id"`
+		SiteID   string `json:"site_id"`
+		DeviceID string `json:"device_id"`
+	}
+	if r.Body != nil && r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&target); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid target payload"})
+			return
+		}
+	}
+	targetPolicy := record.input()
+	if target.ClientID != "" {
+		targetPolicy.ClientID = target.ClientID
+	}
+	if target.SiteID != "" {
+		targetPolicy.SiteID = target.SiteID
+	}
+	if target.DeviceID != "" {
+		targetPolicy.DeviceID = target.DeviceID
+	}
+	if targetPolicy.DeviceID != "" {
+		targetPolicy.ScopeLevel = "device"
+	} else if targetPolicy.SiteID != "" {
+		targetPolicy.ScopeLevel = "site"
+	} else if targetPolicy.ClientID != "" {
+		targetPolicy.ScopeLevel = "client"
+	}
+	if err := s.validatePolicyScope(r, record.MSPID, targetPolicy); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	layers, err := s.loadPolicyLayers(r, record, targetPolicy)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "load policy layers failed"})
+		return
+	}
+	if len(layers) == 0 {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no effective layers found for target"})
+		return
+	}
+	effective := mergePolicyLayers(layers)
+	effectiveMgmt := mergeMaintenanceLayers(layers)
+	sourceAttr := []map[string]interface{}{}
+	for _, layer := range layers {
+		sourceAttr = append(sourceAttr, map[string]interface{}{
+			"id":                   layer.ID,
+			"scope_level":          layer.ScopeLevel,
+			"version":              layer.Version,
+			"maintenance_start":    layer.MaintenanceStart,
+			"maintenance_end":      layer.MaintenanceEnd,
+			"maintenance_days":     layer.MaintenanceDays,
+			"maintenance_timezone": layer.MaintenanceTimezone,
+		})
+	}
+	response := map[string]interface{}{
+		"policy_id":             record.ID,
+		"target":                map[string]string{"client_id": targetPolicy.ClientID, "site_id": targetPolicy.SiteID, "device_id": targetPolicy.DeviceID},
+		"effective_config":      effective,
+		"effective_maintenance": effectiveMgmt,
+		"source_layers":         sourceAttr,
+		"layers":                layers,
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func mergeMaintenanceLayers(layers []policyLayer) map[string]interface{} {
+	effective := map[string]interface{}{}
+	for _, layer := range layers {
+		if layer.MaintenanceStart != nil {
+			effective["maintenance_start"] = *layer.MaintenanceStart
+		}
+		if layer.MaintenanceEnd != nil {
+			effective["maintenance_end"] = *layer.MaintenanceEnd
+		}
+		if layer.MaintenanceDays != nil && len(*layer.MaintenanceDays) > 0 {
+			effective["maintenance_days"] = *layer.MaintenanceDays
+		}
+		if layer.MaintenanceTimezone != "" {
+			effective["maintenance_timezone"] = layer.MaintenanceTimezone
+		}
+	}
+	return effective
+}
+
+func parseIntParam(r *http.Request, name string) (int, error) {
+	val := r.PathValue(name)
+	if val == "" {
+		val = r.URL.Query().Get(name)
+	}
+	if val == "" {
+		return 0, errors.New("missing parameter")
+	}
+	var result int
+	_, err := fmt.Sscanf(val, "%d", &result)
+	return result, err
 }
