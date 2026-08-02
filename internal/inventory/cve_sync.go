@@ -23,6 +23,7 @@ type CVESyncEngine struct {
 	interval   time.Duration
 	mu         sync.Mutex
 	running    bool
+	remediateFn func(deviceID, cveID, severity string)
 }
 
 type OSVQuery struct {
@@ -202,6 +203,17 @@ func (e *CVESyncEngine) Stop() {
 
 func (e *CVESyncEngine) Sync(ctx context.Context) {
 	e.runSync(ctx)
+}
+
+// SetRemediationEngine sets the remediation callback
+func (e *CVESyncEngine) SetRemediationEngine(fn func(deviceID, cveID, severity string)) {
+	e.remediateFn = fn
+}
+
+func (e *CVESyncEngine) TriggerRemediation(ctx context.Context, deviceID, cveID, severity string) {
+	if e.remediateFn != nil {
+		e.remediateFn(deviceID, cveID, severity)
+	}
 }
 
 func (e *CVESyncEngine) runSync(ctx context.Context) {
