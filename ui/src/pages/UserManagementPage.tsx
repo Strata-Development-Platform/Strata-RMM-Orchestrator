@@ -115,20 +115,37 @@ export default function UserManagementPage() {
   );
 }
 
-function ClientMembershipEditor({ user, customers, onSave }: { user: User; customers: TenantInfo[]; onSave: () => void }) {
+export function ClientMembershipEditor({ user, customers, onSave }: { user: User; customers: TenantInfo[]; onSave: () => void }) {
   const { showToast } = useToast();
   const fixedMemberships = useMemo(() => (user.memberships || []).filter(membership => membership.scope_type !== 'client'), [user.memberships]);
-  const currentClientIDs = (user.memberships || []).filter(membership => membership.scope_type === 'client').map(membership => membership.scope_id);
-  const [selected, setSelected] = useState(currentClientIDs);
-  const [role, setRole] = useState<'client_admin' | 'client_viewer'>('client_viewer');
+  const initialClientRoles = useMemo(() => Object.fromEntries(
+    (user.memberships || [])
+      .filter(membership => membership.scope_type === 'client')
+      .map(membership => [membership.scope_id, membership.role as 'client_admin' | 'client_viewer'])
+  ), [user.memberships]);
+  const [clientRoles, setClientRoles] = useState<Record<string, 'client_admin' | 'client_viewer'>>(initialClientRoles);
   const [saving, setSaving] = useState(false);
 
-  const toggle = (id: string) => setSelected(previous => previous.includes(id) ? previous.filter(value => value !== id) : [...previous, id]);
+  const toggle = (id: string) => {
+    setClientRoles(previous => {
+      if (previous[id]) {
+        const { [id]: removed, ...remaining } = previous;
+        void removed;
+        return remaining;
+      }
+      return { ...previous, [id]: 'client_viewer' };
+    });
+  };
+
+  const setClientRole = (id: string, role: 'client_admin' | 'client_viewer') => {
+    setClientRoles(previous => ({ ...previous, [id]: role }));
+  };
+
   const handleSave = async () => {
     setSaving(true);
     const memberships: UserMembership[] = [
-      ...fixedMemberships.map(({ scope_type, scope_id, role: fixedRole }) => ({ scope_type, scope_id, role: fixedRole })),
-      ...selected.map(scope_id => ({ scope_type: 'client' as const, scope_id, role })),
+      ...fixedMemberships.map(({ scope_type, scope_id, role }) => ({ scope_type, scope_id, role })),
+      ...Object.entries(clientRoles).map(([scope_id, role]) => ({ scope_type: 'client' as const, scope_id, role })),
     ];
     try {
       await api.updateUserMemberships(user.id, memberships);
@@ -143,22 +160,37 @@ function ClientMembershipEditor({ user, customers, onSave }: { user: User; custo
 
   return (
     <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
-      <div className="mb-3 flex items-center justify-between gap-4">
-        <h3 className="font-semibold">Client memberships for {user.email}</h3>
-        <select value={role} onChange={event => setRole(event.target.value as typeof role)} className="rounded-md border px-2 py-1.5 text-sm dark:bg-slate-800">
-          <option value="client_viewer">Client viewer</option>
-          <option value="client_admin">Client administrator</option>
-        </select>
+      <h3 className="mb-1 font-semibold">Client memberships for {user.email}</h3>
+      <p className="mb-3 text-sm text-slate-500">Set each client's role independently. Existing roles are preserved unless changed.</p>
+      <div className="mb-4 space-y-2">
+        {customers.map(customer => {
+          const selectedRole = clientRoles[customer.id];
+          return (
+            <div key={customer.id} className="flex items-center justify-between gap-3 rounded p-2 hover:bg-slate-50 dark:hover:bg-slate-800">
+              <label className="flex cursor-pointer items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={Boolean(selectedRole)}
+                  onChange={() => toggle(customer.id)}
+                  aria-label={`Enable ${customer.name} membership`}
+                />
+                <span className="text-sm">{customer.name}</span>
+              </label>
+              <select
+                value={selectedRole || 'client_viewer'}
+                onChange={event => setClientRole(customer.id, event.target.value as 'client_admin' | 'client_viewer')}
+                disabled={!selectedRole}
+                aria-label={`Role for ${customer.name}`}
+                className="rounded-md border px-2 py-1.5 text-sm disabled:opacity-50 dark:bg-slate-800"
+              >
+                <option value="client_viewer">Client viewer</option>
+                <option value="client_admin">Client administrator</option>
+              </select>
+            </div>
+          );
+        })}
       </div>
-      <div className="mb-4 grid grid-cols-2 gap-2 md:grid-cols-3">
-        {customers.map(customer => (
-          <label key={customer.id} className="flex cursor-pointer items-center gap-2 rounded p-2 hover:bg-slate-50 dark:hover:bg-slate-800">
-            <input type="checkbox" checked={selected.includes(customer.id)} onChange={() => toggle(customer.id)} />
-            <span className="text-sm">{customer.name}</span>
-          </label>
-        ))}
-      </div>
-      <button onClick={() => void handleSave()} disabled={saving || selected.length + fixedMemberships.length === 0} className="rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50">
+      <button onClick={() => void handleSave()} disabled={saving || Object.keys(clientRoles).length + fixedMemberships.length === 0} className="rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50">
         {saving ? 'Saving...' : 'Save memberships'}
       </button>
     </div>
