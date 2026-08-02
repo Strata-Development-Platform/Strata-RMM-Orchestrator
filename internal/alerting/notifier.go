@@ -172,7 +172,7 @@ func postJSON(ctx context.Context, client *http.Client, endpoint string, payload
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
@@ -223,7 +223,7 @@ func (s *SMTPSender) Send(ctx context.Context, alert *Alert) error {
 	if err != nil {
 		return fmt.Errorf("connection failed")
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = conn.SetDeadline(deadline)
 	} else {
@@ -241,7 +241,7 @@ func (s *SMTPSender) Send(ctx context.Context, alert *Alert) error {
 	if err != nil {
 		return fmt.Errorf("session failed")
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	if !s.implicitTLS {
 		if ok, _ := client.Extension("STARTTLS"); !ok {
 			return fmt.Errorf("server does not support required TLS")
