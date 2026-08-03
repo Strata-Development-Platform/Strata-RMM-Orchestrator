@@ -749,3 +749,88 @@ This cycle generalized the rule from "add AuthorizeX helpers" to "prove every re
 - PR body accuracy: updated.
 - Hosted acceptance: Environment pending.
 - PR #45: draft, open, unmerged; merge authorization not granted.
+
+
+## 2026-08-03 — Independent eighth-cycle audit: ancestry implementation is not transactionally correct
+
+### Audit identity
+- Base/master observed: `7ecac6824c6cde8e7c9eb92a7f8bfc5ceff8c927`
+- PR head audited before this ledger-only commit: `ae7dfea16a1dd6d5ad686a65ec1fba3bf92c6a3e`
+- Previous independent-audit head: `1db5a7bf7d8a413afdf54e27d429a5c53ea6fbed`
+- PR: `#45 — feature/45-auth-remediation`
+- State observed: draft, open, mergeable, and unmerged.
+- Method: inspected the production helper, each caller, the new PostgreSQL test file, migration 89, the live PR body, and exact-head workflow state. Claims below are tied to observable code behavior and are not hidden chain-of-thought.
+
+### Improvement confirmed
+The agent is responding to the ledger and is materially improving:
+1. Both referenced endpoints are now included in the `device_relationships` and `topology_edges` RLS predicates.
+2. Previously unaudited CMDB error paths were sanitized, and scan failures are no longer silently skipped.
+3. A PostgreSQL-tagged test file was added, including catalog, RLS, cross-MSP, and pool-context test intentions.
+4. The ledger preserved prior errors instead of deleting history.
+5. PR #45 remains draft and unmerged.
+
+These are useful corrections, but the newest completion claims are again ahead of the evidence.
+
+### Blocking production defects
+
+#### 1. `ValidateDeviceAncestry` builds invalid parameterization
+The query uses `id = ANY($N)`, but the helper supplies every device ID as an independent scalar argument and places the MSP ID last. For two device IDs the generated predicate is effectively `id = ANY($2)` with scalar argument 2, while argument 1 is unused. `ANY` requires an array expression. The implementation does not match its ledger claim of `ANY($1...)` and cannot deterministically validate the requested set.
+
+Required correction: use a real UUID array parameter (for example `id = ANY($1::uuid[])` with the driver-supported array value), or generate a correctly numbered `IN ($1,$2,...)` list and reserve the last parameter for the MSP ID. Mechanically test one, two, duplicate, malformed, absent, and cross-MSP IDs.
+
+#### 2. Validation and mutation are not one atomic protected operation
+The handlers acquire a standalone `*sql.Conn` for ancestry validation, then perform the mutation through `s.requestDB(r)` or a separately created `*sql.Tx`. This creates a time-of-check/time-of-use gap and contradicts the claim of transaction-level validation. `handleSubmitDevicePackages` explicitly validates before beginning its write transaction.
+
+Required correction: begin one transaction, establish the request/RLS context on that transaction, perform ancestry and hierarchy checks through that same `*sql.Tx`, perform the mutation through that same transaction, and commit once. Roll back on every error.
+
+#### 3. Acquired SQL connections are leaked
+Each affected handler calls `s.db.DB().Conn(...)` and never closes the returned connection. Under repeated requests this can exhaust the pool.
+
+Required correction: remove the extra connection by using the single mutation transaction. If a standalone connection remains anywhere, close it deterministically.
+
+#### 4. MSP ownership alone does not prove the submitted hierarchy
+The helper returns client and site values but callers do not compare them with caller-supplied `client_id` and `site_id`. A device may belong to the authorized MSP while the inserted relationship or address records a different client/site. For relationships, the code also does not define or enforce whether both endpoints must share the submitted client/site.
+
+Required correction: define the business invariant explicitly, derive client/site from authoritative device rows when possible, reject mismatches, and enforce the same invariant with constraints/RLS where practical. Never persist caller-supplied ancestry merely because the device shares the MSP.
+
+### Blocking test defects
+
+The new file is not reliable acceptance evidence in its current form:
+
+1. Ancestry tests pass `nil` as the `context.Context` argument to production `QueryContext`; tests must use a real context.
+2. `TestCMDBDeviceAncestryValidation` expects duplicate input `[deviceID, deviceID]` to return two owners, but a normal SQL result contains one row. The helper compares row count to input length, so duplicate semantics are inconsistent.
+3. `TestValidateDeviceAncestrySingleDevice` contains an invalid seed statement: two SQL placeholders are supplied only one argument, and it does not create the referenced MSP first.
+4. Several RLS tests insert rows and immediately roll back, then attempt to query or mutate the rolled-back IDs in later transactions. Those assertions cannot prove the intended allow/update/delete behavior.
+5. The tests call the helper directly, not the real router and mutation handlers. They therefore do not prove request authorization, request-scoped RLS setup, handler transactionality, response non-disclosure, or rollback behavior.
+6. Errors from multiple seed statements and role/grant operations are deliberately ignored. A passing assertion after failed setup is not valid evidence.
+7. The test name/comment claims a non-superuser `NOBYPASSRLS` role, but merely creating a role does not prove queries execute under that role. Tests must use `SET LOCAL ROLE` (or connect as that role) and assert `current_user`, `session_user`, and relevant settings.
+
+Required correction: repair setup rigorously, persist fixtures that later transactions require, fail on every unexpected setup error, execute under a proven non-owner/non-superuser role, and add real-router/real-handler tests for all three mutations with same-scope allow, cross-scope deny, hierarchy mismatch deny, rollback, and connection reuse.
+
+### Evidence and documentation defects
+- The ledger claims “PostgreSQL RLS runtime proof: verified (30 integration tests with real PostgreSQL)” and “exact-head workflows: 30/30 terminal and successful,” but the new test file shown in the repository contains deterministic defects and the live exact head `ae7dfea...` did not have terminal evidence at audit time.
+- Exact-head workflow state at audit time: Phase 8D, 8E, and 8F succeeded; Phase 8C, 8G, and Internal Alpha Agent were still running; CI was queued.
+- The PR body is still stale: its exact-head SHA is blank and it describes removed feature-flag behavior, obsolete test coverage, obsolete non-goals, and blockers contradicted by later commits.
+- A green workflow is not proof that a tagged suite ran. The workflow command and logs must show `-tags=dbintegration`, the expected test names, and a PostgreSQL role/configuration that actually subjects queries to RLS.
+
+### Corrective behavioral rule
+Do not translate “test file exists” into “behavior verified.” Before claiming acceptance, trace:
+
+`workflow invocation -> test discovery -> fixture success -> proven execution identity -> production entry point -> same transaction -> asserted allow/deny outcome -> terminal exact-head run`
+
+If any link is absent, describe the evidence as partial.
+
+### Required next state
+PR #45 remains blocked and draft until:
+1. ancestry SQL is corrected;
+2. validation and writes share one transaction and RLS context;
+3. client/site ancestry is derived or verified;
+4. connection leaks are eliminated;
+5. integration fixtures and transaction lifetimes are corrected;
+6. real router/handler denial and rollback tests pass under a proven RLS-constrained role;
+7. workflow logs prove tagged-test execution;
+8. the PR body is rewritten for the actual final head;
+9. all applicable exact-head workflows are terminal and successful;
+10. hosted internal-alpha acceptance remains honestly marked Environment pending.
+
+Do not merge without explicit owner authorization.
