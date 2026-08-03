@@ -441,6 +441,9 @@ func (s *APIServer) scopedUserRoutes() []Route {
 		{Method: "GET", Path: "/api/v1/thirdparty/packages", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/thirdparty/sync", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/thirdparty/sync/{app}", Access: AccessUser},
+		{Method: "GET", Path: "/api/v1/thirdparty/vendors", Access: AccessUser},
+		{Method: "POST", Path: "/api/v1/thirdparty/vendors/{vendor}/sync", Access: AccessUser},
+		{Method: "GET", Path: "/api/v1/thirdparty/vendors/status", Access: AccessUser},
 		// Reports
 		{Method: "GET", Path: "/api/v1/reports/{tenantID}", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/reports/{tenantID}/schedules", Access: AccessUser},
@@ -471,6 +474,16 @@ func (s *APIServer) scopedUserRoutes() []Route {
 		{Method: "POST", Path: "/api/v1/remote/{tenantID}/session", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/remote/{tenantID}/session/{sessionID}/input", Access: AccessUser},
 		{Method: "DELETE", Path: "/api/v1/remote/{tenantID}/session/{sessionID}", Access: AccessUser},
+		// Interactive remote sessions
+		{Method: "POST", Path: "/api/v1/remote/{tenantID}/interactive", Access: AccessUser},
+		{Method: "POST", Path: "/api/v1/remote/{tenantID}/interactive/{sessionID}/input", Access: AccessUser},
+		{Method: "DELETE", Path: "/api/v1/remote/{tenantID}/interactive/{sessionID}", Access: AccessUser},
+		{Method: "GET", Path: "/api/v1/remote/{tenantID}/interactive", Access: AccessUser},
+		// Interactive recording management
+		{Method: "POST", Path: "/api/v1/remote/{tenantID}/interactive/{sessionID}/recording", Access: AccessUser},
+		{Method: "POST", Path: "/api/v1/remote/{tenantID}/recording/{recordingID}/stop", Access: AccessUser},
+		{Method: "GET", Path: "/api/v1/remote/{tenantID}/recording/{recordingID}/playback", Access: AccessUser},
+		{Method: "GET", Path: "/api/v1/remote/{tenantID}/recordings", Access: AccessUser},
 		// Keys
 		{Method: "POST", Path: "/api/v1/keys/{tenantID}", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/keys/{tenantID}", Access: AccessUser},
@@ -562,6 +575,12 @@ func (s *APIServer) scopedUserRoutes() []Route {
 		{Method: "PATCH", Path: "/api/v2/clients/{clientID}/profile", Access: AccessUser},
 		{Method: "GET", Path: "/api/v2/clients/{clientID}/settings", Access: AccessUser},
 		{Method: "PATCH", Path: "/api/v2/clients/{clientID}/settings", Access: AccessUser},
+		// Client support requests
+		{Method: "POST", Path: "/api/v2/clients/{clientID}/support-requests", Access: AccessUser},
+		{Method: "GET", Path: "/api/v2/clients/{clientID}/support-requests", Access: AccessUser},
+		{Method: "GET", Path: "/api/v2/clients/{clientID}/support-requests/{requestID}", Access: AccessUser},
+		{Method: "PATCH", Path: "/api/v2/clients/{clientID}/support-requests/{requestID}/reply", Access: AccessUser},
+		{Method: "PATCH", Path: "/api/v2/clients/{clientID}/support-requests/{requestID}/close", Access: AccessUser},
 		// MSP client management
 		{Method: "GET", Path: "/api/v2/msps/{mspID}/clients", Access: AccessUser},
 		{Method: "POST", Path: "/api/v2/msps/{mspID}/clients", Access: AccessUser},

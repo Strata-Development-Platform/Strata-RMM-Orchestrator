@@ -8,6 +8,7 @@ import (
 	"image/jpeg"
 	"runtime"
 	"sync"
+	"time"
 )
 
 type Frame struct {
@@ -48,6 +49,7 @@ type capturer struct {
 	closed   bool
 	mu       sync.Mutex
 	seq      int64
+	source   ScreenSource
 }
 
 func NewCapturer() Capturer {
@@ -60,6 +62,7 @@ func NewCapturer() Capturer {
 		format:   "jpeg",
 		compress: true,
 		scale:    1.0,
+		source:   getScreenSource(),
 	}
 }
 
@@ -73,6 +76,7 @@ func NewCapturerWithConfig(config CaptureConfig) Capturer {
 		compress: config.Compress,
 		region:   config.Region,
 		scale:    config.Scale,
+		source:   getScreenSource(),
 	}
 
 	if c.width == 0 || c.height == 0 {
@@ -100,17 +104,24 @@ func (c *capturer) Capture() (*Frame, error) {
 	}
 
 	c.seq++
-	getTimestamp()
 
-	img, err := captureScreen()
+	img, err := c.source.Capture()
 	if err != nil {
 		return nil, fmt.Errorf("capture: %w", err)
+	}
+
+	if c.region != nil {
+		img = cropImage(img, *c.region)
+	}
+
+	if c.scale != 1.0 {
+		img = scaleImage(img, c.scale)
 	}
 
 	frame := &Frame{
 		Width:     img.Bounds().Dx(),
 		Height:    img.Bounds().Dy(),
-		Timestamp: getCurrentTime(),
+		Timestamp: time.Now().UnixMilli(),
 		Seq:       c.seq,
 	}
 
@@ -134,6 +145,9 @@ func (c *capturer) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.closed = true
+	if closer, ok := c.source.(interface{ Close() error }); ok {
+		return closer.Close()
+	}
 	return nil
 }
 
@@ -163,36 +177,62 @@ func getPrimaryMonitorSize() (int, int) {
 }
 
 func getWindowsMonitorSize() (int, int) {
-	// Implementation for Windows
-	return 1920, 1080
+	bounds, err := getWindowsDisplayBounds()
+	if err != nil {
+		return 1920, 1080
+	}
+	return bounds.Dx(), bounds.Dy()
 }
 
 func getDarwinMonitorSize() (int, int) {
-	// Implementation for macOS
-	return 1920, 1080
+	bounds, err := getDarwinDisplayBounds()
+	if err != nil {
+		return 1920, 1080
+	}
+	return bounds.Dx(), bounds.Dy()
 }
 
 func getLinuxMonitorSize() (int, int) {
-	// Implementation for Linux
-	return 1920, 1080
+	bounds, err := getLinuxDisplayBounds()
+	if err != nil {
+		return 1920, 1080
+	}
+	return bounds.Dx(), bounds.Dy()
 }
 
-func getTimestamp() int64 {
-	return getCurrentTime()
+type ScreenSource interface {
+	Capture() (image.Image, error)
+	Name() string
 }
 
-func getCurrentTime() int64 {
-	// Use a monotonic time source
-	return 0
+type captureFunc func() (image.Image, error)
+
+func (fn captureFunc) Capture() (image.Image, error) { return fn() }
+func (fn captureFunc) Name() string                  { return "built-in" }
+
+func getScreenSource() ScreenSource {
+	switch runtime.GOOS {
+	case "windows":
+		return captureFunc(captureWindows)
+	case "darwin":
+		return captureFunc(captureDarwin)
+	case "linux":
+		return captureFunc(captureLinux)
+	default:
+		return captureFunc(captureFallback)
+	}
 }
 
-func captureScreen() (image.Image, error) {
-	// Create a placeholder image
+func captureFallback() (image.Image, error) {
 	return image.NewRGBA(image.Rect(0, 0, 1920, 1080)), nil
 }
 
+func captureScreen() (image.Image, error) {
+	src := getScreenSource()
+	return src.Capture()
+}
+
 func convertToYUV420(img image.Image) []byte {
-	// Simple YUV420 conversion for raw format
 	bounds := img.Bounds()
 	width := bounds.Dx()
 	height := bounds.Dy()
@@ -278,4 +318,40 @@ func scaleImage(src image.Image, scale float64) image.Image {
 		}
 	}
 	return dst
+}
+
+func cropImage(img image.Image, rect image.Rectangle) image.Image {
+	bounds := img.Bounds()
+	rect = rect.Intersect(bounds)
+	if rect.Empty() {
+		return img
+	}
+
+	dst := image.NewRGBA(rect)
+	for y := rect.Min.Y; y < rect.Max.Y; y++ {
+		for x := rect.Min.X; x < rect.Max.X; x++ {
+			dst.Set(x-rect.Min.X, y-rect.Min.Y, img.At(x, y))
+		}
+	}
+	return dst
+}
+
+func encodeFrame(img image.Image, format string, quality int) ([]byte, error) {
+	buf := &bytes.Buffer{}
+	switch format {
+	case "png":
+		return nil, fmt.Errorf("png encoding not yet implemented for real capture")
+	case "jpeg":
+		opts := &jpeg.Options{Quality: quality}
+		if err := jpeg.Encode(buf, img, opts); err != nil {
+			return nil, err
+		}
+		return buf.Bytes(), nil
+	default:
+		opts := &jpeg.Options{Quality: quality}
+		if err := jpeg.Encode(buf, img, opts); err != nil {
+			return nil, err
+		}
+		return buf.Bytes(), nil
+	}
 }

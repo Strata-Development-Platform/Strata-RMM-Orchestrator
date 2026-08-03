@@ -605,3 +605,22 @@ func getVendorFromMAC(mac string) string {
 
 	return "unknown"
 }
+
+// lldpDiscovery discovers LLDP neighbors on local interfaces
+func (de *DiscoveryEngine) discoverLLDPNeighbors() []DiscoveryResult {
+	de.probe.Logger.Info("LLDP neighbor discovery started (stub)")
+	return nil
+}
+
+// cdpDiscovery discovers CDP neighbors on local interfaces
+func (de *DiscoveryEngine) discoverCDPNeighbors() []DiscoveryResult {
+	de.probe.Logger.Info("CDP neighbor discovery started (stub)")
+	return nil
+}
+
+// stpDiscovery discovers STP topology
+func (de *DiscoveryEngine) discoverSTPTopology() []DiscoveryResult {
+	de.probe.Logger.Info("STP topology discovery started (stub)")
+	return nil
+}
+
