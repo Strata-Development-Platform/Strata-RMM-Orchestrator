@@ -336,7 +336,7 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /api/v1/reports/{tenantID}/compliance/{reportID}/export/csv", s.handleExportComplianceReportCSV)
 	mux.HandleFunc("GET /api/v1/reports/{tenantID}/compliance/{reportID}/export/json", s.handleExportComplianceReportJSON)
 
-	mux.HandleFunc("GET /api/v1/remediation/attempts/{vulnID}", s.handleGetRemediationHistory)
+	mux.HandleFunc("GET /api/v1/remediation/{tenantID}/attempts/{vulnID}", s.handleGetRemediationHistory)
 	mux.HandleFunc("GET /api/v1/remediation/summary/{tenantID}", s.handleGetRemediationSummary)
 	mux.HandleFunc("GET /api/v1/remediation/policy/{tenantID}", s.handleGetRemediationPolicy)
 	mux.HandleFunc("PATCH /api/v1/remediation/policy/{tenantID}", s.handleUpdateRemediationPolicy)
@@ -2200,9 +2200,19 @@ func (s *APIServer) handleGetRemediationHistory(w http.ResponseWriter, r *http.R
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "vulnID required"})
 		return
 	}
+	tenantID := r.PathValue("tenantID")
+	if tenantID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tenantID required"})
+		return
+	}
+	// Enumerate handler: GET /api/v1/remediation/{tenantID}/attempts/{vulnID}
+	// Operation: read — ClientAccess required per Cycle 7 handler authorization matrix
+	if !s.AuthorizeClientAccess(w, r, tenantID) {
+		return
+	}
 	history, err := s.remediationEngine.GetRemediationHistory(r.Context(), vulnID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": sanitizeDBError(err.Error())})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"history": history})
@@ -2218,9 +2228,14 @@ func (s *APIServer) handleGetRemediationSummary(w http.ResponseWriter, r *http.R
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tenantID required"})
 		return
 	}
+	// Enumerate handler: GET /api/v1/remediation/summary/{tenantID}
+	// Operation: read — ClientAccess required per Cycle 7 handler authorization matrix
+	if !s.AuthorizeClientAccess(w, r, tenantID) {
+		return
+	}
 	summary, err := s.remediationEngine.GetRemediationSummary(r.Context(), tenantID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": sanitizeDBError(err.Error())})
 		return
 	}
 	writeJSON(w, http.StatusOK, summary)
@@ -2234,6 +2249,11 @@ func (s *APIServer) handleGetRemediationPolicy(w http.ResponseWriter, r *http.Re
 	tenantID := r.PathValue("tenantID")
 	if tenantID == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tenantID required"})
+		return
+	}
+	// Enumerate handler: GET /api/v1/remediation/policy/{tenantID}
+	// Operation: read — ClientAccess required per Cycle 7 handler authorization matrix
+	if !s.AuthorizeClientAccess(w, r, tenantID) {
 		return
 	}
 	policy, err := s.remediationEngine.GetPolicyForTenant(r.Context(), tenantID)
@@ -2252,6 +2272,11 @@ func (s *APIServer) handleUpdateRemediationPolicy(w http.ResponseWriter, r *http
 	tenantID := r.PathValue("tenantID")
 	if tenantID == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tenantID required"})
+		return
+	}
+	// Enumerate handler: PATCH /api/v1/remediation/policy/{tenantID}
+	// Operation: manage — ClientManage required per Cycle 7 handler authorization matrix
+	if !s.AuthorizeClientManage(w, r, tenantID) {
 		return
 	}
 	var req struct {
@@ -2280,7 +2305,7 @@ func (s *APIServer) handleUpdateRemediationPolicy(w http.ResponseWriter, r *http
 		MaintenanceWindowEnd:   req.MaintenanceWindowEnd,
 	}
 	if err := s.remediationEngine.SavePolicy(r.Context(), policy); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": sanitizeDBError(err.Error())})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})

@@ -180,7 +180,8 @@ func (r *RemediationEngine) getVulnerabilitiesForRemediation(ctx context.Context
 		if err := rows.Scan(&v.ID, &v.DeviceID, &v.TenantID, &v.PackageName, &v.CurrentVersion,
 			&v.FixedIn, &v.Severity, &v.Status, &v.DetectedAt, &v.ResolvedAt,
 			&v.OS, &v.OSVersion); err != nil {
-			continue
+			r.logger.Error("scan device vulnerability", zap.Error(err))
+			return nil, fmt.Errorf("scan vulnerability: %w", err)
 		}
 
 		severityScore := severityOrder[v.Severity]
@@ -356,7 +357,8 @@ func (r *RemediationEngine) GetRemediationHistory(ctx context.Context, vulnID st
 		if err := rows.Scan(&a.ID, &a.VulnerabilityID, &a.DeviceID, &a.TenantID,
 			&a.AttemptNumber, &a.Status, &a.Output, &a.Error, &a.RetryAt,
 			&a.CreatedAt, &a.UpdatedAt); err != nil {
-			continue
+			r.logger.Error("scan remediation attempt", zap.Error(err))
+			return nil, fmt.Errorf("scan attempt: %w", err)
 		}
 		attempts = append(attempts, a)
 	}
@@ -385,7 +387,8 @@ func (r *RemediationEngine) GetRemediationSummary(ctx context.Context, tenantID 
 		var status string
 		var count int
 		if err := rows.Scan(&status, &count); err != nil {
-			continue
+			r.logger.Error("scan remediation summary", zap.Error(err))
+			return nil, fmt.Errorf("scan summary: %w", err)
 		}
 		summary[status] = count
 	}
