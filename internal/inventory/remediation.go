@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+
+	"github.com/strata-rmm/strata-rmm-orchestrator/internal/patch"
 )
 
 // RemediationStatus represents the current status of a remediation attempt
@@ -58,7 +60,7 @@ type RemediationPolicy struct {
 type RemediationEngine struct {
 	db        *sql.DB
 	logger    *zap.Logger
-	patchExec *Executor
+	patchExec *patch.Executor
 	policy    *RemediationPolicy
 	mu        sync.RWMutex
 }
@@ -68,7 +70,7 @@ func NewRemediationEngine(db *sql.DB, logger *zap.Logger) *RemediationEngine {
 	return &RemediationEngine{
 		db:        db,
 		logger:    logger,
-		patchExec: NewExecutor(),
+		patchExec: patch.NewExecutor(),
 		policy: &RemediationPolicy{
 			Enabled:           false,
 			SeverityThreshold: "critical",
@@ -90,7 +92,7 @@ func (r *RemediationEngine) WithPolicy(policy *RemediationPolicy) *RemediationEn
 }
 
 // WithExecutor sets the patch executor to use
-func (r *RemediationEngine) WithExecutor(exec *Executor) *RemediationEngine {
+func (r *RemediationEngine) WithExecutor(exec *patch.Executor) *RemediationEngine {
 	r.patchExec = exec
 	return r
 }
@@ -258,9 +260,9 @@ func (r *RemediationEngine) remediateVulnerability(ctx context.Context, vuln Dev
 	}
 
 	var status RemediationStatus
-	if result.Status == "installed" {
+	if result.Status == patch.StatusInstalled {
 		status = RemediationSuccess
-	} else if result.Status == "reboot_required" {
+	} else if result.Status == patch.StatusRebootReq {
 		status = RemediationSuccess
 		output += "; reboot required"
 	} else {
@@ -485,29 +487,14 @@ type DeviceVulnerability struct {
 	OSVersion      string     `json:"os_version,omitempty"`
 }
 
-// PatchStatus constants from patch package
+// PatchStatus re-exports from patch package
+type PatchStatus = patch.PatchStatus
+
 const (
-	StatusInstalled PatchStatus = "installed"
-	StatusFailed    PatchStatus = "failed"
-	StatusRebootReq PatchStatus = "reboot_required"
+	StatusInstalled = patch.StatusInstalled
+	StatusFailed    = patch.StatusFailed
+	StatusRebootReq = patch.StatusRebootReq
 )
 
-type PatchStatus string
-
-// Executor from patch package
-type Executor struct {
-	Platform string
-}
-
-func NewExecutor() *Executor {
-	return &Executor{Platform: "linux"}
-}
-
-func (e *Executor) Install(ctx context.Context, packages []string) (*struct {
-	Status    PatchStatus
-	Output    string
-	Error     string
-	RebootReq bool
-}, error) {
-	return nil, fmt.Errorf("not implemented")
-}
+// ExecResult re-exports from patch package
+type ExecResult = patch.ExecResult
