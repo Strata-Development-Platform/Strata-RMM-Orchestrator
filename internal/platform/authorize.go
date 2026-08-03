@@ -294,7 +294,7 @@ func (s *APIServer) ValidateDeviceAncestry(
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var d deviceOwnershipInfo
 		var id string
