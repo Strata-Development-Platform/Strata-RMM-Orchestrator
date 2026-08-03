@@ -1225,20 +1225,37 @@ func (s *APIServer) handleSubmitDevicePackages(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	tx, err := s.db.DB().BeginTx(r.Context(), nil)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to begin transaction"})
+		return
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	inserted := 0
 	for _, pkg := range req.Packages {
 		if pkg.Name == "" || pkg.Version == "" {
 			continue
 		}
-		if pkg.PackageType == "" {
-			req.Packages[0].PackageType = "deb"
+		pkgType := pkg.PackageType
+		if pkgType == "" {
+			pkgType = "deb"
 		}
 
 		var installDate time.Time
 		if pkg.InstallDate != "" {
-			installDate, _ = time.Parse(time.RFC3339, pkg.InstallDate)
+			installDate, err = time.Parse(time.RFC3339, pkg.InstallDate)
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid install_date format"})
+				return
+			}
 		}
 
-		s.requestDB(r).ExecContext(r.Context(), `
+		_, err = tx.ExecContext(r.Context(), `
 			INSERT INTO device_packages (device_id, msp_id, name, version, release, arch, source, install_date, package_type, status)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'installed')
 			ON CONFLICT (device_id, name) DO UPDATE SET
@@ -1247,13 +1264,24 @@ func (s *APIServer) handleSubmitDevicePackages(w http.ResponseWriter, r *http.Re
 				arch = $6,
 				source = $7,
 				install_date = $8,
+				package_type = $9,
 				updated_at = NOW()
-		`, deviceID, mspID, pkg.Name, pkg.Version, pkg.Release, pkg.Arch, pkg.Source, installDate)
+		`, deviceID, mspID, pkg.Name, pkg.Version, pkg.Release, pkg.Arch, pkg.Source, installDate, pkgType)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to sync package"})
+			return
+		}
+		inserted++
+	}
+
+	if err = tx.Commit(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to commit transaction"})
+		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"device_id": deviceID,
-		"msg":       fmt.Sprintf("synced %d packages", len(req.Packages)),
+		"msg":       fmt.Sprintf("synced %d packages", inserted),
 	})
 }
 

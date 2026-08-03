@@ -25,6 +25,12 @@ import (
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/timescale"
 )
 
+// FeatureFlags gates operations that are experimental, semantically unsafe,
+// or not yet production-ready. Every flag is off-by-default.
+type FeatureFlags struct {
+	RetentionMutationEnabled bool
+}
+
 type APIServer struct {
 	addr           string
 	db             *timescale.Client
@@ -75,6 +81,10 @@ type APIServer struct {
 	agentNATSURLs        []string
 	agentNATSCA          []byte
 	remoteSessions       map[string]remoteSessionBinding
+
+	// FeatureFlags gates experimental or semantically unsafe operations
+	// that are not yet production-ready. Each flag is off-by-default.
+	featureFlags FeatureFlags
 	remoteSessionTTL     time.Duration
 	remoteSessionNow     func() time.Time
 	reportEngine         *reporting.ReportEngine
@@ -1862,6 +1872,9 @@ func (s *APIServer) handleGetRetention(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tenantID is required"})
 		return
 	}
+	if !s.AuthorizeClientAccess(w, r, tenantID) {
+		return
+	}
 
 	row := s.db.DB().QueryRowContext(r.Context(), `
 		SELECT metrics_days, heartbeats_days, alerts_days, snmp_polls_days,
@@ -1903,6 +1916,24 @@ func (s *APIServer) handleUpdateRetention(w http.ResponseWriter, r *http.Request
 	tenantID := r.PathValue("tenantID")
 	if tenantID == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tenantID is required"})
+		return
+	}
+	if !s.AuthorizeClientAccess(w, r, tenantID) {
+		return
+	}
+
+	// Tenant-facing retention mutation is disabled: Timescale native
+	// retention policies are global to a hypertable, so a tenant-level
+	// mutation endpoint cannot safely call them. The database stores
+	// per-tenant logical settings (tenant_retention_settings) but
+	// physical retention remains a platform-admin responsibility.
+	if !s.featureFlags.RetentionMutationEnabled {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+			"error":              "tenant retention mutation is not supported",
+			"code":               "feature_gate_disabled",
+			"feature_flag":       "retention_mutation_enabled",
+			"message":           "Physical retention policy modification is a platform-admin operation. Per-tenant logical retention settings are stored but physical Timescale retention policies require platform-level authorization.",
+		})
 		return
 	}
 

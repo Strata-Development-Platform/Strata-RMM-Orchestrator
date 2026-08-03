@@ -52,6 +52,9 @@ func (s *APIServer) handleGetBillingAccount(w http.ResponseWriter, r *http.Reque
 
 func (s *APIServer) handleCreateBillingAccount(w http.ResponseWriter, r *http.Request) {
 	mspID := r.PathValue("mspID")
+	if !s.AuthorizeMSPManage(w, r, mspID) {
+		return
+	}
 
 	var req struct {
 		Provider           string `json:"provider"`
@@ -101,6 +104,9 @@ func (s *APIServer) handleCreateBillingAccount(w http.ResponseWriter, r *http.Re
 
 func (s *APIServer) handleDeleteBillingAccount(w http.ResponseWriter, r *http.Request) {
 	mspID := r.PathValue("mspID")
+	if !s.AuthorizeMSPManage(w, r, mspID) {
+		return
+	}
 
 	_, err := s.requestDB(r).ExecContext(r.Context(), `DELETE FROM billing_accounts WHERE msp_id = $1`, mspID)
 	if err != nil {
@@ -168,6 +174,9 @@ func (s *APIServer) handleGetSubscriptions(w http.ResponseWriter, r *http.Reques
 
 func (s *APIServer) handleCreateSubscription(w http.ResponseWriter, r *http.Request) {
 	mspID := r.PathValue("mspID")
+	if !s.AuthorizeMSPManage(w, r, mspID) {
+		return
+	}
 
 	var req struct {
 		PlanID        string `json:"plan_id"`
@@ -372,6 +381,9 @@ func (s *APIServer) handleGetInvoice(w http.ResponseWriter, r *http.Request) {
 
 func (s *APIServer) handleSubmitUsage(w http.ResponseWriter, r *http.Request) {
 	mspID := r.PathValue("mspID")
+	if !s.AuthorizeMSPManage(w, r, mspID) {
+		return
+	}
 
 	var req struct {
 		MeterName  string `json:"meter_name"`
@@ -415,6 +427,9 @@ func (s *APIServer) handleSubmitUsage(w http.ResponseWriter, r *http.Request) {
 
 func (s *APIServer) handleGetUsage(w http.ResponseWriter, r *http.Request) {
 	mspID := r.PathValue("mspID")
+	if !s.AuthorizeMSPAccess(w, r, mspID) {
+		return
+	}
 	meterName := r.PathValue("meterName")
 
 	rows, err := s.requestDB(r).QueryContext(r.Context(), `
@@ -512,6 +527,9 @@ func (s *APIServer) handleGetPaymentMethods(w http.ResponseWriter, r *http.Reque
 
 func (s *APIServer) handleAddPaymentMethod(w http.ResponseWriter, r *http.Request) {
 	mspID := r.PathValue("mspID")
+	if !s.AuthorizeMSPManage(w, r, mspID) {
+		return
+	}
 
 	var req struct {
 		ProviderPaymentMethodID string                 `json:"provider_payment_method_id"`

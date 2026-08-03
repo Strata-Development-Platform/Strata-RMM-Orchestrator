@@ -1,5 +1,5 @@
 -- Drop session activity trigger
-DROP TRIGGER IF EXISTS update_client_session_activity_updated_at ON client_session_activity;
+DROP TRIGGER IF EXISTS "update_client_session_activity_updated_at" ON client_session_activity;
 
 -- Drop RLS policies for client_session_activity
 DROP POLICY IF EXISTS "Platform admins can read all activity" ON client_session_activity;

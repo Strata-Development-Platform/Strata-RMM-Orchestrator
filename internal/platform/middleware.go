@@ -54,6 +54,7 @@ const (
 	AccessUser
 	AccessAgent
 	AccessAdmin
+	AccessDenied
 )
 
 type Route struct {
@@ -279,6 +280,10 @@ func (s *APIServer) withAccessControl(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		if access == AccessDenied {
+			http.Error(w, `{"error":"unclassified route"}`, http.StatusForbidden)
+			return
+		}
 
 		rawToken := extractBearerToken(r.Header.Get("Authorization"))
 		if rawToken == "" {
@@ -365,9 +370,9 @@ func (s *APIServer) classifyRoute(method, path string) RouteAccess {
 	if strings.HasPrefix(path, "/api/v1/admin/") ||
 		strings.HasPrefix(path, "/api/v2/platform/") ||
 		strings.HasPrefix(path, "/api/v2/deployment/") {
-		return AccessAdmin
+		return AccessDenied
 	}
-	return AccessAdmin
+	return AccessDenied
 }
 
 // Scoped-user routes: require authenticated user with scope-bound authorization.

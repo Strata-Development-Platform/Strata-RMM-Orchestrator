@@ -92,6 +92,9 @@ func (s *APIServer) handleListReports(w http.ResponseWriter, r *http.Request) {
 
 func (s *APIServer) handleCreateSchedule(w http.ResponseWriter, r *http.Request) {
 	tenantID := r.PathValue("tenantID")
+	if !s.AuthorizeClientAccess(w, r, tenantID) {
+		return
+	}
 	var req struct {
 		Name      string   `json:"name"`
 		Frequency string   `json:"frequency"`
@@ -161,7 +164,11 @@ func (s *APIServer) handleListSchedules(w http.ResponseWriter, r *http.Request) 
 
 func (s *APIServer) handleDeleteSchedule(w http.ResponseWriter, r *http.Request) {
 	scheduleID := r.PathValue("scheduleID")
-	_, err := s.requestDB(r).ExecContext(r.Context(), `DELETE FROM report_schedules WHERE id = $1`, scheduleID)
+	tenantID := r.PathValue("tenantID")
+	if !s.AuthorizeClientAccess(w, r, tenantID) {
+		return
+	}
+	_, err := s.requestDB(r).ExecContext(r.Context(), `DELETE FROM report_schedules WHERE id = $1 AND tenant_id = $2`, scheduleID, tenantID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
