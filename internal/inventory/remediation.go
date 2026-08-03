@@ -260,12 +260,13 @@ func (r *RemediationEngine) remediateVulnerability(ctx context.Context, vuln Dev
 	}
 
 	var status RemediationStatus
-	if result.Status == patch.StatusInstalled {
+	switch result.Status {
+	case patch.StatusInstalled, patch.StatusRebootReq:
 		status = RemediationSuccess
-	} else if result.Status == patch.StatusRebootReq {
-		status = RemediationSuccess
-		output += "; reboot required"
-	} else {
+		if result.Status == patch.StatusRebootReq {
+			output += "; reboot required"
+		}
+	default:
 		status = RemediationFailed
 	}
 
