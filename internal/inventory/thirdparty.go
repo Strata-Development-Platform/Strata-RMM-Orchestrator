@@ -315,12 +315,12 @@ func (e *ThirdPartyEngine) SyncApp(ctx context.Context, appName string) (string,
 
 // Vendor represents a third-party software vendor
 type Vendor struct {
-	Name       string   `json:"name"`
-	URL        string   `json:"url"`
-	Apps       []string `json:"apps"`
-	Platform   string   `json:"platform"`
-	Active     bool     `json:"active"`
-	LastSync   string   `json:"last_sync,omitempty"`
+	Name     string   `json:"name"`
+	URL      string   `json:"url"`
+	Apps     []string `json:"apps"`
+	Platform string   `json:"platform"`
+	Active   bool     `json:"active"`
+	LastSync string   `json:"last_sync,omitempty"`
 }
 
 // DiscoverVendors returns all vendors from the app catalog
@@ -395,12 +395,12 @@ func (e *ThirdPartyEngine) VendorStatus(ctx context.Context) []map[string]interf
 
 	for _, v := range vendors {
 		status = append(status, map[string]interface{}{
-			"name":       v.Name,
-			"platform":   v.Platform,
-			"active":     v.Active,
-			"apps":       v.Apps,
-			"app_count":  len(v.Apps),
-			"last_sync":  v.LastSync,
+			"name":      v.Name,
+			"platform":  v.Platform,
+			"active":    v.Active,
+			"apps":      v.Apps,
+			"app_count": len(v.Apps),
+			"last_sync": v.LastSync,
 		})
 	}
 

@@ -21,17 +21,10 @@ var (
 
 func getDarwinDisplayBounds() (image.Rectangle, error) {
 	displayBoundsOnce.Do(func() {
-		// Try to get display info via system_profiler
-		cmd := exec.Command("system_profiler", "SPDisplaysDataType", "-json")
-		output, err := cmd.Output()
+		bounds, err := getScreenSize()
 		if err == nil {
-			// Parse JSON to get display dimensions
-			// For simplicity, use screen size via screenutil
-			bounds, err := getScreenSize()
-			if err == nil {
-				displayBounds = bounds
-				return
-			}
+			displayBounds = bounds
+			return
 		}
 		// Fallback to default
 		displayBounds = image.Rect(0, 0, 1920, 1080)

@@ -12,26 +12,27 @@ import (
 )
 
 var (
-	user32     = windows.NewLazySystemDLL("user32.dll")
-	gdi32      = windows.NewLazySystemDLL("gdi32.dll")
+	user32 = windows.NewLazySystemDLL("user32.dll")
+	gdi32  = windows.NewLazySystemDLL("gdi32.dll")
 
-	procGetSystemMetrics = user32.NewProc("GetSystemMetrics")
-	procGetDC            = user32.NewProc("GetDC")
-	procReleaseDC        = user32.NewProc("ReleaseDC")
-	procCreateDC         = gdi32.NewProc("CreateDCA")
-	procDeleteDC         = gdi32.NewProc("DeleteDC")
-	procCreateCompatibleDC = gdi32.NewProc("CreateCompatibleDC")
-	procDeleteDC_gdi     = gdi32.NewProc("DeleteDC")
-	procDeleteObject     = gdi32.NewProc("DeleteObject")
-	procBitBlt           = gdi32.NewProc("BitBlt")
+	procGetSystemMetrics       = user32.NewProc("GetSystemMetrics")
+	procGetDC                  = user32.NewProc("GetDC")
+	procReleaseDC              = user32.NewProc("ReleaseDC")
+	procSendInput              = user32.NewProc("SendInput")
+	procCreateDC               = gdi32.NewProc("CreateDCA")
+	procDeleteDC               = gdi32.NewProc("DeleteDC")
+	procCreateCompatibleDC     = gdi32.NewProc("CreateCompatibleDC")
+	procDeleteDC_gdi           = gdi32.NewProc("DeleteDC")
+	procDeleteObject           = gdi32.NewProc("DeleteObject")
+	procBitBlt                 = gdi32.NewProc("BitBlt")
 	procCreateCompatibleBitmap = gdi32.NewProc("CreateCompatibleBitmap")
-	procSelectObject     = gdi32.NewProc("SelectObject")
-	procGetBitmapBits    = gdi32.NewProc("GetBitmapBits")
+	procSelectObject           = gdi32.NewProc("SelectObject")
+	procGetBitmapBits          = gdi32.NewProc("GetBitmapBits")
 )
 
 const (
-	SRCCOPY     = 0x00CC0020
-	CAPTUREBLT  = 0x40000000
+	SRCCOPY    = 0x00CC0020
+	CAPTUREBLT = 0x40000000
 )
 
 func getWindowsDisplayBounds() (image.Rectangle, error) {

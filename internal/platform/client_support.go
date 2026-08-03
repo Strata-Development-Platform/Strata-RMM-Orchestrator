@@ -12,21 +12,21 @@ import (
 // Client support request types
 
 type clientSupportRequest struct {
-	ID            string          `json:"id"`
-	DeviceID      string          `json:"device_id,omitempty"`
-	TenantID      string          `json:"tenant_id"`
-	Category      string          `json:"category"`
-	Subject       string          `json:"subject"`
-	Description   string          `json:"description"`
-	Priority      string          `json:"priority"`
-	Status        string          `json:"status"`
-	PlatformReply string          `json:"platform_reply,omitempty"`
-	PlatformReplyAt *time.Time    `json:"platform_reply_at,omitempty"`
-	CreatedAt     time.Time       `json:"created_at"`
-	UpdatedAt     time.Time       `json:"updated_at"`
-	ReplyFrom     string          `json:"reply_from,omitempty"`
-	ReplyAt       *time.Time      `json:"reply_at,omitempty"`
-	ReplyBody     json.RawMessage `json:"reply_body,omitempty"`
+	ID              string          `json:"id"`
+	DeviceID        string          `json:"device_id,omitempty"`
+	TenantID        string          `json:"tenant_id"`
+	Category        string          `json:"category"`
+	Subject         string          `json:"subject"`
+	Description     string          `json:"description"`
+	Priority        string          `json:"priority"`
+	Status          string          `json:"status"`
+	PlatformReply   string          `json:"platform_reply,omitempty"`
+	PlatformReplyAt *time.Time      `json:"platform_reply_at,omitempty"`
+	CreatedAt       time.Time       `json:"created_at"`
+	UpdatedAt       time.Time       `json:"updated_at"`
+	ReplyFrom       string          `json:"reply_from,omitempty"`
+	ReplyAt         *time.Time      `json:"reply_at,omitempty"`
+	ReplyBody       json.RawMessage `json:"reply_body,omitempty"`
 }
 
 type createClientSupportRequest struct {
@@ -96,14 +96,14 @@ func (s *APIServer) handleCreateClientSupportRequest(w http.ResponseWriter, r *h
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
-		"id":           requestID,
-		"tenant_id":    clientID,
-		"device_id":    req.DeviceID,
-		"category":     req.Category,
-		"subject":      req.Subject,
-		"priority":     req.Priority,
-		"status":       "open",
-		"created_at":   createdAt.UTC().Format(time.RFC3339),
+		"id":         requestID,
+		"tenant_id":  clientID,
+		"device_id":  req.DeviceID,
+		"category":   req.Category,
+		"subject":    req.Subject,
+		"priority":   req.Priority,
+		"status":     "open",
+		"created_at": createdAt.UTC().Format(time.RFC3339),
 	})
 }
 

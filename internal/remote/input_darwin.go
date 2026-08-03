@@ -20,34 +20,10 @@ func injectDarwinMouseMove(x, y float64) error {
 		return fmt.Errorf("cannot get screen dimensions")
 	}
 
-	eventX := int(x * screenWidth)
-	eventY := int(y * screenHeight)
-
-	// Create and post a mouse move event
-	// CGEventCreateMouseEvent and CGEventPost are in CoreGraphics
-	// For now, we'll use a subprocess approach
-
-	cmd := exec.Command("python3", "-c", fmt.Sprintf(`
-import ctypes
-import ctypes.util
-
-# Load Quartz framework
-coregraphics = ctypes.CDLL("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
-
-# Create mouse event
-kCGEventMouseMoved = 1
-kCGEventSourceStateHIDSystemState = 0xFFFFFFFF
-
-# Get source
-source = coregraphics.CGEventSourceCreate(kCGEventSourceStateHIDSystemState)
-
-# Create and post the event
-event = coregraphics.CGEventCreateMouseEvent(source, kCGEventMouseMoved,
-    ctypes.c_double(%d), ctypes.c_double(%d), 0)
-coregraphics.CGEventPost(0, event)
-coregraphics.CFRelease(event)
-coregraphics.CFRelease(source)
-`% eventX, eventY))
+	// Create and post a mouse move event using CGEvent via python3
+	cmd := exec.Command("python3", "-c",
+		fmt.Sprintf(`import ctypes; cg=ctypes.CDLL("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics"); src=cg.CGEventSourceCreate(0xFFFFFFFF); evt=cg.CGEventCreateMouseEvent(src, 1, %f, %f, 0); cg.CGEventPost(0, evt); cg.CFRelease(evt); cg.CFRelease(src)`,
+			x*float64(screenWidth), y*float64(screenHeight)))
 
 	_ = cmd.Run()
 	return nil

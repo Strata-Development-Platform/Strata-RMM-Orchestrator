@@ -623,4 +623,3 @@ func (de *DiscoveryEngine) discoverSTPTopology() []DiscoveryResult {
 	de.probe.Logger.Info("STP topology discovery started (stub)")
 	return nil
 }
-

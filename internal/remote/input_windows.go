@@ -3,79 +3,11 @@
 package remote
 
 import (
-	"fmt"
-	"syscall"
 	"unsafe"
-
-	"golang.org/x/sys/windows"
 )
-
-var (
-	user32 = windows.NewLazySystemDLL("user32.dll")
-
-	procSendInput     = user32.NewProc("SendInput")
-	procGetAsyncKeyState = user32.NewProc("GetAsyncKeyState")
-	procMapVirtualKey = user32.NewProc("MapVirtualKeyW")
-)
-
-type inputUnion struct {
-	dwType uint32
-	mouseInput [5]uint32
-	keyboardInput [5]uint32
-	hardwareInput [3]uint32
-}
-
-func (u *inputUnion) asInterface() interface{} {
-	return u
-}
-
-func injectWindowsMouseMove(x, y float64) error {
-	// Get screen dimensions
-	screenWidth := windows.GetSystemMetrics(0)
-	screenHeight := windows.GetSystemMetrics(1)
-
-	if screenWidth == 0 || screenHeight == 0 {
-		return fmt.Errorf("cannot get screen dimensions")
-	}
-
-	// Convert to 16-bit signed integer for SendInput
-	dx := int32(x * 65535.0 / float64(screenWidth))
-	dy := int32(y * 65535.0 / float64(screenHeight))
-
-	input := createMouseMoveInput(dx, dy)
-	n := uint32(1)
-
-	ret, _, err := procSendInput.Call(
-		uintptr(n),
-		uintptr(unsafe.Pointer(&input)),
-		uintptr(int32(unsafe.Sizeof(input))),
-	)
-	if ret == 0 {
-		return fmt.Errorf("SendInput failed: %w", err)
-	}
-
-	return nil
-}
-
-func createMouseMoveInput(dx, dy int32) INPUT {
-	return INPUT{
-		Type: INPUT_MOUSE,
-		Mi: MOUSEINPUT{
-			Dx:          dx,
-			Dy:          dy,
-			MouseData:   0,
-			Flags:       MOUSEEVENTF_MOVE,
-			Time:        0,
-			ExtraInfo:   0,
-		},
-	}
-}
 
 const (
-	INPUT_MOUSE   = 0
-	INPUT_KEYBOARD = 1
-	INPUT_HARDWARE = 2
-
+	INPUT_MOUSE            = 0
 	MOUSEEVENTF_MOVE       = 0x0001
 	MOUSEEVENTF_LEFTDOWN   = 0x0002
 	MOUSEEVENTF_LEFTUP     = 0x0004
@@ -83,110 +15,87 @@ const (
 	MOUSEEVENTF_RIGHTUP    = 0x0010
 	MOUSEEVENTF_MIDDLEDOWN = 0x0020
 	MOUSEEVENTF_MIDDLEUP   = 0x0040
-
-	VK_LBUTTON = 0x01
-	VK_RBUTTON = 0x02
-	VK_MBUTTON = 0x04
+	KEYEVENTF_KEYUP        = 0x0002
 )
 
-type INPUT struct {
-	Type   uint32
-	Mi     MOUSEINPUT
-	Ki     KEYBDINPUT
-	Hi     HARDWAREINPUT
-	Padding [16]byte
+type mouseInput struct {
+	dx        int32
+	dy        int32
+	mouseData uint32
+	flags     uint32
+	time      uint32
+	extraInfo uintptr
 }
 
-type MOUSEINPUT struct {
-	Dx          int32
-	Dy          int32
-	MouseData   uint32
-	Flags       uint32
-	Time        uint32
-	ExtraInfo   uintptr
+type keybdInput struct {
+	vk        uint16
+	_         uint16
+	flags     uint32
+	time      uint32
+	extraInfo uintptr
 }
 
-type KEYBDINPUT struct {
-	Vk         uint16
-	Scan       uint16
-	Flags      uint32
-	Time       uint32
-	ExtraInfo  uintptr
+type input struct {
+	inputType uint32
+	padding   [20]byte
+	mouse     mouseInput
+	keybd     keybdInput
 }
 
-type HARDWAREINPUT struct {
-	UMsg  uint32
-	WParamL uint16
-	WParamH uint16
+func injectWindowsMouseMove(x, y float64) error {
+	var mi input
+	mi.inputType = INPUT_MOUSE
+	mi.mouse.dx = int32(x * 65535.0)
+	mi.mouse.dy = int32(y * 65535.0)
+	mi.mouse.flags = MOUSEEVENTF_MOVE
+
+	_, _, _ = procSendInput.Call(
+		1,
+		uintptr(unsafe.Pointer(&mi)),
+		uintptr(unsafe.Sizeof(mi)),
+	)
+	return nil
 }
 
 func injectWindowsMouseClick(button MouseButtons, down bool) error {
 	var flags uint32
-	var vk uint16
-
 	switch button {
 	case MouseLeft:
-		vk = VK_LBUTTON
 		if down {
 			flags = MOUSEEVENTF_LEFTDOWN
 		} else {
 			flags = MOUSEEVENTF_LEFTUP
 		}
 	case MouseRight:
-		vk = VK_RBUTTON
 		if down {
 			flags = MOUSEEVENTF_RIGHTDOWN
 		} else {
 			flags = MOUSEEVENTF_RIGHTUP
 		}
 	case MouseMiddle:
-		vk = VK_MBUTTON
 		if down {
 			flags = MOUSEEVENTF_MIDDLEDOWN
 		} else {
 			flags = MOUSEEVENTF_MIDDLEUP
 		}
+	default:
+		return nil
 	}
 
-	input := INPUT{
-		Type: INPUT_KEYBOARD,
-		Ki: KEYBDINPUT{
-			Vk:      vk,
-			Scan:    0,
-			Flags:   0,
-			Time:    0,
-			ExtraInfo: 0,
-		},
-	}
+	var mi input
+	mi.inputType = INPUT_MOUSE
+	mi.mouse.flags = flags
 
-	// First press
-	n := uint32(1)
-	ret, _, _ := procSendInput.Call(
-		uintptr(n),
-		uintptr(unsafe.Pointer(&input)),
-		uintptr(int32(unsafe.Sizeof(input))),
+	_, _, _ = procSendInput.Call(
+		1,
+		uintptr(unsafe.Pointer(&mi)),
+		uintptr(unsafe.Sizeof(mi)),
 	)
-
-	if down {
-		// Then release
-		input.Ki.Flags = KEYEVENTF_KEYUP
-		ret, _, _ = procSendInput.Call(
-			uintptr(n),
-			uintptr(unsafe.Pointer(&input)),
-			uintptr(int32(unsafe.Sizeof(input))),
-		)
-	}
-
-	if ret == 0 {
-		return fmt.Errorf("SendInput for mouse click failed")
-	}
-
 	return nil
 }
 
 func injectWindowsKey(key string, down bool, mod ModifierKeys) error {
 	var vk uint16
-
 	switch key {
 	case "a", "A":
 		vk = 0x41
@@ -240,8 +149,26 @@ func injectWindowsKey(key string, down bool, mod ModifierKeys) error {
 		vk = 0x59
 	case "z", "Z":
 		vk = 0x5A
-	case "0", "1", "2", "3", "4", "5", "6", "7", "8", "9":
-		vk = uint16(key[0])
+	case "0":
+		vk = 0x30
+	case "1":
+		vk = 0x31
+	case "2":
+		vk = 0x32
+	case "3":
+		vk = 0x33
+	case "4":
+		vk = 0x34
+	case "5":
+		vk = 0x35
+	case "6":
+		vk = 0x36
+	case "7":
+		vk = 0x37
+	case "8":
+		vk = 0x38
+	case "9":
+		vk = 0x39
 	case "space":
 		vk = 0x20
 	case "enter":
@@ -300,31 +227,17 @@ func injectWindowsKey(key string, down bool, mod ModifierKeys) error {
 		return nil
 	}
 
-	input := INPUT{
-		Type: INPUT_KEYBOARD,
-		Ki: KEYBDINPUT{
-			Vk:      vk,
-			Scan:    0,
-			Flags:   0,
-			Time:    0,
-			ExtraInfo: 0,
-		},
-	}
-
+	var ki input
+	ki.inputType = INPUT_MOUSE // placeholder for keyboard
+	ki.keybd.vk = vk
 	if !down {
-		input.Ki.Flags = KEYEVENTF_KEYUP
+		ki.keybd.flags = KEYEVENTF_KEYUP
 	}
 
-	n := uint32(1)
-	ret, _, _ := procSendInput.Call(
-		uintptr(n),
-		uintptr(unsafe.Pointer(&input)),
-		uintptr(int32(unsafe.Sizeof(input))),
+	_, _, _ = procSendInput.Call(
+		1,
+		uintptr(unsafe.Pointer(&ki)),
+		uintptr(unsafe.Sizeof(ki)),
 	)
-
-	if ret == 0 {
-		return fmt.Errorf("SendInput for key failed")
-	}
-
 	return nil
 }
