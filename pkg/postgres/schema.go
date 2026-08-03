@@ -3920,7 +3920,7 @@ ALTER TABLE client_session_activity ENABLE ROW LEVEL SECURITY;
 -- RLS policies for client_session_activity
 DROP POLICY IF EXISTS "Users can read activity for their client sessions" ON client_session_activity;
 
-CREATE POLICY "Users can read activity for their client sessions" FOR SELECT
+CREATE POLICY "Users can read activity for their client sessions" ON client_session_activity FOR SELECT
     USING (
         EXISTS (
             SELECT 1 FROM client_sessions cs
@@ -3935,7 +3935,7 @@ CREATE POLICY "Users can read activity for their client sessions" FOR SELECT
 
 DROP POLICY IF EXISTS "Platform admins can read all activity" ON client_session_activity;
 
-CREATE POLICY "Platform admins can read all activity" FOR SELECT
+CREATE POLICY "Platform admins can read all activity" ON client_session_activity FOR SELECT
     USING (
         current_setting('app.role', true) IN ('platform_owner', 'platform_admin')
     );
