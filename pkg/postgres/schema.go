@@ -4243,18 +4243,12 @@ DROP POLICY IF EXISTS "platform_admin_topology_edges" ON topology_edges;
 				CREATE INDEX IF NOT EXISTS idx_client_support_requests_created ON client_support_requests(created_at DESC);
 				ALTER TABLE client_support_requests ENABLE ROW LEVEL SECURITY;
 				ALTER TABLE client_support_requests FORCE ROW LEVEL SECURITY;
-				CREATE POLICY client_support_read ON client_support_requests FOR SELECT
-					USING (tenant_id IN (
-						SELECT tenant_id FROM tenant_users WHERE user_id = current_setting('strata.user_id', true)::UUID
-					));
-				CREATE POLICY client_support_insert ON client_support_requests FOR INSERT
-					WITH CHECK (tenant_id IN (
-						SELECT tenant_id FROM tenant_users WHERE user_id = current_setting('strata.user_id', true)::UUID
-					));
-				CREATE POLICY client_support_update ON client_support_requests FOR UPDATE
-					USING (tenant_id IN (
-						SELECT tenant_id FROM tenant_users WHERE user_id = current_setting('strata.user_id', true)::UUID
-					));
+			CREATE POLICY client_support_read ON client_support_requests FOR SELECT
+				USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::UUID);
+			CREATE POLICY client_support_insert ON client_support_requests FOR INSERT
+				WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::UUID);
+			CREATE POLICY client_support_update ON client_support_requests FOR UPDATE
+				USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::UUID);
 			`,
 			Down: `DROP TABLE IF EXISTS client_support_requests;`,
 		},
