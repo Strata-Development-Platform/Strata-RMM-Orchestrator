@@ -62,7 +62,7 @@ func (s *SessionStore) ReplayMessages(ctx context.Context, agentID string, maxMe
 	if err != nil {
 		return nil, fmt.Errorf("subscribe to session stream: %w", err)
 	}
-	defer msgs.Unsubscribe()
+	defer func() { _ = msgs.Unsubscribe() }()
 
 	var results []SessionMessage
 	for i := 0; i < maxMessages; i++ {

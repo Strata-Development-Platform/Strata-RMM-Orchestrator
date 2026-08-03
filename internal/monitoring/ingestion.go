@@ -203,7 +203,7 @@ func (s *IngestService) Stop() {
 }
 
 func (s *IngestService) handleAgentMetricsJS(m *nats.Msg) {
-	defer m.Ack()
+	defer func() { _ = m.Ack() }()
 
 	var payload struct {
 		Samples []struct {
@@ -248,7 +248,7 @@ func (s *IngestService) handleAgentMetricsJS(m *nats.Msg) {
 }
 
 func (s *IngestService) handleAgentEventsJS(m *nats.Msg) {
-	defer m.Ack()
+	defer func() { _ = m.Ack() }()
 
 	var payload struct {
 		Type      string            `json:"type"`
@@ -287,7 +287,7 @@ func (s *IngestService) handleAgentEventsJS(m *nats.Msg) {
 }
 
 func (s *IngestService) handleAgentHeartbeatJS(m *nats.Msg) {
-	defer m.Ack()
+	defer func() { _ = m.Ack() }()
 
 	var payload struct {
 		AgentID string `json:"agent_id"`
@@ -389,7 +389,7 @@ func tokenize(s string, sep byte) []string {
 
 // Probe handlers
 func (s *IngestService) handleProbeSNMPJS(m *nats.Msg) {
-	defer m.Ack()
+	defer func() { _ = m.Ack() }()
 	tenantID := extractProbeTenant(m.Subject)
 	if tenantID == "" {
 		return
@@ -398,7 +398,7 @@ func (s *IngestService) handleProbeSNMPJS(m *nats.Msg) {
 }
 
 func (s *IngestService) handleProbeFlowJS(m *nats.Msg) {
-	defer m.Ack()
+	defer func() { _ = m.Ack() }()
 	tenantID := extractProbeTenant(m.Subject)
 	if tenantID == "" {
 		return
@@ -407,7 +407,7 @@ func (s *IngestService) handleProbeFlowJS(m *nats.Msg) {
 }
 
 func (s *IngestService) handleProbeDiscoveryJS(m *nats.Msg) {
-	defer m.Ack()
+	defer func() { _ = m.Ack() }()
 	tenantID := extractProbeTenant(m.Subject)
 	if tenantID == "" {
 		return
