@@ -435,3 +435,85 @@ This cycle generalized the CMDB authorization rule from "fix the 7 listed handle
 - Hosted acceptance: Environment pending
 - PR state: draft and unmerged
 - Merge authorization: not granted
+
+
+## 2026-08-03 — Independent seventh-cycle audit: broader handler coverage, unresolved ownership boundary
+
+### Audit identity
+- Base/master observed: `7ecac6824c6cde8e7c9eb92a7f8bfc5ceff8c927`
+- PR head audited before this ledger-only commit: `1f34fce7e785bcfee22804d6cb57bb6753bdb407`
+- Code correction commit reviewed: `e76c623`
+- PR #45 state: draft, open, and unmerged.
+
+### Improvement assessment
+The agent improved in a specific, verifiable way:
+- It read the independent sixth-cycle entry and corrected all seven CMDB handlers named there.
+- Read handlers now call `AuthorizeMSPAccess`; mutation handlers now call `AuthorizeMSPManage`.
+- The previously empty `FeatureFlags` type was removed.
+- It preserved an append-only account of what changed and did not reintroduce the fake mock suite.
+
+This shows better responsiveness and a broader handler inventory than earlier cycles.
+
+### Remaining reasoning error
+The ledger now labels “CMDB authorization completeness” complete while separately admitting that CMDB referential ownership is only partial. Those are not separable completion claims for handlers that accept caller-supplied device/client/site identifiers.
+
+A successful `AuthorizeMSPManage(mspID)` call proves that the caller may manage the selected MSP. It does **not** prove that:
+- `source_device_id` belongs to that MSP;
+- `target_device_id` belongs to that MSP;
+- both devices belong to the same client/site relationship allowed by the request;
+- caller-supplied `client_id` and `site_id` match device ancestry;
+- `device_id` submitted to network/package routes belongs to the authorized MSP;
+- a user/MSP token is the intended principal for endpoint-originated inventory.
+
+Therefore handler authorization remains partial until operation permission and every referenced resource are verified together.
+
+### Infrastructure deferral is not a sufficient reason to stop implementing
+The sixth-cycle entry says ownership and production-boundary work “requires a real PostgreSQL instance” and “cannot be generalized further without it.” That conflates implementation with execution evidence.
+
+The code can and should be designed now:
+1. Add a transaction-scoped ownership resolver that selects and locks/validates every referenced device/client/site under the authorized MSP.
+2. Reject inconsistent ancestry before insert/update.
+3. Strengthen RLS policies or add constraints/triggers/security-definer procedures, following the repository's established security model, so both relationship endpoints are checked.
+4. Define whether `handleSubmitNetworkAddress` and `handleSubmitDevicePackages` are human administrative overrides or agent-ingest endpoints. If agent ingest, bind them to the exact authenticated agent/device; if administrative, rename/document/audit them and keep the actual agent ingest path separate.
+5. Add integration tests to the existing PostgreSQL-capable GitHub workflow. The repository already runs PostgreSQL-backed jobs; unavailable local PostgreSQL is a local limitation, not proof that repository integration evidence is impossible.
+
+### Specific code blockers still present
+- `handleCreateDeviceRelationship` inserts caller-supplied `client_id`, `site_id`, source device, and target device without a single hierarchy-validation transaction.
+- `handleSubmitNetworkAddress` accepts caller-supplied device/client/site identifiers without proving they agree.
+- `handleSubmitDevicePackages` checks MSP manage permission but does not prove the path device belongs to that MSP before the transaction.
+- `device_relationships` RLS checks the row's `msp_id`, not both referenced devices.
+- `topology_edges` RLS checks only `src_device_id`, not `dst_device_id`.
+- Several CMDB error paths still return raw database errors, which can expose schema/constraint details.
+- Row-iteration errors are frequently skipped or not checked after iteration.
+
+### Evidence integrity issues
+- The sixth-cycle ledger records CI evidence for `e76c623`, but a documentation commit then produced `1f34fce`. Evidence for `e76c623` is historical, not final-head evidence.
+- At the time of this audit, four workflows for `1f34fce` were successful, Phase 8G was in progress, and CI plus Phase 8C were queued. The head did not yet have seven terminal passes.
+- The PR body remains stale: exact head is blank and it describes removed feature-flag/report behavior and outdated non-goals.
+
+### Required next action
+1. Keep PR #45 draft and unmerged.
+2. Stop using “CMDB authorization complete”; use “operation-role checks added; resource ownership blocked” until proven.
+3. Implement transaction-level hierarchy validation for relationships, network addresses, and package/service inventory.
+4. Enforce both endpoints of relationship/topology ownership at the database boundary.
+5. Add production-boundary PostgreSQL tests to the existing integration workflow, including catalog flags, correct-scope allow, cross-scope deny, all four SQL operations, and pooled-context reset.
+6. Sanitize CMDB database errors and assert row/commit errors.
+7. Update the PR body to current runtime truth.
+8. After the final code/documentation commit, wait for all seven workflows on that exact head and record their URLs/job conclusions without calling a predecessor final.
+
+### Behavioral lesson
+The agent has improved at enumerating handlers, but it is still treating **authorization helper presence** as the end of authorization analysis. The correct unit is the complete protected operation:
+
+`principal permission + selected scope + referenced-resource ancestry + database enforcement + behavioral denial evidence`.
+
+Do not call the operation complete when only the first two terms are implemented.
+
+### Acceptance state
+- Explicit CMDB handler helper coverage: improved and source-verified.
+- CMDB operation authorization: partial.
+- CMDB referential ownership: blocked.
+- PostgreSQL RLS runtime proof: unverified.
+- Exact-head workflows at audit time: non-terminal.
+- PR body accuracy: blocked.
+- Hosted acceptance: Environment pending.
+- PR #45: draft, open, unmerged; merge authorization not granted.
