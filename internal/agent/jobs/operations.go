@@ -41,6 +41,8 @@ func RegisterDeviceOperations(registry *HandlerRegistry) {
 	registry.Register("device.service_stop", handleServiceStop)
 	registry.Register("device.service_restart", handleServiceRestart)
 	registry.Register("device.process_kill", handleProcessKill)
+	registry.Register("patch_scan", handlePatchScan)
+	registry.Register("patch_install", handlePatchInstall)
 }
 
 func parseOperation(payload json.RawMessage) (*DeviceOperation, error) {
@@ -256,4 +258,199 @@ func handleProcessKill(ctx context.Context, cmd *CommandEnvelope) (string, int, 
 		return "failed", 1, marshalOperationResult(OperationResult{Action: "process_kill", Message: err.Error(), Output: output}), nil
 	}
 	return "succeeded", 0, marshalOperationResult(OperationResult{Action: "process_kill", Succeeded: true, Message: fmt.Sprintf("termination requested for process %d", op.ProcessID), Output: output}), nil
+}
+
+type patchPayload struct {
+	PatchIDs     []string `json:"patch_ids"`
+	DeploymentID string   `json:"deployment_id"`
+	PolicyID     string   `json:"policy_id"`
+}
+
+func handlePatchScan(ctx context.Context, cmd *CommandEnvelope) (string, int, []byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+
+	output, err := runPatchScan(ctx)
+	if err != nil {
+		return "failed", 1, marshalOperationResult(OperationResult{Action: "patch_scan", Message: err.Error()}), nil
+	}
+
+	var patches []map[string]interface{}
+	if err := json.Unmarshal([]byte(output), &patches); err != nil {
+		patches = []map[string]interface{}{
+			{"raw_output": truncate(output, 4096)},
+		}
+	}
+
+	result := OperationResult{
+		Action:    "patch_scan",
+		Succeeded: true,
+		Message:   fmt.Sprintf("scanned %d available patches", len(patches)),
+		Data:      patches,
+	}
+	return "succeeded", 0, marshalOperationResult(result), nil
+}
+
+func handlePatchInstall(ctx context.Context, cmd *CommandEnvelope) (string, int, []byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+
+	var payload patchPayload
+	if err := json.Unmarshal(cmd.Payload, &payload); err != nil {
+		return "failed", 1, marshalOperationResult(OperationResult{Action: "patch_install", Message: "invalid payload"}), nil
+	}
+
+	if len(payload.PatchIDs) == 0 {
+		return "failed", 1, marshalOperationResult(OperationResult{Action: "patch_install", Message: "no patch IDs provided"}), nil
+	}
+
+	output, rebootReq, err := runPatchInstall(ctx, payload.PatchIDs)
+	if err != nil {
+		result := OperationResult{
+			Action:    "patch_install",
+			Succeeded: false,
+			Message:   err.Error(),
+			Output:    truncate(output, 4096),
+		}
+		if rebootReq {
+			result.Message += " (reboot required)"
+		}
+		return "failed", 1, marshalOperationResult(result), nil
+	}
+
+	result := OperationResult{
+		Action:    "patch_install",
+		Succeeded: true,
+		Message:   fmt.Sprintf("installed %d patches", len(payload.PatchIDs)),
+		Output:    truncate(output, 4096),
+	}
+	if rebootReq {
+		result.Message += " - reboot required"
+	}
+	return "succeeded", 0, marshalOperationResult(result), nil
+}
+
+func runPatchScan(ctx context.Context) (string, error) {
+	switch runtime.GOOS {
+	case "windows":
+		return runWindowsPatchScan(ctx)
+	case "linux":
+		return runLinuxPatchScan(ctx)
+	default:
+		return "", fmt.Errorf("patch scanning not supported on %s", runtime.GOOS)
+	}
+}
+
+func runWindowsPatchScan(ctx context.Context) (string, error) {
+	script := `$Session = New-Object -ComObject Microsoft.Update.Session
+$Searcher = $Session.CreateUpdateSearcher()
+$SearchResult = $Searcher.Search("IsInstalled=0 AND IsHidden=0")
+$Updates = @()
+foreach ($Update in $SearchResult.Updates) {
+    $kb = @()
+    foreach ($id in $Update.KBArticleIDs) { $kb += $id }
+    $updates += @{
+        Title = $Update.Title
+        KB = ($kb -join ',')
+        Severity = if ($Update.MsrcSeverity) { $Update.MsrcSeverity } else { 'unknown' }
+        Description = $Update.Description
+    }
+}
+$Updates | ConvertTo-Json -Compress`
+
+	return runOperationCommand(ctx, "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script)
+}
+
+func runLinuxPatchScan(ctx context.Context) (string, error) {
+	pm := detectPackageManager()
+	if pm == "" {
+		return "", fmt.Errorf("no package manager found")
+	}
+	var cmdName string
+	var cmdArgs []string
+	switch pm {
+	case "apt":
+		cmdName = "apt"
+		cmdArgs = []string{"list", "--upgradable"}
+	case "dnf":
+		cmdName = "dnf"
+		cmdArgs = []string{"check-update"}
+	case "yum":
+		cmdName = "yum"
+		cmdArgs = []string{"check-update"}
+	case "zypper":
+		cmdName = "zypper"
+		cmdArgs = []string{"list-patches"}
+	default:
+		return "", fmt.Errorf("unsupported package manager: %s", pm)
+	}
+	return runOperationCommand(ctx, cmdName, cmdArgs...)
+}
+
+func runPatchInstall(ctx context.Context, patchIDs []string) (string, bool, error) {
+	switch runtime.GOOS {
+	case "windows":
+		return runWindowsPatchInstall(ctx, patchIDs)
+	case "linux":
+		return runLinuxPatchInstall(ctx, patchIDs)
+	default:
+		return "", false, fmt.Errorf("patch installation not supported on %s", runtime.GOOS)
+	}
+}
+
+func runWindowsPatchInstall(ctx context.Context, patchIDs []string) (string, bool, error) {
+	kbFilter := strings.Join(patchIDs, ",")
+	script := fmt.Sprintf(`$Session = New-Object -ComObject Microsoft.Update.Session
+$Searcher = $Session.CreateUpdateSearcher()
+$SearchResult = $Searcher.Search("IsInstalled=0 AND IsHidden=0")
+$Updates = @()
+foreach ($Update in $SearchResult.Updates) {
+    $kb = ($Update.KBArticleIDs | ForEach-Object { $_.ToString() }) -join ','
+    if ($kb -match '%s') {
+        $Updates += $Update
+    }
+}
+$Downloader = $Session.CreateUpdateDownloader()
+$Downloader.Updates = $Updates
+$Downloader.Download()
+$Installer = New-Object -ComObject Microsoft.Update.Installer
+$Installer.Updates = $Updates
+$Result = $Installer.Install()
+$Result.ResultCode`, kbFilter)
+
+	output, err := runOperationCommand(ctx, "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script)
+	rebootReq := strings.Contains(output, "2") || strings.Contains(output, "Reboot")
+	return output, rebootReq, err
+}
+
+func runLinuxPatchInstall(ctx context.Context, patchIDs []string) (string, bool, error) {
+	pm := detectPackageManager()
+	if pm == "" {
+		return "", false, fmt.Errorf("no package manager found")
+	}
+	args := append([]string{"install", "-y"}, patchIDs...)
+	cmdName := pm
+	if pm == "zypper" {
+		args = append([]string{"--non-interactive", "update"}, patchIDs...)
+		cmdName = "zypper"
+	}
+	output, err := runOperationCommand(ctx, cmdName, args...)
+	return output, false, err
+}
+
+func detectPackageManager() string {
+	for _, pm := range []string{"apt", "dnf", "yum", "zypper", "pacman"} {
+		_, err := exec.LookPath(pm)
+		if err == nil {
+			return pm
+		}
+	}
+	return ""
+}
+
+func truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max]
 }

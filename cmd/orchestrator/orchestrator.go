@@ -19,6 +19,7 @@ import (
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/alerting"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/inventory"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/monitoring"
+	"github.com/strata-rmm/strata-rmm-orchestrator/internal/patch"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/platform"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/reconnect"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/remote"
@@ -227,6 +228,16 @@ func NewCommand(ctx context.Context, version, commit string, logger *zap.Logger)
 			go thirdParty.Start(ctx)
 			logger.Info("third-party patching engine started")
 
+			// Stage 11b: OS Patch manager
+			advanceStage(11)
+			patchStore := patch.NewStore(tsdb.DB())
+			patchMgr := patch.NewManager(nc, tsdb, patchStore, logger)
+			if err := patchMgr.Start(ctx); err != nil {
+				logger.Warn("starting patch manager (continuing without OS patch deployment)", zap.Error(err))
+			} else {
+				logger.Info("OS patch manager started")
+			}
+
 			// Stage 12: API server and storage policy
 			advanceStage(12)
 			updateMgr := platform.NewUpdateManager(version, "Strata-Development-Platform", "Strata-RMM-Orchestrator", cfg.HTTP.APIAddr, logger)
@@ -276,7 +287,8 @@ func NewCommand(ctx context.Context, version, commit string, logger *zap.Logger)
 				WithCVESyncEngine(cveSync).
 				WithThirdPartyEngine(thirdParty).
 				WithUpdateManager(updateMgr).
-				WithDeploymentController(deploymentCtrl)
+				WithDeploymentController(deploymentCtrl).
+				WithPatchManager(patchMgr)
 
 			updateMgr.WithDeploymentController(deploymentCtrl)
 

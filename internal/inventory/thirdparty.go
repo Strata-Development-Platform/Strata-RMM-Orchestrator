@@ -183,6 +183,10 @@ func (e *ThirdPartyEngine) fetchLatestVersion(ctx context.Context, app ThirdPart
 
 func (e *ThirdPartyEngine) buildDownloadURL(app ThirdPartyApp, version string) string {
 	url := app.URLTemplate
+	hasPlaceholder := strings.Contains(url, "{version}") || strings.Contains(url, "{major}") || strings.Contains(url, "{minor}") || strings.Contains(url, "{patch}")
+	if !hasPlaceholder {
+		return url
+	}
 	versionParts := strings.Split(version, ".")
 	major := ""
 	minor := ""

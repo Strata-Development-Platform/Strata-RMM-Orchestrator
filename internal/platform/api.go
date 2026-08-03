@@ -17,6 +17,7 @@ import (
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/alerting"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/inventory"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/observability"
+	"github.com/strata-rmm/strata-rmm-orchestrator/internal/patch"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/remote"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/reporting"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/auth"
@@ -81,6 +82,7 @@ type APIServer struct {
 	remoteSessionNow func() time.Time
 	reportEngine     *reporting.ReportEngine
 	inventoryEngine  *inventory.ReportingEngine
+	patchMgr         *patch.Manager
 }
 
 func NewAPIServer(addr string, db *timescale.Client, nc *nats.Conn, logger *zap.Logger, tokenGen *auth.TokenGenerator) (*APIServer, error) {
@@ -155,6 +157,11 @@ func (s *APIServer) WithCVESyncEngine(e *inventory.CVESyncEngine) *APIServer {
 
 func (s *APIServer) WithThirdPartyEngine(e *inventory.ThirdPartyEngine) *APIServer {
 	s.thirdParty = e
+	return s
+}
+
+func (s *APIServer) WithPatchManager(m *patch.Manager) *APIServer {
+	s.patchMgr = m
 	return s
 }
 
@@ -299,6 +306,14 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /api/v1/thirdparty/packages", s.handleThirdPartyPackages)
 	mux.HandleFunc("POST /api/v1/thirdparty/sync", s.handleThirdPartySync)
 	mux.HandleFunc("POST /api/v1/thirdparty/sync/{app}", s.handleThirdPartySyncApp)
+
+	mux.HandleFunc("GET /api/v1/patch-policies", s.handleListPatchPolicies)
+	mux.HandleFunc("GET /api/v1/patch-policies/{policyID}", s.handleGetPatchPolicy)
+	mux.HandleFunc("POST /api/v1/patch-policies", s.handleCreatePatchPolicy)
+	mux.HandleFunc("DELETE /api/v1/patch-policies/{policyID}", s.handleDeletePatchPolicy)
+	mux.HandleFunc("GET /api/v1/patch-deployments", s.handleListPatchDeployments)
+	mux.HandleFunc("GET /api/v1/patch-inventory/{tenantID}/{deviceID}", s.handleGetPatchInventory)
+	mux.HandleFunc("GET /api/v1/patch-inventory/{tenantID}/{deviceID}/latest", s.handleGetLatestPatchInventory)
 
 	mux.HandleFunc("GET /api/v1/reports/{tenantID}", s.handleListReports)
 	mux.HandleFunc("POST /api/v1/reports/{tenantID}/schedules", s.handleCreateSchedule)
@@ -1996,5 +2011,168 @@ func (s *APIServer) handleGetBillingAnalytics(w http.ResponseWriter, r *http.Req
 		"total_mrr":        totalMRR,
 		"past_due_mrr":     pastDueMRR,
 		"updated_at":       time.Now(),
+	})
+}
+
+// Patch management handlers
+
+func (s *APIServer) handleListPatchPolicies(w http.ResponseWriter, r *http.Request) {
+	if s.patchMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "patch engine not available"})
+		return
+	}
+	tenantID := r.URL.Query().Get("tenant_id")
+	if tenantID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tenant_id required"})
+		return
+	}
+	policies, err := s.patchMgr.ListPolicies(r.Context(), tenantID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"policies": policies})
+}
+
+func (s *APIServer) handleGetPatchPolicy(w http.ResponseWriter, r *http.Request) {
+	if s.patchMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "patch engine not available"})
+		return
+	}
+	policyID := r.PathValue("policyID")
+	policies, err := s.patchMgr.ListPolicies(r.Context(), "")
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	for _, p := range policies {
+		if p.ID == policyID {
+			writeJSON(w, http.StatusOK, p)
+			return
+		}
+	}
+	writeJSON(w, http.StatusNotFound, map[string]string{"error": "policy not found"})
+}
+
+func (s *APIServer) handleCreatePatchPolicy(w http.ResponseWriter, r *http.Request) {
+	if s.patchMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "patch engine not available"})
+		return
+	}
+	var req struct {
+		TenantID       string              `json:"tenant_id"`
+		Name           string              `json:"name"`
+		Enabled        bool                `json:"enabled"`
+		Platforms      []patch.Platform    `json:"platforms"`
+		ApprovalMode   string              `json:"approval_mode"`
+		Severity       patch.PatchSeverity `json:"severity"`
+		MaintenanceWin string              `json:"maintenance_window"`
+		DeviceFilter   map[string]string   `json:"device_filter"`
+		MaxRetries     int                 `json:"max_retries"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+	if req.TenantID == "" || req.Name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tenant_id and name required"})
+		return
+	}
+	if req.ApprovalMode == "" {
+		req.ApprovalMode = "auto"
+	}
+	if req.Severity == "" {
+		req.Severity = patch.SeverityImportant
+	}
+	if req.MaxRetries == 0 {
+		req.MaxRetries = 3
+	}
+	if req.Platforms == nil {
+		req.Platforms = []patch.Platform{patch.PlatformWindows, patch.PlatformLinux}
+	}
+	policy := &patch.PatchPolicy{
+		ID:             "",
+		TenantID:       req.TenantID,
+		Name:           req.Name,
+		Enabled:        req.Enabled,
+		Platforms:      req.Platforms,
+		ApprovalMode:   req.ApprovalMode,
+		Severity:       req.Severity,
+		MaintenanceWin: req.MaintenanceWin,
+		DeviceFilter:   req.DeviceFilter,
+		MaxRetries:     req.MaxRetries,
+	}
+	if err := s.patchMgr.CreatePolicy(r.Context(), policy); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusCreated, policy)
+}
+
+func (s *APIServer) handleDeletePatchPolicy(w http.ResponseWriter, r *http.Request) {
+	if s.patchMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "patch engine not available"})
+		return
+	}
+	policyID := r.PathValue("policyID")
+	if err := s.patchMgr.DeletePolicy(r.Context(), policyID); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+func (s *APIServer) handleListPatchDeployments(w http.ResponseWriter, r *http.Request) {
+	if s.patchMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "patch engine not available"})
+		return
+	}
+	tenantID := r.URL.Query().Get("tenant_id")
+	if tenantID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tenant_id required"})
+		return
+	}
+	deployments, err := s.patchMgr.ListDeployments(r.Context(), tenantID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"deployments": deployments})
+}
+
+func (s *APIServer) handleGetPatchInventory(w http.ResponseWriter, r *http.Request) {
+	if s.patchMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "patch engine not available"})
+		return
+	}
+	tenantID := r.PathValue("tenantID")
+	deviceID := r.PathValue("deviceID")
+	installed, missing, err := s.patchMgr.GetPatchInventory(r.Context(), tenantID, deviceID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"installed": installed,
+		"missing":   missing,
+	})
+}
+
+func (s *APIServer) handleGetLatestPatchInventory(w http.ResponseWriter, r *http.Request) {
+	if s.patchMgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "patch engine not available"})
+		return
+	}
+	tenantID := r.PathValue("tenantID")
+	deviceID := r.PathValue("deviceID")
+	installed, missing, err := s.patchMgr.GetPatchInventory(r.Context(), tenantID, deviceID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"installed": installed,
+		"missing":   missing,
+		"latest":    true,
 	})
 }

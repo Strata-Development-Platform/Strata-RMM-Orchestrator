@@ -345,8 +345,119 @@ func (e *CVESyncEngine) syncNVD(ctx context.Context) error {
 		return fmt.Errorf("decode nvd: %w", err)
 	}
 
-	e.logger.Info("NVD sync completed", zap.Int("cves", len(bucket.Vulns)))
+	newCount := 0
+	updatedCount := 0
+	for _, vuln := range bucket.Vulns {
+		created, err := e.upsertNVD(ctx, vuln)
+		if err != nil {
+			e.logger.Warn("upsert NVD CVE", zap.String("cve", vuln.ID), zap.Error(err))
+			continue
+		}
+		if created {
+			newCount++
+		} else {
+			updatedCount++
+		}
+	}
+
+	e.logger.Info("NVD sync completed",
+		zap.Int("cves", len(bucket.Vulns)),
+		zap.Int("new", newCount),
+		zap.Int("updated", updatedCount),
+	)
 	return nil
+}
+
+func (e *CVESyncEngine) upsertNVD(ctx context.Context, vuln NVDVuln) (bool, error) {
+	severity := "unknown"
+	score := 0.0
+
+	if vuln.Metrics != nil {
+		var cvss []NVDCVSS
+		if len(vuln.Metrics.CVSS31) > 0 {
+			cvss = vuln.Metrics.CVSS31
+		} else if len(vuln.Metrics.CVSS30) > 0 {
+			cvss = vuln.Metrics.CVSS30
+		}
+		for _, m := range cvss {
+			if m.Score > score {
+				score = m.Score
+			}
+			if m.Severity != "" {
+				sev := strings.ToLower(m.Severity)
+				switch sev {
+				case "critical", "high", "medium", "low":
+					severity = sev
+				}
+			}
+		}
+		if score > 0 && severity == "unknown" {
+			severity = scoreToSeverity(score)
+		}
+	}
+
+	description := ""
+	if len(vuln.Desc) > 0 {
+		for _, d := range vuln.Desc {
+			if d.Lang == "en" {
+				description = d.Value
+				break
+			}
+		}
+		if description == "" {
+			description = vuln.Desc[0].Value
+		}
+	}
+	description = truncate(description, 500)
+
+	packageName := ""
+	_ = packageName
+
+	var fixedInVersions []string
+	_ = fixedInVersions
+
+	if description == "" {
+		description = vuln.ID
+	}
+
+	var exists bool
+	err := e.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM cve_database WHERE id = $1)`, vuln.ID).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check exists: %w", err)
+	}
+
+	fixedIn := ""
+	published := time.Now()
+
+	if exists {
+		_, err = e.db.ExecContext(ctx, `
+			UPDATE cve_database
+			SET package_name = $1, severity = $2, score = $3, description = $4,
+			    fixed_in = $5, source = 'nvd', published = $6
+			WHERE id = $7
+		`, packageName, severity, score, description, fixedIn, published, vuln.ID)
+		if err != nil {
+			return false, fmt.Errorf("update nvd cve: %w", err)
+		}
+		return false, nil
+	}
+
+	_, err = e.db.ExecContext(ctx, `
+		INSERT INTO cve_database (id, package_name, severity, score, description, fixed_in, source, published)
+		VALUES ($1, $2, $3, $4, $5, $6, 'nvd', $7)
+		ON CONFLICT (id) DO UPDATE SET
+			package_name = EXCLUDED.package_name,
+			severity = EXCLUDED.severity,
+			score = EXCLUDED.score,
+			description = EXCLUDED.description,
+			fixed_in = EXCLUDED.fixed_in,
+			source = 'nvd',
+			published = EXCLUDED.published
+	`, vuln.ID, packageName, severity, score, description, fixedIn, published)
+	if err != nil {
+		return false, fmt.Errorf("insert nvd cve: %w", err)
+	}
+	return true, nil
 }
 
 func (e *CVESyncEngine) upsertCVE(ctx context.Context, vuln OSVVuln) (bool, error) {
