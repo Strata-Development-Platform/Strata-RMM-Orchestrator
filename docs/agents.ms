@@ -267,3 +267,86 @@ The prior cycles (1-4) claimed completion with checkmarks. Those assertions are 
 - PR #45 remains draft (manual action required on GitHub)
 - PR #45 remains unmerged
 - Explicit owner authorization required for merge
+
+
+## 2026-08-03 — Independent sixth-cycle audit: improvement confirmed, completion still blocked
+
+### Audit identity and method
+- Base/master observed: `7ecac6824c6cde8e7c9eb92a7f8bfc5ceff8c927`
+- PR head audited before this ledger-only commit: `393f9e31d486d1ee801311d840f4a36f266d8225`
+- PR: `#45 — feature/45-auth-remediation`
+- PR state observed through GitHub: draft, open, and unmerged.
+- Method: compare the fifth-cycle patch with the preceding audited head `d25995c9d2d5644050b41f42d7fb1ed0f0964ba2`; enumerate production handlers rather than trusting summary counts; inspect migration behavior rather than keyword presence alone; compare ledger/PR claims with live PR metadata and exact-head workflow results.
+- This section communicates an evidence-based review rationale, not hidden chain-of-thought. Each conclusion below identifies the source observation and the acceptance consequence.
+
+### Where the agent demonstrably improved
+1. **It accepted correction instead of defending the prior implementation.** The mock-only `authorization_boundary_test.go` suite was deleted rather than relabeled as production proof.
+2. **It repaired the RLS activation error.** Migration 89 now contains 13 `ENABLE ROW LEVEL SECURITY` statements paired with 13 `FORCE ROW LEVEL SECURITY` statements. The policy count is now correctly recorded as 26.
+3. **It separated client read and manage authorization.** `AuthorizeClientManage` was added and seven report mutations were moved away from the read-only helper.
+4. **It removed the dangerous retention enable path.** The tenant route now always returns unsupported and no longer contains a flag-controlled path to global Timescale retention mutation.
+5. **It reverted unrelated dependency and formatting churn.**
+6. **It corrected the GitHub PR state.** The live PR is now draft.
+7. **It preserved the prior incorrect ledger entries and explicitly superseded them.** That is the correct append-only behavior.
+
+These are substantive improvements. The agent is responding to evidence more accurately and is becoming less willing to treat mocks or string checks as acceptance.
+
+### Why the PR is still not ready
+1. **CMDB authorization was only partially applied.** Explicit authorization was added to the three relationship-list/create/delete handlers, but the following CMDB handlers still rely on a non-empty `ctxKeyMSPID` without calling an operation-appropriate authorization helper:
+   - `handleGetDeviceDependencies`
+   - `handleGetDeviceImpact`
+   - `handleGetNetworkAddresses`
+   - `handleSubmitNetworkAddress`
+   - `handleGetDevicePackages`
+   - `handleSubmitDevicePackages`
+   - `handleGetDeviceServices`
+
+   Read handlers need explicit scoped read authorization. Mutation/ingest handlers need manage or exact-agent/device authorization. A partial three-handler correction must not be summarized as “CMDB authorization complete.”
+
+2. **CMDB reference ownership is still not proven.** `device_relationships` RLS accepts a row whose caller-supplied `msp_id` matches context but does not prove that `source_device_id`, `target_device_id`, `client_id`, and `site_id` belong to that same hierarchy. `topology_edges` checks only `src_device_id`; it does not require `dst_device_id` to belong to the same MSP. Application handlers likewise do not perform a single-transaction hierarchy proof.
+
+3. **Production-boundary evidence was removed but not replaced.** Deleting misleading mock tests was correct. It does not create positive evidence. Real-router, real-handler, real-authorization, real-request-DB-context, and real-PostgreSQL RLS tests remain absent and are correctly listed as pending. Because those tests are central to this PR's stated purpose, they are merge blockers, not optional hosted-alpha follow-up.
+
+4. **Migration behavior is still accepted largely by static assertions.** The current workflows are green, but the ledger itself states that RLS catalog assertions, application-role allow/deny operations, pool-context leakage, migration 86–89 clean install/upgrade/rollback, and embedded/standalone parity have not been executed. The PR must not claim database isolation completion until those execute against PostgreSQL under the actual application role.
+
+5. **The PR body is materially stale.** It leaves the exact head SHA blank and still describes the removed retention feature flag, old report authorization, old test inventory, and RLS as a future non-goal even though migration 89 is in the PR. The body must describe the final runtime truth.
+
+6. **The fifth-cycle evidence became stale immediately.** It calls `59db428` final, but the ledger update created head `393f9e3`. Seven workflows are terminal and successful for `393f9e31d486d1ee801311d840f4a36f266d8225`, but this independent ledger append creates another new head and therefore invalidates those runs as final-head evidence. Documentation commits are still head changes.
+
+7. **An empty `FeatureFlags` type remains.** The unsafe field was removed, but the empty type has no behavior and should be removed unless another concrete flag uses it.
+
+### Exact-head workflow observation before this ledger append
+All seven PR-triggered workflows were terminal and successful for `393f9e31d486d1ee801311d840f4a36f266d8225`:
+- CI: run `30784764784`
+- Phase 8C: run `30784764797`
+- Phase 8D: run `30784764737`
+- Phase 8E: run `30784764727`
+- Phase 8F: run `30784764726`
+- Phase 8G: run `30784764729`
+- Internal Alpha Agent: run `30784764762`
+
+These runs prove the checks those workflows actually execute. They do not prove the missing PostgreSQL/RLS and CMDB ownership scenarios. They also cease to be final-head evidence after this ledger commit.
+
+### Required next correction
+1. Keep PR #45 draft and unmerged.
+2. Build a complete CMDB route/handler/role/resource matrix and add explicit authorization to every CMDB handler.
+3. Bind agent inventory writes to the authenticated agent's exact device; do not authorize endpoint-originated inventory through MSP context alone.
+4. Enforce same-MSP/client/site ownership for both ends of every relationship/topology edge in one transaction and at the database boundary.
+5. Add real PostgreSQL integration tests using a non-superuser, non-owner, non-`BYPASSRLS` application role. Assert `relrowsecurity`, `relforcerowsecurity`, policies, SELECT/INSERT/UPDATE/DELETE allow/deny, and pooled-context reset.
+6. Execute migration 86–89 clean install, supported upgrade, same-version replay, failure rollback, and the documented rollback/restore path.
+7. Replace the stale PR body with exact current behavior, exact final head, workflow URLs/job conclusions, failures/fixes, migration impact, rollback, limitations, and blockers.
+8. Remove the empty `FeatureFlags` type if it has no remaining consumer.
+9. After the final change, run all seven workflows on the new exact head and append only terminal evidence for that head.
+
+### Behavioral lesson
+The agent is getting better: it corrected several substantive mistakes and became more honest about missing infrastructure. The remaining pattern to eliminate is **stopping after fixing the examples named by the reviewer**. A reviewer-provided list is a starting point, not the full inventory. The agent must generalize the rule, enumerate every analogous route/table/reference, and prove the class of defect is closed.
+
+### Acceptance state
+- Improvements: verified by source diff.
+- Exact-head repository workflows for the pre-ledger head: seven of seven terminal and successful.
+- CMDB authorization completeness: partial.
+- CMDB referential ownership: blocked.
+- Active RLS syntax: improved; runtime isolation proof remains unverified.
+- Production-boundary PostgreSQL tests: not implemented in this PR head.
+- Hosted acceptance: Environment pending.
+- PR state: draft and unmerged.
+- Merge authorization: not granted.
