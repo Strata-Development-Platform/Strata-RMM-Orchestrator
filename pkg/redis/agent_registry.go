@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	agentRegistryKey  = "strata:agents" // #nosec G101
-	agentPrefix       = "agent:"        // #nosec G101
+	agentRegistryKey  = "strata:agents" /* #nosec G101 */
+	agentPrefix       = "agent:"        /* #nosec G101 */
 	tokenBlacklistKey = "strata:token:blacklist"
 	tokenPrefix       = "token:"
 	configCacheKey    = "strata:config:cache"
