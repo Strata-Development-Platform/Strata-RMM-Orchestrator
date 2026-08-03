@@ -20,7 +20,6 @@ type IngestService struct {
 	js     nats.JetStreamContext
 	tsdb   *timescale.Client
 	logger *zap.Logger
-	tenant string
 	subs   []*nats.Subscription
 	batch  *batchBuffer
 }

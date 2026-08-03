@@ -53,7 +53,7 @@ func NewClient(ctx context.Context, primaryDSN, replicaDSN string) (*Client, err
 	writeDB.SetConnMaxLifetime(5 * time.Minute)
 
 	if err := writeDB.PingContext(ctx); err != nil {
-		writeDB.Close()
+		_ = writeDB.Close()
 		return nil, fmt.Errorf("pinging primary: %w", err)
 	}
 
@@ -61,7 +61,7 @@ func NewClient(ctx context.Context, primaryDSN, replicaDSN string) (*Client, err
 	if replicaDSN != "" {
 		readDB, err = sql.Open("postgres", replicaDSN)
 		if err != nil {
-			writeDB.Close()
+			_ = writeDB.Close()
 			return nil, fmt.Errorf("opening replica connection: %w", err)
 		}
 
@@ -70,7 +70,7 @@ func NewClient(ctx context.Context, primaryDSN, replicaDSN string) (*Client, err
 		readDB.SetConnMaxLifetime(5 * time.Minute)
 
 		if err := readDB.PingContext(ctx); err != nil {
-			readDB.Close()
+			_ = readDB.Close()
 			return nil, fmt.Errorf("pinging replica: %w", err)
 		}
 	}
@@ -113,10 +113,10 @@ func (c *Client) ReadDB() *sql.DB {
 
 func (c *Client) Close() {
 	if c.writeDB != nil {
-		c.writeDB.Close()
+		_ = c.writeDB.Close()
 	}
 	if c.readDB != nil {
-		c.readDB.Close()
+		_ = c.readDB.Close()
 	}
 }
 
