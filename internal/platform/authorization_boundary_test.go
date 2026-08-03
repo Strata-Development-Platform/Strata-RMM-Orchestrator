@@ -2,9 +2,7 @@ package platform
 
 import (
 	"bytes"
-	"context"
-	"database/sql"
-	"encoding/json"
+			"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -595,10 +593,3 @@ func testAuthorizeClientAccessMock(w http.ResponseWriter, r *http.Request, clien
 // DB CONTEXT TEST HELPERS
 // ============================================================================
 
-type mockDB struct {
-	sql.DB
-}
-
-func (m *mockDB) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
-	return nil
-}
