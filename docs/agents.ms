@@ -1387,3 +1387,87 @@ Before writing “complete,” “verified,” “secure,” “isolated,” “
 If any answer is no or unknown, state that limitation and use a weaker, accurate claim.
 
 The project benefits more from an honest blocker than from a false completion.
+
+
+## 2026-08-03 — Eighth-cycle remediation: SQL parameterization, single-transaction mutation, test repair
+
+### Audited SHAs
+- Base/master: `7ecac6824c6cde8e7c9eb92a7f8bfc5ceff8c927`
+- PR head before eighth cycle: `c08d5e4` (this commit)
+- PR: `#45 — feature/45-auth-remediation`
+- PR state: draft, open, unmerged
+
+### Eighth-cycle audit findings (from independent audit)
+The seventh-cycle audit claimed "transaction-level hierarchy validation" but the implementation had critical defects:
+
+**1. ValidateDeviceAncestry built invalid SQL parameterization**
+The query used `id = ANY($N)` but supplied every device ID as an independent scalar argument and placed the MSP ID last. For two device IDs the generated predicate was `id = ANY($2)` with scalar argument 2, while argument 1 was unused. `ANY` requires an array expression. The implementation could not deterministically validate the requested set.
+
+**2. Validation and mutation were not one atomic protected operation**
+Handlers acquired a standalone `*sql.Conn` for ancestry validation, then performed the mutation through `s.requestDB(r)` or a separately created `*sql.Tx`. This created a time-of-check/time-of-use gap. `handleSubmitDevicePackages` explicitly validated before beginning its write transaction.
+
+**3. Acquired SQL connections were leaked**
+Each affected handler called `s.db.DB().Conn(...)` and never closed the returned connection. Under repeated requests this can exhaust the pool.
+
+**4. MSP ownership alone does not prove the submitted hierarchy**
+The helper returns client and site values but callers did not compare them with caller-supplied `client_id` and `site_id`. A device may belong to the authorized MSP while the inserted relationship or address records a different client/site.
+
+**5. Test file defects**
+- Ancestry tests passed `nil` as the `context.Context` argument to production `QueryContext`
+- `TestCMDBDeviceAncestryValidation` expected duplicate input `[deviceID, deviceID]` to return two owners
+- `TestValidateDeviceAncestrySingleDevice` contained an invalid seed statement (two placeholders, one argument)
+- Several RLS tests inserted rows and rolled back, then attempted to query rolled-back IDs in later transactions
+- Errors from seed/role/grant operations were deliberately ignored
+
+### Corrections applied in this cycle
+
+**A. Fixed SQL parameterization** (`internal/platform/authorize.go`)
+- Changed `id = ANY($N)` with scalar args to `id = ANY($1::uuid[])` with `pq.Array(unique)` as first parameter and `authorizedMSPID` as `$2`
+- Added deduplication of input device IDs before querying (using a `seen` map) so row-count comparison is meaningful for inputs with duplicates
+- Changed function signature to accept `interface{}` matching `QueryContext` instead of `*sql.Conn`, enabling use with both `*sql.Tx` and `*sql.Conn`
+
+**B. Merged validation into single transaction** (`internal/platform/device_handlers.go`)
+- `handleCreateDeviceRelationship`: replaced `s.db.DB().Conn()` + `s.requestDB()` with single `BeginTx()`, RLS context set on tx, ancestry validation through tx, mutation through tx, single `Commit()`
+- `handleSubmitNetworkAddress`: same pattern
+- `handleSubmitDevicePackages`: moved Conn-based validation inside `BeginTx()`, RLS context set on tx, ancestry validation through same tx, mutation through same tx, single `Commit()`
+- All three handlers now have proper `defer tx.Rollback()` on error
+
+**C. Eliminated connection leaks**
+- Removed all three standalone `s.db.DB().Conn(r.Context())` calls
+- All validation now goes through the single transaction connection
+
+**D. Verified caller-supplied client_id/site_id against device ancestry**
+- All three mutation handlers now compare caller-supplied `client_id` and `site_id` against proven device ancestry
+- Mismatches return 403 `client_id does not match device ancestry` or `site_id does not match device ancestry`
+- When caller does not provide client_id/site_id, values are derived from the source device's proven ancestry
+
+**E. Test file repairs** (`internal/platform/cmdb_hierarchy_test.go`)
+- Fixed all `ValidateDeviceAncestry` calls to use `context.Background()` instead of `nil`
+- Fixed `TestCMDBDeviceAncestryValidation`: replaced duplicate `[deviceID, deviceID]` with `[deviceID, otherDeviceID]` (cross-MSP deny case) and added a proper `[]string{deviceID}` single-allow case
+- Fixed `TestValidateDeviceAncestrySingleDevice`: creates MSP before seeding device
+- Fixed `TestDeviceRelationshipsRLSDualEndpoint`: captured returned relID, verified before rollback
+- Fixed `TestRLSAllowDenyAllFourOperations`: explicit error checking on all seed/role/grant operations
+- Fixed all `_, _ = db.Exec(...)` patterns to use proper error checking (`if err != nil { t.Fatalf(...) }`)
+- Fixed NOBYPASSRLS role test to create role with `DROP ROLE IF EXISTS` before `CREATE ROLE`
+
+### What remains (Environment pending)
+1. Production-boundary integration tests with real router and real handlers — requires live database
+2. Migration 86-89 clean install, upgrade, rollback execution evidence — requires live database
+3. Connection-pool context leakage test under real request routing — requires live database
+4. Exact-head CI workflow evidence for the new head — CI running
+
+### Local evidence
+- `go build ./...` succeeds
+- `go test ./...` all pass
+- `go vet ./...` passes
+
+### Acceptance state (post-eighth-cycle)
+- ValidateDeviceAncestry SQL parameterization: corrected (uses proper UUID array)
+- Validation + mutation transactionality: corrected (single BeginTx for all three mutation handlers)
+- Connection leak: eliminated (no standalone Conn calls remain)
+- Caller-supplied ancestry verification: implemented for all three mutation handlers
+- Test file integrity: repaired (real context, valid seeds, error-checked setup)
+- Exact-head workflows: pending (CI running for head c08d5e4)
+- PR body: pending (still stale)
+- Hosted acceptance: Environment pending
+- PR #45: draft, open, unmerged; merge authorization not granted
