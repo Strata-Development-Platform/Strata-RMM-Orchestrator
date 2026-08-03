@@ -43,7 +43,7 @@ func TestDurableJobRoundTripWithRealPostgresAndNATS(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	db, err := timescale.NewClient(ctx, dsn)
+	db, err := timescale.NewClient(ctx, dsn, "")
 	if err != nil {
 		t.Fatal(err)
 	}
