@@ -286,12 +286,15 @@ func (e *ThirdPartyEngine) GetPackages(ctx context.Context) ([]map[string]interf
 		var id, name, version, desc, platform, pkgType, url string
 		var createdAt time.Time
 		if err := rows.Scan(&id, &name, &version, &desc, &platform, &pkgType, &url, &createdAt); err != nil {
-			continue
+			return nil, fmt.Errorf("scan package row: %w", err)
 		}
 		pkgs = append(pkgs, map[string]interface{}{
 			"id": id, "name": name, "version": version, "description": desc,
 			"platform": platform, "package_type": pkgType, "source_url": url, "created_at": createdAt,
 		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate package rows: %w", err)
 	}
 	return pkgs, nil
 }

@@ -157,8 +157,8 @@ func createGradientFallback(width, height int) image.Image {
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
 	for y := 0; y < height; y++ {
 		for x := 0; x < width; x++ {
-			r := uint8((x * 255) / width)
-			g := uint8((y * 255) / height)
+			r := uint8(float64(x) * 255.0 / float64(width))
+			g := uint8(float64(y) * 255.0 / float64(height))
 			b := uint8(128)
 			img.Set(x, y, color.RGBA{R: r, G: g, B: b, A: 255})
 		}

@@ -26,6 +26,7 @@ CREATE INDEX IF NOT EXISTS idx_client_support_requests_created ON client_support
 
 -- RLS policies
 ALTER TABLE client_support_requests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE client_support_requests FORCE ROW LEVEL SECURITY;
 
 CREATE POLICY client_support_read ON client_support_requests
     FOR SELECT
