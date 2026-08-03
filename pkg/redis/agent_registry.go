@@ -12,10 +12,10 @@ import (
 const (
 	agentRegistryKey  = "strata:rmm:agents"
 	agentPrefix       = "rmm:agent:"
-	tokenBlacklistKey = "strata:rmm:auth:token:blacklist"
-	tokenPrefix       = "rmm:auth:token:"
-	configCacheKey    = "strata:rmm:config:cache"
-	configPrefix      = "rmm:config:"
+	revokedKey        = "strata:rmm:revocations"
+	revokedPrefix     = "rmm:revoked:"
+	configCacheKey    = "strata:rmm:cfg:cache"
+	configPrefix      = "rmm:cfg:"
 )
 
 type AgentInfo struct {
@@ -194,7 +194,7 @@ func (c *Client) BlacklistToken(ctx context.Context, entry TokenBlacklistEntry) 
 		entry.ExpiresAt = now.Add(24 * time.Hour)
 	}
 
-	key := tokenPrefix + entry.TokenID
+	key := revokedPrefix + entry.TokenID
 	data, err := json.Marshal(entry)
 	if err != nil {
 		return fmt.Errorf("marshal token entry: %w", err)
@@ -205,12 +205,12 @@ func (c *Client) BlacklistToken(ctx context.Context, entry TokenBlacklistEntry) 
 		ttl = 24 * time.Hour
 	}
 
-	return c.rdb.Set(ctx, tokenBlacklistKey+":"+key, data, ttl).Err()
+	return c.rdb.Set(ctx, revokedKey+":"+key, data, ttl).Err()
 }
 
 func (c *Client) IsTokenBlacklisted(ctx context.Context, tokenID string) (bool, error) {
-	key := tokenPrefix + tokenID
-	_, err := c.rdb.Get(ctx, tokenBlacklistKey+":"+key).Result()
+	key := revokedPrefix + tokenID
+	_, err := c.rdb.Get(ctx, revokedKey+":"+key).Result()
 	if err == redis.Nil {
 		return false, nil
 	}
