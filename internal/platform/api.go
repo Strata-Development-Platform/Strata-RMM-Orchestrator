@@ -1428,7 +1428,7 @@ func (s *APIServer) handleThirdPartySyncVendor(w http.ResponseWriter, r *http.Re
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"vendor": vendor,
+		"vendor":  vendor,
 		"created": created,
 		"count":   len(created),
 	})
