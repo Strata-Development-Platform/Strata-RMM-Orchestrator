@@ -4130,10 +4130,10 @@ CREATE POLICY "platform_admin_device_mounts" ON device_mounts FOR ALL
 DROP POLICY IF EXISTS "msp_isolation_topology_edges" ON topology_edges;
 CREATE POLICY "msp_isolation_topology_edges" ON topology_edges FOR ALL
     USING (
-        EXISTS (SELECT 1 FROM devices d WHERE d.id = topology_edges.source_id AND d.msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID)
+        EXISTS (SELECT 1 FROM devices d WHERE d.id = topology_edges.src_device_id AND d.msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID)
     )
     WITH CHECK (
-        EXISTS (SELECT 1 FROM devices d WHERE d.id = topology_edges.source_id AND d.msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID)
+        EXISTS (SELECT 1 FROM devices d WHERE d.id = topology_edges.src_device_id AND d.msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID)
     );
 
 DROP POLICY IF EXISTS "platform_admin_topology_edges" ON topology_edges;
