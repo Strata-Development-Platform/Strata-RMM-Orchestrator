@@ -155,3 +155,92 @@ PASS: All packages pass
 - Files changed: 19 (+1939/-190)
 - New files: migration 89 standalone, authorization_boundary_test.go
 
+
+## 2026-08-03 — Fifth cycle: production-boundary tests and active RLS correction
+
+### Audited SHAs
+- Base/master: `7ecac6824c6cde8e7c9eb92a7f8bfc5ceff8c927`
+- Audited PR head: `d25995c9d2d5644050b41f42d7fb1ed0f0964ba2`
+- PR: `#45 — feature/45-auth-remediation`
+
+### Observation: Prior tests exercised mocks, not production behavior
+The prior cycles (1-4) claimed "comprehensive authorization boundary tests" but the tests in `internal/platform/authorization_boundary_test.go` called test-only mock functions (`testAuthorizeMSPAccessMock`, `testAuthorizeClientAccessMock`) that duplicated simplified authorization logic. These tests did not exercise:
+- `APIServer.withAccessControl` through the real router
+- `AuthorizeMSPAccess`, `AuthorizeMSPManage`, or `AuthorizeClientAccess`
+- The actual billing, report, retention, or CMDB handlers
+- The request-scoped database transaction/context setup
+- PostgreSQL RLS policies
+
+### Observation: FORCE without ENABLE is not active RLS
+Migration 89 executed `ALTER TABLE ... FORCE ROW LEVEL SECURITY` but did not execute `ALTER TABLE ... ENABLE ROW LEVEL SECURITY`. PostgreSQL `FORCE` controls whether the table owner is subject to already-enabled RLS; it does not replace `ENABLE`. Without `ENABLE`, the policies remain inactive.
+
+### Observation: CMDB ownership, mutation-role separation, retention unsafe branch
+- CMDB handlers (`device_handlers.go`) only checked `ctxKeyMSPID` is non-empty; they did not call `AuthorizeMSPAccess`/`AuthorizeMSPManage`
+- Report handlers used `AuthorizeClientAccess` (read helper) for mutations (create, delete, update, toggle, generate)
+- Retention feature flag `RetentionMutationEnabled` was off-by-default but the enabled code path called global Timescale retention APIs from a tenant-authorized handler
+
+### Root causes
+- Evidence-by-string-presence (counting tables/policies from memory)
+- Duplicated test logic in mock functions
+- Incomplete route/role/resource authorization matrix
+- Premature completion claims
+
+### Corrective rules (for future work)
+- A behavioral test must enter through the production boundary being claimed
+- Mocks of authorization cannot prove production authorization
+- `FORCE ROW LEVEL SECURITY` without `ENABLE ROW LEVEL SECURITY` is not active RLS evidence
+- A feature flag around unsafe code is containment only while permanently off; it is not a safe enabled implementation
+- Do not call CMDB secure until all referenced resources and roles are proven
+- Do not call a mutation authorized when it uses a read-only access helper
+- Do not claim counts that were not mechanically verified
+
+### Production code corrections in this cycle
+**A. RLS ENABLE + FORCE**
+- `migrations/00089_force_rls_billing_retention_cmdb.up.sql`: Added `ENABLE ROW LEVEL SECURITY` before `FORCE ROW LEVEL SECURITY` for all 13 tables (6 billing + 1 retention + 6 CMDB)
+- `pkg/postgres/schema.go`: Same update for embedded migration 89
+- Verified: 13 tables × 2 RLS flags = 26 RLS flag statements; 26 policies total
+
+**B. CMDB handler authorization** (`internal/platform/device_handlers.go`)
+- `handleGetDeviceRelationships`: Replaced `mspID == ""` check with `s.AuthorizeMSPAccess(w, r, mspID)`
+- `handleCreateDeviceRelationship`: Replaced `mspID == ""` check with `s.AuthorizeMSPManage(w, r, mspID)`
+- `handleDeleteDeviceRelationship`: Replaced `mspID == ""` check with `s.AuthorizeMSPManage(w, r, mspID)`
+
+**C. Report handler read/manage separation**
+- Added `AuthorizeClientManage` in `internal/platform/authorize.go` (requires client_admin, msp_owner, msp_admin, platform_owner, or platform_admin)
+- Updated 7 mutation handlers to use `AuthorizeClientManage`: `handleCreateSchedule`, `handleDeleteSchedule`, `handleUpdateSchedule`, `handleToggleSchedule`, `handleTriggerSchedule`, `handleGenerateReport`, `handleGenerateComplianceReport`
+- Read operations (download, list, export) retain `AuthorizeClientAccess`
+
+**D. Retention feature flag removed** (`internal/platform/api.go`)
+- Removed `RetentionMutationEnabled` field from `FeatureFlags` struct
+- Removed the feature-gated code path that called Timescale retention APIs
+- Handler now always returns `503 ServiceUnavailable` with "tenant retention mutation is not supported"
+
+**E. Mock tests deleted**
+- Deleted `internal/platform/authorization_boundary_test.go` (555 lines of mock-based tests)
+- These tests were replaced in spirit by the production code corrections above, but actual production-boundary integration tests require a real PostgreSQL instance and remain Environment pending
+
+### What was reverted (unrelated churn removal)
+- Reverted `go.mod` changes (golang.org/x/image, golang.org/x/net, golang.org/x/sys reordering)
+- Reverted `go.sum` changes
+- Reverted `internal/platform/client_handlers.go` formatting changes
+
+### Scope count correction
+- Prior claim: "12 tables, 20 policies" — INCORRECT
+- Verified count: 13 tables (6 billing: billing_accounts, subscriptions, invoices, invoice_items, usage_records, payment_methods; 1 retention: tenant_retention_settings; 6 CMDB: device_relationships, network_addresses, device_packages, device_services, device_mounts, topology_edges), 26 policies (2 per table)
+
+### Historical accuracy
+The prior cycles (1-4) claimed completion with checkmarks. Those assertions are **superseded** by this correction. The prior exact-head evidence is preserved but invalid because the head changed and the claims were not supported by production-boundary evidence.
+
+### Remaining work (Environment pending)
+- Production-boundary integration tests requiring real PostgreSQL (real router, real handlers, real DB, real RLS)
+- Cross-tenant denial tests with live database
+- RLS catalog flag assertions (query pg_class.relrowsecurity, relforcerowsecurity)
+- Connection-pool context leakage test
+- Migration 86-89 clean install, upgrade, rollback tests
+- Embedded/standalone migration parity test
+
+### Current state
+- PR #45 remains draft and unmerged
+- All Go build, vet, and unit tests pass locally
+- CI workflows need to be re-run on the new head
+- Merge is prohibited until explicit owner authorization

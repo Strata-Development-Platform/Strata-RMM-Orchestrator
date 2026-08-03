@@ -154,6 +154,18 @@ func (s *APIServer) authorizeSiteManage(w http.ResponseWriter, r *http.Request, 
 	return mspID, true
 }
 
+// AuthorizeClientManage requires a managing role effective in the exact selected
+// client, MSP, or a top-level platform administrator. A child selection never
+// manages its parent.
+func (s *APIServer) AuthorizeClientManage(w http.ResponseWriter, r *http.Request, clientID string) bool {
+	if clientID == "" || s.db == nil {
+		writeAuthorizationDenied(w)
+		return false
+	}
+	_, ok := s.authorizeClientManage(w, r, clientID)
+	return ok
+}
+
 // AuthorizeClientAccess authorizes only a client selected directly, or a parent
 // platform/MSP scope whose active hierarchy contains that client.
 func (s *APIServer) AuthorizeClientAccess(w http.ResponseWriter, r *http.Request, clientID string) bool {

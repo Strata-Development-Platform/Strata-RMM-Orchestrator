@@ -92,7 +92,7 @@ func (s *APIServer) handleListReports(w http.ResponseWriter, r *http.Request) {
 
 func (s *APIServer) handleCreateSchedule(w http.ResponseWriter, r *http.Request) {
 	tenantID := r.PathValue("tenantID")
-	if !s.AuthorizeClientAccess(w, r, tenantID) {
+	if !s.AuthorizeClientManage(w, r, tenantID) {
 		return
 	}
 	var req struct {
@@ -165,7 +165,7 @@ func (s *APIServer) handleListSchedules(w http.ResponseWriter, r *http.Request) 
 func (s *APIServer) handleDeleteSchedule(w http.ResponseWriter, r *http.Request) {
 	scheduleID := r.PathValue("scheduleID")
 	tenantID := r.PathValue("tenantID")
-	if !s.AuthorizeClientAccess(w, r, tenantID) {
+	if !s.AuthorizeClientManage(w, r, tenantID) {
 		return
 	}
 	_, err := s.requestDB(r).ExecContext(r.Context(), `DELETE FROM report_schedules WHERE id = $1 AND tenant_id = $2`, scheduleID, tenantID)
@@ -178,7 +178,7 @@ func (s *APIServer) handleDeleteSchedule(w http.ResponseWriter, r *http.Request)
 
 func (s *APIServer) handleGenerateReport(w http.ResponseWriter, r *http.Request) {
 	tenantID := r.PathValue("tenantID")
-	if !s.AuthorizeClientAccess(w, r, tenantID) {
+	if !s.AuthorizeClientManage(w, r, tenantID) {
 		return
 	}
 	var req struct {
@@ -209,7 +209,7 @@ func (s *APIServer) handleGenerateReport(w http.ResponseWriter, r *http.Request)
 func (s *APIServer) handleUpdateSchedule(w http.ResponseWriter, r *http.Request) {
 	scheduleID := r.PathValue("scheduleID")
 	tenantID := r.PathValue("tenantID")
-	if !s.AuthorizeClientAccess(w, r, tenantID) {
+	if !s.AuthorizeClientManage(w, r, tenantID) {
 		return
 	}
 
@@ -287,7 +287,7 @@ func (s *APIServer) handleUpdateSchedule(w http.ResponseWriter, r *http.Request)
 func (s *APIServer) handleToggleSchedule(w http.ResponseWriter, r *http.Request) {
 	scheduleID := r.PathValue("scheduleID")
 	tenantID := r.PathValue("tenantID")
-	if !s.AuthorizeClientAccess(w, r, tenantID) {
+	if !s.AuthorizeClientManage(w, r, tenantID) {
 		return
 	}
 
@@ -310,7 +310,7 @@ func (s *APIServer) handleToggleSchedule(w http.ResponseWriter, r *http.Request)
 func (s *APIServer) handleTriggerSchedule(w http.ResponseWriter, r *http.Request) {
 	scheduleID := r.PathValue("scheduleID")
 	tenantID := r.PathValue("tenantID")
-	if !s.AuthorizeClientAccess(w, r, tenantID) {
+	if !s.AuthorizeClientManage(w, r, tenantID) {
 		return
 	}
 
@@ -374,7 +374,7 @@ func (s *APIServer) handleTriggerSchedule(w http.ResponseWriter, r *http.Request
 
 func (s *APIServer) handleGenerateComplianceReport(w http.ResponseWriter, r *http.Request) {
 	tenantID := r.PathValue("tenantID")
-	if !s.AuthorizeClientAccess(w, r, tenantID) {
+	if !s.AuthorizeClientManage(w, r, tenantID) {
 		return
 	}
 	var req struct {

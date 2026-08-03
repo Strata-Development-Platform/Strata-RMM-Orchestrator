@@ -28,7 +28,6 @@ import (
 // FeatureFlags gates operations that are experimental, semantically unsafe,
 // or not yet production-ready. Every flag is off-by-default.
 type FeatureFlags struct {
-	RetentionMutationEnabled bool
 }
 
 type APIServer struct {
@@ -1924,150 +1923,12 @@ func (s *APIServer) handleUpdateRetention(w http.ResponseWriter, r *http.Request
 
 	// Tenant-facing retention mutation is disabled: Timescale native
 	// retention policies are global to a hypertable, so a tenant-level
-	// mutation endpoint cannot safely call them. The database stores
-	// per-tenant logical settings (tenant_retention_settings) but
-	// physical retention remains a platform-admin responsibility.
-	if !s.featureFlags.RetentionMutationEnabled {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
-			"error":        "tenant retention mutation is not supported",
-			"code":         "feature_gate_disabled",
-			"feature_flag": "retention_mutation_enabled",
-			"message":      "Physical retention policy modification is a platform-admin operation. Per-tenant logical retention settings are stored but physical Timescale retention policies require platform-level authorization.",
-		})
-		return
-	}
-
-	var req RetentionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
-		return
-	}
-
-	validate := func(field string, days int) error {
-		if days < 1 || days > 10000 {
-			return fmt.Errorf("retention for %s must be between 1 and 10000", field)
-		}
-		return nil
-	}
-
-	newSettings := RetentionPolicySettings{
-		MetricsDays:       365,
-		HeartbeatsDays:    90,
-		AlertsDays:        365,
-		SNMPPollsDays:     90,
-		FlowRecordsDays:   30,
-		TopologyEdgesDays: 90,
-	}
-
-	if req.MetricsDays != nil {
-		if err := validate("metrics_days", *req.MetricsDays); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		newSettings.MetricsDays = *req.MetricsDays
-	}
-	if req.HeartbeatsDays != nil {
-		if err := validate("heartbeats_days", *req.HeartbeatsDays); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		newSettings.HeartbeatsDays = *req.HeartbeatsDays
-	}
-	if req.AlertsDays != nil {
-		if err := validate("alerts_days", *req.AlertsDays); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		newSettings.AlertsDays = *req.AlertsDays
-	}
-	if req.SNMPPollsDays != nil {
-		if err := validate("snmp_polls_days", *req.SNMPPollsDays); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		newSettings.SNMPPollsDays = *req.SNMPPollsDays
-	}
-	if req.FlowRecordsDays != nil {
-		if err := validate("flow_records_days", *req.FlowRecordsDays); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		newSettings.FlowRecordsDays = *req.FlowRecordsDays
-	}
-	if req.TopologyEdgesDays != nil {
-		if err := validate("topology_edges_days", *req.TopologyEdgesDays); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
-		newSettings.TopologyEdgesDays = *req.TopologyEdgesDays
-	}
-
-	_, err := s.db.DB().ExecContext(r.Context(), `
-		INSERT INTO tenant_retention_settings (
-			tenant_id, metrics_days, heartbeats_days, alerts_days,
-			snmp_polls_days, flow_records_days, topology_edges_days
-		) VALUES ($1, $2, $3, $4, $5, $6, $7)
-		ON CONFLICT (tenant_id) DO UPDATE SET
-			metrics_days = EXCLUDED.metrics_days,
-			heartbeats_days = EXCLUDED.heartbeats_days,
-			alerts_days = EXCLUDED.alerts_days,
-			snmp_polls_days = EXCLUDED.snmp_polls_days,
-			flow_records_days = EXCLUDED.flow_records_days,
-			topology_edges_days = EXCLUDED.topology_edges_days,
-			updated_at = NOW()
-	`, tenantID, newSettings.MetricsDays, newSettings.HeartbeatsDays,
-		newSettings.AlertsDays, newSettings.SNMPPollsDays,
-		newSettings.FlowRecordsDays, newSettings.TopologyEdgesDays)
-	if err != nil {
-		s.logger.Error("updating retention settings", zap.Error(err), zap.String("tenant_id", tenantID))
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to update retention settings"})
-		return
-	}
-
-	// Apply retention policies to TimescaleDB
-	if req.MetricsDays != nil {
-		if err := s.db.SetRetentionPolicy(r.Context(), *req.MetricsDays); err != nil {
-			s.logger.Error("applying metrics retention", zap.Error(err))
-		}
-	}
-	if req.HeartbeatsDays != nil {
-		if err := s.db.SetHeartbeatsRetention(r.Context(), *req.HeartbeatsDays); err != nil {
-			s.logger.Error("applying heartbeats retention", zap.Error(err))
-		}
-	}
-	if req.AlertsDays != nil {
-		if err := s.db.SetAlertsRetention(r.Context(), *req.AlertsDays); err != nil {
-			s.logger.Error("applying alerts retention", zap.Error(err))
-		}
-	}
-	if req.SNMPPollsDays != nil {
-		if err := s.db.SetSNMPPollsRetention(r.Context(), *req.SNMPPollsDays); err != nil {
-			s.logger.Error("applying snmp retention", zap.Error(err))
-		}
-	}
-	if req.FlowRecordsDays != nil {
-		if err := s.db.SetFlowRecordsRetention(r.Context(), *req.FlowRecordsDays); err != nil {
-			s.logger.Error("applying flow retention", zap.Error(err))
-		}
-	}
-	if req.TopologyEdgesDays != nil {
-		if err := s.db.SetTopologyEdgesRetention(r.Context(), *req.TopologyEdgesDays); err != nil {
-			s.logger.Error("applying topology retention", zap.Error(err))
-		}
-	}
-
-	policies, err := s.db.GetAllRetentionPolicies(r.Context())
-	if err != nil {
-		s.logger.Error("getting retention policies", zap.Error(err))
-	}
-
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"tenant_id":  tenantID,
-		"settings":   newSettings,
-		"policies":   policies,
-		"message":    "retention settings updated",
-		"updated_at": time.Now(),
+	// mutation endpoint cannot safely call them.
+	writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+		"error":   "tenant retention mutation is not supported",
+		"message": "Physical retention policy modification is a platform-admin operation.",
 	})
+	return
 }
 
 func (s *APIServer) handleListRetentionPolicies(w http.ResponseWriter, r *http.Request) {

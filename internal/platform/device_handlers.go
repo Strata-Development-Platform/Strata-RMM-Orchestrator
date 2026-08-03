@@ -795,8 +795,7 @@ func parseInt(s string, def int) int {
 
 func (s *APIServer) handleGetDeviceRelationships(w http.ResponseWriter, r *http.Request) {
 	mspID, _ := r.Context().Value(ctxKeyMSPID).(string)
-	if mspID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "MSP context required"})
+	if !s.AuthorizeMSPAccess(w, r, mspID) {
 		return
 	}
 
@@ -850,8 +849,7 @@ func (s *APIServer) handleGetDeviceRelationships(w http.ResponseWriter, r *http.
 
 func (s *APIServer) handleCreateDeviceRelationship(w http.ResponseWriter, r *http.Request) {
 	mspID, _ := r.Context().Value(ctxKeyMSPID).(string)
-	if mspID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "MSP context required"})
+	if !s.AuthorizeMSPManage(w, r, mspID) {
 		return
 	}
 
@@ -899,8 +897,7 @@ func (s *APIServer) handleCreateDeviceRelationship(w http.ResponseWriter, r *htt
 
 func (s *APIServer) handleDeleteDeviceRelationship(w http.ResponseWriter, r *http.Request) {
 	mspID, _ := r.Context().Value(ctxKeyMSPID).(string)
-	if mspID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "MSP context required"})
+	if !s.AuthorizeMSPManage(w, r, mspID) {
 		return
 	}
 	relationshipID := r.PathValue("relationshipID")

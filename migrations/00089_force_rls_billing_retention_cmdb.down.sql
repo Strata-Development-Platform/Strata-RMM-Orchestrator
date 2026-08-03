@@ -1,4 +1,4 @@
--- Disable FORCE RLS on billing tables
+-- Disable RLS on billing tables
 ALTER TABLE billing_accounts DISABLE ROW LEVEL SECURITY;
 ALTER TABLE subscriptions DISABLE ROW LEVEL SECURITY;
 ALTER TABLE invoices DISABLE ROW LEVEL SECURITY;
@@ -6,10 +6,10 @@ ALTER TABLE invoice_items DISABLE ROW LEVEL SECURITY;
 ALTER TABLE usage_records DISABLE ROW LEVEL SECURITY;
 ALTER TABLE payment_methods DISABLE ROW LEVEL SECURITY;
 
--- Disable FORCE RLS on retention table
+-- Disable RLS on retention table
 ALTER TABLE tenant_retention_settings DISABLE ROW LEVEL SECURITY;
 
--- Disable FORCE RLS on CMDB tables
+-- Disable RLS on CMDB tables
 ALTER TABLE device_relationships DISABLE ROW LEVEL SECURITY;
 ALTER TABLE network_addresses DISABLE ROW LEVEL SECURITY;
 ALTER TABLE device_packages DISABLE ROW LEVEL SECURITY;
