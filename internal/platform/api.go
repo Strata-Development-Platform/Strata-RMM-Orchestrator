@@ -1923,8 +1923,7 @@ func (s *APIServer) handleUpdateRetention(w http.ResponseWriter, r *http.Request
 	// retention policies are global to a hypertable, so a tenant-level
 	// mutation endpoint cannot safely call them.
 	writeJSON(w, http.StatusServiceUnavailable, map[string]string{
-		"error":   "tenant retention mutation is not supported",
-		
+		"error": "tenant retention mutation is not supported",
 	})
 }
 
