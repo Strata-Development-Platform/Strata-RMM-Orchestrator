@@ -1,6 +1,11 @@
 package platform
 
-import "net/http"
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"net/http"
+)
 
 func canManageMSPAtSelectedScope(authorization AuthorizationResult, mspID string) bool {
 	switch authorization.Selected.Type {
@@ -252,4 +257,54 @@ func (s *APIServer) AuthorizeSiteAccess(w http.ResponseWriter, r *http.Request, 
 
 func writeAuthorizationDenied(w http.ResponseWriter) {
 	http.Error(w, `{"error":"resource not found or access denied"}`, http.StatusNotFound)
+}
+
+// deviceOwnershipInfo holds proven ownership data for a single device row.
+type deviceOwnershipInfo struct {
+	MSPID    string
+	ClientID string
+	SiteID   string
+}
+
+// ValidateDeviceAncestry proves that every referenced device belongs to the
+// authorized MSP and returns their ownership data in one round trip.
+// It is suitable for use inside a transaction that will insert/update
+// cross-referencing CMDB rows.
+// Returns nil if any device is missing or belongs to a different MSP.
+func (s *APIServer) ValidateDeviceAncestry(
+	ctx context.Context,
+	dbx *sql.Conn,
+	deviceIDs []string,
+	authorizedMSPID string,
+) ([]deviceOwnershipInfo, error) {
+	if len(deviceIDs) == 0 {
+		return nil, nil
+	}
+	var owners []deviceOwnershipInfo
+	args := make([]interface{}, len(deviceIDs)+1)
+	for i, id := range deviceIDs {
+		args[i] = id
+	}
+	args[len(deviceIDs)] = authorizedMSPID
+	query := fmt.Sprintf(`
+		SELECT id, msp_id::text, COALESCE(client_id::text,''), COALESCE(site_id::text,'')
+		FROM devices WHERE id = ANY($%d) AND msp_id = $%d::uuid
+	`, len(deviceIDs), len(deviceIDs)+1)
+	rows, err := dbx.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var d deviceOwnershipInfo
+		var id string
+		if err := rows.Scan(&id, &d.MSPID, &d.ClientID, &d.SiteID); err != nil {
+			return nil, err
+		}
+		owners = append(owners, d)
+	}
+	if len(owners) != len(deviceIDs) {
+		return nil, fmt.Errorf("device ancestry validation failed: %d of %d devices not found in MSP scope", len(owners), len(deviceIDs))
+	}
+	return owners, nil
 }

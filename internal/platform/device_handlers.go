@@ -871,9 +871,25 @@ func (s *APIServer) handleCreateDeviceRelationship(w http.ResponseWriter, r *htt
 		return
 	}
 
+	// Validate that both referenced devices belong to the authorized MSP hierarchy.
+	conn, connErr := s.db.DB().Conn(r.Context())
+	if connErr != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "database unavailable"})
+		return
+	}
+	owners, err := s.ValidateDeviceAncestry(r.Context(), conn, []string{req.SourceDeviceID, req.TargetDeviceID}, mspID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": sanitizeDBError(err.Error())})
+		return
+	}
+	if owners == nil || len(owners) != 2 {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "source or target device not found in authorized MSP scope"})
+		return
+	}
+
 	var id string
 	metadataJSON, _ := json.Marshal(req.Metadata)
-	err := s.requestDB(r).QueryRowContext(r.Context(), `
+	err = s.requestDB(r).QueryRowContext(r.Context(), `
 		INSERT INTO device_relationships (msp_id, client_id, site_id, source_device_id, target_device_id, relationship_type, metadata)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (msp_id, source_device_id, target_device_id, relationship_type) DO UPDATE SET
@@ -885,7 +901,7 @@ func (s *APIServer) handleCreateDeviceRelationship(w http.ResponseWriter, r *htt
 		RETURNING id
 	`, mspID, req.ClientID, req.SiteID, req.SourceDeviceID, req.TargetDeviceID, req.RelationshipType, metadataJSON).Scan(&id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": sanitizeDBError(err.Error())})
 		return
 	}
 
@@ -906,7 +922,7 @@ func (s *APIServer) handleDeleteDeviceRelationship(w http.ResponseWriter, r *htt
 		UPDATE device_relationships SET is_active = false WHERE id = $1 AND msp_id = $2
 	`, relationshipID, mspID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": sanitizeDBError(err.Error())})
 		return
 	}
 
@@ -929,7 +945,7 @@ func (s *APIServer) handleGetDeviceDependencies(w http.ResponseWriter, r *http.R
 		ORDER BY created_at DESC
 	`, deviceID, mspID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": sanitizeDBError(err.Error())})
 		return
 	}
 	defer rows.Close()
@@ -942,7 +958,8 @@ func (s *APIServer) handleGetDeviceDependencies(w http.ResponseWriter, r *http.R
 
 		err := rows.Scan(&id, &srcID, &tgtID, &relType, &metadata, &isActive)
 		if err != nil {
-			continue
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to scan relationship"})
+			return
 		}
 
 		dep := map[string]interface{}{
@@ -981,7 +998,7 @@ func (s *APIServer) handleGetDeviceImpact(w http.ResponseWriter, r *http.Request
 		WHERE target_device_id = $1 AND msp_id = $2 AND is_active = true
 	`, deviceID, mspID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": sanitizeDBError(err.Error())})
 		return
 	}
 	defer rows.Close()
@@ -990,7 +1007,8 @@ func (s *APIServer) handleGetDeviceImpact(w http.ResponseWriter, r *http.Request
 	for rows.Next() {
 		var srcID, relType string
 		if err := rows.Scan(&srcID, &relType); err != nil {
-			continue
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to scan relationship"})
+			return
 		}
 		impacted = append(impacted, map[string]interface{}{
 			"affected_device_id": srcID,
@@ -1021,7 +1039,7 @@ func (s *APIServer) handleGetNetworkAddresses(w http.ResponseWriter, r *http.Req
 		ORDER BY created_at DESC
 	`, mspID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": sanitizeDBError(err.Error())})
 		return
 	}
 	defer rows.Close()
@@ -1037,7 +1055,8 @@ func (s *APIServer) handleGetNetworkAddresses(w http.ResponseWriter, r *http.Req
 
 		err := rows.Scan(&id, &deviceID, &ipAddress, &ipFamily, &networkType, &interfaceName, &vlanID, &subnetCIDR, &isPrimary, &createdAt)
 		if err != nil {
-			continue
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to scan network address"})
+			return
 		}
 
 		addr := map[string]interface{}{
@@ -1094,6 +1113,23 @@ func (s *APIServer) handleSubmitNetworkAddress(w http.ResponseWriter, r *http.Re
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "device_id and ip_address required"})
 		return
 	}
+
+	// Validate that the referenced device belongs to the authorized MSP hierarchy.
+	conn, connErr := s.db.DB().Conn(r.Context())
+	if connErr != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "database unavailable"})
+		return
+	}
+	owners, err := s.ValidateDeviceAncestry(r.Context(), conn, []string{req.DeviceID}, mspID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": sanitizeDBError(err.Error())})
+		return
+	}
+	if owners == nil || len(owners) != 1 {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "device not found in authorized MSP scope"})
+		return
+	}
+
 	if req.IPFamily == 0 {
 		req.IPFamily = 4
 	}
@@ -1102,7 +1138,7 @@ func (s *APIServer) handleSubmitNetworkAddress(w http.ResponseWriter, r *http.Re
 	}
 
 	var id string
-	err := s.requestDB(r).QueryRowContext(r.Context(), `
+	err = s.requestDB(r).QueryRowContext(r.Context(), `
 		INSERT INTO network_addresses (msp_id, client_id, site_id, device_id, ip_address, ip_family, network_type, interface_name, vlan_id, subnet_cidr, is_primary)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		ON CONFLICT (device_id, ip_address) DO UPDATE SET
@@ -1117,7 +1153,7 @@ func (s *APIServer) handleSubmitNetworkAddress(w http.ResponseWriter, r *http.Re
 		RETURNING id
 	`, mspID, req.ClientID, req.SiteID, req.DeviceID, req.IPAddress, req.IPFamily, req.NetworkType, req.InterfaceName, req.VlanID, req.SubnetCIDR, req.IsPrimary).Scan(&id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": sanitizeDBError(err.Error())})
 		return
 	}
 
@@ -1142,7 +1178,7 @@ func (s *APIServer) handleGetDevicePackages(w http.ResponseWriter, r *http.Reque
 		ORDER BY created_at DESC
 	`, deviceID, mspID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": sanitizeDBError(err.Error())})
 		return
 	}
 	defer rows.Close()
@@ -1155,7 +1191,8 @@ func (s *APIServer) handleGetDevicePackages(w http.ResponseWriter, r *http.Reque
 
 		err := rows.Scan(&id, &devID, &name, &version, &release, &arch, &source, &installDate, &pkgType, &status, &createdAt)
 		if err != nil {
-			continue
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to scan device package"})
+			return
 		}
 
 		pkg := map[string]interface{}{
@@ -1213,6 +1250,22 @@ func (s *APIServer) handleSubmitDevicePackages(w http.ResponseWriter, r *http.Re
 
 	if len(req.Packages) == 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "packages array required"})
+		return
+	}
+
+	// Validate that the referenced device belongs to the authorized MSP hierarchy.
+	conn, connErr := s.db.DB().Conn(r.Context())
+	if connErr != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "database unavailable"})
+		return
+	}
+	owners, err := s.ValidateDeviceAncestry(r.Context(), conn, []string{deviceID}, mspID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": sanitizeDBError(err.Error())})
+		return
+	}
+	if owners == nil || len(owners) != 1 {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "device not found in authorized MSP scope"})
 		return
 	}
 
@@ -1289,7 +1342,7 @@ func (s *APIServer) handleGetDeviceServices(w http.ResponseWriter, r *http.Reque
 		ORDER BY created_at DESC
 	`, deviceID, mspID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": sanitizeDBError(err.Error())})
 		return
 	}
 	defer rows.Close()
@@ -1302,7 +1355,8 @@ func (s *APIServer) handleGetDeviceServices(w http.ResponseWriter, r *http.Reque
 
 		err := rows.Scan(&id, &devID, &name, &port, &protocol, &state, &procName, &binPath, &createdAt)
 		if err != nil {
-			continue
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to scan device service"})
+			return
 		}
 
 		svc := map[string]interface{}{
@@ -1330,4 +1384,12 @@ func (s *APIServer) handleGetDeviceServices(w http.ResponseWriter, r *http.Reque
 		"services":  services,
 		"count":     len(services),
 	})
+}
+
+// sanitizeDBError prevents database error details from leaking to clients.
+func sanitizeDBError(err string) string {
+	if strings.Contains(err, "pq:") || strings.Contains(err, "sql:") || strings.Contains(err, "driver:") {
+		return "internal server error"
+	}
+	return err
 }

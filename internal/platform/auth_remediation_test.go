@@ -393,11 +393,3 @@ func containsStr(s, substr string) bool {
 	}
 	return false
 }
-
-// sanitizeDBError sanitizes database errors.
-func sanitizeDBError(err string) string {
-	if strings.Contains(err, "pq:") || strings.Contains(err, "sql:") || strings.Contains(err, "driver:") {
-		return "internal server error"
-	}
-	return err
-}

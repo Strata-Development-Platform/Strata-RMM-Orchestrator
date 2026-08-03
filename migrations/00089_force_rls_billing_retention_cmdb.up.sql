@@ -100,10 +100,19 @@ CREATE POLICY "platform_admin_retention_settings" ON tenant_retention_settings F
     USING (current_setting('app.role', true) IN ('platform_owner', 'platform_admin'));
 
 -- RLS policies for CMDB tables (12 policies)
+-- device_relationships: check caller-supplied msp_id AND both referenced devices belong to that MSP
 DROP POLICY IF EXISTS "msp_isolation_device_relationships" ON device_relationships;
 CREATE POLICY "msp_isolation_device_relationships" ON device_relationships FOR ALL
-    USING (msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID)
-    WITH CHECK (msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID);
+    USING (
+        msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID
+        AND EXISTS (SELECT 1 FROM devices WHERE id = device_relationships.source_device_id AND msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID)
+        AND EXISTS (SELECT 1 FROM devices WHERE id = device_relationships.target_device_id AND msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID)
+    )
+    WITH CHECK (
+        msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID
+        AND EXISTS (SELECT 1 FROM devices WHERE id = device_relationships.source_device_id AND msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID)
+        AND EXISTS (SELECT 1 FROM devices WHERE id = device_relationships.target_device_id AND msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID)
+    );
 
 DROP POLICY IF EXISTS "platform_admin_device_relationships" ON device_relationships;
 CREATE POLICY "platform_admin_device_relationships" ON device_relationships FOR ALL
@@ -161,9 +170,11 @@ DROP POLICY IF EXISTS "msp_isolation_topology_edges" ON topology_edges;
 CREATE POLICY "msp_isolation_topology_edges" ON topology_edges FOR ALL
     USING (
         EXISTS (SELECT 1 FROM devices d WHERE d.id = topology_edges.src_device_id AND d.msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID)
+        AND EXISTS (SELECT 1 FROM devices d WHERE d.id = topology_edges.dst_device_id AND d.msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID)
     )
     WITH CHECK (
         EXISTS (SELECT 1 FROM devices d WHERE d.id = topology_edges.src_device_id AND d.msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID)
+        AND EXISTS (SELECT 1 FROM devices d WHERE d.id = topology_edges.dst_device_id AND d.msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID)
     );
 
 DROP POLICY IF EXISTS "platform_admin_topology_edges" ON topology_edges;
