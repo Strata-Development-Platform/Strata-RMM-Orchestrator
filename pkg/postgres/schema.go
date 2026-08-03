@@ -3726,17 +3726,23 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
-CREATE TRIGGER IF NOT EXISTS update_client_auth_providers_updated_at
+DROP TRIGGER IF EXISTS "update_client_auth_providers_updated_at" ON client_auth_providers;
+
+CREATE TRIGGER "update_client_auth_providers_updated_at"
     BEFORE UPDATE ON client_auth_providers
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER IF NOT EXISTS update_client_sessions_updated_at
+DROP TRIGGER IF EXISTS "update_client_sessions_updated_at" ON client_sessions;
+
+CREATE TRIGGER "update_client_sessions_updated_at"
     BEFORE UPDATE ON client_sessions
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER IF NOT EXISTS update_client_portal_settings_updated_at
+DROP TRIGGER IF EXISTS "update_client_portal_settings_updated_at" ON client_portal_settings;
+
+CREATE TRIGGER "update_client_portal_settings_updated_at"
     BEFORE UPDATE ON client_portal_settings
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
@@ -3940,7 +3946,9 @@ CREATE INDEX IF NOT EXISTS idx_client_session_activity_client ON client_session_
 ) INCLUDE (activity_type, created_at);
 
 -- Add trigger to update updated_at
-CREATE TRIGGER IF NOT EXISTS update_client_session_activity_updated_at
+DROP TRIGGER IF EXISTS "update_client_session_activity_updated_at" ON client_session_activity;
+
+CREATE TRIGGER "update_client_session_activity_updated_at"
     BEFORE UPDATE ON client_session_activity
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
