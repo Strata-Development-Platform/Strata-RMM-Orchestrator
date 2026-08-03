@@ -94,6 +94,11 @@ func (de *DiscoveryEngine) runDiscovery(ctx context.Context) {
 	allDevices = append(allDevices, snmpDevices...)
 	de.probe.Logger.Info("SNMP neighbor discovery complete", zap.Int("devices", len(snmpDevices)))
 
+	// Discover via LLDP/CDP (stubs - full topology discovery not implemented)
+	_ = de.discoverLLDPNeighbors()
+	_ = de.discoverCDPNeighbors()
+	_ = de.discoverSTPTopology()
+
 	// Deduplicate and publish
 	deduped := de.deduplicate(allDevices)
 
@@ -604,4 +609,22 @@ func getVendorFromMAC(mac string) string {
 	}
 
 	return "unknown"
+}
+
+// lldpDiscovery discovers LLDP neighbors on local interfaces
+func (de *DiscoveryEngine) discoverLLDPNeighbors() []DiscoveryResult {
+	de.probe.Logger.Info("LLDP neighbor discovery started (stub)")
+	return nil
+}
+
+// cdpDiscovery discovers CDP neighbors on local interfaces
+func (de *DiscoveryEngine) discoverCDPNeighbors() []DiscoveryResult {
+	de.probe.Logger.Info("CDP neighbor discovery started (stub)")
+	return nil
+}
+
+// stpDiscovery discovers STP topology
+func (de *DiscoveryEngine) discoverSTPTopology() []DiscoveryResult {
+	de.probe.Logger.Info("STP topology discovery started (stub)")
+	return nil
 }

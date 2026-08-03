@@ -312,6 +312,9 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /api/v1/thirdparty/packages", s.handleThirdPartyPackages)
 	mux.HandleFunc("POST /api/v1/thirdparty/sync", s.handleThirdPartySync)
 	mux.HandleFunc("POST /api/v1/thirdparty/sync/{app}", s.handleThirdPartySyncApp)
+	mux.HandleFunc("GET /api/v1/thirdparty/vendors", s.handleThirdPartyVendors)
+	mux.HandleFunc("POST /api/v1/thirdparty/vendors/{vendor}/sync", s.handleThirdPartySyncVendor)
+	mux.HandleFunc("GET /api/v1/thirdparty/vendors/status", s.handleThirdPartyVendorStatus)
 
 	mux.HandleFunc("GET /api/v1/patch-policies", s.handleListPatchPolicies)
 	mux.HandleFunc("GET /api/v1/patch-policies/{policyID}", s.handleGetPatchPolicy)
@@ -373,6 +376,16 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("POST /api/v1/remote/{tenantID}/session", s.handleRemoteSessionStart)
 	mux.HandleFunc("POST /api/v1/remote/{tenantID}/session/{sessionID}/input", s.handleRemoteSessionInput)
 	mux.HandleFunc("DELETE /api/v1/remote/{tenantID}/session/{sessionID}", s.handleRemoteSessionStop)
+
+	mux.HandleFunc("POST /api/v1/remote/{tenantID}/interactive", s.handleStartInteractiveSession)
+	mux.HandleFunc("POST /api/v1/remote/{tenantID}/interactive/{sessionID}/input", s.handleInteractiveSessionInput)
+	mux.HandleFunc("DELETE /api/v1/remote/{tenantID}/interactive/{sessionID}", s.handleStopInteractiveSession)
+	mux.HandleFunc("GET /api/v1/remote/{tenantID}/interactive", s.handleListInteractiveSessions)
+
+	mux.HandleFunc("POST /api/v1/remote/{tenantID}/interactive/{sessionID}/recording", s.handleStartInteractiveRecording)
+	mux.HandleFunc("POST /api/v1/remote/{tenantID}/recording/{recordingID}/stop", s.handleStopInteractiveRecording)
+	mux.HandleFunc("GET /api/v1/remote/{tenantID}/recording/{recordingID}/playback", s.handleInteractiveRecordingPlayback)
+	mux.HandleFunc("GET /api/v1/remote/{tenantID}/recordings", s.handleListInteractiveRecordings)
 
 	mux.HandleFunc("GET /api/v1/admin/update/check", s.handleUpdateCheck)
 	mux.HandleFunc("POST /api/v1/admin/update/apply", s.handleUpdateApply)
@@ -489,6 +502,13 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("PATCH /api/v2/clients/{clientID}/profile", s.handleUpdateClientProfile)
 	mux.HandleFunc("GET /api/v2/clients/{clientID}/settings", s.handleGetClientSettings)
 	mux.HandleFunc("PATCH /api/v2/clients/{clientID}/settings", s.handleUpdateClientSettings)
+
+	// v2 API — Client support requests
+	mux.HandleFunc("POST /api/v2/clients/{clientID}/support-requests", s.handleCreateClientSupportRequest)
+	mux.HandleFunc("GET /api/v2/clients/{clientID}/support-requests", s.handleListClientSupportRequests)
+	mux.HandleFunc("GET /api/v2/clients/{clientID}/support-requests/{requestID}", s.handleGetClientSupportRequest)
+	mux.HandleFunc("PATCH /api/v2/clients/{clientID}/support-requests/{requestID}/reply", s.handleReplyToClientSupportRequest)
+	mux.HandleFunc("PATCH /api/v2/clients/{clientID}/support-requests/{requestID}/close", s.handleCloseClientSupportRequest)
 
 	// v2 API — Site management
 	mux.HandleFunc("GET /api/v2/clients/{clientID}/sites", s.handleListSites)
@@ -1382,6 +1402,48 @@ func (s *APIServer) handleThirdPartySyncApp(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"result": result})
+}
+
+func (s *APIServer) handleThirdPartyVendors(w http.ResponseWriter, r *http.Request) {
+	if s.thirdParty == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "third-party engine not available"})
+		return
+	}
+	vendors := s.thirdParty.DiscoverVendors()
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"vendors": vendors,
+		"count":   len(vendors),
+	})
+}
+
+func (s *APIServer) handleThirdPartySyncVendor(w http.ResponseWriter, r *http.Request) {
+	vendor := r.PathValue("vendor")
+	if s.thirdParty == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "third-party engine not available"})
+		return
+	}
+	created, err := s.thirdParty.SyncVendor(r.Context(), vendor)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"vendor":  vendor,
+		"created": created,
+		"count":   len(created),
+	})
+}
+
+func (s *APIServer) handleThirdPartyVendorStatus(w http.ResponseWriter, r *http.Request) {
+	if s.thirdParty == nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "third-party engine not available"})
+		return
+	}
+	status := s.thirdParty.VendorStatus(r.Context())
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status": status,
+		"count":  len(status),
+	})
 }
 
 func (s *APIServer) handleCVEDBStats(w http.ResponseWriter, r *http.Request) {

@@ -130,41 +130,6 @@ func (inj *injector) Close() error {
 	return nil
 }
 
-// Windows implementations
-func injectWindowsMouseMove(x, y float64) error {
-	return nil
-}
-
-func injectWindowsMouseClick(button MouseButtons, down bool) error {
-	return nil
-}
-
-func injectWindowsKey(key string, down bool, mod ModifierKeys) error {
-	return nil
-}
-
-// macOS implementations
-func injectDarwinMouseMove(x, y float64) error {
-	return nil
-}
-
-func injectDarwinMouseClick(button MouseButtons, down bool) error {
-	return nil
-}
-
-func injectDarwinKey(key string, down bool, mod ModifierKeys) error {
-	return nil
-}
-
-// Linux implementations
-func injectLinuxMouseMove(x, y float64) error {
-	return nil
-}
-
-func injectLinuxMouseClick(button MouseButtons, down bool) error {
-	return nil
-}
-
-func injectLinuxKey(key string, down bool, mod ModifierKeys) error {
-	return nil
-}
+// Windows implementations - see capture_windows.go / input_windows.go
+// macOS implementations - see input_darwin.go
+// Linux implementations - see input_linux.go

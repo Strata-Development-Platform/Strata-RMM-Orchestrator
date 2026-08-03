@@ -160,16 +160,25 @@ func (e *ThirdPartyEngine) fetchLatestVersion(ctx context.Context, app ThirdPart
 		return "", err
 	}
 	req.Header.Set("User-Agent", "StrataRMM/1.0")
+	req.Header.Set("Accept", "application/json")
 
 	resp, err := e.httpClient.Do(req)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("HTTP request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("HTTP %d from %s", resp.StatusCode, app.VersionURL)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("read response: %w", err)
+	}
+
+	if len(body) == 0 {
+		return "", fmt.Errorf("empty response body")
 	}
 
 	re := regexp.MustCompile(app.VersionRegex)
@@ -302,4 +311,98 @@ func (e *ThirdPartyEngine) SyncApp(ctx context.Context, appName string) (string,
 		}
 	}
 	return "", fmt.Errorf("app not found: %s", appName)
+}
+
+// Vendor represents a third-party software vendor
+type Vendor struct {
+	Name     string   `json:"name"`
+	URL      string   `json:"url"`
+	Apps     []string `json:"apps"`
+	Platform string   `json:"platform"`
+	Active   bool     `json:"active"`
+	LastSync string   `json:"last_sync,omitempty"`
+}
+
+// DiscoverVendors returns all vendors from the app catalog
+func (e *ThirdPartyEngine) DiscoverVendors() []Vendor {
+	vendorMap := make(map[string]*Vendor)
+
+	for _, app := range ThirdPartyApps {
+		if _, exists := vendorMap[app.Vendor]; !exists {
+			vendorMap[app.Vendor] = &Vendor{
+				Name:     app.Vendor,
+				Platform: app.Platform,
+				Active:   true,
+			}
+		}
+		vendorMap[app.Vendor].Apps = append(vendorMap[app.Vendor].Apps, app.Name)
+	}
+
+	vendors := make([]Vendor, 0, len(vendorMap))
+	for _, v := range vendorMap {
+		vendors = append(vendors, *v)
+	}
+
+	return vendors
+}
+
+// SyncVendor syncs all apps from a specific vendor
+func (e *ThirdPartyEngine) SyncVendor(ctx context.Context, vendorName string) ([]string, error) {
+	var created []string
+
+	for _, app := range ThirdPartyApps {
+		if !strings.EqualFold(app.Vendor, vendorName) {
+			continue
+		}
+
+		version, err := e.fetchLatestVersion(ctx, app)
+		if err != nil {
+			e.logger.Warn("fetch vendor app version",
+				zap.String("vendor", vendorName),
+				zap.String("app", app.Name),
+				zap.Error(err))
+			continue
+		}
+
+		exists, err := e.packageExists(ctx, app.Name, version)
+		if err != nil || exists {
+			continue
+		}
+
+		url := e.buildDownloadURL(app, version)
+		if url == "" {
+			continue
+		}
+
+		if err := e.createPackage(ctx, app, version, url); err != nil {
+			e.logger.Warn("create vendor package",
+				zap.String("vendor", vendorName),
+				zap.String("app", app.Name),
+				zap.Error(err))
+			continue
+		}
+
+		created = append(created, fmt.Sprintf("%s %s", app.Name, version))
+	}
+
+	return created, nil
+}
+
+// VendorStatus returns the sync status of all vendors
+func (e *ThirdPartyEngine) VendorStatus(ctx context.Context) []map[string]interface{} {
+	vendors := e.DiscoverVendors()
+	status := make([]map[string]interface{}, 0, len(vendors))
+
+	for _, v := range vendors {
+		status = append(status, map[string]interface{}{
+			"name":      v.Name,
+			"platform":  v.Platform,
+			"active":    v.Active,
+			"apps":      v.Apps,
+			"app_count": len(v.Apps),
+			"last_sync": v.LastSync,
+		})
+	}
+
+	return status
 }
