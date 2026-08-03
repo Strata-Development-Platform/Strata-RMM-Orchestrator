@@ -3,8 +3,9 @@ DROP INDEX IF EXISTS idx_client_sessions_mfa_verified;
 DROP INDEX IF EXISTS idx_client_sessions_active;
 
 -- Remove enhanced columns from client_auth_providers
+-- Note: DO NOT drop client_id — it was created by migration 86 as UUID FK.
 ALTER TABLE client_auth_providers DROP COLUMN IF EXISTS issuer;
-ALTER TABLE client_auth_providers DROP COLUMN IF EXISTS client_id;
+ALTER TABLE client_auth_providers DROP COLUMN IF EXISTS oauth_client_id;
 ALTER TABLE client_auth_providers DROP COLUMN IF EXISTS scope;
 ALTER TABLE client_auth_providers DROP COLUMN IF EXISTS mapping;
 ALTER TABLE client_auth_providers DROP COLUMN IF EXISTS auto_provision;

@@ -1,6 +1,13 @@
 package platform
 
-import "net/http"
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"net/http"
+
+	"github.com/lib/pq"
+)
 
 func canManageMSPAtSelectedScope(authorization AuthorizationResult, mspID string) bool {
 	switch authorization.Selected.Type {
@@ -154,6 +161,18 @@ func (s *APIServer) authorizeSiteManage(w http.ResponseWriter, r *http.Request, 
 	return mspID, true
 }
 
+// AuthorizeClientManage requires a managing role effective in the exact selected
+// client, MSP, or a top-level platform administrator. A child selection never
+// manages its parent.
+func (s *APIServer) AuthorizeClientManage(w http.ResponseWriter, r *http.Request, clientID string) bool {
+	if clientID == "" || s.db == nil {
+		writeAuthorizationDenied(w)
+		return false
+	}
+	_, ok := s.authorizeClientManage(w, r, clientID)
+	return ok
+}
+
 // AuthorizeClientAccess authorizes only a client selected directly, or a parent
 // platform/MSP scope whose active hierarchy contains that client.
 func (s *APIServer) AuthorizeClientAccess(w http.ResponseWriter, r *http.Request, clientID string) bool {
@@ -240,4 +259,64 @@ func (s *APIServer) AuthorizeSiteAccess(w http.ResponseWriter, r *http.Request, 
 
 func writeAuthorizationDenied(w http.ResponseWriter) {
 	http.Error(w, `{"error":"resource not found or access denied"}`, http.StatusNotFound)
+}
+
+// deviceOwnershipInfo holds proven ownership data for a single device row.
+type deviceOwnershipInfo struct {
+	MSPID    string
+	ClientID string
+	SiteID   string
+}
+
+// ValidateDeviceAncestry proves that every referenced device belongs to the
+// authorized MSP and returns their ownership data in one round trip.
+// It accepts a *sql.Tx for transaction-scoped execution so that ancestry
+// validation and the subsequent mutation share the same transaction and RLS
+// context.  A *sql.Conn is also accepted for standalone callers.
+// Uses a single UUID-array parameter ($1::uuid[]) and an MSP-ID parameter ($2::uuid).
+// Returns nil if any device is missing or belongs to a different MSP.
+func (s *APIServer) ValidateDeviceAncestry(
+	ctx context.Context,
+	dbx interface {
+		QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
+	},
+	deviceIDs []string,
+	authorizedMSPID string,
+) ([]deviceOwnershipInfo, error) {
+	if len(deviceIDs) == 0 {
+		return nil, nil
+	}
+	// Deduplicate the requested IDs so that row-count comparison is meaningful.
+	seen := make(map[string]bool, len(deviceIDs))
+	unique := make([]string, 0, len(deviceIDs))
+	for _, id := range deviceIDs {
+		if !seen[id] {
+			seen[id] = true
+			unique = append(unique, id)
+		}
+	}
+	rows, err := dbx.QueryContext(ctx, `
+		SELECT id, msp_id::text, COALESCE(client_id::text,''), COALESCE(site_id::text,'')
+		FROM devices WHERE id = ANY($1::uuid[]) AND msp_id = $2::uuid
+	`, pq.Array(unique), authorizedMSPID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var owners []deviceOwnershipInfo
+	for rows.Next() {
+		var d deviceOwnershipInfo
+		var id string
+		if err := rows.Scan(&id, &d.MSPID, &d.ClientID, &d.SiteID); err != nil {
+			return nil, err
+		}
+		owners = append(owners, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(owners) != len(unique) {
+		return nil, fmt.Errorf("device ancestry validation failed: %d of %d devices not found in MSP scope", len(owners), len(unique))
+	}
+	return owners, nil
 }

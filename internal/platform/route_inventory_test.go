@@ -352,14 +352,17 @@ func TestRouteInventoryComplete(t *testing.T) {
 
 	if len(unclassified) > 0 {
 		t.Errorf("%d route(s) are not in any classification table and are not in a privileged namespace. "+
-			"These would default to AccessAdmin. Add each to the appropriate route function:\n  %s",
+			"These would default to AccessDenied (fail-closed). Add each to the appropriate route function:\n  %s",
 			len(unclassified), strings.Join(unclassified, "\n  "))
 	}
 
-	// Sanity: ensure the classification actually enforces a non-public default.
+	// Sanity: ensure the classification actually enforces AccessDenied for unknown routes.
 	srv := &APIServer{}
-	if srv.classifyRoute("GET", "/api/v1/unknown/route") != AccessAdmin {
-		t.Error("classifyRoute should return AccessAdmin for unknown routes outside privileged namespaces")
+	if srv.classifyRoute("GET", "/api/v1/unknown/route") != AccessDenied {
+		t.Error("classifyRoute should return AccessDenied for unknown routes outside privileged namespaces")
+	}
+	if srv.classifyRoute("GET", "/api/v2/platform/unknown") != AccessDenied {
+		t.Error("classifyRoute should return AccessDenied for unknown routes in privileged namespaces")
 	}
 }
 
@@ -385,10 +388,14 @@ func TestRouteClassificationConsistency(t *testing.T) {
 		}
 		seen[key] = i
 	}
+
+	// AccessDenied is not expected in classification tables — it is the implicit
+	// default returned by classifyRoute for unregistered routes.  A table entry
+	// with AccessDenied would be confusing and should be avoided.
 }
 
 // TestAccessControlDefaultsToAdmin verifies that a request to an unknown route
-// is denied when the default is AccessAdmin and no valid admin token is present.
+// is denied even when a valid admin token is present (fail-closed).
 func TestAccessControlDefaultsToAdmin(t *testing.T) {
 	s := &APIServer{
 		allowClaimPrincipal: true,
@@ -401,7 +408,38 @@ func TestAccessControlDefaultsToAdmin(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})).ServeHTTP(w, r)
 
-	if w.Code != http.StatusUnauthorized && w.Code != http.StatusForbidden {
-		t.Errorf("expected 401 or 403 for unknown route without admin token, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403 for unknown route (fail-closed), got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "unclassified") {
+		t.Errorf("expected 'unclassified route' error message, got: %s", w.Body.String())
+	}
+}
+
+// TestAccessControlPrivilegedNamespaceFailClosed verifies that unknown routes
+// inside privileged namespaces (/api/v1/admin/, /api/v2/platform/,
+// /api/v2/deployment/) also return 403.
+func TestAccessControlPrivilegedNamespaceFailClosed(t *testing.T) {
+	s := &APIServer{
+		allowClaimPrincipal: true,
+	}
+
+	privilegedPaths := []string{
+		"/api/v1/admin/unknown",
+		"/api/v2/platform/unknown",
+		"/api/v2/deployment/unknown",
+	}
+
+	for _, path := range privilegedPaths {
+		r := httptest.NewRequest("GET", path, nil)
+		w := httptest.NewRecorder()
+
+		s.withAccessControl(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})).ServeHTTP(w, r)
+
+		if w.Code != http.StatusForbidden {
+			t.Errorf("expected 403 for unclassified route %s, got %d: %s", path, w.Code, w.Body.String())
+		}
 	}
 }

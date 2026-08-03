@@ -29,39 +29,49 @@ func TestBearerTokenExtraction(t *testing.T) {
 }
 
 func TestProtectedRoutesRejectMissingCredentials(t *testing.T) {
-	protected := []string{
-		"/api/v1/auth/me",
-		"/api/v1/platform/overview",
-		"/api/v1/platform/customers",
-		"/api/v1/admin/users",
-		"/api/v1/branding",
-		"/api/v1/jobs",
-		"/api/v1/policies",
-		"/api/v1/device-groups",
-		"/api/v1/maintenance-windows",
-		"/api/v1/scripts/00000000-0000-0000-0000-000000000001",
-		"/api/v1/software/packages/00000000-0000-0000-0000-000000000001",
-		"/api/v1/alerts/00000000-0000-0000-0000-000000000001",
-		"/api/v1/reports/00000000-0000-0000-0000-000000000001",
-		"/api/v1/remote/00000000-0000-0000-0000-000000000001/session",
-		"/api/v1/keys/00000000-0000-0000-0000-000000000001",
-		"/api/v1/access/audit/00000000-0000-0000-0000-000000000001",
-		"/api/v1/mfa/status/00000000-0000-0000-0000-000000000010",
-		"/api/v1/recordings/00000000-0000-0000-0000-000000000001",
-		"/api/v1/cve/stats",
-		"/api/v1/thirdparty/apps",
-		"/api/v1/enrollment/tokens",
+	// Protected routes require authentication. Each entry specifies the HTTP
+	// method used in the route inventory so that the test exercises a route
+	// that is actually registered.
+	type protectedRoute struct {
+		method string
+		path   string
 	}
-	for _, path := range protected {
-		t.Run("GET "+path, func(t *testing.T) {
-			req := httptest.NewRequest("GET", path, nil)
+	protected := []protectedRoute{
+		{"GET", "/api/v1/auth/me"},
+		{"GET", "/api/v1/platform/overview"},
+		{"GET", "/api/v1/platform/customers"},
+		{"GET", "/api/v1/admin/users"},
+		{"GET", "/api/v1/branding"},
+		{"GET", "/api/v1/jobs"},
+		{"GET", "/api/v1/policies"},
+		{"GET", "/api/v1/device-groups"},
+		{"GET", "/api/v1/maintenance-windows"},
+		{"GET", "/api/v1/scripts/00000000-0000-0000-0000-000000000001"},
+		{"GET", "/api/v1/software/packages/00000000-0000-0000-0000-000000000001"},
+		{"GET", "/api/v1/alerts/00000000-0000-0000-0000-000000000001"},
+		{"GET", "/api/v1/reports/00000000-0000-0000-0000-000000000001"},
+		{"POST", "/api/v1/remote/00000000-0000-0000-0000-000000000001/session"},
+		{"GET", "/api/v1/keys/00000000-0000-0000-0000-000000000001"},
+		{"GET", "/api/v1/access/audit/00000000-0000-0000-0000-000000000001"},
+		{"GET", "/api/v1/mfa/status/00000000-0000-0000-0000-000000000010"},
+		{"GET", "/api/v1/recordings/00000000-0000-0000-0000-000000000001"},
+		{"GET", "/api/v1/cve/stats"},
+		{"GET", "/api/v1/thirdparty/apps"},
+		{"GET", "/api/v1/enrollment/tokens"},
+	}
+	for _, r := range protected {
+		t.Run(r.method+" "+r.path, func(t *testing.T) {
+			req := httptest.NewRequest(r.method, r.path, nil)
+			if r.method == "POST" {
+				req.Body = http.NoBody
+			}
 			w := httptest.NewRecorder()
 			s := &APIServer{}
 			s.withAccessControl(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
 			})).ServeHTTP(w, req)
 			if w.Code != http.StatusUnauthorized {
-				t.Errorf("%s: expected 401, got %d", path, w.Code)
+				t.Errorf("%s %s: expected 401, got %d", r.method, r.path, w.Code)
 			}
 		})
 	}
@@ -188,8 +198,8 @@ func TestPrivilegedNamespacesFailClosed(t *testing.T) {
 		"/api/v2/platform/future-operation",
 		"/api/v2/deployment/future-operation",
 	} {
-		if got := s.classifyRoute(http.MethodPost, path); got != AccessAdmin {
-			t.Errorf("POST %s classified as %v, want AccessAdmin", path, got)
+		if got := s.classifyRoute(http.MethodPost, path); got != AccessDenied {
+			t.Errorf("POST %s classified as %v, want AccessDenied (fail-closed)", path, got)
 		}
 	}
 }

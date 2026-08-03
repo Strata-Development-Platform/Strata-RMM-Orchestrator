@@ -1,6 +1,8 @@
 -- Add provider configuration columns for enhanced SSO support
+-- Note: migration 86 creates client_id UUID NOT NULL REFERENCES client_organizations(id).
+-- This column adds oauth_client_id (TEXT) for OAuth provider client identifiers.
 ALTER TABLE client_auth_providers ADD COLUMN IF NOT EXISTS issuer TEXT;
-ALTER TABLE client_auth_providers ADD COLUMN IF NOT EXISTS client_id TEXT;
+ALTER TABLE client_auth_providers ADD COLUMN IF NOT EXISTS oauth_client_id TEXT;
 ALTER TABLE client_auth_providers ADD COLUMN IF NOT EXISTS scope TEXT DEFAULT 'openid profile email';
 ALTER TABLE client_auth_providers ADD COLUMN IF NOT EXISTS mapping JSONB DEFAULT '{}';
 ALTER TABLE client_auth_providers ADD COLUMN IF NOT EXISTS auto_provision BOOLEAN DEFAULT false;

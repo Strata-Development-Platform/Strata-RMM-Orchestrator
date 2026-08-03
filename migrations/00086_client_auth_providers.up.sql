@@ -73,98 +73,153 @@ ALTER TABLE client_auth_providers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE client_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE client_portal_settings ENABLE ROW LEVEL SECURITY;
 
--- RLS policies for client_auth_providers
-CREATE POLICY IF NOT EXISTS "Users can read auth providers for their client"
-    ON client_auth_providers FOR SELECT
-    USING (
-        EXISTS (
-            SELECT 1 FROM client_organizations c
-            WHERE c.id = client_auth_providers.client_id
-            AND (
-                c.id = NULLIF(current_setting('app.client_id', true), '')::UUID
-                OR c.msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID
-            )
-        )
-    );
+-- RLS policies for client_auth_providers (use DO blocks because PostgreSQL
+-- does not support IF NOT EXISTS for CREATE POLICY)
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies WHERE policyname = 'Users can read auth providers for their client' AND tablename = 'client_auth_providers'
+    ) THEN
+        CREATE POLICY "Users can read auth providers for their client"
+            ON client_auth_providers FOR SELECT
+            USING (
+                EXISTS (
+                    SELECT 1 FROM client_organizations c
+                    WHERE c.id = client_auth_providers.client_id
+                    AND (
+                        c.id = NULLIF(current_setting('app.client_id', true), '')::UUID
+                        OR c.msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID
+                    )
+                )
+            );
+    END IF;
+END $$;
 
-CREATE POLICY IF NOT EXISTS "Platform admins can manage all auth providers"
-    ON client_auth_providers FOR ALL
-    USING (
-        current_setting('app.role', true) IN ('platform_owner', 'platform_admin')
-    );
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies WHERE policyname = 'Platform admins can manage all auth providers' AND tablename = 'client_auth_providers'
+    ) THEN
+        CREATE POLICY "Platform admins can manage all auth providers"
+            ON client_auth_providers FOR ALL
+            USING (
+                current_setting('app.role', true) IN ('platform_owner', 'platform_admin')
+            );
+    END IF;
+END $$;
 
-CREATE POLICY IF NOT EXISTS "MSP admins can manage auth providers for their MSP clients"
-    ON client_auth_providers FOR ALL
-    USING (
-        EXISTS (
-            SELECT 1 FROM client_organizations c
-            WHERE c.id = client_auth_providers.client_id
-            AND c.msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID
-        )
-    );
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies WHERE policyname = 'MSP admins can manage auth providers for their MSP clients' AND tablename = 'client_auth_providers'
+    ) THEN
+        CREATE POLICY "MSP admins can manage auth providers for their MSP clients"
+            ON client_auth_providers FOR ALL
+            USING (
+                EXISTS (
+                    SELECT 1 FROM client_organizations c
+                    WHERE c.id = client_auth_providers.client_id
+                    AND c.msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID
+                )
+            );
+    END IF;
+END $$;
 
 -- RLS policies for client_sessions
-CREATE POLICY IF NOT EXISTS "Users can read sessions for their client"
-    ON client_sessions FOR SELECT
-    USING (
-        EXISTS (
-            SELECT 1 FROM client_organizations c
-            WHERE c.id = client_sessions.client_id
-            AND (
-                c.id = NULLIF(current_setting('app.client_id', true), '')::UUID
-                OR c.msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID
-            )
-        )
-    );
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies WHERE policyname = 'Users can read sessions for their client' AND tablename = 'client_sessions'
+    ) THEN
+        CREATE POLICY "Users can read sessions for their client"
+            ON client_sessions FOR SELECT
+            USING (
+                EXISTS (
+                    SELECT 1 FROM client_organizations c
+                    WHERE c.id = client_sessions.client_id
+                    AND (
+                        c.id = NULLIF(current_setting('app.client_id', true), '')::UUID
+                        OR c.msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID
+                    )
+                )
+            );
+    END IF;
+END $$;
 
-CREATE POLICY IF NOT EXISTS "Users can manage their own sessions"
-    ON client_sessions FOR ALL
-    USING (
-        EXISTS (
-            SELECT 1 FROM client_organizations c
-            WHERE c.id = client_sessions.client_id
-            AND (
-                c.id = NULLIF(current_setting('app.client_id', true), '')::UUID
-                OR c.msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID
-            )
-        )
-    );
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies WHERE policyname = 'Users can manage their own sessions' AND tablename = 'client_sessions'
+    ) THEN
+        CREATE POLICY "Users can manage their own sessions"
+            ON client_sessions FOR ALL
+            USING (
+                EXISTS (
+                    SELECT 1 FROM client_organizations c
+                    WHERE c.id = client_sessions.client_id
+                    AND (
+                        c.id = NULLIF(current_setting('app.client_id', true), '')::UUID
+                        OR c.msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID
+                    )
+                )
+            );
+    END IF;
+END $$;
 
-CREATE POLICY IF NOT EXISTS "Platform admins can manage all sessions"
-    ON client_sessions FOR ALL
-    USING (
-        current_setting('app.role', true) IN ('platform_owner', 'platform_admin')
-    );
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies WHERE policyname = 'Platform admins can manage all sessions' AND tablename = 'client_sessions'
+    ) THEN
+        CREATE POLICY "Platform admins can manage all sessions"
+            ON client_sessions FOR ALL
+            USING (
+                current_setting('app.role', true) IN ('platform_owner', 'platform_admin')
+            );
+    END IF;
+END $$;
 
 -- RLS policies for client_portal_settings
-CREATE POLICY IF NOT EXISTS "Users can read portal settings for their client"
-    ON client_portal_settings FOR SELECT
-    USING (
-        EXISTS (
-            SELECT 1 FROM client_organizations c
-            WHERE c.id = client_portal_settings.client_id
-            AND (
-                c.id = NULLIF(current_setting('app.client_id', true), '')::UUID
-                OR c.msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID
-            )
-        )
-    );
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies WHERE policyname = 'Users can read portal settings for their client' AND tablename = 'client_portal_settings'
+    ) THEN
+        CREATE POLICY "Users can read portal settings for their client"
+            ON client_portal_settings FOR SELECT
+            USING (
+                EXISTS (
+                    SELECT 1 FROM client_organizations c
+                    WHERE c.id = client_portal_settings.client_id
+                    AND (
+                        c.id = NULLIF(current_setting('app.client_id', true), '')::UUID
+                        OR c.msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID
+                    )
+                )
+            );
+    END IF;
+END $$;
 
-CREATE POLICY IF NOT EXISTS "Platform admins can manage all portal settings"
-    ON client_portal_settings FOR ALL
-    USING (
-        current_setting('app.role', true) IN ('platform_owner', 'platform_admin')
-    );
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies WHERE policyname = 'Platform admins can manage all portal settings' AND tablename = 'client_portal_settings'
+    ) THEN
+        CREATE POLICY "Platform admins can manage all portal settings"
+            ON client_portal_settings FOR ALL
+            USING (
+                current_setting('app.role', true) IN ('platform_owner', 'platform_admin')
+            );
+    END IF;
+END $$;
 
-CREATE POLICY IF NOT EXISTS "MSP admins can manage portal settings for their MSP clients"
-    ON client_portal_settings FOR ALL
-    USING (
-        EXISTS (
-            SELECT 1 FROM client_organizations c
-            WHERE c.id = client_portal_settings.client_id
-            AND c.msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID
-        )
-    );
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies WHERE policyname = 'MSP admins can manage portal settings for their MSP clients' AND tablename = 'client_portal_settings'
+    ) THEN
+        CREATE POLICY "MSP admins can manage portal settings for their MSP clients"
+            ON client_portal_settings FOR ALL
+            USING (
+                EXISTS (
+                    SELECT 1 FROM client_organizations c
+                    WHERE c.id = client_portal_settings.client_id
+                    AND c.msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID
+                )
+            );
+    END IF;
+END $$;
 
 -- Update updated_at trigger for all tables
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -175,17 +230,37 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
-CREATE TRIGGER IF NOT EXISTS update_client_auth_providers_updated_at
-    BEFORE UPDATE ON client_auth_providers
-    FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at_column();
+-- Create triggers (use DO blocks because PostgreSQL does not support
+-- IF NOT EXISTS for CREATE TRIGGER)
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger WHERE tgname = 'update_client_auth_providers_updated_at'
+    ) THEN
+        CREATE TRIGGER "update_client_auth_providers_updated_at"
+            BEFORE UPDATE ON client_auth_providers
+            FOR EACH ROW
+            EXECUTE FUNCTION update_updated_at_column();
+    END IF;
+END $$;
 
-CREATE TRIGGER IF NOT EXISTS update_client_sessions_updated_at
-    BEFORE UPDATE ON client_sessions
-    FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at_column();
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger WHERE tgname = 'update_client_sessions_updated_at'
+    ) THEN
+        CREATE TRIGGER "update_client_sessions_updated_at"
+            BEFORE UPDATE ON client_sessions
+            FOR EACH ROW
+            EXECUTE FUNCTION update_updated_at_column();
+    END IF;
+END $$;
 
-CREATE TRIGGER IF NOT EXISTS update_client_portal_settings_updated_at
-    BEFORE UPDATE ON client_portal_settings
-    FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at_column();
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger WHERE tgname = 'update_client_portal_settings_updated_at'
+    ) THEN
+        CREATE TRIGGER "update_client_portal_settings_updated_at"
+            BEFORE UPDATE ON client_portal_settings
+            FOR EACH ROW
+            EXECUTE FUNCTION update_updated_at_column();
+    END IF;
+END $$;

@@ -13,35 +13,35 @@ import (
 
 // Auth Provider Types
 const (
-	AuthProviderGoogle      = "google"
-	AuthProviderMicrosoft   = "microsoft"
-	AuthProviderOkta        = "okta"
-	AuthProviderGitHub      = "github"
-	AuthProviderGitLab      = "gitlab"
-	AuthProviderSAML        = "saml"
+	AuthProviderGoogle    = "google"
+	AuthProviderMicrosoft = "microsoft"
+	AuthProviderOkta      = "okta"
+	AuthProviderGitHub    = "github"
+	AuthProviderGitLab    = "gitlab"
+	AuthProviderSAML      = "saml"
 )
 
 // Auth Provider Request/Response Types
 type authProvider struct {
-	ID              string         `json:"id"`
-	ClientID        string         `json:"client_id"`
-	ProviderName    string         `json:"provider_name"`
-	ProviderID      string         `json:"provider_id"`
-	DisplayName     string         `json:"display_name,omitempty"`
-	RedirectURI     string         `json:"redirect_uri"`
-	IsActive        bool           `json:"is_active"`
-	Settings        json.RawMessage `json:"settings,omitempty"`
-	CreatedAt       time.Time      `json:"created_at"`
-	UpdatedAt       time.Time      `json:"updated_at"`
+	ID           string          `json:"id"`
+	ClientID     string          `json:"client_id"`
+	ProviderName string          `json:"provider_name"`
+	ProviderID   string          `json:"provider_id"`
+	DisplayName  string          `json:"display_name,omitempty"`
+	RedirectURI  string          `json:"redirect_uri"`
+	IsActive     bool            `json:"is_active"`
+	Settings     json.RawMessage `json:"settings,omitempty"`
+	CreatedAt    time.Time       `json:"created_at"`
+	UpdatedAt    time.Time       `json:"updated_at"`
 }
 
 type createAuthProviderRequest struct {
-	ProviderName string         `json:"provider_name" validate:"required,oneof=google microsoft okta github gitlab saml"`
-	ProviderID   string         `json:"provider_id" validate:"required"`
-	ClientSecret string         `json:"client_secret" validate:"required"`
-	RedirectURI  string         `json:"redirect_uri" validate:"required"`
+	ProviderName string          `json:"provider_name" validate:"required,oneof=google microsoft okta github gitlab saml"`
+	ProviderID   string          `json:"provider_id" validate:"required"`
+	ClientSecret string          `json:"client_secret" validate:"required"`
+	RedirectURI  string          `json:"redirect_uri" validate:"required"`
 	Settings     json.RawMessage `json:"settings,omitempty"`
-	IsActive     bool           `json:"is_active,omitempty"`
+	IsActive     bool            `json:"is_active,omitempty"`
 }
 
 type listAuthProvidersResponse struct {
@@ -79,15 +79,15 @@ type listSessionsResponse struct {
 
 // Client Profile Types
 type clientProfile struct {
-	ID                    string         `json:"id"`
-	MSPID                 string         `json:"msp_id"`
-	Name                  string         `json:"name"`
-	Slug                  string         `json:"slug"`
-	DisplayName           string         `json:"display_name"`
-	IsActive              bool           `json:"is_active"`
-	CreatedAt             time.Time      `json:"created_at"`
-	UpdatedAt             time.Time      `json:"updated_at"`
-	Settings              *clientSettings `json:"settings,omitempty"`
+	ID          string          `json:"id"`
+	MSPID       string          `json:"msp_id"`
+	Name        string          `json:"name"`
+	Slug        string          `json:"slug"`
+	DisplayName string          `json:"display_name"`
+	IsActive    bool            `json:"is_active"`
+	CreatedAt   time.Time       `json:"created_at"`
+	UpdatedAt   time.Time       `json:"updated_at"`
+	Settings    *clientSettings `json:"settings,omitempty"`
 }
 
 type updateClientProfileRequest struct {
@@ -98,49 +98,49 @@ type updateClientProfileRequest struct {
 
 // Portal Settings Types
 type clientSettings struct {
-	ID                              string         `json:"id"`
-	ClientID                        string         `json:"client_id"`
-	AllowSelfRegistration           bool           `json:"allow_self_registration"`
-	SelfRegistrationDomains         []string       `json:"self_registration_domains"`
-	EnableSSO                       bool           `json:"enable_sso"`
-	EnablePasswordLogin             bool           `json:"enable_password_login"`
-	BrandingOverride                json.RawMessage `json:"branding_override,omitempty"`
-	WelcomeMessage                  string         `json:"welcome_message,omitempty"`
-	SupportEmail                    string         `json:"support_email,omitempty"`
-	SupportPhone                    string         `json:"support_phone,omitempty"`
-	SupportURL                      string         `json:"support_url,omitempty"`
-	LogoURL                         string         `json:"logo_url,omitempty"`
-	FaviconURL                      string         `json:"favicon_url,omitempty"`
-	PrimaryColor                    string         `json:"primary_color,omitempty"`
-	AccentColor                     string         `json:"accent_color,omitempty"`
-	SidebarBg                       string         `json:"sidebar_bg,omitempty"`
-	HeaderBg                        string         `json:"header_bg,omitempty"`
-	LoginBg                         string         `json:"login_bg,omitempty"`
-	PortalTitle                     string         `json:"portal_title,omitempty"`
-	WelcomeText                     string         `json:"welcome_text,omitempty"`
-	CreatedAt                       time.Time      `json:"created_at"`
-	UpdatedAt                       time.Time      `json:"updated_at"`
+	ID                      string          `json:"id"`
+	ClientID                string          `json:"client_id"`
+	AllowSelfRegistration   bool            `json:"allow_self_registration"`
+	SelfRegistrationDomains []string        `json:"self_registration_domains"`
+	EnableSSO               bool            `json:"enable_sso"`
+	EnablePasswordLogin     bool            `json:"enable_password_login"`
+	BrandingOverride        json.RawMessage `json:"branding_override,omitempty"`
+	WelcomeMessage          string          `json:"welcome_message,omitempty"`
+	SupportEmail            string          `json:"support_email,omitempty"`
+	SupportPhone            string          `json:"support_phone,omitempty"`
+	SupportURL              string          `json:"support_url,omitempty"`
+	LogoURL                 string          `json:"logo_url,omitempty"`
+	FaviconURL              string          `json:"favicon_url,omitempty"`
+	PrimaryColor            string          `json:"primary_color,omitempty"`
+	AccentColor             string          `json:"accent_color,omitempty"`
+	SidebarBg               string          `json:"sidebar_bg,omitempty"`
+	HeaderBg                string          `json:"header_bg,omitempty"`
+	LoginBg                 string          `json:"login_bg,omitempty"`
+	PortalTitle             string          `json:"portal_title,omitempty"`
+	WelcomeText             string          `json:"welcome_text,omitempty"`
+	CreatedAt               time.Time       `json:"created_at"`
+	UpdatedAt               time.Time       `json:"updated_at"`
 }
 
 type updatePortalSettingsRequest struct {
-	AllowSelfRegistration    bool           `json:"allow_self_registration,omitempty"`
-	SelfRegistrationDomains  []string       `json:"self_registration_domains,omitempty"`
-	EnableSSO                bool           `json:"enable_sso,omitempty"`
-	EnablePasswordLogin      bool           `json:"enable_password_login,omitempty"`
-	BrandingOverride         json.RawMessage `json:"branding_override,omitempty"`
-	WelcomeMessage           string         `json:"welcome_message,omitempty"`
-	SupportEmail             string         `json:"support_email,omitempty"`
-	SupportPhone             string         `json:"support_phone,omitempty"`
-	SupportURL               string         `json:"support_url,omitempty"`
-	LogoURL                  string         `json:"logo_url,omitempty"`
-	FaviconURL               string         `json:"favicon_url,omitempty"`
-	PrimaryColor             string         `json:"primary_color,omitempty"`
-	AccentColor              string         `json:"accent_color,omitempty"`
-	SidebarBg                string         `json:"sidebar_bg,omitempty"`
-	HeaderBg                 string         `json:"header_bg,omitempty"`
-	LoginBg                  string         `json:"login_bg,omitempty"`
-	PortalTitle              string         `json:"portal_title,omitempty"`
-	WelcomeText              string         `json:"welcome_text,omitempty"`
+	AllowSelfRegistration   bool            `json:"allow_self_registration,omitempty"`
+	SelfRegistrationDomains []string        `json:"self_registration_domains,omitempty"`
+	EnableSSO               bool            `json:"enable_sso,omitempty"`
+	EnablePasswordLogin     bool            `json:"enable_password_login,omitempty"`
+	BrandingOverride        json.RawMessage `json:"branding_override,omitempty"`
+	WelcomeMessage          string          `json:"welcome_message,omitempty"`
+	SupportEmail            string          `json:"support_email,omitempty"`
+	SupportPhone            string          `json:"support_phone,omitempty"`
+	SupportURL              string          `json:"support_url,omitempty"`
+	LogoURL                 string          `json:"logo_url,omitempty"`
+	FaviconURL              string          `json:"favicon_url,omitempty"`
+	PrimaryColor            string          `json:"primary_color,omitempty"`
+	AccentColor             string          `json:"accent_color,omitempty"`
+	SidebarBg               string          `json:"sidebar_bg,omitempty"`
+	HeaderBg                string          `json:"header_bg,omitempty"`
+	LoginBg                 string          `json:"login_bg,omitempty"`
+	PortalTitle             string          `json:"portal_title,omitempty"`
+	WelcomeText             string          `json:"welcome_text,omitempty"`
 }
 
 // --- API Handlers ---
@@ -241,8 +241,8 @@ func (s *APIServer) handleCreateAuthProvider(w http.ResponseWriter, r *http.Requ
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
-		"id":        id,
-		"msg":       "auth provider configured",
+		"id":         id,
+		"msg":        "auth provider configured",
 		"created_at": createdAt.UTC().Format(time.RFC3339),
 	})
 }
@@ -295,12 +295,12 @@ func (s *APIServer) handleCreateClientSession(w http.ResponseWriter, r *http.Req
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
-		"id":              sessionToken,
-		"session_token":   sessionToken,
-		"expires_at":      expiresAt.UTC().Format(time.RFC3339),
-		"user_id":         userID,
-		"username":        username,
-		"client_id":       clientID,
+		"id":            sessionToken,
+		"session_token": sessionToken,
+		"expires_at":    expiresAt.UTC().Format(time.RFC3339),
+		"user_id":       userID,
+		"username":      username,
+		"client_id":     clientID,
 	})
 }
 
@@ -746,12 +746,12 @@ func (s *APIServer) getClientSettings(r *http.Request, clientID string) *clientS
 
 func isValidAuthProvider(provider string) bool {
 	validProviders := map[string]bool{
-		AuthProviderGoogle:      true,
-		AuthProviderMicrosoft:   true,
-		AuthProviderOkta:        true,
-		AuthProviderGitHub:      true,
-		AuthProviderGitLab:      true,
-		AuthProviderSAML:        true,
+		AuthProviderGoogle:    true,
+		AuthProviderMicrosoft: true,
+		AuthProviderOkta:      true,
+		AuthProviderGitHub:    true,
+		AuthProviderGitLab:    true,
+		AuthProviderSAML:      true,
 	}
 	return validProviders[provider]
 }
