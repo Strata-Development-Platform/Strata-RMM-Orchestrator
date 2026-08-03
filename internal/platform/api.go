@@ -78,8 +78,8 @@ type APIServer struct {
 	remoteSessions       map[string]remoteSessionBinding
 
 	// FeatureFlags gates experimental or semantically unsafe operations
-	remoteSessionTTL time.Duration
-	remoteSessionNow func() time.Time
+	remoteSessionTTL  time.Duration
+	remoteSessionNow  func() time.Time
 	reportEngine      *reporting.ReportEngine
 	inventoryEngine   *inventory.ReportingEngine
 	remediationEngine *inventory.RemediationEngine
@@ -2255,12 +2255,12 @@ func (s *APIServer) handleUpdateRemediationPolicy(w http.ResponseWriter, r *http
 		return
 	}
 	var req struct {
-		SeverityThreshold     string `json:"severity_threshold"`
-		AutoRemediate         bool   `json:"auto_remediate"`
-		MaxRetries            int    `json:"max_retries"`
-		RetryDelayHours       int    `json:"retry_delay_hours"`
-		AutoApprove           bool   `json:"auto_approve"`
-		RebootBehavior        string `json:"reboot_behavior"`
+		SeverityThreshold      string `json:"severity_threshold"`
+		AutoRemediate          bool   `json:"auto_remediate"`
+		MaxRetries             int    `json:"max_retries"`
+		RetryDelayHours        int    `json:"retry_delay_hours"`
+		AutoApprove            bool   `json:"auto_approve"`
+		RebootBehavior         string `json:"reboot_behavior"`
 		MaintenanceWindowStart string `json:"maintenance_window_start"`
 		MaintenanceWindowEnd   string `json:"maintenance_window_end"`
 	}
