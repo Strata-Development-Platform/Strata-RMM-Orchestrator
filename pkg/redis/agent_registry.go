@@ -10,12 +10,12 @@ import (
 )
 
 const (
-	agentRegistryKey  = "strata:agents"
-	agentPrefix       = "agent:"
-	tokenBlacklistKey = "strata:auth:token:blacklist"
-	tokenPrefix       = "auth:token:"
-	configCacheKey    = "strata:config:cache"
-	configPrefix      = "config:"
+	agentRegistryKey  = "strata:rmm:agents"
+	agentPrefix       = "rmm:agent:"
+	tokenBlacklistKey = "strata:rmm:auth:token:blacklist"
+	tokenPrefix       = "rmm:auth:token:"
+	configCacheKey    = "strata:rmm:config:cache"
+	configPrefix      = "rmm:config:"
 )
 
 type AgentInfo struct {
