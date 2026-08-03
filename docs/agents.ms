@@ -1746,15 +1746,104 @@ The agent is getting better at following the ledger. Previous cycles showed the 
 - **Created**: 2026-08-03T17:10:00Z
 - **PR URL**: https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/pull/48
 - **Branch**: `feature/patch-scan-unit-tests`
-- **SHA**: `ccf1243`
-- **Gates**: 1-8 draft; pending owner review
+- **Base SHA**: `a91ba25` (origin/master HEAD at PR creation)
+- **Exact head SHA**: `51451ed` (final commit before merge)
+- **Gates**: 1-10 completed (draft-unmerged until owner authorization)
 - **Loose ends addressed**:
-  1. **Patch scan unit tests** — 28 tests covering parseAptUpgradable, parseDnfCheckUpdate, parseYumCheckUpdate, parseZypperListPatches, severityFromMSRC, NewExecutor, Executor.Scan/Install, detectPackageManager, ExecResult/Patch struct validation
-- **Test design**: All tests exercise parsing logic with string inputs, no external tools required
-- **CI**: go build ./... clean, go vet ./... clean, go test ./... -race all 26 packages pass, golangci-lint 0 issues
+  1. **Patch scan unit tests** — 28 tests covering parseAptUpgradable (7 cases), parseDnfCheckUpdate (6 cases), parseYumCheckUpdate (4 cases), parseZypperListPatches (7 cases), severityFromMSRC (12 cases), NewExecutor (1), Executor.Scan/Install (2), detectPackageManager (1), ExecResult/Patch (2)
+- **Test design**: All tests exercise parsing logic with string inputs; no external tools or network required
+- **CI**: All 84 checks terminal and passing for exact-head `51451ed`
+- **Failures/reruns**: None — all 84 checks passed on first run
+- **Workflow evidence** (exact-head `51451ed`):
+  | # | Workflow | Result | Run |
+  |---|---|---|---|
+  | 1 | Agent build (darwin/amd64) | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875740/job/91777380880 |
+  | 2 | Agent build (darwin/arm64) | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875740/job/91777380831 |
+  | 3 | Agent build (windows/amd64) | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875740/job/91777380834 |
+  | 4 | Agent build (windows/arm64) | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875740/job/91777380904 |
+  | 5 | Artifact Repository Tests | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840876463/job/91777349045 |
+  | 6 | Authoritative install and configured object storage | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875740/job/91777380851 |
+  | 7 | Authorization and Input Contracts | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875630/job/91777382437 |
+  | 8 | Authorization and abuse-control contracts | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875598/job/91777341264 |
+  | 9 | Build (darwin, amd64) | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875666/job/91777331574 |
+  | 10 | Build (linux, amd64) | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875666/job/91777331525 |
+  | 11 | Build (linux, arm64) | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875666/job/91777331530 |
+  | 12 | Build (windows, amd64) | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875666/job/91777331732 |
+  | 13 | Build (windows, arm64) | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875666/job/91777331572 |
+  | 14 | CLI Command Validation | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840876463/job/91777348976 |
+  | 15 | Concurrent Recovery Exclusion | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840876463/job/91777349333 |
+  | 16 | Configuration Validation | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840876463/job/91777349264 |
+  | 17 | Container scan and SBOM | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875598/job/91777341271 |
+  | 18 | Database Isolation | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875666/job/91777331427 |
+  | 19 | Degraded Readiness Contract | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840876498/job/91777389391 |
+  | 20 | Durable Job Metrics (PostgreSQL) | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875664/job/91777333077 |
+  | 21 | Durable Job Preservation Tests | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840876463/job/91777349121 |
+  | 22 | Durable Jobs Integration | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875666/job/91777331471 |
+  | 23 | Encryption Adversarial Tests | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840876463/job/91777349055 |
+  | 24 | End-to-End Recovery Tests | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840876463/job/91777349193 |
+  | 25 | Endpoint Operations Integration | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875666/job/91777331488 |
+  | 26 | Enrollment and broker policy | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875740/job/91777380761 |
+  | 27 | Evidence and Secret Safety | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840876498/job/91777389322 |
+  | 28 | Failure Injection Tests | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840876463/job/91777349183 |
+  | 29 | Frontend | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875666/job/91777331595 |
+  | 30 | Frontend dependency and build gate | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875598/job/91777341246 |
+  | 31 | Full Test Suite (race detection) | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840876463/job/91778069364 |
+  | 32 | Go vulnerability and static analysis | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875598/job/91777341255 |
+  | 33 | Installer and release packaging | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875740/job/91777380864 |
+  | 34 | JetStream Backup/Restore Integration | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840876463/job/91777349101 |
+  | 35 | Key Provider Tests | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840876463/job/91777348975 |
+  | 36 | Lint | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875666/job/91777331527 |
+  | 37 | Load Threshold Contract | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840876498/job/91777389425 |
+  | 38 | Metrics and Log Safety | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875664/job/91777333017 |
+  | 39 | Migration Integration | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840876463/job/91777349073 |
+  | 40 | NATS outage queue and replay integration | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875740/job/91777380840 |
+  | 41 | Offboarding and Export Integration | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875630/job/91777382488 |
+  | 42 | Phase 7 — Approval Workflow | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875666/job/91777331448 |
+  | 43 | Phase 7 — Browser Acceptance | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875666/job/91777331449 |
+  | 44 | Phase 7 — Capability Negotiation | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875666/job/91777331700 |
+  | 45 | Phase 7 — Destructive Idempotency | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875666/job/91777331504 |
+  | 46 | Phase 7 — Immutable Audit | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875666/job/91777331509 |
+  | 47 | Phase 7 — Inventory Ingestion | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875666/job/91777331726 |
+  | 48 | Phase 7 — Maintenance & Offline Lifecycle | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875666/job/91777331733 |
+  | 49 | Phase 8B — Clean Deployment | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875666/job/91777331660 |
+  | 50 | Phase 8B — Deployment Audit Authorization | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875666/job/91777331910 |
+  | 51 | Phase 8B — Deployment Template Rendering | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875666/job/91777331723 |
+  | 52 | Phase 8B — Docs Check | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875666/job/91777331507 |
+  | 53 | Phase 8B — Durable Job Preservation | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875666/job/91777331615 |
+  | 54 | Phase 8B — Forward Upgrade | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875666/job/91777331785 |
+  | 55 | Phase 8B — Injected Failure | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875666/job/91777331735 |
+  | 56 | Phase 8B — Migration Lock Concurrency | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875666/job/91777331523 |
+  | 57 | Phase 8B — Preflight and Redaction | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875666/job/91777331516 |
+  | 58 | Phase 8B — Resource Cleanup | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875666/job/91777331821 |
+  | 59 | Phase 8B — Rollback Restoration | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875666/job/91777331771 |
+  | 60 | Phase 8B — Runtime Validation | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875666/job/91777630521 |
+  | 61 | Phase 8B — Same-Version Idempotency | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875666/job/91777331631 |
+  | 62 | Phase 8B — Tenant Preservation | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875666/job/91777331540 |
+  | 63 | PostgreSQL Backup/Restore Integration | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840876463/job/91777349143 |
+  | 64 | Prometheus and Grafana Deployment | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875740/job/91777380822 |
+  | 65 | Quiescing Behavior Tests | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840876463/job/91777349138 |
+  | 66 | Reconnect Dispersion | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840876498/job/91777389368 |
+  | 67 | RPO/RTO Model Unit Tests | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840876463/job/91777349088 |
+  | 68 | S3 Backup/Restore Integration | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840876463/job/91777349114 |
+  | 69 | SaaS Control Plane | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875666/job/91777331433 |
+  | 70 | Secret and Cardinality Safety | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875664/job/91777333053 |
+  | 71 | Secret regression and evidence contracts | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875598/job/91777341241 |
+  | 72 | Security Scan | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875666/job/91777331440 |
+  | 73 | Static Validation | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875666/job/91777331438 |
+  | 74 | Synthetic Coverage | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875664/job/91777333034 |
+  | 75 | Telemetry wire and replay contract | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875740/job/91777380783 |
+  | 76 | Tenant Preservation Tests | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840876463/job/91777349156 |
+  | 77 | Test | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875666/job/91777331421 |
+  | 78 | Unit Tests (race detection) | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840876463/job/91777349008 |
+  | 79 | Vet | pass | https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30840875666/job/91777331441 |
+- **Workflow evidence summary**: 84 checks, 84 passing, 0 failing, 0 pending, 0 skipped, 0 cancelled
+- **Failures/reruns**: None
+- **Security and tenancy**: No new tables, migrations, schema changes, network endpoints, API routes, secrets, tokens, or credentials. Tests exercise pure parsing logic; no tenant-scoped data or authorization boundary involved.
+- **Compatibility**: No API changes, protocol changes, agent impact, migration impact, or backward compatibility concerns.
+- **Migration and rollback**: No migrations added; no rollback needed (pure test addition).
+- **Limitations**: No unit tests for `patch.Executor.Install()` output parsing; no integration tests for `patch.Manager` (requires NATS + TimescaleDB); no integration tests for `RemediationEngine` (requires PostgreSQL); auto-remediate is disabled-by-default; `RemediationEngine.Start()` runs hourly goroutine; no auto-remediate scheduling window validation.
 - **Files changed**: 1 new file (+463 lines)
   - `internal/patch/executor_test.go`
-
 ## PR #48 merge-completion (Gate 10)
 - **Merged**: 2026-08-03T17:30:00Z
 - **Merge SHA**: `f71b01c` (squash merge)
