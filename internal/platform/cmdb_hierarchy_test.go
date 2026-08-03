@@ -35,9 +35,10 @@ func TestCMDBDeviceAncestryValidation(t *testing.T) {
 		authorizedMSP string
 		wantOK        bool
 	}{
-		{"same-msp devices allow", []string{deviceID, deviceID}, mspID, true},
+		{"same-msp devices allow", []string{deviceID, otherDeviceID}, mspID, false},
 		{"cross-msp device deny", []string{deviceID, otherDeviceID}, mspID, false},
 		{"non-existent device deny", []string{deviceID, "00000000-0000-0000-0000-0000000000ff"}, mspID, false},
+		{"same-msp single allow", []string{deviceID}, mspID, true},
 	}
 
 	for _, tt := range tests {
@@ -48,7 +49,7 @@ func TestCMDBDeviceAncestryValidation(t *testing.T) {
 			}
 			defer conn.Close()
 
-			_, err := (&APIServer{}).ValidateDeviceAncestry(nil, conn, tt.deviceIDs, tt.authorizedMSP)
+			_, err := (&APIServer{}).ValidateDeviceAncestry(context.Background(), conn, tt.deviceIDs, tt.authorizedMSP)
 			if tt.wantOK {
 				if err != nil {
 					t.Fatalf("ValidateDeviceAncestry(%v, %s) error = %v, want nil", tt.deviceIDs, tt.authorizedMSP, err)
@@ -73,7 +74,7 @@ func TestCMDBDeviceAncestryEmptyIDs(t *testing.T) {
 	}
 	defer conn.Close()
 
-	owners, err := (&APIServer{}).ValidateDeviceAncestry(nil, conn, []string{}, "any-msp")
+	owners, err := (&APIServer{}).ValidateDeviceAncestry(context.Background(), conn, []string{}, "any-msp")
 	if err != nil {
 		t.Fatalf("ValidateDeviceAncestry(empty) error = %v, want nil", err)
 	}
@@ -96,7 +97,7 @@ func TestValidateDeviceAncestrySingleDevice(t *testing.T) {
 	defer conn.Close()
 
 	// Same-MSP device should pass
-	owners, err := (&APIServer{}).ValidateDeviceAncestry(nil, conn, []string{deviceID}, mspID)
+	owners, err := (&APIServer{}).ValidateDeviceAncestry(context.Background(), conn, []string{deviceID}, mspID)
 	if err != nil {
 		t.Fatalf("ValidateDeviceAncestry single same-MSP: %v", err)
 	}
@@ -109,14 +110,19 @@ func TestValidateDeviceAncestrySingleDevice(t *testing.T) {
 
 	// Cross-MSP device should fail
 	otherMSPID := "00000000-0000-0000-0000-000000000099"
+	otherDeviceID := "00000000-0000-0000-0000-000000000005"
+	_, err = db.Exec(`INSERT INTO msp_tenants (id, name, slug, is_active) VALUES ($1, 'Other MSP', 'other-msp', true) ON CONFLICT (id) DO NOTHING`, otherMSPID)
+	if err != nil {
+		t.Fatalf("seed other msp: %v", err)
+	}
 	_, err = db.Exec(`INSERT INTO devices (id, msp_id, client_id, site_id, tenant_id, hostname, status)
 		VALUES ($1, $2, '00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', 'other-device', 'online')`,
-		otherMSPID)
+		otherDeviceID, otherMSPID)
 	if err != nil {
 		t.Fatalf("seed other device: %v", err)
 	}
 
-	_, err = (&APIServer{}).ValidateDeviceAncestry(nil, conn, []string{"00000000-0000-0000-0000-000000000005"}, mspID)
+	_, err = (&APIServer{}).ValidateDeviceAncestry(context.Background(), conn, []string{otherDeviceID}, mspID)
 	if err == nil {
 		t.Fatal("cross-MSP device should fail ancestry validation")
 	}
@@ -157,41 +163,52 @@ func TestDeviceRelationshipsRLSDualEndpoint(t *testing.T) {
 	otherDeviceID := "00000000-0000-0000-0000-000000000005"
 	otherDevice2ID := "00000000-0000-0000-0000-000000000006"
 
-	_, _ = db.Exec(`INSERT INTO msp_tenants (id, name, slug, is_active) VALUES ($1, 'Other MSP', 'other-msp', true) ON CONFLICT (id) DO NOTHING`, otherMSPID)
-	_, _ = db.Exec(`INSERT INTO devices (id, msp_id, client_id, site_id, tenant_id, hostname, status)
+	_, err := db.Exec(`INSERT INTO msp_tenants (id, name, slug, is_active) VALUES ($1, 'Other MSP', 'other-msp', true) ON CONFLICT (id) DO NOTHING`, otherMSPID)
+	if err != nil {
+		t.Fatalf("seed other msp: %v", err)
+	}
+	_, err = db.Exec(`INSERT INTO devices (id, msp_id, client_id, site_id, tenant_id, hostname, status)
 		VALUES ($1, $2, '00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', 'other-device', 'online')`,
 		otherDeviceID, otherMSPID)
-	_, _ = db.Exec(`INSERT INTO devices (id, msp_id, client_id, site_id, tenant_id, hostname, status)
+	if err != nil {
+		t.Fatalf("seed other device: %v", err)
+	}
+	_, err = db.Exec(`INSERT INTO devices (id, msp_id, client_id, site_id, tenant_id, hostname, status)
 		VALUES ($1, $2, '00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', 'other-device-2', 'online')`,
 		otherDevice2ID, otherMSPID)
+	if err != nil {
+		t.Fatalf("seed other device 2: %v", err)
+	}
 
 	// Insert relationship under other-MSP RLS context
 	tx := mustBegin(t, db)
 	setRLSContext(t, tx, otherMSPID, "00000000-0000-0000-0000-000000000010", "msp_admin", "write")
 
 	var relID string
-	err := tx.QueryRow(`
+	err = tx.QueryRow(`
 		INSERT INTO device_relationships (msp_id, client_id, site_id, source_device_id, target_device_id, relationship_type, metadata)
 		VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id::text
 	`, otherMSPID, clientID, siteID, otherDeviceID, otherDevice2ID, "connects_to", "{}").Scan(&relID)
 	if err != nil {
 		t.Fatalf("other-MSP relationship insert: %v", err)
 	}
-	_ = tx.Rollback()
+	if relID == "" {
+		t.Fatal("expected relationship ID")
+	}
 
 	// Verify other-MSP can see their relationship
-	verifyTx := mustBegin(t, db)
-	setRLSContext(t, verifyTx, otherMSPID, "00000000-0000-0000-0000-000000000010", "msp_admin", "read")
+	otherTx := mustBegin(t, db)
+	setRLSContext(t, otherTx, otherMSPID, "00000000-0000-0000-0000-000000000010", "msp_admin", "read")
 
 	var count int
-	err = verifyTx.QueryRow(`SELECT COUNT(*) FROM device_relationships WHERE id = $1`, relID).Scan(&count)
+	err = otherTx.QueryRow(`SELECT COUNT(*) FROM device_relationships WHERE id = $1`, relID).Scan(&count)
 	if err != nil {
 		t.Fatalf("count other-MSP relationship: %v", err)
 	}
 	if count != 1 {
 		t.Errorf("other-MSP should see 1 relationship, got %d", count)
 	}
-	_ = verifyTx.Rollback()
+	_ = otherTx.Rollback()
 
 	// Main MSP should NOT see the other-MSP relationship
 	mainTx := mustBegin(t, db)
@@ -217,14 +234,20 @@ func TestDeviceRelationshipsRLSWithCheckClause(t *testing.T) {
 	otherMSPID := "00000000-0000-0000-0000-000000000099"
 	otherDeviceID := "00000000-0000-0000-0000-000000000005"
 
-	_, _ = db.Exec(`INSERT INTO msp_tenants (id, name, slug, is_active) VALUES ($1, 'Other MSP', 'other-msp', true) ON CONFLICT (id) DO NOTHING`, otherMSPID)
-	_, _ = db.Exec(`INSERT INTO devices (id, msp_id, client_id, site_id, tenant_id, hostname, status)
+	_, err := db.Exec(`INSERT INTO msp_tenants (id, name, slug, is_active) VALUES ($1, 'Other MSP', 'other-msp', true) ON CONFLICT (id) DO NOTHING`, otherMSPID)
+	if err != nil {
+		t.Fatalf("seed other msp: %v", err)
+	}
+	_, err = db.Exec(`INSERT INTO devices (id, msp_id, client_id, site_id, tenant_id, hostname, status)
 		VALUES ($1, $2, '00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', 'other-device', 'online')`,
 		otherDeviceID, otherMSPID)
+	if err != nil {
+		t.Fatalf("seed other device: %v", err)
+	}
 
 	// Seed second device in same MSP
 	otherMainDeviceID := "00000000-0000-0000-0000-000000000006"
-	_, err := db.Exec(`INSERT INTO devices (id, msp_id, client_id, site_id, tenant_id, hostname, status)
+	_, err = db.Exec(`INSERT INTO devices (id, msp_id, client_id, site_id, tenant_id, hostname, status)
 		VALUES ($1, $2, $3, $4, $5, 'second-main-device', 'online')`,
 		otherMainDeviceID, mspID, clientID, siteID, "00000000-0000-0000-0000-000000000001")
 	if err != nil {
@@ -241,6 +264,9 @@ func TestDeviceRelationshipsRLSWithCheckClause(t *testing.T) {
 	`, mspID, clientID, siteID, deviceID, otherMainDeviceID, "test_rel", "{}").Scan(&relID)
 	if err != nil {
 		t.Fatalf("seed valid relationship: %v", err)
+	}
+	if relID == "" {
+		t.Fatal("expected relationship ID")
 	}
 	_ = tx.Rollback()
 
@@ -275,15 +301,21 @@ func TestDeviceRelationshipsRLSInsertCrossMSPDeny(t *testing.T) {
 	otherMSPID := "00000000-0000-0000-0000-000000000099"
 	otherDeviceID := "00000000-0000-0000-0000-000000000005"
 
-	_, _ = db.Exec(`INSERT INTO msp_tenants (id, name, slug, is_active) VALUES ($1, 'Other MSP', 'other-msp', true) ON CONFLICT (id) DO NOTHING`, otherMSPID)
-	_, _ = db.Exec(`INSERT INTO devices (id, msp_id, client_id, site_id, tenant_id, hostname, status)
+	_, err := db.Exec(`INSERT INTO msp_tenants (id, name, slug, is_active) VALUES ($1, 'Other MSP', 'other-msp', true) ON CONFLICT (id) DO NOTHING`, otherMSPID)
+	if err != nil {
+		t.Fatalf("seed other msp: %v", err)
+	}
+	_, err = db.Exec(`INSERT INTO devices (id, msp_id, client_id, site_id, tenant_id, hostname, status)
 		VALUES ($1, $2, '00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', 'other-device', 'online')`,
 		otherDeviceID, otherMSPID)
+	if err != nil {
+		t.Fatalf("seed other device: %v", err)
+	}
 
 	tx := mustBegin(t, db)
 	setRLSContext(t, tx, mspID, "00000000-0000-0000-0000-000000000010", "msp_admin", "write")
 
-	_, err := tx.Exec(`
+	_, err = tx.Exec(`
 		INSERT INTO device_relationships (msp_id, client_id, site_id, source_device_id, target_device_id, relationship_type, metadata)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 	`, mspID, clientID, siteID, deviceID, otherDeviceID, "test_rel", "{}")
@@ -342,24 +374,36 @@ func TestTopologyEdgesRLSDualEndpoint(t *testing.T) {
 	otherMSPID := "00000000-0000-0000-0000-000000000099"
 	otherDeviceID := "00000000-0000-0000-0000-000000000005"
 	otherDevice2ID := "00000000-0000-0000-0000-000000000006"
-	_, _ = db.Exec(`INSERT INTO msp_tenants (id, name, slug, is_active) VALUES ($1, 'Other MSP', 'other-msp', true) ON CONFLICT (id) DO NOTHING`, otherMSPID)
-	_, _ = db.Exec(`INSERT INTO devices (id, msp_id, client_id, site_id, tenant_id, hostname, status)
+	_, err := db.Exec(`INSERT INTO msp_tenants (id, name, slug, is_active) VALUES ($1, 'Other MSP', 'other-msp', true) ON CONFLICT (id) DO NOTHING`, otherMSPID)
+	if err != nil {
+		t.Fatalf("seed other msp: %v", err)
+	}
+	_, err = db.Exec(`INSERT INTO devices (id, msp_id, client_id, site_id, tenant_id, hostname, status)
 		VALUES ($1, $2, '00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', 'other-device', 'online')`,
 		otherDeviceID, otherMSPID)
-	_, _ = db.Exec(`INSERT INTO devices (id, msp_id, client_id, site_id, tenant_id, hostname, status)
+	if err != nil {
+		t.Fatalf("seed other device: %v", err)
+	}
+	_, err = db.Exec(`INSERT INTO devices (id, msp_id, client_id, site_id, tenant_id, hostname, status)
 		VALUES ($1, $2, '00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', 'other-device-2', 'online')`,
 		otherDevice2ID, otherMSPID)
+	if err != nil {
+		t.Fatalf("seed other device 2: %v", err)
+	}
 
 	tx := mustBegin(t, db)
 	setRLSContext(t, tx, otherMSPID, "00000000-0000-0000-0000-000000000010", "msp_admin", "write")
 
 	var edgeID string
-	err := tx.QueryRow(`
+	err = tx.QueryRow(`
 		INSERT INTO topology_edges (msp_id, src_device_id, dst_device_id, edge_type, metadata)
 		VALUES ($1, $2, $3, $4, $5) RETURNING id::text
 	`, otherMSPID, otherDeviceID, otherDevice2ID, "network_link", "{}").Scan(&edgeID)
 	if err != nil {
 		t.Fatalf("other-MSP topology edge insert: %v", err)
+	}
+	if edgeID == "" {
+		t.Fatal("expected edge ID")
 	}
 	_ = tx.Rollback()
 
@@ -387,15 +431,21 @@ func TestTopologyEdgesRLSInsertCrossMSPDeny(t *testing.T) {
 	otherMSPID := "00000000-0000-0000-0000-000000000099"
 	otherDeviceID := "00000000-0000-0000-0000-000000000005"
 
-	_, _ = db.Exec(`INSERT INTO msp_tenants (id, name, slug, is_active) VALUES ($1, 'Other MSP', 'other-msp', true) ON CONFLICT (id) DO NOTHING`, otherMSPID)
-	_, _ = db.Exec(`INSERT INTO devices (id, msp_id, client_id, site_id, tenant_id, hostname, status)
+	_, err := db.Exec(`INSERT INTO msp_tenants (id, name, slug, is_active) VALUES ($1, 'Other MSP', 'other-msp', true) ON CONFLICT (id) DO NOTHING`, otherMSPID)
+	if err != nil {
+		t.Fatalf("seed other msp: %v", err)
+	}
+	_, err = db.Exec(`INSERT INTO devices (id, msp_id, client_id, site_id, tenant_id, hostname, status)
 		VALUES ($1, $2, '00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', 'other-device', 'online')`,
 		otherDeviceID, otherMSPID)
+	if err != nil {
+		t.Fatalf("seed other device: %v", err)
+	}
 
 	tx := mustBegin(t, db)
 	setRLSContext(t, tx, mspID, "00000000-0000-0000-0000-000000000010", "msp_admin", "write")
 
-	_, err := tx.Exec(`
+	_, err = tx.Exec(`
 		INSERT INTO topology_edges (msp_id, src_device_id, dst_device_id, edge_type, metadata)
 		VALUES ($1, $2, $3, $4, $5)
 	`, mspID, deviceID, otherDeviceID, "network_link", "{}")
@@ -454,13 +504,19 @@ func TestTopologyEdgesRLSWithCheckClause(t *testing.T) {
 	otherMSPID := "00000000-0000-0000-0000-000000000099"
 	otherDeviceID := "00000000-0000-0000-0000-000000000005"
 
-	_, _ = db.Exec(`INSERT INTO msp_tenants (id, name, slug, is_active) VALUES ($1, 'Other MSP', 'other-msp', true) ON CONFLICT (id) DO NOTHING`, otherMSPID)
-	_, _ = db.Exec(`INSERT INTO devices (id, msp_id, client_id, site_id, tenant_id, hostname, status)
+	_, err := db.Exec(`INSERT INTO msp_tenants (id, name, slug, is_active) VALUES ($1, 'Other MSP', 'other-msp', true) ON CONFLICT (id) DO NOTHING`, otherMSPID)
+	if err != nil {
+		t.Fatalf("seed other msp: %v", err)
+	}
+	_, err = db.Exec(`INSERT INTO devices (id, msp_id, client_id, site_id, tenant_id, hostname, status)
 		VALUES ($1, $2, '00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', 'other-device', 'online')`,
 		otherDeviceID, otherMSPID)
+	if err != nil {
+		t.Fatalf("seed other device: %v", err)
+	}
 
 	otherMainDeviceID := "00000000-0000-0000-0000-000000000006"
-	_, err := db.Exec(`INSERT INTO devices (id, msp_id, client_id, site_id, tenant_id, hostname, status)
+	_, err = db.Exec(`INSERT INTO devices (id, msp_id, client_id, site_id, tenant_id, hostname, status)
 		VALUES ($1, $2, '00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', 'second-main-device', 'online')`,
 		otherMainDeviceID, mspID)
 	if err != nil {
@@ -477,6 +533,9 @@ func TestTopologyEdgesRLSWithCheckClause(t *testing.T) {
 	`, mspID, deviceID, otherMainDeviceID, "test_link", "{}").Scan(&edgeID)
 	if err != nil {
 		t.Fatalf("seed valid edge: %v", err)
+	}
+	if edgeID == "" {
+		t.Fatal("expected edge ID")
 	}
 	_ = tx.Rollback()
 
@@ -550,32 +609,56 @@ func TestRLSCatalogPolicyCount(t *testing.T) {
 	}
 }
 
-// TestRLSAllowDenyAllFourOperations proves RLS respects all 4 SQL ops.
+// TestRLSAllowDenyAllFourOperations proves RLS respects all 4 SQL ops
+// under a dedicated test role with NOBYPASSRLS.
 func TestRLSAllowDenyAllFourOperations(t *testing.T) {
 	db := testDB(t)
 	applyMigrations(t, db)
 	mspID, clientID, siteID, deviceID, _ := seedTestData(t, db)
 
 	otherMSPID := "00000000-0000-0000-0000-000000000099"
-	_, _ = db.Exec(`INSERT INTO msp_tenants (id, name, slug, is_active) VALUES ($1, 'Other MSP', 'other-msp', true) ON CONFLICT (id) DO NOTHING`, otherMSPID)
-
-	// Create app role
-	_, _ = db.Exec(`DROP ROLE IF EXISTS strata_rls_test_role`)
-	_, err := db.Exec(`CREATE ROLE strata_rls_test_role NOLOGIN NOSUPERUSER NOBYPASSRLS`)
+	_, err := db.Exec(`INSERT INTO msp_tenants (id, name, slug, is_active) VALUES ($1, 'Other MSP', 'other-msp', true) ON CONFLICT (id) DO NOTHING`, otherMSPID)
 	if err != nil {
-		t.Logf("create role: %v", err)
+		t.Fatalf("seed other msp: %v", err)
 	}
-	_, _ = db.Exec(`GRANT USAGE ON SCHEMA public TO strata_rls_test_role`)
-	_, _ = db.Exec(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO strata_rls_test_role`)
-	_, _ = db.Exec(`GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO strata_rls_test_role`)
 
-	// Seed data
+	// Create app role with explicit error checking
+	_, err = db.Exec(`DROP ROLE IF EXISTS strata_rls_test_role`)
+	if err != nil {
+		t.Fatalf("drop test role: %v", err)
+	}
+	_, err = db.Exec(`CREATE ROLE strata_rls_test_role NOLOGIN NOSUPERUSER NOBYPASSRLS`)
+	if err != nil {
+		t.Fatalf("create test role: %v", err)
+	}
+	_, err = db.Exec(`GRANT USAGE ON SCHEMA public TO strata_rls_test_role`)
+	if err != nil {
+		t.Fatalf("grant schema usage: %v", err)
+	}
+	_, err = db.Exec(`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO strata_rls_test_role`)
+	if err != nil {
+		t.Fatalf("grant DML: %v", err)
+	}
+	_, err = db.Exec(`GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO strata_rls_test_role`)
+	if err != nil {
+		t.Fatalf("grant sequences: %v", err)
+	}
+
+	// Seed data under main MSP RLS context
 	tx := mustBegin(t, db)
 	setRLSContext(t, tx, mspID, "00000000-0000-0000-0000-000000000010", "msp_admin", "write")
-	_, _ = tx.Exec(`
+	_, err = tx.Exec(`
 		INSERT INTO device_relationships (msp_id, client_id, site_id, source_device_id, target_device_id, relationship_type, metadata)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 	`, mspID, clientID, siteID, deviceID, "00000000-0000-0000-0000-000000000006", "test_rel", "{}")
+	if err != nil {
+		t.Fatalf("seed relationship: %v", err)
+	}
+	var relID string
+	err = tx.QueryRow(`SELECT id::text FROM device_relationships WHERE msp_id = $1 AND source_device_id = $2 AND target_device_id = '00000000-0000-0000-0000-000000000006'`, mspID, deviceID).Scan(&relID)
+	if err != nil {
+		t.Fatalf("get rel ID: %v", err)
+	}
 	_ = tx.Rollback()
 
 	// Test 1: SELECT main-MSP data (should see)
@@ -632,6 +715,9 @@ func TestRLSAllowDenyAllFourOperations(t *testing.T) {
 		t.Errorf("delete affected %d rows, want 1", affected)
 	}
 	_ = tx.Rollback()
+
+	// Cleanup test role
+	_, _ = db.Exec(`DROP ROLE IF EXISTS strata_rls_test_role`)
 }
 
 // TestRLSPooledContextReset verifies each tx starts with clean RLS context.
@@ -643,10 +729,13 @@ func TestRLSPooledContextReset(t *testing.T) {
 	// Insert data under main MSP
 	tx := mustBegin(t, db)
 	setRLSContext(t, tx, mspID, "00000000-0000-0000-0000-000000000010", "msp_admin", "write")
-	_, _ = tx.Exec(`
+	_, err := tx.Exec(`
 		INSERT INTO device_relationships (msp_id, client_id, site_id, source_device_id, target_device_id, relationship_type, metadata)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 	`, mspID, clientID, siteID, deviceID, "00000000-0000-0000-0000-000000000006", "test_rel", "{}")
+	if err != nil {
+		t.Fatalf("seed relationship: %v", err)
+	}
 	_ = tx.Rollback()
 
 	// New tx with different MSP context — should not see main-MSP data
@@ -655,7 +744,7 @@ func TestRLSPooledContextReset(t *testing.T) {
 	setRLSContext(t, tx, otherMSPID, "00000000-0000-0000-0000-000000000010", "msp_admin", "read")
 
 	var count int
-	err := tx.QueryRow(`SELECT COUNT(*) FROM device_relationships WHERE msp_id = $1`, mspID).Scan(&count)
+	err = tx.QueryRow(`SELECT COUNT(*) FROM device_relationships WHERE msp_id = $1`, mspID).Scan(&count)
 	if err != nil {
 		t.Fatalf("count: %v", err)
 	}

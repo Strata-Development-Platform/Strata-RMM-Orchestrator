@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
+
+	"github.com/lib/pq"
 )
 
 func canManageMSPAtSelectedScope(authorization AuthorizationResult, mspID string) bool {
@@ -268,33 +270,40 @@ type deviceOwnershipInfo struct {
 
 // ValidateDeviceAncestry proves that every referenced device belongs to the
 // authorized MSP and returns their ownership data in one round trip.
-// It is suitable for use inside a transaction that will insert/update
-// cross-referencing CMDB rows.
+// It accepts a *sql.Tx for transaction-scoped execution so that ancestry
+// validation and the subsequent mutation share the same transaction and RLS
+// context.  A *sql.Conn is also accepted for standalone callers.
+// Uses a single UUID-array parameter ($1::uuid[]) and an MSP-ID parameter ($2::uuid).
 // Returns nil if any device is missing or belongs to a different MSP.
 func (s *APIServer) ValidateDeviceAncestry(
 	ctx context.Context,
-	dbx *sql.Conn,
+	dbx interface {
+		QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
+	},
 	deviceIDs []string,
 	authorizedMSPID string,
 ) ([]deviceOwnershipInfo, error) {
 	if len(deviceIDs) == 0 {
 		return nil, nil
 	}
-	var owners []deviceOwnershipInfo
-	args := make([]interface{}, len(deviceIDs)+1)
-	for i, id := range deviceIDs {
-		args[i] = id
+	// Deduplicate the requested IDs so that row-count comparison is meaningful.
+	seen := make(map[string]bool, len(deviceIDs))
+	unique := make([]string, 0, len(deviceIDs))
+	for _, id := range deviceIDs {
+		if !seen[id] {
+			seen[id] = true
+			unique = append(unique, id)
+		}
 	}
-	args[len(deviceIDs)] = authorizedMSPID
-	query := fmt.Sprintf(`
+	rows, err := dbx.QueryContext(ctx, `
 		SELECT id, msp_id::text, COALESCE(client_id::text,''), COALESCE(site_id::text,'')
-		FROM devices WHERE id = ANY($%d) AND msp_id = $%d::uuid
-	`, len(deviceIDs), len(deviceIDs)+1)
-	rows, err := dbx.QueryContext(ctx, query, args...)
+		FROM devices WHERE id = ANY($1::uuid[]) AND msp_id = $2::uuid
+	`, pq.Array(unique), authorizedMSPID)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
+	var owners []deviceOwnershipInfo
 	for rows.Next() {
 		var d deviceOwnershipInfo
 		var id string
@@ -303,8 +312,11 @@ func (s *APIServer) ValidateDeviceAncestry(
 		}
 		owners = append(owners, d)
 	}
-	if len(owners) != len(deviceIDs) {
-		return nil, fmt.Errorf("device ancestry validation failed: %d of %d devices not found in MSP scope", len(owners), len(deviceIDs))
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(owners) != len(unique) {
+		return nil, fmt.Errorf("device ancestry validation failed: %d of %d devices not found in MSP scope", len(owners), len(unique))
 	}
 	return owners, nil
 }

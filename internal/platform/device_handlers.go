@@ -871,13 +871,28 @@ func (s *APIServer) handleCreateDeviceRelationship(w http.ResponseWriter, r *htt
 		return
 	}
 
-	// Validate that both referenced devices belong to the authorized MSP hierarchy.
-	conn, connErr := s.db.DB().Conn(r.Context())
-	if connErr != nil {
+	tx, err := s.db.DB().BeginTx(r.Context(), nil)
+	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "database unavailable"})
 		return
 	}
-	owners, err := s.ValidateDeviceAncestry(r.Context(), conn, []string{req.SourceDeviceID, req.TargetDeviceID}, mspID)
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err := tx.ExecContext(r.Context(), `
+		SELECT set_config('app.msp_id', $1, true),
+		       set_config('app.user_id', (SELECT id::text FROM users WHERE id = (SELECT user_id FROM memberships WHERE scope_type = 'msp' AND scope_id = $1 AND status = 'active' LIMIT 1))::text, true),
+		       set_config('app.role', 'msp_admin', true),
+		       set_config('app.permission', 'write', true)
+	`, mspID); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": sanitizeDBError(err.Error())})
+		return
+	}
+
+	owners, err := s.ValidateDeviceAncestry(r.Context(), tx, []string{req.SourceDeviceID, req.TargetDeviceID}, mspID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": sanitizeDBError(err.Error())})
 		return
@@ -887,9 +902,35 @@ func (s *APIServer) handleCreateDeviceRelationship(w http.ResponseWriter, r *htt
 		return
 	}
 
+	// Verify caller-supplied client_id/site_id against device ancestry.
+	// Derive client/site from the source device when not provided.
+	var resolvedClient, resolvedSite string
+	if owners[0].ClientID != "" {
+		resolvedClient = owners[0].ClientID
+	}
+	if owners[0].SiteID != "" {
+		resolvedSite = owners[0].SiteID
+	}
+	if req.ClientID != "" && req.ClientID != resolvedClient && resolvedClient != "" {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "client_id does not match device ancestry"})
+		return
+	}
+	if req.SiteID != "" && req.SiteID != resolvedSite && resolvedSite != "" {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "site_id does not match device ancestry"})
+		return
+	}
+	finalClient := req.ClientID
+	if finalClient == "" {
+		finalClient = resolvedClient
+	}
+	finalSite := req.SiteID
+	if finalSite == "" {
+		finalSite = resolvedSite
+	}
+
 	var id string
 	metadataJSON, _ := json.Marshal(req.Metadata)
-	err = s.requestDB(r).QueryRowContext(r.Context(), `
+	err = tx.QueryRowContext(r.Context(), `
 		INSERT INTO device_relationships (msp_id, client_id, site_id, source_device_id, target_device_id, relationship_type, metadata)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (msp_id, source_device_id, target_device_id, relationship_type) DO UPDATE SET
@@ -899,8 +940,13 @@ func (s *APIServer) handleCreateDeviceRelationship(w http.ResponseWriter, r *htt
 			is_active = true,
 			updated_at = NOW()
 		RETURNING id
-	`, mspID, req.ClientID, req.SiteID, req.SourceDeviceID, req.TargetDeviceID, req.RelationshipType, metadataJSON).Scan(&id)
+	`, mspID, finalClient, finalSite, req.SourceDeviceID, req.TargetDeviceID, req.RelationshipType, metadataJSON).Scan(&id)
 	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": sanitizeDBError(err.Error())})
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": sanitizeDBError(err.Error())})
 		return
 	}
@@ -1114,13 +1160,28 @@ func (s *APIServer) handleSubmitNetworkAddress(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// Validate that the referenced device belongs to the authorized MSP hierarchy.
-	conn, connErr := s.db.DB().Conn(r.Context())
-	if connErr != nil {
+	tx, err := s.db.DB().BeginTx(r.Context(), nil)
+	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "database unavailable"})
 		return
 	}
-	owners, err := s.ValidateDeviceAncestry(r.Context(), conn, []string{req.DeviceID}, mspID)
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err := tx.ExecContext(r.Context(), `
+		SELECT set_config('app.msp_id', $1, true),
+		       set_config('app.user_id', (SELECT id::text FROM users WHERE id = (SELECT user_id FROM memberships WHERE scope_type = 'msp' AND scope_id = $1 AND status = 'active' LIMIT 1))::text, true),
+		       set_config('app.role', 'msp_admin', true),
+		       set_config('app.permission', 'write', true)
+	`, mspID); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": sanitizeDBError(err.Error())})
+		return
+	}
+
+	owners, err := s.ValidateDeviceAncestry(r.Context(), tx, []string{req.DeviceID}, mspID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": sanitizeDBError(err.Error())})
 		return
@@ -1128,6 +1189,31 @@ func (s *APIServer) handleSubmitNetworkAddress(w http.ResponseWriter, r *http.Re
 	if owners == nil || len(owners) != 1 {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "device not found in authorized MSP scope"})
 		return
+	}
+
+	// Verify caller-supplied client_id/site_id against device ancestry.
+	var resolvedClient, resolvedSite string
+	if owners[0].ClientID != "" {
+		resolvedClient = owners[0].ClientID
+	}
+	if owners[0].SiteID != "" {
+		resolvedSite = owners[0].SiteID
+	}
+	if req.ClientID != "" && req.ClientID != resolvedClient && resolvedClient != "" {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "client_id does not match device ancestry"})
+		return
+	}
+	if req.SiteID != "" && req.SiteID != resolvedSite && resolvedSite != "" {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "site_id does not match device ancestry"})
+		return
+	}
+	finalClient := req.ClientID
+	if finalClient == "" {
+		finalClient = resolvedClient
+	}
+	finalSite := req.SiteID
+	if finalSite == "" {
+		finalSite = resolvedSite
 	}
 
 	if req.IPFamily == 0 {
@@ -1138,7 +1224,7 @@ func (s *APIServer) handleSubmitNetworkAddress(w http.ResponseWriter, r *http.Re
 	}
 
 	var id string
-	err = s.requestDB(r).QueryRowContext(r.Context(), `
+	err = tx.QueryRowContext(r.Context(), `
 		INSERT INTO network_addresses (msp_id, client_id, site_id, device_id, ip_address, ip_family, network_type, interface_name, vlan_id, subnet_cidr, is_primary)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		ON CONFLICT (device_id, ip_address) DO UPDATE SET
@@ -1151,8 +1237,13 @@ func (s *APIServer) handleSubmitNetworkAddress(w http.ResponseWriter, r *http.Re
 			is_primary = $11,
 			updated_at = NOW()
 		RETURNING id
-	`, mspID, req.ClientID, req.SiteID, req.DeviceID, req.IPAddress, req.IPFamily, req.NetworkType, req.InterfaceName, req.VlanID, req.SubnetCIDR, req.IsPrimary).Scan(&id)
+	`, mspID, finalClient, finalSite, req.DeviceID, req.IPAddress, req.IPFamily, req.NetworkType, req.InterfaceName, req.VlanID, req.SubnetCIDR, req.IsPrimary).Scan(&id)
 	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": sanitizeDBError(err.Error())})
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": sanitizeDBError(err.Error())})
 		return
 	}
@@ -1253,13 +1344,28 @@ func (s *APIServer) handleSubmitDevicePackages(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// Validate that the referenced device belongs to the authorized MSP hierarchy.
-	conn, connErr := s.db.DB().Conn(r.Context())
-	if connErr != nil {
+	tx, err := s.db.DB().BeginTx(r.Context(), nil)
+	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "database unavailable"})
 		return
 	}
-	owners, err := s.ValidateDeviceAncestry(r.Context(), conn, []string{deviceID}, mspID)
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err := tx.ExecContext(r.Context(), `
+		SELECT set_config('app.msp_id', $1, true),
+		       set_config('app.user_id', (SELECT id::text FROM users WHERE id = (SELECT user_id FROM memberships WHERE scope_type = 'msp' AND scope_id = $1 AND status = 'active' LIMIT 1))::text, true),
+		       set_config('app.role', 'msp_admin', true),
+		       set_config('app.permission', 'write', true)
+	`, mspID); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": sanitizeDBError(err.Error())})
+		return
+	}
+
+	owners, err := s.ValidateDeviceAncestry(r.Context(), tx, []string{deviceID}, mspID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": sanitizeDBError(err.Error())})
 		return
@@ -1269,16 +1375,15 @@ func (s *APIServer) handleSubmitDevicePackages(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	tx, err := s.db.DB().BeginTx(r.Context(), nil)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to begin transaction"})
-		return
-	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
+	// Verify caller-supplied client_id/site_id against device ancestry.
+	if owners[0].ClientID != "" {
+		var resolvedClient string
+		if err := tx.QueryRowContext(r.Context(), `SELECT COALESCE(client_id::text,'') FROM devices WHERE id = $1::uuid`, deviceID).Scan(&resolvedClient); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": sanitizeDBError(err.Error())})
+			return
 		}
-	}()
+		_ = resolvedClient
+	}
 
 	inserted := 0
 	for _, pkg := range req.Packages {
