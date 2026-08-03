@@ -82,8 +82,6 @@ type APIServer struct {
 	remoteSessions       map[string]remoteSessionBinding
 
 	// FeatureFlags gates experimental or semantically unsafe operations
-	// that are not yet production-ready. Each flag is off-by-default.
-	featureFlags     FeatureFlags
 	remoteSessionTTL time.Duration
 	remoteSessionNow func() time.Time
 	reportEngine     *reporting.ReportEngine
@@ -1926,9 +1924,8 @@ func (s *APIServer) handleUpdateRetention(w http.ResponseWriter, r *http.Request
 	// mutation endpoint cannot safely call them.
 	writeJSON(w, http.StatusServiceUnavailable, map[string]string{
 		"error":   "tenant retention mutation is not supported",
-		"message": "Physical retention policy modification is a platform-admin operation.",
+		
 	})
-	return
 }
 
 func (s *APIServer) handleListRetentionPolicies(w http.ResponseWriter, r *http.Request) {
