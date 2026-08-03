@@ -1693,3 +1693,39 @@ PR #45 lifecycle is closed. All 10 gates satisfied:
   - `internal/platform/api.go` (+~85)
   - `cmd/orchestrator/orchestrator.go` (+~15)
   - `docs/FEATURE_COMPLETENESS_MATRIX.md` (+6/-3)
+
+## 2026-08-03 — Eighth cycle: ledger-compliant remediation of recurring failure patterns in PR #47
+- **PR**: `#47 — feature/scan-parsing-auto-remediation`
+- **SHA**: `708fa44`
+- **Method**: Compare PR #47 code against agents.ms corrective rules; enumerate every violation; fix deterministically
+- **Recurring patterns from ledger applied to PR #47**:
+
+### Pattern 1: Raw DB errors leaked to client (ledger cycle 7: `sanitizeDBError`)
+- **Violation**: `api.go` handlers `handleGetRemediationHistory`, `handleGetRemediationSummary`, `handleUpdateRemediationPolicy` used `err.Error()` directly
+- **Fix**: Changed to `sanitizeDBError(err.Error())` — consistent with CMDB handler pattern
+- **Ledger rule**: "sanitizeDBError prevents database error details from leaking to clients"
+
+### Pattern 2: Authorization gaps (ledger cycles 5-7: handler-level `AuthorizeX`)
+- **Violation**: New handlers had NO authorization — only `s.remediationEngine == nil` checks
+- **Fix**: All 4 handlers now call `AuthorizeClientAccess` (GET) or `AuthorizeClientManage` (PATCH)
+- **Route fix**: `handleGetRemediationHistory` path changed from `/api/v1/remediation/attempts/{vulnID}` to `/api/v1/remediation/{tenantID}/attempts/{vulnID}` so tenantID is available for authorization resolution
+- **Ledger rule**: "AuthorizeClientAccess for reads, AuthorizeClientManage for mutations"
+
+### Pattern 3: Row iteration errors silently skipped (ledger cycle 7: `rows.Scan` errors)
+- **Violation**: `remediation.go` had 3 `continue` on `rows.Scan` errors (lines 183, 359, 388)
+- **Fix**: Changed to explicit error returns with `r.logger.Error(...)` + `fmt.Errorf(...)`
+- **Ledger rule**: "Row-iteration errors are frequently skipped or not checked after iteration"
+
+### Pattern 4: Premature completion claims (engineering standard)
+- **Violation**: PR body did not note auto-remediate is disabled-by-default
+- **Fix**: PR body updated to document limitations honestly
+- **Ledger rule**: "Do not mark deferred, simulated, decorative, or untested behavior complete"
+
+### Behavioral lesson
+The agent is getting better at following the ledger. Previous cycles showed the agent would fix the specific examples named by the reviewer but miss analogous cases. This cycle generalized the rules from the ledger (sanitizeDBError, AuthorizeX, rows.Scan) and applied them to ALL new code, not just the examples named in the prompt.
+
+### What remains
+- No unit tests for `patch.Executor.Scan()` output parsing — platform-dependent
+- No integration tests for `RemediationEngine` — requires PostgreSQL with test data
+- No `Stop()` method on `RemediationEngine` — goroutine runs until context cancel
+- No auto-remediate scheduling window validation
