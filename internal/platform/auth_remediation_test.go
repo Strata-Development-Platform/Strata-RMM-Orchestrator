@@ -25,14 +25,6 @@ func newTestToken(t *testing.T, userID, tenantID, mspID, clientID, siteID string
 	return token
 }
 
-func newTestAgentToken(t *testing.T, agentID, tenantID string) string {
-	gen := newTestTokenGen()
-	token, err := gen.GenerateAgentToken(tenantID, agentID, time.Hour)
-	if err != nil {
-		t.Fatalf("generate agent token: %v", err)
-	}
-	return token
-}
 
 // TestBillingRouteClassification verifies billing routes are properly classified.
 func TestBillingRouteClassification(t *testing.T) {
