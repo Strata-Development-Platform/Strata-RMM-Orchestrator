@@ -335,23 +335,3 @@ func cropImage(img image.Image, rect image.Rectangle) image.Image {
 	}
 	return dst
 }
-
-func encodeFrame(img image.Image, format string, quality int) ([]byte, error) {
-	buf := &bytes.Buffer{}
-	switch format {
-	case "png":
-		return nil, fmt.Errorf("png encoding not yet implemented for real capture")
-	case "jpeg":
-		opts := &jpeg.Options{Quality: quality}
-		if err := jpeg.Encode(buf, img, opts); err != nil {
-			return nil, err
-		}
-		return buf.Bytes(), nil
-	default:
-		opts := &jpeg.Options{Quality: quality}
-		if err := jpeg.Encode(buf, img, opts); err != nil {
-			return nil, err
-		}
-		return buf.Bytes(), nil
-	}
-}

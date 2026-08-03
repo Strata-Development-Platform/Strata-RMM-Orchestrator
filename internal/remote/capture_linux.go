@@ -44,7 +44,7 @@ func getLinuxScreenSize() (image.Rectangle, error) {
 			if string(output[i:i+9]) == "dimensions" {
 				// Find width and height after this
 				rest := string(output[i:])
-				fmt.Sscanf(rest, "dimensions: %d x %d", &w, &h)
+				_, _ = fmt.Sscanf(rest, "dimensions: %d x %d", &w, &h)
 				if w > 0 && h > 0 {
 					return image.Rect(0, 0, w, h), nil
 				}
@@ -60,7 +60,7 @@ func getLinuxScreenSize() (image.Rectangle, error) {
 		for _, line := range bytes.Split(output, []byte("\n")) {
 			lineStr := string(line)
 			if len(lineStr) > 10 && lineStr[:10] == "+-geometry" {
-				fmt.Sscanf(lineStr[10:], "%dx%d", &w, &h)
+				_, _ = fmt.Sscanf(lineStr[10:], "%dx%d", &w, &h)
 				if w > 0 && h > 0 {
 					return image.Rect(0, 0, w, h), nil
 				}

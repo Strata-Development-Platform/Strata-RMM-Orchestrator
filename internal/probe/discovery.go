@@ -94,6 +94,11 @@ func (de *DiscoveryEngine) runDiscovery(ctx context.Context) {
 	allDevices = append(allDevices, snmpDevices...)
 	de.probe.Logger.Info("SNMP neighbor discovery complete", zap.Int("devices", len(snmpDevices)))
 
+	// Discover via LLDP/CDP (stubs - full topology discovery not implemented)
+	_ = de.discoverLLDPNeighbors()
+	_ = de.discoverCDPNeighbors()
+	_ = de.discoverSTPTopology()
+
 	// Deduplicate and publish
 	deduped := de.deduplicate(allDevices)
 

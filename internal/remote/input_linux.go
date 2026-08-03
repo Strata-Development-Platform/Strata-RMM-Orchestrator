@@ -28,14 +28,7 @@ func injectLinuxMouseClick(button MouseButtons, down bool) error {
 		buttonCode = 2
 	}
 
-	action := "click"
-	if down {
-		action = "click"
-	} else {
-		action = "click"
-	}
-
-	cmd := exec.Command("xdotool", action, fmt.Sprintf("%d", buttonCode))
+	cmd := exec.Command("xdotool", "click", fmt.Sprintf("%d", buttonCode))
 	_ = cmd.Run()
 	return nil
 }
