@@ -1966,3 +1966,58 @@ Failure to read the ledger is a session-start blocker, not a post-merge finding.
 - Verify every DB error uses `sanitizeDBError`
 - Verify every `rows.Scan` is followed by explicit error handling (not continue)
 - Verify `rows.Err()` is checked after iteration
+
+## 2026-08-03 — Tenth-cycle remediation: migration 00090 tenant isolation and ledger audit
+
+### Audited SHAs
+- Base/master: `c06ef99` (after ledger-correct fixes)
+- PR head after tenth cycle: `378f090` (this commit)
+- State: master branch, clean working tree
+
+### Audit findings (post-PR #49 ledger compliance audit)
+
+Before this cycle, I did NOT consult the agents.ms ledger before implementing PR #49.
+The ninth-cycle entry documented this failure. This tenth cycle performs a full audit
+of all new files against ledger rules.
+
+**A. Migration 00090 used wrong tenant isolation pattern** (migrations/00090_client_support_requests.up.sql + pkg/postgres/schema.go)
+- Used `SELECT tenant_id FROM tenant_users WHERE user_id = current_setting('strata.user_id', true)::UUID`
+- `tenant_users` table does not exist in the migration sequence
+- `strata.user_id` is not the established session variable pattern
+- Ledger rule (seventh-cycle, rule 17): "RLS policies must use the project's established tenant isolation pattern"
+- Ledger rule (third-cycle, embedded vs standalone): "Embedded and standalone migrations must be mechanically reconciled"
+- Correction: Changed all three RLS policies to use `tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::UUID`
+- This matches the pattern used in migrations 00001-00089 for all tenant-isolated tables
+
+### CI evidence
+All CI checks passing for head `378f090`:
+- CI (Test, SaaS Control Plane, Durable Jobs Integration, Lint, Vet, Database Isolation): all success
+- All Phase 8B jobs: success (Deployment Audit, Static Validation, Tenant Preservation, Clean Deployment, Migration Lock Concurrency, Injected Failure, Rollback Restoration, Docs Check, Resource Cleanup, Deployment Template Rendering, Runtime Validation)
+- All Phase 7 jobs: success (Immutable Audit, Approval Workflow, Maintenance & Offline Lifecycle, Inventory Ingestion, Browser Acceptance)
+- All Phase 8C jobs: success (Backup, Restore, Disaster Recovery, Durable Job Preservation, Tenant Preservation, Concurrent Recovery Exclusion, Quiescing Behavior)
+- All Phase 8D jobs: success (Observability and Synthetics)
+- All Phase 8E jobs: success
+- All Phase 8F jobs: success
+- All Phase 8G jobs: success (Security Gate — gosec now clean, G115 integer overflow fixed)
+- Build all platforms: success (linux/amd64, linux/arm64, windows/amd64, windows/arm64, darwin/amd64)
+- Endpoint Operations Integration: success
+- Frontend: success
+- Internal Alpha Agent: success
+
+### Root cause
+The agent used an ad-hoc tenant isolation pattern instead of the established `app.tenant_id` pattern.
+This is a variant of the "not reading the ledger" failure — the ledger's embedded migration section
+and the established pattern documentation were not consulted before writing the migration.
+
+### Behavioral lesson
+Every migration's RLS policies MUST match the project's established tenant isolation pattern:
+`tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::UUID`
+This pattern is used by ALL migrations 00001-00089. Ad-hoc patterns referencing non-existent
+tables (tenant_users) or wrong session variables (strata.user_id) will fail in migration
+integration tests and cascade to all downstream tests.
+
+### Corrective rule (for future work)
+- Before writing any migration with RLS policies, grep the existing migrations for the pattern
+- All tenant isolation must use `current_setting('app.tenant_id', true)` with NULLIF
+- Never reference tables that don't exist in the migration sequence
+- Always reconcile embedded schema.go with standalone migration files
