@@ -834,3 +834,556 @@ PR #45 remains blocked and draft until:
 10. hosted internal-alpha acceptance remains honestly marked Environment pending.
 
 Do not merge without explicit owner authorization.
+
+
+# Prospective project engineering bible
+
+## Status and authority
+
+This section is the mandatory operating constitution for every human or automated coding agent working on Strata RMM Orchestrator after 2026-08-03.
+
+It is prospective guidance, while the preceding entries remain the append-only remediation and learning history. Earlier ledger entries may document superseded claims or implementations. They remain evidence of prior behavior, but they do not override this constitution.
+
+Instruction precedence:
+
+1. Explicit current instructions from the repository owner
+2. Repository-root `AGENTS.md` and other path-scoped repository instructions
+3. This project engineering bible
+4. The applicable product specification and acceptance documentation
+5. The feature-completion/acceptance matrix
+6. The newest applicable remediation entry in this ledger
+7. Older historical ledger entries
+8. General agent defaults
+
+If two instructions conflict, stop, identify the exact conflict, and request direction. Do not silently choose the instruction that makes completion easier.
+
+Every development session must read this section completely before changing code.
+
+## Governing principles
+
+1. Never optimize for appearing complete. Optimize for discovering what remains unproven.
+2. “Implemented” is a source-code state, not acceptance evidence.
+3. A test name, route, UI control, schema object, comment, mock, fixture, generated report, commit message, checklist mark, or green unrelated workflow is not proof of the behavior it describes.
+4. Evidence must exercise the boundary being claimed.
+5. Security claims require both successful authorized behavior and denied unauthorized behavior.
+6. Every claim must identify the exact commit tested.
+7. Any commit—including documentation-only commits—creates a new exact head and invalidates earlier final-head workflow evidence.
+8. Unavailable infrastructure must be marked blocked or Environment pending, never passed.
+9. Deterministic failures require diagnosis and correction. Repeated reruns are prohibited.
+10. One rerun is acceptable only for a documented external transient failure.
+11. Never merge without explicit repository-owner authorization.
+12. Preserve user changes and unrelated work. Avoid scope expansion and unrelated churn.
+13. Record limitations as prominently as successes.
+14. Prefer the smallest complete vertical slice over broad scaffolding that cannot be accepted.
+15. Comments and documentation must describe current behavior, not intended future behavior.
+
+## Required repository orientation
+
+Before implementation:
+
+1. Fetch all relevant remote refs.
+2. Verify the current `origin/master` SHA.
+3. Confirm the referenced prior merge commits.
+4. Inspect every open PR and confirm whether an existing development PR owns the work.
+5. Confirm the working branch, its base SHA, exact head SHA, ahead/behind state, and whether it contains unrelated changes.
+6. Read all repository instructions.
+7. Read this complete file.
+8. Read the applicable product specification, phase documentation, internal-alpha acceptance documentation, migration rules, security guidance, and PR lifecycle documentation.
+9. Build a source-backed inventory of existing behavior before proposing implementation.
+10. Identify the smallest missing code or automation. Do not duplicate existing features.
+
+Do not start implementation from a stale local branch or an assumed base.
+
+## One focused draft PR lifecycle
+
+Unless the owner explicitly directs otherwise:
+
+1. Start from verified current `origin/master`.
+2. Use one focused branch and one draft PR.
+3. Record the immutable base SHA in the PR body.
+4. Keep the PR draft throughout implementation, remediation, and evidence gathering.
+5. Do not open overlapping development PRs.
+6. Keep commits coherent and reviewable.
+7. Do not mix dependency churn, formatting churn, generated-file churn, or unrelated refactors into the feature PR.
+8. Reconcile generated or embedded sources with authoritative standalone sources in the same commit.
+9. Add or update automated tests with production code.
+10. Append material mistakes, corrections, evidence, and limitations to this ledger.
+11. Monitor every applicable workflow for the exact current head.
+12. Diagnose deterministic failures and commit fixes.
+13. Update the PR body only with verified facts.
+14. Keep the PR unmerged until every merge gate is satisfied.
+15. Obtain explicit owner authorization before merge.
+16. After authorized merge, verify the actual master merge commit and absence of leftover development PRs.
+
+A branch being mergeable is not authorization to merge.
+
+## Scope and vertical-slice discipline
+
+Before coding, state:
+
+- the user-visible or operator-visible outcome;
+- the production entry points;
+- affected identities and roles;
+- tenant/MSP/client/site/endpoint scope;
+- persistence changes;
+- external dependencies;
+- deployment/migration effects;
+- denial and failure behavior;
+- required tests;
+- infrastructure that is available or unavailable;
+- non-goals.
+
+A vertical slice is complete only when its interface, authorization, persistence, failure handling, observability, documentation, deployment impact, and relevant tests are addressed together.
+
+Do not introduce empty feature flags, placeholder handlers, no-op adapters, fake provider integrations, success-shaped mock responses, or UI controls backed only by local state and call them implemented.
+
+## Feature state vocabulary
+
+Every feature or acceptance row must use exactly one honest state:
+
+- **Absent** — no meaningful implementation exists.
+- **Scaffolded** — structure or interface exists but production behavior does not.
+- **Implemented, unverified** — production code exists without sufficient behavioral evidence.
+- **Partially verified** — some required paths are proven but material paths remain untested.
+- **Environment pending** — implementation may exist, but required infrastructure testing has not occurred.
+- **Blocked** — a named dependency, defect, permission, or infrastructure limitation prevents progress.
+- **Accepted** — all specified acceptance criteria have durable evidence at the required boundary for the exact commit.
+- **Hosted accepted** — the authoritative isolated hosted exercise passed with durable evidence.
+
+“Feature complete” may be used only when every required feature row is Accepted or Hosted accepted as specified, with no undisclosed material blocker.
+
+## Evidence ladder
+
+Report the highest demonstrated level only:
+
+1. **Specified** — requirement is written.
+2. **Scaffolded** — interface, route, type, schema, or UI shell exists.
+3. **Implemented** — production code path exists.
+4. **Statically verified** — formatting, compilation, lint, schema/static checks pass.
+5. **Unit verified** — isolated production logic passes meaningful unit tests.
+6. **Integration verified** — real dependent components interact successfully.
+7. **Production-boundary verified** — request enters through the real production entry point with real middleware, authorization, persistence, and response behavior.
+8. **Isolated end-to-end verified** — authoritative clean deployment exercises the complete workflow.
+9. **Hosted accepted** — the intended hosted environment passes the exercise with durable terminal evidence.
+
+Evidence at one level does not imply the next.
+
+## Mandatory pre-claim checklist
+
+Before stating that a capability is complete, identify:
+
+- exact requirement;
+- exact commit SHA;
+- production entry point;
+- real dependencies;
+- authenticated identity and effective role;
+- selected scope;
+- referenced-resource ancestry;
+- database/security enforcement;
+- successful path;
+- denied cross-scope path;
+- denied insufficient-role path;
+- malformed-input path;
+- dependency-failure path;
+- rollback or recovery behavior;
+- durable test or exercise evidence;
+- workflow URL and terminal job result;
+- known limitations;
+- whether hosted infrastructure was actually used.
+
+If any required item is missing, downgrade the claim.
+
+## Authorization and isolation standard
+
+The complete protected operation is:
+
+`principal permission + selected scope + referenced-resource ancestry + database enforcement + behavioral denial evidence`
+
+All terms are required.
+
+Rules:
+
+1. Authentication proves identity, not authorization.
+2. Route classification proves neither handler authorization nor resource ownership.
+3. Context claims establish selected scope, not database ancestry.
+4. Read and mutation permissions must be distinct where roles differ.
+5. Parent scope may access child resources only through an active, proven hierarchy.
+6. Child scope must never implicitly manage a parent.
+7. Caller-supplied MSP, client, site, tenant, endpoint, or relationship IDs are untrusted.
+8. Derive ancestry from authoritative rows where possible.
+9. When multiple resources are referenced, prove every resource and the required relationship among them.
+10. Denial responses must avoid resource-existence disclosure.
+11. Tests must cover same-scope allow, cross-tenant deny, cross-MSP deny, cross-client deny, cross-site deny, cross-endpoint deny, insufficient-role deny, and missing-resource behavior as applicable.
+12. Platform-administrator exceptions must be explicit and tested.
+13. Authorization helpers must fail closed when context, database, identity, or scope is missing.
+
+## Transactions, RLS, and connection pools
+
+1. Validation and mutation for one protected operation must occur in one transaction when consistency matters.
+2. Establish request-scoped database settings using transaction-local semantics.
+3. Execute ancestry checks and writes through the same transaction.
+4. Commit exactly once after all validations and mutations succeed.
+5. Roll back on every failure.
+6. Never validate on one connection and write on another when the validation protects the write.
+7. Close standalone connections and rows deterministically.
+8. Check `rows.Err()` after iteration.
+9. Never ignore scan, execution, commit, rollback-relevant, seed, grant, or role-switch errors.
+10. RLS tables require both `ENABLE ROW LEVEL SECURITY` and, where intended, `FORCE ROW LEVEL SECURITY`.
+11. Test RLS under a proven non-owner, non-superuser, `NOBYPASSRLS` identity.
+12. Assert `current_user`, `session_user`, active role, and relevant `app.*` settings.
+13. Test `USING` and `WITH CHECK` behavior for SELECT, INSERT, UPDATE, and DELETE as applicable.
+14. Test connection reuse to prove scope settings do not leak between requests.
+15. Policies for cross-referencing rows must validate every security-relevant endpoint.
+16. RLS is defense in depth; handlers must still enforce business authorization and return controlled responses.
+17. Raw database, constraint, schema, driver, or topology details must never reach clients.
+
+## Migration standard
+
+Every migration change must provide:
+
+- unique ordered migration ID;
+- accurate name and comments;
+- standalone up/down files when the repository requires them;
+- embedded migration parity;
+- idempotency where the migration framework requires it;
+- correct PostgreSQL/TimescaleDB syntax;
+- clean-install test;
+- upgrade-from-supported-version test;
+- same-version redeployment test;
+- rollback test;
+- failure-injection/partial-application test where material;
+- schema/data preservation assertions;
+- security-policy and catalog assertions;
+- documented migration impact and rollback limitations.
+
+Do not claim migration correctness from string matching. Execute it against the real supported database engine.
+
+Down migrations must not accidentally remove columns or objects owned by earlier migrations. Destructive or irreversible rollback behavior must be explicitly documented.
+
+## Production-boundary testing standard
+
+Mocks and unit tests are useful but cannot prove production integration.
+
+A production-boundary test must exercise, as applicable:
+
+- real router;
+- real middleware;
+- real token/identity parsing;
+- real authorization helpers;
+- real handler;
+- real transaction and request-scoped DB context;
+- real PostgreSQL/TimescaleDB;
+- real NATS JetStream;
+- configured object storage;
+- real response serialization;
+- real allow and deny outcomes.
+
+Test fixtures must:
+
+- use real contexts;
+- fail immediately on unexpected setup errors;
+- use valid foreign-key ancestry;
+- persist for the lifetime of dependent assertions;
+- avoid rollback-before-reuse errors;
+- be isolated and deterministic;
+- verify execution identity;
+- clean up safely;
+- never turn setup failure into a passing denial test.
+
+The evidence chain is:
+
+`workflow invocation -> test discovery -> fixture success -> proven execution identity -> production entry point -> same transaction -> asserted outcome -> terminal exact-head run`
+
+A missing link means partial evidence.
+
+## End-to-end and internal-alpha coverage
+
+The authoritative internal-alpha exercise must eventually cover, without marking unavailable infrastructure passed:
+
+- clean installation into an isolated environment;
+- initial administrator bootstrap;
+- provider business setup;
+- provider-created MSP;
+- owner invitation and activation;
+- MSP client and site creation;
+- scoped enrollment-token generation;
+- Linux endpoint-agent installation and enrollment;
+- identity persistence across agent restart;
+- PostgreSQL/TimescaleDB operation;
+- NATS JetStream operation;
+- configured object storage operation;
+- telemetry ingestion and dashboard visibility;
+- broker outage;
+- bounded local queueing;
+- reconnect and replay;
+- duplicate handling;
+- harmless durable job dispatch;
+- durable job result visibility;
+- cross-tenant denial;
+- cross-endpoint denial;
+- orchestrator restart and readiness recovery;
+- same-version redeployment/idempotency;
+- native Linux systemd installation;
+- Windows PowerShell parsing;
+- Windows service installation where infrastructure permits;
+- secret scanning;
+- vulnerability scanning;
+- dependency scanning;
+- image scanning;
+- SBOM generation/validation;
+- container scanning.
+
+Each item requires terminal evidence or an explicit limitation/blocker.
+
+## Deployment and certificate simplicity
+
+Deployment work must preserve:
+
+- deterministic clean install;
+- explicit configuration validation;
+- secure secret generation and handling;
+- initial-admin bootstrap without logging secrets;
+- Docker/container deployment where supported;
+- native Linux/systemd installation;
+- same-version idempotency;
+- upgrade and rollback;
+- readiness and restart recovery;
+- non-destructive failure handling;
+- operator-readable diagnostics.
+
+Let's Encrypt integration may simplify deployment, but must:
+
+- remain optional when an external reverse proxy or certificate manager is used;
+- verify domain and ports before requesting a certificate;
+- avoid exposing ACME account or private-key material;
+- support automated renewal;
+- preserve existing valid certificates during failed renewal;
+- provide readiness/health behavior during renewal;
+- document HTTP-01/DNS-01 assumptions;
+- fail safely without partially replacing proxy configuration;
+- include staging-environment tests to avoid production rate limits.
+
+## Agent lifecycle, telemetry, broker, jobs, and durability
+
+Endpoint-agent acceptance must prove:
+
+- scoped enrollment token use;
+- token expiration and replay behavior;
+- durable generated identity;
+- identity persistence across restart;
+- tenant/MSP/client/site/endpoint binding;
+- Linux service install/start/restart;
+- Windows parsing and service behavior where available;
+- bounded offline storage;
+- explicit overflow policy;
+- reconnect with backoff;
+- ordered or defined replay semantics;
+- duplicate suppression/idempotency;
+- telemetry persistence and dashboard visibility;
+- harmless job dispatch;
+- authorization of job target;
+- durable result reporting;
+- denial of cross-endpoint dispatch or result access.
+
+In-memory tests alone cannot prove restart or durability behavior.
+
+## External dependency testing
+
+For PostgreSQL/TimescaleDB, NATS JetStream, object storage, email, certificate issuance, or other providers:
+
+1. Identify whether the test uses a real service, compatible emulator, fake, or mock.
+2. Do not describe an emulator or mock as the real provider.
+3. Test dependency outage and recovery.
+4. Test timeout, retry, and idempotency behavior.
+5. Test malformed and partial responses where relevant.
+6. Prevent uncontrolled request loops and provider hammering.
+7. Record exact versions and configuration.
+8. Redact credentials and sensitive endpoints from logs and artifacts.
+9. Preserve durable evidence without preserving secrets.
+
+## Security and supply-chain gates
+
+Applicable exact-head gates must include:
+
+- secret scan;
+- static analysis;
+- dependency vulnerability scan;
+- license/policy checks where required;
+- container/image vulnerability scan;
+- Dockerfile/container best-practice scan;
+- SBOM generation;
+- SBOM validation and retention as an artifact;
+- source and built-image provenance where supported;
+- migration/security-policy tests;
+- authentication/authorization abuse cases.
+
+A scanner invocation that silently skips targets is not a pass. Record tool version, target, result, ignored findings, severity policy, and artifact URL.
+
+Findings must be fixed, explicitly accepted by the owner, or accurately documented as blockers. Do not suppress a finding solely to make CI green.
+
+## Workflow and exact-head evidence
+
+For every applicable workflow:
+
+- record workflow name;
+- run URL;
+- run ID;
+- exact commit SHA;
+- status;
+- conclusion;
+- applicable jobs;
+- skipped jobs and why;
+- failure cause;
+- fixing commit;
+- rerun attempt and justification;
+- artifact/evidence URLs.
+
+Rules:
+
+1. Only terminal results count.
+2. Results for a predecessor commit never count as final-head evidence.
+3. A documentation commit triggers a new evidence cycle.
+4. Check that expected tagged/integration tests were discovered and executed.
+5. Check that scan targets were present.
+6. Check that skipped jobs are genuinely inapplicable.
+7. Never summarize “all checks pass” from a partial workflow list.
+8. Do not repeatedly rerun deterministic failures.
+9. Preserve external-transient details for the one permitted rerun.
+
+## Failure classification
+
+Classify failures before acting:
+
+- **Code defect** — fix code or tests.
+- **Test defect** — repair the test without weakening the requirement.
+- **Migration defect** — correct migration and verify supported paths.
+- **Security finding** — remediate or document/obtain explicit risk acceptance.
+- **Infrastructure unavailable** — mark Environment pending or blocked.
+- **Permission/credential blocker** — stop and request the required authority.
+- **External transient** — document provider, timestamp, symptom, evidence, and single rerun.
+- **Flaky behavior** — diagnose and eliminate; do not normalize reruns.
+- **Out-of-scope pre-existing failure** — prove it is pre-existing, document it, and request direction if it blocks required evidence.
+
+Never weaken assertions, skip a required job, broaden retries, or catch-and-ignore errors merely to obtain green status.
+
+## Durable evidence requirements
+
+Evidence must be reproducible and useful after the agent session ends.
+
+Preserve:
+
+- exact commands;
+- exact versions;
+- exact commit;
+- sanitized configuration;
+- test output;
+- workflow/job URLs;
+- generated reports;
+- relevant logs;
+- timestamps;
+- failure and rerun history;
+- environment limitations;
+- migration and rollback results.
+
+Never preserve passwords, tokens, private keys, session cookies, raw connection strings, or sensitive customer information.
+
+Screenshots can support UI evidence but do not replace machine-verifiable API/database assertions. Generated reports must fail when required inputs are absent; they must not produce success-shaped empty evidence.
+
+## PR body contract
+
+Before requesting review or merge authorization, the PR body must contain:
+
+- objective and bounded scope;
+- base SHA;
+- exact head SHA;
+- branch and draft state;
+- source-backed description of existing behavior;
+- implementation summary;
+- security and tenant-isolation impact;
+- migration impact;
+- deployment impact;
+- rollback procedure;
+- automated tests and exact commands;
+- production-boundary evidence;
+- hosted/end-to-end evidence;
+- every applicable workflow URL and result;
+- deterministic failures and fixing commits;
+- external transient reruns and justification;
+- skipped/inapplicable jobs;
+- remaining limitations and blockers;
+- explicit statement that the PR is unmerged;
+- explicit statement that owner authorization is required.
+
+The body must be rewritten when implementation invalidates older descriptions. Never leave the exact-head field blank.
+
+## Documentation and ledger behavior
+
+- Keep this file append-only.
+- Do not delete embarrassing or incorrect historical entries.
+- Supersede inaccurate claims explicitly.
+- Add a new entry when an audit discovers a material reasoning or evidence failure.
+- Record what was wrong, why it happened, the corrective rule, the code correction, the evidence, and what remains.
+- Do not use this ledger as a substitute for product documentation, operator instructions, migration notes, or API documentation.
+- Future repository-root `AGENTS.md` should point agents to this constitution, applicable specifications, acceptance matrix, PR lifecycle document, and newest ledger entry.
+
+## Completion and merge gates
+
+The PR must remain draft and unmerged until all applicable gates are satisfied:
+
+1. Scope is implemented without unrelated churn.
+2. Required unit, integration, production-boundary, migration, security, and deployment tests pass.
+3. Exact-head workflows are all terminal and successful.
+4. Expected tests and scans demonstrably ran.
+5. End-to-end exercise has terminal durable evidence when required.
+6. Hosted acceptance has run when required, or is clearly documented as a remaining blocker.
+7. Limitations are accurate and prominent.
+8. PR body satisfies the contract.
+9. Migration and rollback impact are documented.
+10. No material unresolved review finding remains.
+11. The owner explicitly authorizes merge.
+
+Without explicit owner authorization, stop with the PR draft and unmerged even if every technical gate passes.
+
+## Required agent handoff
+
+At the end of every development cycle, report:
+
+- repository and PR;
+- base SHA;
+- exact current head SHA;
+- commits created;
+- files materially changed;
+- behavior implemented;
+- evidence level reached for each claim;
+- commands/tests executed;
+- workflow URLs and conclusions;
+- failures and fixes;
+- reruns;
+- migration impact;
+- rollback;
+- security impact;
+- remaining blockers;
+- whether hosted testing occurred;
+- draft/unmerged state;
+- the exact next recommended action.
+
+The handoff must be understandable without relying on transient conversation history.
+
+## Final honesty reinforcement
+
+Before writing “complete,” “verified,” “secure,” “isolated,” “production-ready,” “accepted,” or “all tests pass,” ask:
+
+- Did I exercise the real boundary?
+- Did I verify the identity actually used?
+- Did I prove both allow and deny behavior?
+- Did I test the real dependency?
+- Did I inspect test discovery rather than assume it?
+- Did I test rollback and recovery?
+- Is this evidence for the exact current head?
+- Is any required infrastructure still unavailable?
+- Does the PR body tell the same story as the code and workflows?
+- Would another engineer reproduce this conclusion from the preserved evidence alone?
+
+If any answer is no or unknown, state that limitation and use a weaker, accurate claim.
+
+The project benefits more from an honest blocker than from a false completion.
