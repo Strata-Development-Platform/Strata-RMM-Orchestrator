@@ -9,9 +9,10 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+//nolint:gosec // Redis key prefixes, not credentials
 const (
-	agentRegistryKey  = "strata:agents" /* #nosec G101 */
-	agentPrefix       = "agent:"        /* #nosec G101 */
+	agentRegistryKey  = "strata:agents"
+	agentPrefix       = "agent:"
 	tokenBlacklistKey = "strata:token:blacklist"
 	tokenPrefix       = "token:"
 	configCacheKey    = "strata:config:cache"
