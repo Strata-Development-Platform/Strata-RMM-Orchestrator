@@ -1729,3 +1729,15 @@ The agent is getting better at following the ledger. Previous cycles showed the 
 - No integration tests for `RemediationEngine` — requires PostgreSQL with test data
 - No `Stop()` method on `RemediationEngine` — goroutine runs until context cancel
 - No auto-remediate scheduling window validation
+
+## PR #47 merge-completion (Gate 10)
+- **Merged**: 2026-08-03T16:59:51Z
+- **Merge SHA**: `2dd2080` (squash merge)
+- **Branch deleted**: `feature/scan-parsing-auto-remediation`
+- **CI**: All 84 checks terminal and passing
+- **Gate 10 verification**:
+  - Master HEAD = origin/master ✅
+  - PR #47 state = MERGED ✅
+  - Feature branch deleted ✅
+  - agents.ms updated with all 8 cycles ✅
+  - All loose ends addressed ✅
