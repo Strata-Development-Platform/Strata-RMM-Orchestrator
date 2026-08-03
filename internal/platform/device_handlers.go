@@ -918,8 +918,7 @@ func (s *APIServer) handleDeleteDeviceRelationship(w http.ResponseWriter, r *htt
 func (s *APIServer) handleGetDeviceDependencies(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.PathValue("deviceID")
 	mspID, _ := r.Context().Value(ctxKeyMSPID).(string)
-	if mspID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "MSP context required"})
+	if !s.AuthorizeMSPAccess(w, r, mspID) {
 		return
 	}
 
@@ -972,8 +971,7 @@ func (s *APIServer) handleGetDeviceDependencies(w http.ResponseWriter, r *http.R
 func (s *APIServer) handleGetDeviceImpact(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.PathValue("deviceID")
 	mspID, _ := r.Context().Value(ctxKeyMSPID).(string)
-	if mspID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "MSP context required"})
+	if !s.AuthorizeMSPAccess(w, r, mspID) {
 		return
 	}
 
@@ -1012,8 +1010,7 @@ func (s *APIServer) handleGetDeviceImpact(w http.ResponseWriter, r *http.Request
 
 func (s *APIServer) handleGetNetworkAddresses(w http.ResponseWriter, r *http.Request) {
 	mspID, _ := r.Context().Value(ctxKeyMSPID).(string)
-	if mspID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "MSP context required"})
+	if !s.AuthorizeMSPAccess(w, r, mspID) {
 		return
 	}
 
@@ -1072,8 +1069,7 @@ func (s *APIServer) handleGetNetworkAddresses(w http.ResponseWriter, r *http.Req
 
 func (s *APIServer) handleSubmitNetworkAddress(w http.ResponseWriter, r *http.Request) {
 	mspID, _ := r.Context().Value(ctxKeyMSPID).(string)
-	if mspID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "MSP context required"})
+	if !s.AuthorizeMSPManage(w, r, mspID) {
 		return
 	}
 
@@ -1136,8 +1132,7 @@ func (s *APIServer) handleSubmitNetworkAddress(w http.ResponseWriter, r *http.Re
 func (s *APIServer) handleGetDevicePackages(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.PathValue("deviceID")
 	mspID, _ := r.Context().Value(ctxKeyMSPID).(string)
-	if mspID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "MSP context required"})
+	if !s.AuthorizeMSPAccess(w, r, mspID) {
 		return
 	}
 
@@ -1196,8 +1191,7 @@ func (s *APIServer) handleGetDevicePackages(w http.ResponseWriter, r *http.Reque
 func (s *APIServer) handleSubmitDevicePackages(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.PathValue("deviceID")
 	mspID, _ := r.Context().Value(ctxKeyMSPID).(string)
-	if mspID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "MSP context required"})
+	if !s.AuthorizeMSPManage(w, r, mspID) {
 		return
 	}
 
@@ -1285,8 +1279,7 @@ func (s *APIServer) handleSubmitDevicePackages(w http.ResponseWriter, r *http.Re
 func (s *APIServer) handleGetDeviceServices(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.PathValue("deviceID")
 	mspID, _ := r.Context().Value(ctxKeyMSPID).(string)
-	if mspID == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "MSP context required"})
+	if !s.AuthorizeMSPAccess(w, r, mspID) {
 		return
 	}
 

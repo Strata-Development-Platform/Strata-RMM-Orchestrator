@@ -25,11 +25,6 @@ import (
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/timescale"
 )
 
-// FeatureFlags gates operations that are experimental, semantically unsafe,
-// or not yet production-ready. Every flag is off-by-default.
-type FeatureFlags struct {
-}
-
 type APIServer struct {
 	addr           string
 	db             *timescale.Client
