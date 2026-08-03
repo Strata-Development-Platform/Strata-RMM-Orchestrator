@@ -30,3 +30,37 @@ This file is append-only. It records mistakes, their causes, corrective rules, e
 - Infrastructure evidence: Environment pending for hosted acceptance, real PostgreSQL integration tests, RLS testing.
 - Limitations/remaining work: Real OIDC provider integration not implemented. Billing provider integration not implemented. Full retention tiering (hot/warm/cold) deferred. PR #46 password recovery + refresh tokens deferred. Migration 71-85 standalone files do not exist (embedded-only). Migration 87 client_id TEXT column renamed to oauth_client_id in this PR — embedded schema.go also needs updating for source parity. CMDB ownership verification at database boundary requires future work. RLS policy additions require future work.
 - Merge state: Draft and unmerged; explicit owner authorization required.
+
+## 2026-08-03 — Second cycle: RLS policies, migration 87 parity, comprehensive tests
+
+- Base audited: `8c7625451f8b30030babc96f9a88d8a5185f8eff` (first remediation commit)
+- PR/commit: `#45 / 54eac03` (second remediation commit)
+- Observation: First remediation cycle left RLS gaps — billing, retention, and CMDB tables from migrations 71-88 had no RLS policies or FORCE RLS. Migration 87 embedded schema still used `client_id TEXT` causing collision with migration 86's `client_id UUID`. Comprehensive behavioral tests for authorization matrices were missing.
+- Root cause: RLS was only added to client_auth_providers tables (migration 86). Billing tables, retention table, and CMDB tables (device_relationships, device_packages, etc.) were never given RLS policies. Migration 87 embedded fix was not applied to schema.go — only the standalone file was updated. Tests were incomplete.
+- Corrective rule: Every table with tenant/MSP/client scope must have RLS policies with USING and WITH CHECK clauses. Embedded and standalone migrations must be mechanically reconciled. Authorization tests must cover every handler category.
+- Code correction:
+  - Migration 89: Added FORCE ROW LEVEL SECURITY to 12 tables (6 billing, 1 retention, 6 CMDB)
+  - Migration 89: Added 20 RLS policies with USING + WITH CHECK clauses
+  - Migration 87 embedded: Changed `client_id TEXT` to `oauth_client_id TEXT` (parity with standalone)
+  - Added auth_remediation_test.go: 40+ tests covering billing, report, retention, CMDB route classification, strict JSON, UUID handling, error sanitization, schema verification
+- Tests added:
+  - TestBillingRouteClassification: Verifies all billing routes are classified
+  - TestBillingHandlersRequireAuth: Verifies billing routes reject missing credentials
+  - TestReportRouteClassification: Verifies all report routes are classified
+  - TestRetentionRouteClassification: Verifies all retention routes are classified
+  - TestCMDBRouteClassification: Verifies all CMDB routes are classified
+  - TestAgentInventoryRouteClassification: Verifies agent vs user routes
+  - TestStrictJSONDecoding: Verifies strict JSON decoding rejects unknown fields
+  - TestInvalidUUIDHandling: Verifies invalid UUIDs are handled safely
+  - TestDatabaseErrorSanitization: Verifies DB errors are sanitized
+  - TestNotFoundNonDisclosure: Verifies not-found responses don't leak existence
+  - TestSchemaHasMigration89: Verifies migration 89 exists with correct name
+  - TestSchemaHasMigration87OAuthClientID: Verifies migration 87 uses oauth_client_id
+  - TestRLSPoliciesExist: Verifies all expected RLS policies in migration 89
+  - TestRLSForceStatement: Verifies FORCE ROW LEVEL SECURITY in migration 89
+  - TestMigration87DownNonDestructive: Verifies migration 87 down doesn't drop FK
+- Local evidence: All `go test ./...` pass. PostgreSQL integration tests require live database.
+- Exact-head CI evidence: Pushed as commit 54eac03. CI runs in progress.
+- Failures/reruns: None in this cycle.
+- Limitations/remaining work: Real PostgreSQL integration tests for RLS require live database. Cross-tenant denial tests require live PostgreSQL.
+- Merge state: Draft and unmerged; explicit owner authorization required.

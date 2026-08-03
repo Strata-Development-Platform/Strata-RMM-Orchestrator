@@ -3801,7 +3801,7 @@ DROP FUNCTION IF EXISTS update_updated_at_column();
 			Up: `
 -- Add provider configuration columns for enhanced SSO support
 ALTER TABLE client_auth_providers ADD COLUMN IF NOT EXISTS issuer TEXT;
-ALTER TABLE client_auth_providers ADD COLUMN IF NOT EXISTS client_id TEXT;
+ALTER TABLE client_auth_providers ADD COLUMN IF NOT EXISTS oauth_client_id TEXT;
 ALTER TABLE client_auth_providers ADD COLUMN IF NOT EXISTS scope TEXT DEFAULT 'openid profile email';
 ALTER TABLE client_auth_providers ADD COLUMN IF NOT EXISTS mapping JSONB DEFAULT '{}';
 ALTER TABLE client_auth_providers ADD COLUMN IF NOT EXISTS auto_provision BOOLEAN DEFAULT false;
@@ -3855,7 +3855,7 @@ DROP INDEX IF EXISTS idx_client_sessions_active;
 
 -- Remove enhanced columns from client_auth_providers
 ALTER TABLE client_auth_providers DROP COLUMN IF EXISTS issuer;
-ALTER TABLE client_auth_providers DROP COLUMN IF EXISTS client_id;
+ALTER TABLE client_auth_providers DROP COLUMN IF EXISTS oauth_client_id;
 ALTER TABLE client_auth_providers DROP COLUMN IF EXISTS scope;
 ALTER TABLE client_auth_providers DROP COLUMN IF EXISTS mapping;
 ALTER TABLE client_auth_providers DROP COLUMN IF EXISTS auto_provision;
@@ -3975,6 +3975,222 @@ DROP FUNCTION IF EXISTS update_updated_at_column();
 
 -- Drop table
 DROP TABLE IF EXISTS client_session_activity;
+`,
+		},
+		{
+			ID:   89,
+			Name: "force_rls_billing_retention_cmdb",
+			Up: `
+-- Force RLS on billing tables (migration 74-79)
+ALTER TABLE billing_accounts FORCE ROW LEVEL SECURITY;
+ALTER TABLE subscriptions FORCE ROW LEVEL SECURITY;
+ALTER TABLE invoices FORCE ROW LEVEL SECURITY;
+ALTER TABLE invoice_items FORCE ROW LEVEL SECURITY;
+ALTER TABLE usage_records FORCE ROW LEVEL SECURITY;
+ALTER TABLE payment_methods FORCE ROW LEVEL SECURITY;
+
+-- Force RLS on retention table (migration 73)
+ALTER TABLE tenant_retention_settings FORCE ROW LEVEL SECURITY;
+
+-- Force RLS on CMDB tables (migration 80-84)
+ALTER TABLE device_relationships FORCE ROW LEVEL SECURITY;
+ALTER TABLE network_addresses FORCE ROW LEVEL SECURITY;
+ALTER TABLE device_packages FORCE ROW LEVEL SECURITY;
+ALTER TABLE device_services FORCE ROW LEVEL SECURITY;
+ALTER TABLE device_mounts FORCE ROW LEVEL SECURITY;
+ALTER TABLE topology_edges FORCE ROW LEVEL SECURITY;
+
+-- RLS policies for billing tables
+DROP POLICY IF EXISTS "msp_isolation_billing_accounts" ON billing_accounts;
+CREATE POLICY "msp_isolation_billing_accounts" ON billing_accounts FOR ALL
+    USING (msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID)
+    WITH CHECK (msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID);
+
+DROP POLICY IF EXISTS "platform_admin_billing_accounts" ON billing_accounts;
+CREATE POLICY "platform_admin_billing_accounts" ON billing_accounts FOR ALL
+    USING (current_setting('app.role', true) IN ('platform_owner', 'platform_admin', 'platform_billing'));
+
+DROP POLICY IF EXISTS "msp_isolation_subscriptions" ON subscriptions;
+CREATE POLICY "msp_isolation_subscriptions" ON subscriptions FOR ALL
+    USING (msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID)
+    WITH CHECK (msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID);
+
+DROP POLICY IF EXISTS "platform_admin_subscriptions" ON subscriptions;
+CREATE POLICY "platform_admin_subscriptions" ON subscriptions FOR ALL
+    USING (current_setting('app.role', true) IN ('platform_owner', 'platform_admin', 'platform_billing'));
+
+DROP POLICY IF EXISTS "msp_isolation_invoices" ON invoices;
+CREATE POLICY "msp_isolation_invoices" ON invoices FOR ALL
+    USING (msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID)
+    WITH CHECK (msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID);
+
+DROP POLICY IF EXISTS "platform_admin_invoices" ON invoices;
+CREATE POLICY "platform_admin_invoices" ON invoices FOR ALL
+    USING (current_setting('app.role', true) IN ('platform_owner', 'platform_admin', 'platform_billing'));
+
+DROP POLICY IF EXISTS "msp_isolation_invoice_items" ON invoice_items;
+CREATE POLICY "msp_isolation_invoice_items" ON invoice_items FOR ALL
+    USING (
+        EXISTS (SELECT 1 FROM invoices i WHERE i.id = invoice_items.invoice_id AND i.msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID)
+    )
+    WITH CHECK (
+        EXISTS (SELECT 1 FROM invoices i WHERE i.id = invoice_items.invoice_id AND i.msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID)
+    );
+
+DROP POLICY IF EXISTS "platform_admin_invoice_items" ON invoice_items;
+CREATE POLICY "platform_admin_invoice_items" ON invoice_items FOR ALL
+    USING (current_setting('app.role', true) IN ('platform_owner', 'platform_admin', 'platform_billing'));
+
+DROP POLICY IF EXISTS "msp_isolation_usage_records" ON usage_records;
+CREATE POLICY "msp_isolation_usage_records" ON usage_records FOR ALL
+    USING (msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID)
+    WITH CHECK (msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID);
+
+DROP POLICY IF EXISTS "platform_admin_usage_records" ON usage_records;
+CREATE POLICY "platform_admin_usage_records" ON usage_records FOR ALL
+    USING (current_setting('app.role', true) IN ('platform_owner', 'platform_admin', 'platform_billing'));
+
+DROP POLICY IF EXISTS "msp_isolation_payment_methods" ON payment_methods;
+CREATE POLICY "msp_isolation_payment_methods" ON payment_methods FOR ALL
+    USING (msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID)
+    WITH CHECK (msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID);
+
+DROP POLICY IF EXISTS "platform_admin_payment_methods" ON payment_methods;
+CREATE POLICY "platform_admin_payment_methods" ON payment_methods FOR ALL
+    USING (current_setting('app.role', true) IN ('platform_owner', 'platform_admin', 'platform_billing'));
+
+-- RLS policies for retention table
+DROP POLICY IF EXISTS "tenant_isolation_retention_settings" ON tenant_retention_settings;
+CREATE POLICY "tenant_isolation_retention_settings" ON tenant_retention_settings FOR ALL
+    USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::UUID)
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::UUID);
+
+DROP POLICY IF EXISTS "platform_admin_retention_settings" ON tenant_retention_settings;
+CREATE POLICY "platform_admin_retention_settings" ON tenant_retention_settings FOR ALL
+    USING (current_setting('app.role', true) IN ('platform_owner', 'platform_admin'));
+
+-- RLS policies for CMDB tables
+DROP POLICY IF EXISTS "msp_isolation_device_relationships" ON device_relationships;
+CREATE POLICY "msp_isolation_device_relationships" ON device_relationships FOR ALL
+    USING (msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID)
+    WITH CHECK (msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID);
+
+DROP POLICY IF EXISTS "platform_admin_device_relationships" ON device_relationships;
+CREATE POLICY "platform_admin_device_relationships" ON device_relationships FOR ALL
+    USING (current_setting('app.role', true) IN ('platform_owner', 'platform_admin'));
+
+DROP POLICY IF EXISTS "msp_isolation_network_addresses" ON network_addresses;
+CREATE POLICY "msp_isolation_network_addresses" ON network_addresses FOR ALL
+    USING (msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID)
+    WITH CHECK (msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID);
+
+DROP POLICY IF EXISTS "platform_admin_network_addresses" ON network_addresses;
+CREATE POLICY "platform_admin_network_addresses" ON network_addresses FOR ALL
+    USING (current_setting('app.role', true) IN ('platform_owner', 'platform_admin'));
+
+DROP POLICY IF EXISTS "msp_isolation_device_packages" ON device_packages;
+CREATE POLICY "msp_isolation_device_packages" ON device_packages FOR ALL
+    USING (
+        EXISTS (SELECT 1 FROM devices d WHERE d.id = device_packages.device_id AND d.msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID)
+    )
+    WITH CHECK (
+        EXISTS (SELECT 1 FROM devices d WHERE d.id = device_packages.device_id AND d.msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID)
+    );
+
+DROP POLICY IF EXISTS "platform_admin_device_packages" ON device_packages;
+CREATE POLICY "platform_admin_device_packages" ON device_packages FOR ALL
+    USING (current_setting('app.role', true) IN ('platform_owner', 'platform_admin'));
+
+DROP POLICY IF EXISTS "msp_isolation_device_services" ON device_services;
+CREATE POLICY "msp_isolation_device_services" ON device_services FOR ALL
+    USING (
+        EXISTS (SELECT 1 FROM devices d WHERE d.id = device_services.device_id AND d.msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID)
+    )
+    WITH CHECK (
+        EXISTS (SELECT 1 FROM devices d WHERE d.id = device_services.device_id AND d.msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID)
+    );
+
+DROP POLICY IF EXISTS "platform_admin_device_services" ON device_services;
+CREATE POLICY "platform_admin_device_services" ON device_services FOR ALL
+    USING (current_setting('app.role', true) IN ('platform_owner', 'platform_admin'));
+
+DROP POLICY IF EXISTS "msp_isolation_device_mounts" ON device_mounts;
+CREATE POLICY "msp_isolation_device_mounts" ON device_mounts FOR ALL
+    USING (
+        EXISTS (SELECT 1 FROM devices d WHERE d.id = device_mounts.device_id AND d.msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID)
+    )
+    WITH CHECK (
+        EXISTS (SELECT 1 FROM devices d WHERE d.id = device_mounts.device_id AND d.msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID)
+    );
+
+DROP POLICY IF EXISTS "platform_admin_device_mounts" ON device_mounts;
+CREATE POLICY "platform_admin_device_mounts" ON device_mounts FOR ALL
+    USING (current_setting('app.role', true) IN ('platform_owner', 'platform_admin'));
+
+DROP POLICY IF EXISTS "msp_isolation_topology_edges" ON topology_edges;
+CREATE POLICY "msp_isolation_topology_edges" ON topology_edges FOR ALL
+    USING (
+        EXISTS (SELECT 1 FROM devices d WHERE d.id = topology_edges.source_id AND d.msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID)
+    )
+    WITH CHECK (
+        EXISTS (SELECT 1 FROM devices d WHERE d.id = topology_edges.source_id AND d.msp_id = NULLIF(current_setting('app.msp_id', true), '')::UUID)
+    );
+
+DROP POLICY IF EXISTS "platform_admin_topology_edges" ON topology_edges;
+CREATE POLICY "platform_admin_topology_edges" ON topology_edges FOR ALL
+    USING (current_setting('app.role', true) IN ('platform_owner', 'platform_admin'));
+`,
+			Down: `
+-- Disable FORCE RLS on billing tables
+ALTER TABLE billing_accounts DISABLE ROW LEVEL SECURITY;
+ALTER TABLE subscriptions DISABLE ROW LEVEL SECURITY;
+ALTER TABLE invoices DISABLE ROW LEVEL SECURITY;
+ALTER TABLE invoice_items DISABLE ROW LEVEL SECURITY;
+ALTER TABLE usage_records DISABLE ROW LEVEL SECURITY;
+ALTER TABLE payment_methods DISABLE ROW LEVEL SECURITY;
+
+-- Disable FORCE RLS on retention table
+ALTER TABLE tenant_retention_settings DISABLE ROW LEVEL SECURITY;
+
+-- Disable FORCE RLS on CMDB tables
+ALTER TABLE device_relationships DISABLE ROW LEVEL SECURITY;
+ALTER TABLE network_addresses DISABLE ROW LEVEL SECURITY;
+ALTER TABLE device_packages DISABLE ROW LEVEL SECURITY;
+ALTER TABLE device_services DISABLE ROW LEVEL SECURITY;
+ALTER TABLE device_mounts DISABLE ROW LEVEL SECURITY;
+ALTER TABLE topology_edges DISABLE ROW LEVEL SECURITY;
+
+-- Drop RLS policies for billing tables
+DROP POLICY IF EXISTS "msp_isolation_billing_accounts" ON billing_accounts;
+DROP POLICY IF EXISTS "platform_admin_billing_accounts" ON billing_accounts;
+DROP POLICY IF EXISTS "msp_isolation_subscriptions" ON subscriptions;
+DROP POLICY IF EXISTS "platform_admin_subscriptions" ON subscriptions;
+DROP POLICY IF EXISTS "msp_isolation_invoices" ON invoices;
+DROP POLICY IF EXISTS "platform_admin_invoices" ON invoices;
+DROP POLICY IF EXISTS "msp_isolation_invoice_items" ON invoice_items;
+DROP POLICY IF EXISTS "platform_admin_invoice_items" ON invoice_items;
+DROP POLICY IF EXISTS "msp_isolation_usage_records" ON usage_records;
+DROP POLICY IF EXISTS "platform_admin_usage_records" ON usage_records;
+DROP POLICY IF EXISTS "msp_isolation_payment_methods" ON payment_methods;
+DROP POLICY IF EXISTS "platform_admin_payment_methods" ON payment_methods;
+
+-- Drop RLS policies for retention table
+DROP POLICY IF EXISTS "tenant_isolation_retention_settings" ON tenant_retention_settings;
+DROP POLICY IF EXISTS "platform_admin_retention_settings" ON tenant_retention_settings;
+
+-- Drop RLS policies for CMDB tables
+DROP POLICY IF EXISTS "msp_isolation_device_relationships" ON device_relationships;
+DROP POLICY IF EXISTS "platform_admin_device_relationships" ON device_relationships;
+DROP POLICY IF EXISTS "msp_isolation_network_addresses" ON network_addresses;
+DROP POLICY IF EXISTS "platform_admin_network_addresses" ON network_addresses;
+DROP POLICY IF EXISTS "msp_isolation_device_packages" ON device_packages;
+DROP POLICY IF EXISTS "platform_admin_device_packages" ON device_packages;
+DROP POLICY IF EXISTS "msp_isolation_device_services" ON device_services;
+DROP POLICY IF EXISTS "platform_admin_device_services" ON device_services;
+DROP POLICY IF EXISTS "msp_isolation_device_mounts" ON device_mounts;
+DROP POLICY IF EXISTS "platform_admin_device_mounts" ON device_mounts;
+DROP POLICY IF EXISTS "msp_isolation_topology_edges" ON topology_edges;
+DROP POLICY IF EXISTS "platform_admin_topology_edges" ON topology_edges;
 `,
 		},
 	}
