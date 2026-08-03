@@ -91,7 +91,7 @@ func (s *APIServer) handleCreateClientSupportRequest(w http.ResponseWriter, r *h
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, 'open', $8, $9)
 	`, requestID, clientID, req.DeviceID, req.Category, req.Subject, req.Description, req.Priority, createdAt, createdAt)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "support request could not be created"})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": sanitizeDBError(err.Error())})
 		return
 	}
 
@@ -124,7 +124,7 @@ func (s *APIServer) handleListClientSupportRequests(w http.ResponseWriter, r *ht
 		LIMIT 100
 	`, clientID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "database error"})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": sanitizeDBError(err.Error())})
 		return
 	}
 	defer func() { _ = rows.Close() }()
@@ -144,7 +144,8 @@ func (s *APIServer) handleListClientSupportRequests(w http.ResponseWriter, r *ht
 			&description, &priority, &status, &createdAt, &updatedAt,
 			&platformReply, &platformReplyAt, &replyFrom, &replyAt, &replyBodyBytes,
 		); err != nil {
-			continue
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": sanitizeDBError(err.Error())})
+			return
 		}
 
 		req.DeviceID = deviceID.String
@@ -164,6 +165,11 @@ func (s *APIServer) handleListClientSupportRequests(w http.ResponseWriter, r *ht
 		}
 
 		requests = append(requests, req)
+	}
+
+	if err := rows.Err(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": sanitizeDBError(err.Error())})
+		return
 	}
 
 	if requests == nil {
@@ -205,7 +211,7 @@ func (s *APIServer) handleGetClientSupportRequest(w http.ResponseWriter, r *http
 		return
 	}
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "database error"})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": sanitizeDBError(err.Error())})
 		return
 	}
 
@@ -231,6 +237,10 @@ func (s *APIServer) handleGetClientSupportRequest(w http.ResponseWriter, r *http
 func (s *APIServer) handleReplyToClientSupportRequest(w http.ResponseWriter, r *http.Request) {
 	clientID := r.PathValue("clientID")
 	requestID := r.PathValue("requestID")
+
+	if !s.AuthorizeClientManage(w, r, clientID) {
+		return
+	}
 
 	approverID, _ := r.Context().Value(ctxKeyUserID).(string)
 
@@ -261,7 +271,7 @@ func (s *APIServer) handleReplyToClientSupportRequest(w http.ResponseWriter, r *
 		WHERE id = $1 AND tenant_id = $2 AND status = 'open'
 	`, requestID, clientID, req.Body, now, approverID, now, replyBody, now)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "reply could not be sent"})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": sanitizeDBError(err.Error())})
 		return
 	}
 
@@ -276,13 +286,17 @@ func (s *APIServer) handleCloseClientSupportRequest(w http.ResponseWriter, r *ht
 	clientID := r.PathValue("clientID")
 	requestID := r.PathValue("requestID")
 
+	if !s.AuthorizeClientManage(w, r, clientID) {
+		return
+	}
+
 	result, err := s.requestDB(r).ExecContext(r.Context(), `
 		UPDATE client_support_requests
 		SET status = 'closed', updated_at = NOW()
 		WHERE id = $1 AND tenant_id = $2 AND status IN ('open', 'in_progress')
 	`, requestID, clientID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "request could not be closed"})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": sanitizeDBError(err.Error())})
 		return
 	}
 
