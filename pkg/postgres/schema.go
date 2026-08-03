@@ -3578,7 +3578,8 @@ CREATE TABLE IF NOT EXISTS client_sessions (
 -- Create client_portal_settings table for per-client portal settings
 CREATE TABLE IF NOT EXISTS client_portal_settings (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    client_id UUID NOT NULL REFERENCES client_organizations(id) ON DELETE CASCADE UNIQUE,
+    client_id UUID NOT NULL REFERENCES client_organizations(id) ON DELETE CASCADE,
+    UNIQUE(client_id),
     allow_self_registration BOOLEAN DEFAULT false,
     self_registration_domains TEXT[] DEFAULT '{}',
     enable_sso BOOLEAN DEFAULT false,
