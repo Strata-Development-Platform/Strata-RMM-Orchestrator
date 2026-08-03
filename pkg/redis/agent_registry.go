@@ -10,11 +10,10 @@ import (
 )
 
 const (
-	_ = "noqa: G101" // Redis key prefixes — suppress hardcoded credential false positive
 	agentRegistryKey  = "strata:agents"
 	agentPrefix       = "agent:"
-	tokenBlacklistKey = "strata:token:blacklist"
-	tokenPrefix       = "token:"
+	tokenBlacklistKey = "strata:auth:token:blacklist"
+	tokenPrefix       = "auth:token:"
 	configCacheKey    = "strata:config:cache"
 	configPrefix      = "config:"
 )
