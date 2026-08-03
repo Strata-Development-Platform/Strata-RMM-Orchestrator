@@ -3734,7 +3734,7 @@ CREATE TRIGGER IF NOT EXISTS update_client_portal_settings_updated_at
 `,
 			Down: `
 -- Drop RLS policies for client_portal_settings
-DROP POLICY IF EXISTS "MSP admins can manage portal settings for their MSP clients" ON client_portal_settings;
+DROP POLICY IF NOT EXISTS "MSP admins can manage portal settings for their MSP clients" ON client_portal_settings;
 DROP POLICY IF NOT EXISTS "Platform admins can manage all portal settings" ON client_portal_settings;
 DROP POLICY IF NOT EXISTS "Users can read portal settings for their client" ON client_portal_settings;
 
