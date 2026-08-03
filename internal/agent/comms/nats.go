@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"go.uber.org/zap"
 
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/agent/core"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/reconnect"
@@ -18,6 +19,7 @@ import (
 
 type Client struct {
 	conn   *nats.Conn
+	js     nats.JetStreamContext
 	cfg    *core.NATSConfig
 	ident  *core.Identity
 	logger core.Logger
@@ -89,6 +91,14 @@ func (c *Client) Connect(ctx context.Context) error {
 	}
 	c.conn = conn
 
+	js, err := conn.JetStream()
+	if err != nil {
+		c.logger.Warn("jetstream not available, falling back to standard NATS", zap.String("error", err.Error()))
+	} else {
+		c.js = js
+		c.logger.Info("jetstream context initialized")
+	}
+
 	c.logger.Info("connected to NATS", "url", conn.ConnectedUrl(), "server", conn.ConnectedServerId())
 	return nil
 }
@@ -144,6 +154,10 @@ func (c *Client) Conn() *nats.Conn {
 }
 
 func (c *Client) Publish(ctx context.Context, subject string, data []byte) error {
+	if c.js != nil {
+		_, err := c.js.Publish(subject, data)
+		return err
+	}
 	return c.conn.Publish(subject, data)
 }
 
