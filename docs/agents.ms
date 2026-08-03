@@ -25,7 +25,7 @@ This file is append-only. It records mistakes, their causes, corrective rules, e
   - `TestPrivilegedNamespacesFailClosed` updated (AccessDenied instead of AccessAdmin)
   - `TestRouteInventoryComplete` updated (AccessDenied default check)
 - Local evidence: Go build succeeds. All `go test ./...` pass locally. PostgreSQL/TimescaleDB integration tests require local database (unavailable).
-- Exact-head CI evidence: PR #45 created at https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/pull/45. CI runs pending.
+- Exact-head CI evidence: PR #45 at https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/pull/45. CI run 30777411357 (CI) passed. Phase 8C 30777411400 passed. Phase 8D 30777411367 passed. Phase 8E 30777411387 passed. Phase 8F 30777411392 passed. Phase 8G 30777411388 passed. Internal Alpha Agent 30777411369 passed. All 6 workflows terminal and successful for head 2b35adf.
 - Failures/reruns: None.
 - Infrastructure evidence: Environment pending for hosted acceptance, real PostgreSQL integration tests, RLS testing.
 - Limitations/remaining work: Real OIDC provider integration not implemented. Billing provider integration not implemented. Full retention tiering (hot/warm/cold) deferred. PR #46 password recovery + refresh tokens deferred. Migration 71-85 standalone files do not exist (embedded-only). Migration 87 client_id TEXT column renamed to oauth_client_id in this PR — embedded schema.go also needs updating for source parity. CMDB ownership verification at database boundary requires future work. RLS policy additions require future work.
