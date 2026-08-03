@@ -505,46 +505,6 @@ func testAuthorizeMSPAccessMock(w http.ResponseWriter, r *http.Request, mspID st
 	return true
 }
 
-// testAuthorizeMSPManageMock mocks AuthorizeMSPManage without database.
-func testAuthorizeMSPManageMock(w http.ResponseWriter, r *http.Request, mspID string) bool {
-	if mspID == "" {
-		writeAuthorizationDenied(w)
-		return false
-	}
-
-	authHeader := r.Header.Get("Authorization")
-	if authHeader == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authorization required"})
-		return false
-	}
-
-	tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
-	gen := auth.NewTokenGenerator("test-secret-long-enough-for-unit-tests-1234567890")
-	claims, err := gen.Validate(tokenStr)
-	if err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid token"})
-		return false
-	}
-
-	if claims.MSPID != mspID {
-		writeAuthorizationDenied(w)
-		return false
-	}
-
-	hasManageRole := false
-	for _, role := range claims.Roles {
-		if role == "msp_owner" || role == "msp_admin" || role == "platform_owner" || role == "platform_admin" {
-			hasManageRole = true
-			break
-		}
-	}
-	if !hasManageRole {
-		writeAuthorizationDenied(w)
-		return false
-	}
-
-	return true
-}
 
 // testAuthorizeClientAccessMock mocks AuthorizeClientAccess without database.
 func testAuthorizeClientAccessMock(w http.ResponseWriter, r *http.Request, clientID string) bool {
