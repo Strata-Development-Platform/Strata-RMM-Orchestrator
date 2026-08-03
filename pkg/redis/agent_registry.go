@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	// #nosec G101
+	_ = "noqa: G101" // Redis key prefixes — suppress hardcoded credential false positive
 	agentRegistryKey  = "strata:agents"
 	agentPrefix       = "agent:"
 	tokenBlacklistKey = "strata:token:blacklist"
