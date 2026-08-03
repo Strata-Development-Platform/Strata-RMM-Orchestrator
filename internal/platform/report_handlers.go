@@ -20,6 +20,9 @@ import (
 func (s *APIServer) handleDownloadReport(w http.ResponseWriter, r *http.Request) {
 	reportID := r.PathValue("reportID")
 	tenantID := r.PathValue("tenantID")
+	if !s.AuthorizeClientAccess(w, r, tenantID) {
+		return
+	}
 
 	var storageKey string
 	err := s.requestDB(r).QueryRowContext(r.Context(), `SELECT storage_key FROM generated_reports WHERE id = $1 AND tenant_id = $2`, reportID, tenantID).Scan(&storageKey)
@@ -57,6 +60,9 @@ func (s *APIServer) handleDownloadReport(w http.ResponseWriter, r *http.Request)
 
 func (s *APIServer) handleListReports(w http.ResponseWriter, r *http.Request) {
 	tenantID := r.PathValue("tenantID")
+	if !s.AuthorizeClientAccess(w, r, tenantID) {
+		return
+	}
 	rows, err := s.requestDB(r).QueryContext(r.Context(), `
 		SELECT id, name, format, storage_key, size_bytes, generated_at
 		FROM generated_reports WHERE tenant_id = $1
@@ -114,6 +120,9 @@ func (s *APIServer) handleCreateSchedule(w http.ResponseWriter, r *http.Request)
 
 func (s *APIServer) handleListSchedules(w http.ResponseWriter, r *http.Request) {
 	tenantID := r.PathValue("tenantID")
+	if !s.AuthorizeClientAccess(w, r, tenantID) {
+		return
+	}
 	rows, err := s.requestDB(r).QueryContext(r.Context(), `
 		SELECT id, name, frequency, sections, enabled, last_sent, created_at
 		FROM report_schedules WHERE tenant_id = $1 ORDER BY created_at DESC
@@ -162,6 +171,9 @@ func (s *APIServer) handleDeleteSchedule(w http.ResponseWriter, r *http.Request)
 
 func (s *APIServer) handleGenerateReport(w http.ResponseWriter, r *http.Request) {
 	tenantID := r.PathValue("tenantID")
+	if !s.AuthorizeClientAccess(w, r, tenantID) {
+		return
+	}
 	var req struct {
 		Sections []string `json:"sections"`
 	}
@@ -190,6 +202,9 @@ func (s *APIServer) handleGenerateReport(w http.ResponseWriter, r *http.Request)
 func (s *APIServer) handleUpdateSchedule(w http.ResponseWriter, r *http.Request) {
 	scheduleID := r.PathValue("scheduleID")
 	tenantID := r.PathValue("tenantID")
+	if !s.AuthorizeClientAccess(w, r, tenantID) {
+		return
+	}
 
 	var req struct {
 		Name       string   `json:"name"`
@@ -265,6 +280,9 @@ func (s *APIServer) handleUpdateSchedule(w http.ResponseWriter, r *http.Request)
 func (s *APIServer) handleToggleSchedule(w http.ResponseWriter, r *http.Request) {
 	scheduleID := r.PathValue("scheduleID")
 	tenantID := r.PathValue("tenantID")
+	if !s.AuthorizeClientAccess(w, r, tenantID) {
+		return
+	}
 
 	var req struct {
 		Enabled bool `json:"enabled"`
@@ -285,6 +303,9 @@ func (s *APIServer) handleToggleSchedule(w http.ResponseWriter, r *http.Request)
 func (s *APIServer) handleTriggerSchedule(w http.ResponseWriter, r *http.Request) {
 	scheduleID := r.PathValue("scheduleID")
 	tenantID := r.PathValue("tenantID")
+	if !s.AuthorizeClientAccess(w, r, tenantID) {
+		return
+	}
 
 	var name string
 	var sectionsJSON []byte
@@ -346,6 +367,9 @@ func (s *APIServer) handleTriggerSchedule(w http.ResponseWriter, r *http.Request
 
 func (s *APIServer) handleGenerateComplianceReport(w http.ResponseWriter, r *http.Request) {
 	tenantID := r.PathValue("tenantID")
+	if !s.AuthorizeClientAccess(w, r, tenantID) {
+		return
+	}
 	var req struct {
 		Framework string `json:"framework"`
 	}
@@ -376,6 +400,9 @@ func (s *APIServer) handleGenerateComplianceReport(w http.ResponseWriter, r *htt
 
 func (s *APIServer) handleListComplianceReports(w http.ResponseWriter, r *http.Request) {
 	tenantID := r.PathValue("tenantID")
+	if !s.AuthorizeClientAccess(w, r, tenantID) {
+		return
+	}
 	rows, err := s.requestDB(r).QueryContext(r.Context(), `
 		SELECT id, tenant_id, framework, period_start, period_end, generated_at,
 		       total_vulnerabilities, critical_count, high_count, medium_count, low_count,
@@ -440,6 +467,9 @@ func (s *APIServer) handleListComplianceReports(w http.ResponseWriter, r *http.R
 func (s *APIServer) handleGetComplianceReport(w http.ResponseWriter, r *http.Request) {
 	reportID := r.PathValue("reportID")
 	tenantID := r.PathValue("tenantID")
+	if !s.AuthorizeClientAccess(w, r, tenantID) {
+		return
+	}
 
 	var id, framework, status string
 	var periodStart, periodEnd, generatedAt time.Time
@@ -501,6 +531,9 @@ func (s *APIServer) handleGetComplianceReport(w http.ResponseWriter, r *http.Req
 func (s *APIServer) handleExportComplianceReportCSV(w http.ResponseWriter, r *http.Request) {
 	reportID := r.PathValue("reportID")
 	tenantID := r.PathValue("tenantID")
+	if !s.AuthorizeClientAccess(w, r, tenantID) {
+		return
+	}
 
 	var findingsJSON []byte
 	err := s.requestDB(r).QueryRowContext(r.Context(), `SELECT findings FROM compliance_reports WHERE id = $1 AND tenant_id = $2`, reportID, tenantID).Scan(&findingsJSON)
@@ -557,6 +590,9 @@ func (s *APIServer) handleExportComplianceReportCSV(w http.ResponseWriter, r *ht
 func (s *APIServer) handleExportComplianceReportJSON(w http.ResponseWriter, r *http.Request) {
 	reportID := r.PathValue("reportID")
 	tenantID := r.PathValue("tenantID")
+	if !s.AuthorizeClientAccess(w, r, tenantID) {
+		return
+	}
 
 	var id, framework, status string
 	var periodStart, periodEnd, generatedAt time.Time

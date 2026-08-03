@@ -31,6 +31,10 @@ func (m *capturingAccountMailer) SendOwnerActivation(_ context.Context, message 
 	return m.err
 }
 
+func (m *capturingAccountMailer) SendReport(_ context.Context, _ string, _ string, _ string, _ []byte) error {
+	return nil
+}
+
 func (m *capturingAccountMailer) last(t *testing.T) OwnerActivationMail {
 	t.Helper()
 	m.mu.Lock()

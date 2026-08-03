@@ -124,9 +124,14 @@ func TestCalculateNextRun_Daily_Timezone(t *testing.T) {
 }
 
 func TestCalculateNextRun_Hourly_Midnight(t *testing.T) {
+	now := time.Now()
 	next := calculateNextRun("hourly", nil)
-	assert.GreaterOrEqual(t, next.Hour(), time.Now().Hour())
+	// Next run must be in the future and on a clean hour boundary
+	assert.True(t, next.After(now), "next run must be after now")
 	assert.Equal(t, 0, next.Minute())
+	// Handle day wrap: next hour is now.Hour()+1, or 0 if now.Hour() is 23
+	expectedHour := (now.Hour() + 1) % 24
+	assert.Equal(t, expectedHour, next.Hour(), "next run should be next hour")
 }
 
 func TestCalculateNextRun_Weekly_Sunday(t *testing.T) {
