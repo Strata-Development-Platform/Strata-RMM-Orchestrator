@@ -653,9 +653,13 @@ func TestRLSAllowDenyAllFourOperations(t *testing.T) {
 		t.Fatalf("grant sequences: %v", err)
 	}
 
-	// Seed data under main MSP RLS context
+	// Seed data under main MSP RLS context (superuser bypasses RLS, so seed with SET LOCAL ROLE)
 	tx := mustBegin(t, db)
 	setRLSContext(t, tx, mspID, "00000000-0000-0000-0000-000000000010", "msp_admin", "write")
+	_, err = tx.Exec(`SET LOCAL ROLE strata_rls_test_role`)
+	if err != nil {
+		t.Fatalf("set role: %v", err)
+	}
 	_, err = tx.Exec(`
 		INSERT INTO device_relationships (msp_id, client_id, site_id, source_device_id, target_device_id, relationship_type, metadata)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -673,6 +677,10 @@ func TestRLSAllowDenyAllFourOperations(t *testing.T) {
 	// Test 1: SELECT main-MSP data (should see)
 	tx = mustBegin(t, db)
 	setRLSContext(t, tx, mspID, "00000000-0000-0000-0000-000000000010", "msp_admin", "read")
+	_, err = tx.Exec(`SET LOCAL ROLE strata_rls_test_role`)
+	if err != nil {
+		t.Fatalf("set role: %v", err)
+	}
 	var count int
 	err = tx.QueryRow(`SELECT COUNT(*) FROM device_relationships WHERE msp_id = $1`, mspID).Scan(&count)
 	if err != nil {
@@ -686,6 +694,10 @@ func TestRLSAllowDenyAllFourOperations(t *testing.T) {
 	// Test 2: INSERT main-MSP data (should succeed)
 	tx = mustBegin(t, db)
 	setRLSContext(t, tx, mspID, "00000000-0000-0000-0000-000000000010", "msp_admin", "write")
+	_, err = tx.Exec(`SET LOCAL ROLE strata_rls_test_role`)
+	if err != nil {
+		t.Fatalf("set role: %v", err)
+	}
 	var newRelID string
 	err = tx.QueryRow(`
 		INSERT INTO device_relationships (msp_id, client_id, site_id, source_device_id, target_device_id, relationship_type, metadata)
@@ -702,6 +714,10 @@ func TestRLSAllowDenyAllFourOperations(t *testing.T) {
 	// Test 3: UPDATE main-MSP data (should succeed)
 	tx = mustBegin(t, db)
 	setRLSContext(t, tx, mspID, "00000000-0000-0000-0000-000000000010", "msp_admin", "write")
+	_, err = tx.Exec(`SET LOCAL ROLE strata_rls_test_role`)
+	if err != nil {
+		t.Fatalf("set role: %v", err)
+	}
 	result, err := tx.Exec(`UPDATE device_relationships SET is_active = false WHERE id = $1`, newRelID)
 	if err != nil {
 		t.Fatalf("update main-MSP data: %v", err)
@@ -715,6 +731,10 @@ func TestRLSAllowDenyAllFourOperations(t *testing.T) {
 	// Test 4: DELETE main-MSP data (should succeed)
 	tx = mustBegin(t, db)
 	setRLSContext(t, tx, mspID, "00000000-0000-0000-0000-000000000010", "msp_admin", "write")
+	_, err = tx.Exec(`SET LOCAL ROLE strata_rls_test_role`)
+	if err != nil {
+		t.Fatalf("set role: %v", err)
+	}
 	result, err = tx.Exec(`DELETE FROM device_relationships WHERE id = $1`, newRelID)
 	if err != nil {
 		t.Fatalf("delete main-MSP data: %v", err)
@@ -744,9 +764,13 @@ func TestRLSPooledContextReset(t *testing.T) {
 		t.Fatalf("seed second device for pooled test: %v", execErr)
 	}
 
-	// Insert data under main MSP
+	// Insert data under main MSP (use SET LOCAL ROLE to enforce RLS)
 	tx := mustBegin(t, db)
 	setRLSContext(t, tx, mspID, "00000000-0000-0000-0000-000000000010", "msp_admin", "write")
+	_, execErr = tx.Exec(`SET LOCAL ROLE strata_rls_test_role`)
+	if execErr != nil {
+		t.Fatalf("set role: %v", execErr)
+	}
 	_, execErr = tx.Exec(`
 		INSERT INTO device_relationships (msp_id, client_id, site_id, source_device_id, target_device_id, relationship_type, metadata)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -760,6 +784,10 @@ func TestRLSPooledContextReset(t *testing.T) {
 	tx = mustBegin(t, db)
 	otherMSPID := "00000000-0000-0000-0000-0000000000c0"
 	setRLSContext(t, tx, otherMSPID, "00000000-0000-0000-0000-000000000010", "msp_admin", "read")
+	_, err := tx.Exec(`SET LOCAL ROLE strata_rls_test_role`)
+	if err != nil {
+		t.Fatalf("set role: %v", err)
+	}
 
 	var count int
 	execErr = tx.QueryRow(`SELECT COUNT(*) FROM device_relationships WHERE msp_id = $1`, mspID).Scan(&count)

@@ -199,8 +199,47 @@ func (s *APIServer) handleGenerateReport(w http.ResponseWriter, r *http.Request)
 	}
 
 	go func() {
-		logger := s.logger
-		_ = logger
+		ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
+		defer cancel()
+
+		var secs []reporting.ReportSection
+		for _, s := range req.Sections {
+			secs = append(secs, reporting.ReportSection(s))
+		}
+
+		if s.reportEngine == nil {
+			s.logger.Error("report engine not configured")
+			return
+		}
+
+		pdfData, key, err := s.reportEngine.GenerateReport(ctx, tenantID, secs, tenantName)
+		if err != nil {
+			s.logger.Error("generate report", zap.Error(err))
+			return
+		}
+
+		var reportID string
+		err = s.requestDB(r).QueryRowContext(ctx, `
+			INSERT INTO generated_reports (tenant_id, name, format, storage_key, size_bytes)
+			VALUES ($1, 'on-demand', 'pdf', $2, $3)
+			RETURNING id
+		`, tenantID, key, int64(len(pdfData))).Scan(&reportID)
+		if err != nil {
+			s.logger.Error("record report", zap.Error(err))
+			return
+		}
+
+		if s.storageBackend != nil {
+			_, err := s.storageBackend.Upload(ctx, key, bytes.NewReader(pdfData), storage.UploadOptions{
+				ContentType: "application/pdf",
+			})
+			if err != nil {
+				s.logger.Error("upload report", zap.Error(err))
+				return
+			}
+		}
+
+		s.logger.Info("on-demand report generated", zap.String("tenant", tenantID), zap.String("report_id", reportID))
 	}()
 
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "generation started"})
