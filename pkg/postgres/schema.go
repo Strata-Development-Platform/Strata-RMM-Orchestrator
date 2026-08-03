@@ -3618,7 +3618,7 @@ ALTER TABLE client_portal_settings ENABLE ROW LEVEL SECURITY;
 -- RLS policies for client_auth_providers
 DROP POLICY IF EXISTS "Users can read auth providers for their client" ON client_auth_providers;
 
-CREATE POLICY "Users can read auth providers for their client" FOR SELECT
+CREATE POLICY "Users can read auth providers for their client" ON client_auth_providers FOR SELECT
     USING (
         EXISTS (
             SELECT 1 FROM client_organizations c
@@ -3632,14 +3632,14 @@ CREATE POLICY "Users can read auth providers for their client" FOR SELECT
 
 DROP POLICY IF EXISTS "Platform admins can manage all auth providers" ON client_auth_providers;
 
-CREATE POLICY "Platform admins can manage all auth providers" FOR ALL
+CREATE POLICY "Platform admins can manage all auth providers" ON client_auth_providers FOR ALL
     USING (
         current_setting('app.role', true) IN ('platform_owner', 'platform_admin')
     );
 
 DROP POLICY IF EXISTS "MSP admins can manage auth providers for their MSP clients" ON client_auth_providers;
 
-CREATE POLICY "MSP admins can manage auth providers for their MSP clients" FOR ALL
+CREATE POLICY "MSP admins can manage auth providers for their MSP clients" ON client_auth_providers FOR ALL
     USING (
         EXISTS (
             SELECT 1 FROM client_organizations c
@@ -3651,7 +3651,7 @@ CREATE POLICY "MSP admins can manage auth providers for their MSP clients" FOR A
 -- RLS policies for client_sessions
 DROP POLICY IF EXISTS "Users can read sessions for their client" ON client_sessions;
 
-CREATE POLICY "Users can read sessions for their client" FOR SELECT
+CREATE POLICY "Users can read sessions for their client" ON client_sessions FOR SELECT
     USING (
         EXISTS (
             SELECT 1 FROM client_organizations c
@@ -3665,7 +3665,7 @@ CREATE POLICY "Users can read sessions for their client" FOR SELECT
 
 DROP POLICY IF EXISTS "Users can manage their own sessions" ON client_sessions;
 
-CREATE POLICY "Users can manage their own sessions" FOR ALL
+CREATE POLICY "Users can manage their own sessions" ON client_sessions FOR ALL
     USING (
         EXISTS (
             SELECT 1 FROM client_organizations c
@@ -3679,7 +3679,7 @@ CREATE POLICY "Users can manage their own sessions" FOR ALL
 
 DROP POLICY IF EXISTS "Platform admins can manage all sessions" ON client_sessions;
 
-CREATE POLICY "Platform admins can manage all sessions" FOR ALL
+CREATE POLICY "Platform admins can manage all sessions" ON client_sessions FOR ALL
     USING (
         current_setting('app.role', true) IN ('platform_owner', 'platform_admin')
     );
@@ -3687,7 +3687,7 @@ CREATE POLICY "Platform admins can manage all sessions" FOR ALL
 -- RLS policies for client_portal_settings
 DROP POLICY IF EXISTS "Users can read portal settings for their client" ON client_portal_settings;
 
-CREATE POLICY "Users can read portal settings for their client" FOR SELECT
+CREATE POLICY "Users can read portal settings for their client" ON client_portal_settings FOR SELECT
     USING (
         EXISTS (
             SELECT 1 FROM client_organizations c
@@ -3701,14 +3701,14 @@ CREATE POLICY "Users can read portal settings for their client" FOR SELECT
 
 DROP POLICY IF EXISTS "Platform admins can manage all portal settings" ON client_portal_settings;
 
-CREATE POLICY "Platform admins can manage all portal settings" FOR ALL
+CREATE POLICY "Platform admins can manage all portal settings" ON client_portal_settings FOR ALL
     USING (
         current_setting('app.role', true) IN ('platform_owner', 'platform_admin')
     );
 
 DROP POLICY IF EXISTS "MSP admins can manage portal settings for their MSP clients" ON client_portal_settings;
 
-CREATE POLICY "MSP admins can manage portal settings for their MSP clients" FOR ALL
+CREATE POLICY "MSP admins can manage portal settings for their MSP clients" ON client_portal_settings FOR ALL
     USING (
         EXISTS (
             SELECT 1 FROM client_organizations c
