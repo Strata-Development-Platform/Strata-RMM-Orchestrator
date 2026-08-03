@@ -84,11 +84,11 @@ type APIServer struct {
 
 	// FeatureFlags gates experimental or semantically unsafe operations
 	// that are not yet production-ready. Each flag is off-by-default.
-	featureFlags FeatureFlags
-	remoteSessionTTL     time.Duration
-	remoteSessionNow     func() time.Time
-	reportEngine         *reporting.ReportEngine
-	inventoryEngine      *inventory.ReportingEngine
+	featureFlags     FeatureFlags
+	remoteSessionTTL time.Duration
+	remoteSessionNow func() time.Time
+	reportEngine     *reporting.ReportEngine
+	inventoryEngine  *inventory.ReportingEngine
 }
 
 func NewAPIServer(addr string, db *timescale.Client, nc *nats.Conn, logger *zap.Logger, tokenGen *auth.TokenGenerator) (*APIServer, error) {
@@ -1929,10 +1929,10 @@ func (s *APIServer) handleUpdateRetention(w http.ResponseWriter, r *http.Request
 	// physical retention remains a platform-admin responsibility.
 	if !s.featureFlags.RetentionMutationEnabled {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
-			"error":              "tenant retention mutation is not supported",
-			"code":               "feature_gate_disabled",
-			"feature_flag":       "retention_mutation_enabled",
-			"message":           "Physical retention policy modification is a platform-admin operation. Per-tenant logical retention settings are stored but physical Timescale retention policies require platform-level authorization.",
+			"error":        "tenant retention mutation is not supported",
+			"code":         "feature_gate_disabled",
+			"feature_flag": "retention_mutation_enabled",
+			"message":      "Physical retention policy modification is a platform-admin operation. Per-tenant logical retention settings are stored but physical Timescale retention policies require platform-level authorization.",
 		})
 		return
 	}
