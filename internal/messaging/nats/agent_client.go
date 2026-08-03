@@ -64,5 +64,5 @@ func (c *Client) PublishAsync(subject string, data []byte) (<-chan struct{}, err
 
 // Request sends a request and waits for a response.
 func (c *Client) Request(ctx context.Context, subject string, data []byte, timeout uint) (*nats.Msg, error) {
-	return c.conn.Request(subject, data, time.Duration(int64(timeout)))
+	return c.conn.Request(subject, data, time.Duration(float64(timeout)))
 }
