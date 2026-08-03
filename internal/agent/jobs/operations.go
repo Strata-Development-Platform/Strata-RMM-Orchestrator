@@ -261,9 +261,9 @@ func handleProcessKill(ctx context.Context, cmd *CommandEnvelope) (string, int, 
 }
 
 type patchPayload struct {
-	PatchIDs    []string `json:"patch_ids"`
-	DeploymentID string  `json:"deployment_id"`
-	PolicyID    string   `json:"policy_id"`
+	PatchIDs     []string `json:"patch_ids"`
+	DeploymentID string   `json:"deployment_id"`
+	PolicyID     string   `json:"policy_id"`
 }
 
 func handlePatchScan(ctx context.Context, cmd *CommandEnvelope) (string, int, []byte, error) {

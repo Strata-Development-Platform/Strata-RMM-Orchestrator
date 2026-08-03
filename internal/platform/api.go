@@ -2060,15 +2060,15 @@ func (s *APIServer) handleCreatePatchPolicy(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	var req struct {
-		TenantID     string            `json:"tenant_id"`
-		Name         string            `json:"name"`
-		Enabled      bool              `json:"enabled"`
-		Platforms    []patch.Platform  `json:"platforms"`
-		ApprovalMode string            `json:"approval_mode"`
-		Severity     patch.PatchSeverity `json:"severity"`
-		MaintenanceWin string          `json:"maintenance_window"`
-		DeviceFilter map[string]string `json:"device_filter"`
-		MaxRetries   int               `json:"max_retries"`
+		TenantID       string              `json:"tenant_id"`
+		Name           string              `json:"name"`
+		Enabled        bool                `json:"enabled"`
+		Platforms      []patch.Platform    `json:"platforms"`
+		ApprovalMode   string              `json:"approval_mode"`
+		Severity       patch.PatchSeverity `json:"severity"`
+		MaintenanceWin string              `json:"maintenance_window"`
+		DeviceFilter   map[string]string   `json:"device_filter"`
+		MaxRetries     int                 `json:"max_retries"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})

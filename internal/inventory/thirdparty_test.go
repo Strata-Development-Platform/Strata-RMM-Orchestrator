@@ -112,15 +112,15 @@ func TestFetchLatestVersion_MockHTTP(t *testing.T) {
 			defer server.Close()
 
 			app := ThirdPartyApp{
-				VersionURL:     server.URL,
-				VersionRegex:   tt.versionRegex,
-				URLTemplate:    "https://example.com/pkg.exe",
-				InstallArgs:    "/quiet",
-				DetectCmd:      "detect-cmd",
-				Name:           "TestApp",
-				Vendor:         "TestVendor",
-				Platform:       "windows",
-				PackageType:    "exe",
+				VersionURL:   server.URL,
+				VersionRegex: tt.versionRegex,
+				URLTemplate:  "https://example.com/pkg.exe",
+				InstallArgs:  "/quiet",
+				DetectCmd:    "detect-cmd",
+				Name:         "TestApp",
+				Vendor:       "TestVendor",
+				Platform:     "windows",
+				PackageType:  "exe",
 			}
 
 			engine := NewThirdPartyEngine(nil, nil)
