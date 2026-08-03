@@ -78,11 +78,12 @@ type APIServer struct {
 	remoteSessions       map[string]remoteSessionBinding
 
 	// FeatureFlags gates experimental or semantically unsafe operations
-	remoteSessionTTL time.Duration
-	remoteSessionNow func() time.Time
-	reportEngine     *reporting.ReportEngine
-	inventoryEngine  *inventory.ReportingEngine
-	patchMgr         *patch.Manager
+	remoteSessionTTL  time.Duration
+	remoteSessionNow  func() time.Time
+	reportEngine      *reporting.ReportEngine
+	inventoryEngine   *inventory.ReportingEngine
+	remediationEngine *inventory.RemediationEngine
+	patchMgr          *patch.Manager
 }
 
 func NewAPIServer(addr string, db *timescale.Client, nc *nats.Conn, logger *zap.Logger, tokenGen *auth.TokenGenerator) (*APIServer, error) {
@@ -137,6 +138,11 @@ func (s *APIServer) WithReportEngine(e *reporting.ReportEngine) *APIServer {
 
 func (s *APIServer) WithInventoryEngine(e *inventory.ReportingEngine) *APIServer {
 	s.inventoryEngine = e
+	return s
+}
+
+func (s *APIServer) WithRemediationEngine(e *inventory.RemediationEngine) *APIServer {
+	s.remediationEngine = e
 	return s
 }
 
@@ -329,6 +335,11 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /api/v1/reports/{tenantID}/compliance/{reportID}", s.handleGetComplianceReport)
 	mux.HandleFunc("GET /api/v1/reports/{tenantID}/compliance/{reportID}/export/csv", s.handleExportComplianceReportCSV)
 	mux.HandleFunc("GET /api/v1/reports/{tenantID}/compliance/{reportID}/export/json", s.handleExportComplianceReportJSON)
+
+	mux.HandleFunc("GET /api/v1/remediation/{tenantID}/attempts/{vulnID}", s.handleGetRemediationHistory)
+	mux.HandleFunc("GET /api/v1/remediation/summary/{tenantID}", s.handleGetRemediationSummary)
+	mux.HandleFunc("GET /api/v1/remediation/policy/{tenantID}", s.handleGetRemediationPolicy)
+	mux.HandleFunc("PATCH /api/v1/remediation/policy/{tenantID}", s.handleUpdateRemediationPolicy)
 
 	mux.HandleFunc("GET /api/v2/msps/{mspID}/billing/account", s.handleGetBillingAccount)
 	mux.HandleFunc("POST /api/v2/msps/{mspID}/billing/account", s.handleCreateBillingAccount)
@@ -2175,4 +2186,127 @@ func (s *APIServer) handleGetLatestPatchInventory(w http.ResponseWriter, r *http
 		"missing":   missing,
 		"latest":    true,
 	})
+}
+
+// Remediation API handlers
+
+func (s *APIServer) handleGetRemediationHistory(w http.ResponseWriter, r *http.Request) {
+	if s.remediationEngine == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "remediation engine not available"})
+		return
+	}
+	vulnID := r.PathValue("vulnID")
+	if vulnID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "vulnID required"})
+		return
+	}
+	tenantID := r.PathValue("tenantID")
+	if tenantID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tenantID required"})
+		return
+	}
+	// Enumerate handler: GET /api/v1/remediation/{tenantID}/attempts/{vulnID}
+	// Operation: read — ClientAccess required per Cycle 7 handler authorization matrix
+	if !s.AuthorizeClientAccess(w, r, tenantID) {
+		return
+	}
+	history, err := s.remediationEngine.GetRemediationHistory(r.Context(), vulnID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": sanitizeDBError(err.Error())})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"history": history})
+}
+
+func (s *APIServer) handleGetRemediationSummary(w http.ResponseWriter, r *http.Request) {
+	if s.remediationEngine == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "remediation engine not available"})
+		return
+	}
+	tenantID := r.PathValue("tenantID")
+	if tenantID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tenantID required"})
+		return
+	}
+	// Enumerate handler: GET /api/v1/remediation/summary/{tenantID}
+	// Operation: read — ClientAccess required per Cycle 7 handler authorization matrix
+	if !s.AuthorizeClientAccess(w, r, tenantID) {
+		return
+	}
+	summary, err := s.remediationEngine.GetRemediationSummary(r.Context(), tenantID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": sanitizeDBError(err.Error())})
+		return
+	}
+	writeJSON(w, http.StatusOK, summary)
+}
+
+func (s *APIServer) handleGetRemediationPolicy(w http.ResponseWriter, r *http.Request) {
+	if s.remediationEngine == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "remediation engine not available"})
+		return
+	}
+	tenantID := r.PathValue("tenantID")
+	if tenantID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tenantID required"})
+		return
+	}
+	// Enumerate handler: GET /api/v1/remediation/policy/{tenantID}
+	// Operation: read — ClientAccess required per Cycle 7 handler authorization matrix
+	if !s.AuthorizeClientAccess(w, r, tenantID) {
+		return
+	}
+	policy, err := s.remediationEngine.GetPolicyForTenant(r.Context(), tenantID)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "policy not found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, policy)
+}
+
+func (s *APIServer) handleUpdateRemediationPolicy(w http.ResponseWriter, r *http.Request) {
+	if s.remediationEngine == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "remediation engine not available"})
+		return
+	}
+	tenantID := r.PathValue("tenantID")
+	if tenantID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tenantID required"})
+		return
+	}
+	// Enumerate handler: PATCH /api/v1/remediation/policy/{tenantID}
+	// Operation: manage — ClientManage required per Cycle 7 handler authorization matrix
+	if !s.AuthorizeClientManage(w, r, tenantID) {
+		return
+	}
+	var req struct {
+		SeverityThreshold      string `json:"severity_threshold"`
+		AutoRemediate          bool   `json:"auto_remediate"`
+		MaxRetries             int    `json:"max_retries"`
+		RetryDelayHours        int    `json:"retry_delay_hours"`
+		AutoApprove            bool   `json:"auto_approve"`
+		RebootBehavior         string `json:"reboot_behavior"`
+		MaintenanceWindowStart string `json:"maintenance_window_start"`
+		MaintenanceWindowEnd   string `json:"maintenance_window_end"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+	policy := &inventory.RemediationPolicy{
+		TenantID:               tenantID,
+		SeverityThreshold:      req.SeverityThreshold,
+		AutoRemediate:          req.AutoRemediate,
+		MaxRetries:             req.MaxRetries,
+		RetryDelayHours:        req.RetryDelayHours,
+		AutoApprove:            req.AutoApprove,
+		RebootBehavior:         req.RebootBehavior,
+		MaintenanceWindowStart: req.MaintenanceWindowStart,
+		MaintenanceWindowEnd:   req.MaintenanceWindowEnd,
+	}
+	if err := s.remediationEngine.SavePolicy(r.Context(), policy); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": sanitizeDBError(err.Error())})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }

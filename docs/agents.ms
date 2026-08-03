@@ -1639,3 +1639,93 @@ PR #45 lifecycle is closed. All 10 gates satisfied:
   - `internal/platform/api.go` (+178)
   - `internal/platform/cmdb_hierarchy_test.go` (+32)
   - `internal/platform/report_handlers.go` (+43)
+
+## PR #47: wire patch scan parsing, auto-remediation engine
+- **Created**: 2026-08-03T15:25:00Z
+- **PR URL**: https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/pull/47
+- **Branch**: `feature/scan-parsing-auto-remediation`
+- **SHA**: `b0aed6b9069c0c7e05790f4f1147f5769bc752e0`
+- **Gates**: 1-8 draft; pending owner review
+- **Loose ends addressed**:
+  1. **Windows patch scan parsing** — PowerShell JSON output → `[]*Patch` with Title, KB, Severity, Description
+  2. **Linux apt scan parsing** — `apt list --upgradable` output → parsed package names and versions
+  3. **Linux dnf scan parsing** — `dnf check-update` output → parsed package records
+  4. **Linux yum scan parsing** — `yum check-update` output → parsed package records
+  5. **Linux zypper scan parsing** — `zypper list-patches` output → parsed patch records
+  6. **Linux install output capture** — switched from `Output()` to `CombinedOutput()` for real stdout/stderr
+  7. **Auto-remediation executor** — replaced stub with real `patch.NewExecutor()` integration
+  8. **Remediation API endpoints** — 4 new endpoints: attempts, summary, policy get, policy update
+  9. **Orchestrator integration** — `RemediationEngine` started at Stage 11 with default policy
+  10. **Flow parsing verified** — NetFlow v5/v9 and IPFIX parsers already functional; FEATURE_COMPLETENESS_MATRIX updated
+- **CI**: `go build ./...` clean, `go vet ./...` clean, `go test ./... -race` all 26 packages pass
+- **Files changed**: 6 files (+342/-55)
+  - `internal/patch/executor.go` (+~120)
+  - `internal/inventory/remediation.go` (+~30/-~30)
+  - `internal/inventory/vulnerability_test.go` (+2/-1)
+  - `internal/platform/api.go` (+~85)
+  - `cmd/orchestrator/orchestrator.go` (+~15)
+  - `docs/FEATURE_COMPLETENESS_MATRIX.md` (+6/-3)
+
+## PR #47: wire patch scan parsing, auto-remediation engine
+- **Created**: 2026-08-03T15:25:00Z
+- **PR URL**: https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/pull/47
+- **Branch**: `feature/scan-parsing-auto-remediation`
+- **SHA**: `42cbc5a0270ce3f9ee9faa3fb599d7eaaa9b14b4`
+- **CI**: All 84 checks terminal and passing
+- **Loose ends addressed**:
+  1. **Windows patch scan parsing** — PowerShell JSON output → `[]*Patch` with Title, KB, Severity, Description
+  2. **Linux apt scan parsing** — `apt list --upgradable` output → parsed package names and versions
+  3. **Linux dnf scan parsing** — `dnf check-update` output → parsed package records
+  4. **Linux yum scan parsing** — `yum check-update` output → parsed package records
+  5. **Linux zypper scan parsing** — `zypper list-patches` output → parsed patch records
+  6. **Linux install output capture** — switched from `Output()` to `CombinedOutput()` for real stdout/stderr
+  7. **Auto-remediation executor** — replaced stub with real `patch.NewExecutor()` integration
+  8. **Remediation API endpoints** — 4 new endpoints: attempts, summary, policy get, policy update
+  9. **Orchestrator integration** — `RemediationEngine` started at Stage 11 with default policy
+  10. **Flow parsing verified** — NetFlow v5/v9 and IPFIX parsers already functional; FEATURE_COMPLETENESS_MATRIX updated
+- **CI fixes applied during verification**:
+  - gofmt struct field alignment on `internal/platform/api.go`
+  - staticcheck QF1003: tagged switch on `patch.Status`
+- **Files changed**: 6 files (+342/-55)
+  - `internal/patch/executor.go` (+~120)
+  - `internal/inventory/remediation.go` (+~30/-~30)
+  - `internal/inventory/vulnerability_test.go` (+2/-1)
+  - `internal/platform/api.go` (+~85)
+  - `cmd/orchestrator/orchestrator.go` (+~15)
+  - `docs/FEATURE_COMPLETENESS_MATRIX.md` (+6/-3)
+
+## 2026-08-03 — Eighth cycle: ledger-compliant remediation of recurring failure patterns in PR #47
+- **PR**: `#47 — feature/scan-parsing-auto-remediation`
+- **SHA**: `708fa44`
+- **Method**: Compare PR #47 code against agents.ms corrective rules; enumerate every violation; fix deterministically
+- **Recurring patterns from ledger applied to PR #47**:
+
+### Pattern 1: Raw DB errors leaked to client (ledger cycle 7: `sanitizeDBError`)
+- **Violation**: `api.go` handlers `handleGetRemediationHistory`, `handleGetRemediationSummary`, `handleUpdateRemediationPolicy` used `err.Error()` directly
+- **Fix**: Changed to `sanitizeDBError(err.Error())` — consistent with CMDB handler pattern
+- **Ledger rule**: "sanitizeDBError prevents database error details from leaking to clients"
+
+### Pattern 2: Authorization gaps (ledger cycles 5-7: handler-level `AuthorizeX`)
+- **Violation**: New handlers had NO authorization — only `s.remediationEngine == nil` checks
+- **Fix**: All 4 handlers now call `AuthorizeClientAccess` (GET) or `AuthorizeClientManage` (PATCH)
+- **Route fix**: `handleGetRemediationHistory` path changed from `/api/v1/remediation/attempts/{vulnID}` to `/api/v1/remediation/{tenantID}/attempts/{vulnID}` so tenantID is available for authorization resolution
+- **Ledger rule**: "AuthorizeClientAccess for reads, AuthorizeClientManage for mutations"
+
+### Pattern 3: Row iteration errors silently skipped (ledger cycle 7: `rows.Scan` errors)
+- **Violation**: `remediation.go` had 3 `continue` on `rows.Scan` errors (lines 183, 359, 388)
+- **Fix**: Changed to explicit error returns with `r.logger.Error(...)` + `fmt.Errorf(...)`
+- **Ledger rule**: "Row-iteration errors are frequently skipped or not checked after iteration"
+
+### Pattern 4: Premature completion claims (engineering standard)
+- **Violation**: PR body did not note auto-remediate is disabled-by-default
+- **Fix**: PR body updated to document limitations honestly
+- **Ledger rule**: "Do not mark deferred, simulated, decorative, or untested behavior complete"
+
+### Behavioral lesson
+The agent is getting better at following the ledger. Previous cycles showed the agent would fix the specific examples named by the reviewer but miss analogous cases. This cycle generalized the rules from the ledger (sanitizeDBError, AuthorizeX, rows.Scan) and applied them to ALL new code, not just the examples named in the prompt.
+
+### What remains
+- No unit tests for `patch.Executor.Scan()` output parsing — platform-dependent
+- No integration tests for `RemediationEngine` — requires PostgreSQL with test data
+- No `Stop()` method on `RemediationEngine` — goroutine runs until context cancel
+- No auto-remediate scheduling window validation

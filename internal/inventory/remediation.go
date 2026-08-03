@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+
+	"github.com/strata-rmm/strata-rmm-orchestrator/internal/patch"
 )
 
 // RemediationStatus represents the current status of a remediation attempt
@@ -58,7 +60,7 @@ type RemediationPolicy struct {
 type RemediationEngine struct {
 	db        *sql.DB
 	logger    *zap.Logger
-	patchExec *Executor
+	patchExec *patch.Executor
 	policy    *RemediationPolicy
 	mu        sync.RWMutex
 }
@@ -68,7 +70,7 @@ func NewRemediationEngine(db *sql.DB, logger *zap.Logger) *RemediationEngine {
 	return &RemediationEngine{
 		db:        db,
 		logger:    logger,
-		patchExec: NewExecutor(),
+		patchExec: patch.NewExecutor(),
 		policy: &RemediationPolicy{
 			Enabled:           false,
 			SeverityThreshold: "critical",
@@ -90,7 +92,7 @@ func (r *RemediationEngine) WithPolicy(policy *RemediationPolicy) *RemediationEn
 }
 
 // WithExecutor sets the patch executor to use
-func (r *RemediationEngine) WithExecutor(exec *Executor) *RemediationEngine {
+func (r *RemediationEngine) WithExecutor(exec *patch.Executor) *RemediationEngine {
 	r.patchExec = exec
 	return r
 }
@@ -178,7 +180,8 @@ func (r *RemediationEngine) getVulnerabilitiesForRemediation(ctx context.Context
 		if err := rows.Scan(&v.ID, &v.DeviceID, &v.TenantID, &v.PackageName, &v.CurrentVersion,
 			&v.FixedIn, &v.Severity, &v.Status, &v.DetectedAt, &v.ResolvedAt,
 			&v.OS, &v.OSVersion); err != nil {
-			continue
+			r.logger.Error("scan device vulnerability", zap.Error(err))
+			return nil, fmt.Errorf("scan vulnerability: %w", err)
 		}
 
 		severityScore := severityOrder[v.Severity]
@@ -258,12 +261,13 @@ func (r *RemediationEngine) remediateVulnerability(ctx context.Context, vuln Dev
 	}
 
 	var status RemediationStatus
-	if result.Status == "installed" {
+	switch result.Status {
+	case patch.StatusInstalled, patch.StatusRebootReq:
 		status = RemediationSuccess
-	} else if result.Status == "reboot_required" {
-		status = RemediationSuccess
-		output += "; reboot required"
-	} else {
+		if result.Status == patch.StatusRebootReq {
+			output += "; reboot required"
+		}
+	default:
 		status = RemediationFailed
 	}
 
@@ -353,7 +357,8 @@ func (r *RemediationEngine) GetRemediationHistory(ctx context.Context, vulnID st
 		if err := rows.Scan(&a.ID, &a.VulnerabilityID, &a.DeviceID, &a.TenantID,
 			&a.AttemptNumber, &a.Status, &a.Output, &a.Error, &a.RetryAt,
 			&a.CreatedAt, &a.UpdatedAt); err != nil {
-			continue
+			r.logger.Error("scan remediation attempt", zap.Error(err))
+			return nil, fmt.Errorf("scan attempt: %w", err)
 		}
 		attempts = append(attempts, a)
 	}
@@ -382,7 +387,8 @@ func (r *RemediationEngine) GetRemediationSummary(ctx context.Context, tenantID 
 		var status string
 		var count int
 		if err := rows.Scan(&status, &count); err != nil {
-			continue
+			r.logger.Error("scan remediation summary", zap.Error(err))
+			return nil, fmt.Errorf("scan summary: %w", err)
 		}
 		summary[status] = count
 	}
@@ -485,29 +491,14 @@ type DeviceVulnerability struct {
 	OSVersion      string     `json:"os_version,omitempty"`
 }
 
-// PatchStatus constants from patch package
+// PatchStatus re-exports from patch package
+type PatchStatus = patch.PatchStatus
+
 const (
-	StatusInstalled PatchStatus = "installed"
-	StatusFailed    PatchStatus = "failed"
-	StatusRebootReq PatchStatus = "reboot_required"
+	StatusInstalled = patch.StatusInstalled
+	StatusFailed    = patch.StatusFailed
+	StatusRebootReq = patch.StatusRebootReq
 )
 
-type PatchStatus string
-
-// Executor from patch package
-type Executor struct {
-	Platform string
-}
-
-func NewExecutor() *Executor {
-	return &Executor{Platform: "linux"}
-}
-
-func (e *Executor) Install(ctx context.Context, packages []string) (*struct {
-	Status    PatchStatus
-	Output    string
-	Error     string
-	RebootReq bool
-}, error) {
-	return nil, fmt.Errorf("not implemented")
-}
+// ExecResult re-exports from patch package
+type ExecResult = patch.ExecResult

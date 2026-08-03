@@ -228,6 +228,22 @@ func NewCommand(ctx context.Context, version, commit string, logger *zap.Logger)
 			go thirdParty.Start(ctx)
 			logger.Info("third-party patching engine started")
 
+			remediationEngine := inventory.NewRemediationEngine(tsdb.DB(), logger)
+			remediationEngine.SetPolicy(&inventory.RemediationPolicy{
+				Enabled:           true,
+				SeverityThreshold: "critical",
+				AutoRemediate:     false, // default disabled; enable via API
+				MaxRetries:        3,
+				RetryDelayHours:   1,
+				AutoApprove:       true,
+				RebootBehavior:    "automatic",
+			})
+			if err := remediationEngine.Start(ctx); err != nil {
+				logger.Warn("starting remediation engine", zap.Error(err))
+			} else {
+				logger.Info("auto-remediation engine started")
+			}
+
 			// Stage 11b: OS Patch manager
 			advanceStage(11)
 			patchStore := patch.NewStore(tsdb.DB())
@@ -351,7 +367,7 @@ func NewCommand(ctx context.Context, version, commit string, logger *zap.Logger)
 				reportEngine := reporting.NewReportEngine(tsdb.DB(), logger, sb, cfg.Storage.Bucket)
 				go reportEngine.Start(ctx)
 				logger.Info("report engine started")
-				api = api.WithRecordingStore(recStore).WithStorageBackend(sb).WithReportEngine(reportEngine).WithInventoryEngine(reportingEngine)
+				api = api.WithRecordingStore(recStore).WithStorageBackend(sb).WithReportEngine(reportEngine).WithInventoryEngine(reportingEngine).WithRemediationEngine(remediationEngine)
 				api.RegisterHealth("storage", func(ctx context.Context) error {
 					_, err := sb.Stat(ctx, "health-check")
 					if err != nil && err != storage.ErrNotFound {
