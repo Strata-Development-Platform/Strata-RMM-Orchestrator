@@ -25,7 +25,6 @@ func newTestToken(t *testing.T, userID, tenantID, mspID, clientID, siteID string
 	return token
 }
 
-
 // TestBillingRouteClassification verifies billing routes are properly classified.
 func TestBillingRouteClassification(t *testing.T) {
 	s := &APIServer{allowClaimPrincipal: true}
@@ -242,8 +241,8 @@ func TestInvalidUUIDHandling(t *testing.T) {
 // TestDatabaseErrorSanitization verifies DB errors are sanitized.
 func TestDatabaseErrorSanitization(t *testing.T) {
 	tests := []struct {
-		name     string
-		dbError  string
+		name      string
+		dbError   string
 		sanitized string
 	}{
 		{"pq error", "pq: syntax error at or near \"SELECT\"", "internal server error"},
