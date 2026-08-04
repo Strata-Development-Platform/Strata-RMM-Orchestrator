@@ -3015,3 +3015,100 @@ The user flagged that I did not follow the PR lifecycle, project bible, and Agen
 - PR #55 comment — workflow evidence, environment pending, PR body checklist
 - PR #56 comment — workflow evidence, environment pending, PR body checklist
 
+
+## 2026-08-04 — Thirteenth cycle: Phase 2.2a Git-backed automation vault
+
+### Pre-implementation audit
+- **Ledger read**: Complete (all 3017 lines read before code)
+- **Rule mapping applied**: See below
+- **Ledger rule compliance**: Verified for all applicable rules
+
+### Ledger rules applied to Phase 2.2a code
+
+**A. "Check rows.Err() after iteration. Never ignore scan errors." (seventh-cycle, rules 7-9)**
+- Not applicable. `internal/automation/vault.go` uses `os/exec` commands, no database queries.
+
+**B. "Raw database, constraint, schema, driver, or topology details must never reach clients." (seventh-cycle, rule 17)**
+- Not applicable. No HTTP handlers or client-facing APIs in vault package.
+
+**C. "RLS policies must use the project's established tenant isolation pattern." (seventh-cycle, rule 17)**
+- Not applicable. No database operations.
+
+**D. "Embedded and standalone migrations must be mechanically reconciled." (third-cycle)**
+- Not applicable. No migrations created.
+
+**E. "Validation and mutation for one protected operation must occur in one transaction." (project bible, rule 1)**
+- Not applicable. No transactions.
+
+**F. "Establish request-scoped database settings using transaction-local semantics." (project bible, rule 2)**
+- Not applicable. No database.
+
+**G. "Agent must not write secrets to disk or log files." (agent engineering standard, rule 8)**
+- `AuthConfig.Token` and `AuthConfig.SSHKeyPath` are passed via environment variables only
+- No secrets logged in any function
+- SSH key path validated for existence but never read/printed
+- **Compliant.**
+
+**H. "Every public API must have a corresponding test." (agent engineering standard, rule 5)**
+- `Vault.Clone()` — tested in TestVaultClone, TestVaultCloneInvalidURL, TestVaultCloneEmptyRemote, TestVaultCloneEmptyLocal, TestVaultCloneAndPull, TestVaultCloneWithAuth, TestVaultCloneWithSSHKey, TestVaultCloneContextCancelled
+- `Vault.Pull()` — tested in TestVaultPullNonExistentPath, TestVaultPullNotGitRepo, TestVaultPullEmptyPath, TestVaultCloneAndPull, TestVaultPullAfterClone, TestVaultPullContextCancelled
+- `Vault.Validate()` — tested in TestVaultValidate, TestVaultValidateNonExistentPath, TestVaultValidateEmptyPath
+- `Vault.LastCommit()` — tested in TestVaultLastCommit, TestVaultLastCommitEmptyPath, TestVaultLastCommitNonExistentPath
+- **Compliant.**
+
+### Phase 2.2a implementation summary
+
+**Automation Vault** (`internal/automation/vault.go`):
+- `Vault`: Struct providing Git-backed automation with clone/pull operations
+- `AuthConfig`: Holds authentication credentials (Token, SSHKeyPath, Username, Password)
+- `NewVault()`: Factory with default branch configuration
+- `Clone(ctx, remoteURL, localPath, auth)`: Clone repository with auth support
+- `Pull(ctx, localPath, auth)`: Pull latest changes with auth support
+- `Validate(ctx, localPath)`: Verify repository health
+- `LastCommit(ctx, localPath)`: Get latest commit hash
+- Auth injection: SSH key via GIT_SSH_COMMAND, token via GIT_ASKPASS_ECHO, basic auth via GIT_TERMINAL_PROMPT
+
+**Tests** (`internal/automation/vault_test.go`):
+- 19 unit tests covering clone, pull, validate, lastCommit operations
+- Mock Git server using file:// protocol with bare repositories
+- Error handling tests (empty URL, invalid URL, non-Git directories, cancelled context)
+- Auth configuration tests (token, SSH key)
+
+### CI evidence
+All 84 CI checks terminal and successful on merged commit `5ce0d3d`:
+- Test: pass
+- Lint: pass (after fixing errcheck and staticcheck issues)
+- Vet: pass
+- All Phase 7 jobs: pass
+- All Phase 8B jobs: pass
+- All build jobs: pass (linux/amd64, linux/arm64, windows/amd64, windows/arm64, darwin/amd64, darwin/arm64)
+- All security jobs: pass
+- Unit Tests (race detection): pass
+- Tenant Preservation Tests: pass
+
+### Failures/reruns
+- 3 iterations to achieve green CI:
+  1. Race-detected test failures (t.TempDir cleanup timing) → fixed with os.MkdirTemp + t.Cleanup + push retry
+  2. Test failures (git config before git init) → fixed ordering
+  3. Lint failures (4 errcheck, 1 staticcheck) → fixed all issues
+- All fixes pushed as new heads (deterministic)
+
+### PR #59 state
+- **Branch**: `feature/2-2a-automation-vault`
+- **Base**: origin/master `8aaa3ca`
+- **Head**: `d46a220` (squash merged to master as `5ce0d3d`)
+- **State**: Merged
+- **PR body checklist**: Added via GitHub comment (Gate 6)
+- **Workflow evidence**: Added via GitHub comment (exact-head URLs, failures/fixes table)
+- **Gate 2 audit trace**: Added via GitHub comment (13-category trace)
+- **Gate 3 plan**: Added via GitHub comment (boundary analysis)
+
+### Limitations/remaining work
+- Requires git binary to be available on the host
+- SSH key files must be accessible by the process
+- No support for git submodules
+- No git branching strategies implemented
+- No conflict resolution logic
+- No webhook support for push notifications
+- Phase 2.2b (AES-256-GCM envelope encryption) not yet implemented
+
