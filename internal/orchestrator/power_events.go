@@ -125,14 +125,18 @@ func (pm *PowerEventManager) Start(ctx context.Context) error {
 		return fmt.Errorf("subscribe to UPS alerts: %w", err)
 	}
 
-	pm.log.Info("UPS power manager started, subscribed to probe SNMP alerts")
+	if pm.log != nil {
+		pm.log.Info("UPS power manager started, subscribed to probe SNMP alerts")
+	}
 
 	go func() {
 		<-ctx.Done()
 		pm.mu.Lock()
 		pm.closed = true
 		pm.mu.Unlock()
-		sub.Unsubscribe()
+		if sub != nil {
+			_ = sub.Unsubscribe()
+		}
 		close(pm.shutdown)
 	}()
 
@@ -489,7 +493,13 @@ func (pm *PowerEventManager) getDevicesByRole(ctx context.Context, tenantID, rol
 	if err != nil {
 		return nil, fmt.Errorf("query %s devices: %w", role, err)
 	}
-	defer rows.Close()
+	defer func() {
+		if err := rows.Close(); err != nil {
+			if pm.log != nil {
+				pm.log.Warn("close query rows", zap.Error(err))
+			}
+		}
+	}()
 
 	var ids []string
 	for rows.Next() {

@@ -1,8 +1,6 @@
 package orchestrator
 
 import (
-	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -13,39 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
-
-// mockUPSDB provides a minimal DBProvider for testing UPS state resolution
-type mockUPSDB struct {
-	devices map[string][]string // tenantID -> role -> deviceIDs
-}
-
-func (m *mockUPSDB) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
-func (m *mockUPSDB) QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row {
-	return nil
-}
-
-func (m *mockUPSDB) Query(query string, args ...interface{}) (*sql.Rows, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
-func (m *mockUPSDB) QueryRow(query string, args ...interface{}) *sql.Row {
-	return nil
-}
-
-func (m *mockUPSDB) Exec(query string, args ...interface{}) (sql.Result, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
-func (m *mockUPSDB) Prepare(query string) (*sql.Stmt, error) {
-	return nil, fmt.Errorf("not implemented")
-}
-
-func (m *mockUPSDB) Close() error {
-	return nil
-}
 
 // TestIsUPSRelatedOID verifies OID classification logic
 func TestIsUPSRelatedOID(t *testing.T) {
