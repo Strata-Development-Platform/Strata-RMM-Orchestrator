@@ -86,3 +86,72 @@ exercise unless the internal-alpha scope is expanded.
    terminal evidence.
 4. Convert each broader Partial row into a focused implementation slice with a
    regression test before promoting that capability in product documentation.
+
+## Planned expansion phases (future slices)
+
+The following phases are scoped in the design brief and must remain tracked here
+until implementation begins or the scope is formally retired.
+
+| Phase | Slice | Scope summary | Status | Target files |
+|-------|-------|---------------|--------|--------------|
+| 1 | Core HA Architecture Hardening | JetStream refactoring (persistent consumers, explicit `msg.Ack()`), read/write connection pool routing, RLS context injection, Timescale hypertable compression, stateless scaling (token blacklists → Redis) | Partial — JetStream module exists; DB routing, compression, and Redis migration remain | `internal/messaging/jetstream/`, `pkg/postgres/`, `pkg/timescale/`, `pkg/redis/` |
+| 2 | Hierarchical Policy Engine & Secure Script Vault | Recursive `ComputeEffectivePolicy(deviceID)` with 4-level inheritance (Global→Client→Location→DeviceGroup), Git-backed automation vault with SSH/HTTPS pull + AES-256-GCM envelope encryption | Partial — schema and docs exist; recursive resolver and Git vault worker remain | `internal/policy/`, `internal/automation/`, `pkg/encrypt/` |
+| 3 | Server & Hardware Template Infrastructure | Server role detection (WMI/CIM/systemd → `Roles []string` in telemetry), infrastructure probe engine (SNMP v3, Redfish, IPMI, Syslog for SAN/NAS/firewall/switch/hypervisor/UPS), power-shutdown orchestration handler | Partial — probe engine ~3400 lines exists; role detection and power shutdown handler remain | `internal/inventory/`, `internal/agent/`, `internal/probe/`, `internal/orchestrator/power_events.go` |
+| 4 | Third-Party Public Integration Router | EDR/Backup/PSA webhook ingestion endpoints with HMAC-SHA256 signature verification, automated security isolation (EDR threat → NATS isolation command) | Not implemented | `cmd/orchestrator/router.go`, `internal/integrations/` |
+| 5 | UI Configuration Components | Hierarchical policy dashboard tree-view with inheritance tags and override toggles, integration settings panel (API key management, webhook URL display) | Not implemented | `ui/src/components/policies/`, `ui/src/components/settings/` |
+| 6 | Core Technical Documentation | `docs/architecture/policy-engine.md` (override precedence + ASCII diagram), `docs/integrations/public-api.md` (OpenAPI 3.0 spec for EDR/Backup/PSA), `docs/monitoring/best-practice-templates.md` (server/hardware template master tables with OIDs and thresholds) | Partial — `docs/POLICY_ENGINE.md` exists; public API and monitoring template docs remain | `docs/architecture/`, `docs/integrations/`, `docs/monitoring/` |
+
+## Planned expansion — detailed task traceability
+
+Each item below maps to the design brief and should be opened as an implementation
+ticket or PR when the team is ready to begin work.
+
+### Phase 1: Core HA Architecture Hardening
+
+| ID | Task | Target | Evidence required |
+|----|------|--------|-------------------|
+| 1.1 | JetStream persistent consumers with `tenant.{id}.*` subject pattern; explicit `msg.Ack()` in ingestion loop | `internal/monitoring/ingestion.go`, `internal/agent/`, `cmd/orchestrator/` | NATS integration test showing no message loss during consumer restart |
+| 1.2a | Read/write connection pool routing (replicas for reads, primary for writes) | `pkg/postgres/` | Unit test verifying `pgxpool.NewWithConfig` with separate primary/read replicas |
+| 1.2b | Timescale hypertable continuous aggregation + 7-day compression policy | `pkg/timescale/migrations/` | SQL migration test verifying `hypertable_compression` applied |
+| 1.3 | Token blacklists, transient configs, ephemeral sessions migrated from in-memory maps to Redis | `cmd/orchestrator/main.go`, `internal/platform/`, `pkg/redis/` | Redis-backed blacklist test with multi-process verification |
+
+### Phase 2: Hierarchical Policy Engine & Secure Script Vault
+
+| ID | Task | Target | Evidence required |
+|----|------|--------|-------------------|
+| 2.1a | Recursive `ComputeEffectivePolicy(deviceID)` with most-specific-wins merging | `internal/policy/` | Unit test resolving 4-level inheritance with override/append semantics |
+| 2.1b | Policy lifecycle: validation, preview, publish, rollback | `pkg/postgres/schema.go`, `internal/platform/policy_*` | Integration test for full lifecycle transitions |
+| 2.2a | Git-backed automation vault: SSH/HTTPS clone/pull from GitHub/GitLab | `internal/automation/vault.go`, `internal/automation/worker.go` | Unit test with mock Git server |
+| 2.2b | AES-256-GCM envelope encryption for secret variables; in-memory exposure over NATS | `internal/automation/vault.go`, `pkg/encrypt/` | Encryption round-trip test + audit that secrets never touch disk |
+
+### Phase 3: Server & Hardware Template Infrastructure
+
+| ID | Task | Target | Evidence required |
+|----|------|--------|-------------------|
+| 3.1a | Agent role scanner (WMI/CIM Windows, systemd Linux) detecting AD DC, SQL Server, Hyper-V | `internal/agent/core/`, `internal/agent/collectors/` | Unit test with mocked WMI/systemd output |
+| 3.1b | Telemetry payload extension: `Roles []string` in check-in, auto policy binding | `internal/agent/`, `internal/orchestrator/handlers/` | Integration test verifying role → monitoring definition binding |
+| 3.2 | Infrastructure probe engine: SNMP v3, Redfish, IPMI, Syslog collectors for SAN/NAS/firewall/switch/hypervisor/UPS | `internal/probe/`, `cmd/probe/` | Protocol-specific unit tests (already ~3400 lines of probe skeleton) |
+| 3.3 | UPS power-shutdown handler: runtime tracking, dependency tree evaluation, ordered graceful shutdown via NATS | `internal/orchestrator/power_events.go` | Unit test with mocked UPS telemetry and shutdown sequence verification |
+
+### Phase 4: Third-Party Public Integration Router
+
+| ID | Task | Target | Evidence required |
+|----|------|--------|-------------------|
+| 4.1a | Webhook ingestion routes: `/api/v1/integrations/edr/alerts`, `/backup/sync`, `/psa/webhooks` | `cmd/orchestrator/router.go`, `internal/integrations/` | HTTP handler tests with mock payloads from SentinelOne/CrowdStrike/Veeam/HaloPSA |
+| 4.1b | HMAC-SHA256 signature verification middleware | `internal/integrations/middleware.go` | Auth test verifying valid/invalid signatures are accepted/rejected |
+| 4.2 | Automated security isolation: EDR high-severity alert → NATS isolation command to target agent | `internal/integrations/actions.go` | Integration test tracing alert receipt → isolation command dispatch |
+
+### Phase 5: UI Configuration Components
+
+| ID | Task | Target | Evidence required |
+|----|------|--------|-------------------|
+| 5.1 | Hierarchical policy tree-view with inheritance tags and override toggles | `ui/src/components/policies/` | React component test + Playwright browser test |
+| 5.2 | Integration settings panel: API key CRUD, webhook URL copy-paste | `ui/src/components/settings/` | React component test + Playwright browser test |
+
+### Phase 6: Core Technical Documentation
+
+| ID | Task | Target | Status |
+|----|------|--------|--------|
+| 6.1 | `docs/architecture/policy-engine.md` — override precedence + ASCII evaluation diagram | `docs/architecture/` | `docs/POLICY_ENGINE.md` exists and covers this |
+| 6.2 | `docs/integrations/public-api.md` — OpenAPI 3.0 spec for EDR/Backup/PSA endpoints | `docs/integrations/` | Not implemented |
+| 6.3 | `docs/monitoring/best-practice-templates.md` — server/hardware master tables with OIDs, thresholds, self-healing targets | `docs/monitoring/` | Not implemented |

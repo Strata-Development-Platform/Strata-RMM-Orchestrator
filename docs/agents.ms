@@ -2539,3 +2539,16 @@ All 75 CI checks pass for head `d1eb0c4` (base):
 - **No unintended development PR remains open**: Confirmed
 - **No new slice started**: Confirmed
 
+## 2026-08-04 Feature Completeness Matrix — Planned Expansion Phases Added
+
+- **File**: `docs/FEATURE_COMPLETENESS_MATRIX.md`
+- **Change**: Appended "Planned expansion phases (future slices)" section with 6 phases, plus detailed task traceability tables with IDs, targets, and evidence requirements for each sub-task.
+- **Purpose**: Prevent future loss of the 6-phase design brief (HA hardening, policy engine + vault, hardware templates, integration router, UI components, technical docs).
+- **Status mapping**: Each phase shows Partial/Not-Implemented with a summary of what already exists in the repo vs what remains.
+- **Phase 1**: Partial (JetStream module exists ~5 files; DB routing, compression, Redis migration remain)
+- **Phase 2**: Partial (policy schema + docs exist; recursive resolver + Git vault remain)
+- **Phase 3**: Partial (probe engine ~3400 lines exists; role detection + power shutdown handler remain)
+- **Phase 4**: Not implemented (integration router, HMAC middleware, security isolation actions)
+- **Phase 5**: Not implemented (policy tree-view, integration settings panel)
+- **Phase 6**: Partial (POLICY_ENGINE.md covers 6.1; public-api.md and best-practice-templates.md remain)
+
