@@ -142,11 +142,11 @@ ticket or PR when the team is ready to begin work.
 | 2.2a | Git-backed automation vault: SSH/HTTPS clone/pull from GitHub/GitLab | `internal/automation/vault.go`, `internal/automation/worker.go` | Unit test with mock Git server |
 | 2.2b | AES-256-GCM envelope encryption for secret variables; in-memory exposure over NATS | `internal/automation/vault.go`, `pkg/encrypt/` | Encryption round-trip test + audit that secrets never touch disk |
 
-### Phase 3: Server & Hardware Template Infrastructure
+### Phase 3: Server & Hardware Template Infrastructure — **IN PROGRESS** (3.1a done)
 
-| ID | Task | Target | Evidence required |
-|----|------|--------|-------------------|
-| 3.1a | Agent role scanner (WMI/CIM Windows, systemd Linux) detecting AD DC, SQL Server, Hyper-V | `internal/agent/core/`, `internal/agent/collectors/` | Unit test with mocked WMI/systemd output |
+| ID | Task | Target | Evidence required | Status | PR | CI |
+|----|------|--------|-------------------|--------|----|----|
+| 3.1a | Agent role scanner (WMI/CIM Windows, systemd Linux) detecting AD DC, SQL Server, Hyper-V | `internal/agent/core/` | Unit test with mocked WMI/systemd output (8 tests) | **Verified** | #62 | 83 pass, 1 fail (pre-existing frontend) |
 | 3.1b | Telemetry payload extension: `Roles []string` in check-in, auto policy binding | `internal/agent/`, `internal/orchestrator/handlers/` | Integration test verifying role → monitoring definition binding |
 | 3.2 | Infrastructure probe engine: SNMP v3, Redfish, IPMI, Syslog collectors for SAN/NAS/firewall/switch/hypervisor/UPS | `internal/probe/`, `cmd/probe/` | Protocol-specific unit tests (already ~3400 lines of probe skeleton) |
 | 3.3 | UPS power-shutdown handler: runtime tracking, dependency tree evaluation, ordered graceful shutdown via NATS | `internal/orchestrator/power_events.go` | Unit test with mocked UPS telemetry and shutdown sequence verification |
