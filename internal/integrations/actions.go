@@ -1,7 +1,6 @@
 package integrations
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -130,12 +129,4 @@ func (h *IsolationHandler) HandleIsolation(w http.ResponseWriter, r *http.Reques
 			h.logger.Error("failed to encode response", zap.Error(err))
 		}
 	}
-}
-
-// contextWithIntegrationID adds the integration ID to the context.
-func contextWithIntegrationID(ctx context.Context, id, integration string) context.Context {
-	return context.WithValue(ctx, IntegrationContextKey, IntegrationContext{
-		ID:          id,
-		Integration: integration,
-	})
 }

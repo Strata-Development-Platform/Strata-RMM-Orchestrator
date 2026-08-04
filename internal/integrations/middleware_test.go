@@ -77,7 +77,7 @@ func TestMiddlewareValidSignature(t *testing.T) {
 
 	handler := verifier.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
+		_, _ = w.Write([]byte("ok"))
 	}))
 
 	req := httptest.NewRequest("POST", "/webhook", bytes.NewReader([]byte(body)))
@@ -151,7 +151,7 @@ func TestMiddlewareValidTimestamp(t *testing.T) {
 
 	handler := verifier.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
+		_, _ = w.Write([]byte("ok"))
 	}))
 
 	req := httptest.NewRequest("POST", "/webhook", bytes.NewReader([]byte(body)))
