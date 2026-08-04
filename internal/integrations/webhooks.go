@@ -99,11 +99,15 @@ func (h *WebhookHandler) HandleEDRAlert(w http.ResponseWriter, r *http.Request) 
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":   "received",
 		"alert_id": alert.AlertID,
 		"provider": alert.Provider,
-	})
+	}); err != nil {
+		if h.logger != nil {
+			h.logger.Error("failed to encode response", zap.Error(err))
+		}
+	}
 }
 
 // HandleBackupSync processes backup sync status events.
@@ -133,11 +137,15 @@ func (h *WebhookHandler) HandleBackupSync(w http.ResponseWriter, r *http.Request
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":        "received",
 		"device_id":     sync.DeviceID,
 		"backup_status": sync.Status,
-	})
+	}); err != nil {
+		if h.logger != nil {
+			h.logger.Error("failed to encode response", zap.Error(err))
+		}
+	}
 }
 
 // HandlePSAWebhook processes PSA ticket events.
@@ -167,11 +175,15 @@ func (h *WebhookHandler) HandlePSAWebhook(w http.ResponseWriter, r *http.Request
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":    "received",
 		"ticket_id": psa.TicketID,
 		"action":    psa.Action,
-	})
+	}); err != nil {
+		if h.logger != nil {
+			h.logger.Error("failed to encode response", zap.Error(err))
+		}
+	}
 }
 
 // normalizeSeverity normalizes severity strings to standard values.

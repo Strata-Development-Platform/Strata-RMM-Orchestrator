@@ -36,7 +36,9 @@ func TestHandleEDRAlertValid(t *testing.T) {
 	}
 
 	var resp map[string]interface{}
-	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
 
 	if resp["status"] != "received" {
 		t.Errorf("expected status 'received', got %v", resp["status"])
@@ -108,7 +110,9 @@ func TestHandleBackupSyncValid(t *testing.T) {
 	}
 
 	var resp map[string]interface{}
-	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
 
 	if resp["status"] != "received" {
 		t.Errorf("expected status 'received', got %v", resp["status"])
@@ -162,7 +166,9 @@ func TestHandlePSAWebhookValid(t *testing.T) {
 	}
 
 	var resp map[string]interface{}
-	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
 
 	if resp["status"] != "received" {
 		t.Errorf("expected status 'received', got %v", resp["status"])

@@ -45,7 +45,9 @@ func TestHandleIsolationValid(t *testing.T) {
 	}
 
 	var resp map[string]interface{}
-	json.Unmarshal(rec.Body.Bytes(), &resp)
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
 
 	if resp["status"] != "isolated" {
 		t.Errorf("expected status 'isolated', got %v", resp["status"])
@@ -56,7 +58,9 @@ func TestHandleIsolationValid(t *testing.T) {
 	}
 
 	var cmd IsolationCommand
-	json.Unmarshal(mock.lastData, &cmd)
+	if err := json.Unmarshal(mock.lastData, &cmd); err != nil {
+		t.Fatal(err)
+	}
 
 	if cmd.DeviceID != "device-456" {
 		t.Errorf("expected device_id 'device-456', got %s", cmd.DeviceID)

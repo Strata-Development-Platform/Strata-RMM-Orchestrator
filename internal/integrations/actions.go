@@ -121,11 +121,15 @@ func (h *IsolationHandler) HandleIsolation(w http.ResponseWriter, r *http.Reques
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":    "isolated",
 		"event_id":  cmd.EventID,
 		"device_id": cmd.DeviceID,
-	})
+	}); err != nil {
+		if h.logger != nil {
+			h.logger.Error("failed to encode response", zap.Error(err))
+		}
+	}
 }
 
 // contextWithIntegrationID adds the integration ID to the context.
