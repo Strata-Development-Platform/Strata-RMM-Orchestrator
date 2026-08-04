@@ -153,7 +153,7 @@ func (c *SyslogCollector) acceptTCP(ctx context.Context) {
 
 // HandleTCPConn reads a TCP connection for syslog messages.
 func (c *SyslogCollector) handleTCPConn(ctx context.Context, conn net.Conn) {
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	buf := make([]byte, 65535)
 	conn.SetReadDeadline(time.Now().Add(c.config.Timeout))

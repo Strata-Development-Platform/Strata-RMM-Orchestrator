@@ -89,7 +89,7 @@ func TestRedfishClientSystem(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/redfish/v1/Systems/" {
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(mockData)
+			_ = json.NewEncoder(w).Encode(mockData)
 		} else {
 			w.WriteHeader(http.StatusNotFound)
 		}

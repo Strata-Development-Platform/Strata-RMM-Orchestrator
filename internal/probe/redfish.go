@@ -106,7 +106,7 @@ func (c *RedfishClient) get(ctx context.Context, path string) (*RedfishResult, e
 			Error:    err.Error(),
 		}, nil
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024)) // 10MB limit
 	if err != nil {

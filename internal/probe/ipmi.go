@@ -89,7 +89,7 @@ func (c *IPMIClient) Connect(ctx context.Context) error {
 // Close closes the IPMI connection.
 func (c *IPMIClient) Close() {
 	if c.conn != nil {
-		c.conn.Close()
+		_ = c.conn.Close()
 	}
 }
 
@@ -288,7 +288,7 @@ func (c *IPMIClient) buildFRURequest() []byte {
 
 // ReadResponse reads the response from the IPMI device.
 func (c *IPMIClient) readResponse() ([]byte, error) {
-	c.conn.SetReadDeadline(time.Now().Add(c.timeout))
+	_ = c.conn.SetReadDeadline(time.Now().Add(c.timeout))
 	buf := make([]byte, 1024)
 	n, err := c.conn.Read(buf)
 	if err != nil {
@@ -404,7 +404,7 @@ func decodePhysicalSecurity(reading byte) string {
 // BuildSNMPTrap creates an IPMI-style trap payload for syslog forwarding.
 func BuildSNMPTrap(deviceIP, message string) []byte {
 	buf := new(bytes.Buffer)
-	binary.Write(buf, binary.BigEndian, uint32(len(message)))
+	_ = binary.Write(buf, binary.BigEndian, uint32(len(message)))
 	buf.WriteString(message)
 	return buf.Bytes()
 }
