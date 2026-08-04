@@ -34,6 +34,7 @@ type policyLayer struct {
 	ID                  string                 `json:"id"`
 	ScopeLevel          string                 `json:"scope_level"`
 	Version             int                    `json:"version"`
+	PublishedVersion    int                    `json:"published_version"`
 	Config              map[string]interface{} `json:"config"`
 	MaintenanceStart    *string                `json:"maintenance_start,omitempty"`
 	MaintenanceEnd      *string                `json:"maintenance_end,omitempty"`
