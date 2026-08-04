@@ -4252,6 +4252,20 @@ DROP POLICY IF EXISTS "platform_admin_topology_edges" ON topology_edges;
 			`,
 			Down: `DROP TABLE IF EXISTS client_support_requests;`,
 		},
+		{
+			ID:   91,
+			Name: "devices_add_roles_and_active",
+			Up: `
+				ALTER TABLE devices ADD COLUMN IF NOT EXISTS roles TEXT[] DEFAULT '{}';
+				ALTER TABLE devices ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true;
+				CREATE INDEX IF NOT EXISTS idx_devices_roles ON devices USING GIN (roles);
+				CREATE INDEX IF NOT EXISTS idx_devices_active ON devices(tenant_id, is_active);
+			`,
+			Down: `
+				ALTER TABLE devices DROP COLUMN IF EXISTS roles;
+				ALTER TABLE devices DROP COLUMN IF EXISTS is_active;
+			`,
+		},
 	}
 }
 
