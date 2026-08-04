@@ -165,6 +165,20 @@ type SeedingConfig struct {
 	DevAdminPwd   string
 }
 
+type RedisConfig struct {
+	URL          string
+	PoolSize     int
+	MinIdleConns int
+	MaxRetries   int
+}
+
+type JetStreamConfig struct {
+	MaxMemoryStore string
+	MaxFileStore   string
+	StoragePath    string
+	NumReplicas    int
+}
+
 type BackupConfig struct {
 	Enabled                  bool
 	EnvironmentID            string
@@ -228,6 +242,8 @@ type OrchestratorConfig struct {
 	RuntimeMode   RuntimeMode
 	NATS          NATSConfig
 	DB            DatabaseConfig
+	Redis         RedisConfig
+	JetStream     JetStreamConfig
 	Storage       StorageConfig
 	JWT           JWTConfig
 	HTTP          HTTPConfig
@@ -290,6 +306,12 @@ func (c *OrchestratorConfig) Validate() error {
 	}
 	if c.HTTP.MaxBodySizeBytes <= 0 {
 		errs = append(errs, "HTTP.MaxBodySizeBytes: must be positive")
+	}
+	if c.Redis.URL != "" {
+		check("Redis.URL", validateURL(c.Redis.URL, []string{"redis", "rediss", "tcp", "tls"}))
+		if c.Redis.PoolSize <= 0 {
+			errs = append(errs, "Redis.PoolSize: must be positive")
+		}
 	}
 	if c.Observability.MetricsToken != "" && len(c.Observability.MetricsToken) < 32 {
 		errs = append(errs, "Observability.MetricsToken: must be at least 32 characters when set")
@@ -493,6 +515,17 @@ func LoadOrchestratorConfig() (*OrchestratorConfig, error) {
 			MaxReconnects: -1,
 		},
 		JWT: JWTConfig{},
+		Redis: RedisConfig{
+			PoolSize:     10,
+			MinIdleConns: 2,
+			MaxRetries:   3,
+		},
+		JetStream: JetStreamConfig{
+			MaxMemoryStore: "2GB",
+			MaxFileStore:   "50GB",
+			StoragePath:    "/var/lib/strata/jetstream",
+			NumReplicas:    1,
+		},
 	}
 
 	var errs []string
@@ -545,6 +578,32 @@ func LoadOrchestratorConfig() (*OrchestratorConfig, error) {
 		errs = append(errs, fmt.Sprintf("NATS_MAX_RECONNECTS: %v", err))
 	} else {
 		cfg.NATS.MaxReconnects = v
+	}
+
+	cfg.Redis.URL = envStr("REDIS_URL", "")
+	if v, err := envIntStrict("REDIS_POOL_SIZE", cfg.Redis.PoolSize); err != nil {
+		errs = append(errs, fmt.Sprintf("REDIS_POOL_SIZE: %v", err))
+	} else {
+		cfg.Redis.PoolSize = v
+	}
+	if v, err := envIntStrict("REDIS_MIN_IDLE_CONNS", cfg.Redis.MinIdleConns); err != nil {
+		errs = append(errs, fmt.Sprintf("REDIS_MIN_IDLE_CONNS: %v", err))
+	} else {
+		cfg.Redis.MinIdleConns = v
+	}
+	if v, err := envIntStrict("REDIS_MAX_RETRIES", cfg.Redis.MaxRetries); err != nil {
+		errs = append(errs, fmt.Sprintf("REDIS_MAX_RETRIES: %v", err))
+	} else {
+		cfg.Redis.MaxRetries = v
+	}
+
+	cfg.JetStream.MaxMemoryStore = envStr("JS_MAX_MEMORY_STORE", cfg.JetStream.MaxMemoryStore)
+	cfg.JetStream.MaxFileStore = envStr("JS_MAX_FILE_STORE", cfg.JetStream.MaxFileStore)
+	cfg.JetStream.StoragePath = envStr("JS_STORAGE_PATH", cfg.JetStream.StoragePath)
+	if v, err := envIntStrict("JS_NUM_REPLICAS", cfg.JetStream.NumReplicas); err != nil {
+		errs = append(errs, fmt.Sprintf("JS_NUM_REPLICAS: %v", err))
+	} else {
+		cfg.JetStream.NumReplicas = v
 	}
 
 	if v, err := envIntStrict("DB_MAX_OPEN_CONNS", cfg.DB.MaxOpenConns); err != nil {
@@ -862,6 +921,12 @@ func (c *OrchestratorConfig) RedactedSummary() map[string]interface{} {
 		"db_dsn":                   redactDSN(c.DB.DSN),
 		"db_pool_max":              c.DB.MaxOpenConns,
 		"db_pool_idle":             c.DB.MaxIdleConns,
+		"redis_url":                redactURL(c.Redis.URL),
+		"redis_pool_size":          c.Redis.PoolSize,
+		"js_memory_store":          c.JetStream.MaxMemoryStore,
+		"js_file_store":            c.JetStream.MaxFileStore,
+		"js_storage_path":          c.JetStream.StoragePath,
+		"js_replicas":              c.JetStream.NumReplicas,
 		"storage_type":             c.Storage.Backend,
 		"storage_bucket":           c.Storage.Bucket,
 		"api_addr":                 c.HTTP.APIAddr,

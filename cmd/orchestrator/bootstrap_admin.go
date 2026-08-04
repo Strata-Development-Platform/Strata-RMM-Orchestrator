@@ -34,7 +34,7 @@ func newBootstrapAdminCommand(ctx context.Context, logger *zap.Logger) *cobra.Co
 			if err != nil {
 				return fmt.Errorf("load configuration: %w", err)
 			}
-			db, err := timescale.NewClient(ctx, cfg.DB.DSN)
+			db, err := timescale.NewClient(ctx, cfg.DB.DSN, "")
 			if err != nil {
 				return fmt.Errorf("connect to database: %w", err)
 			}

@@ -4,64 +4,181 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/nats-io/nats.go"
 	"go.uber.org/zap"
 
+	"github.com/strata-rmm/strata-rmm-orchestrator/internal/messaging/jetstream"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/timescale"
 )
 
 type IngestService struct {
-	nats     *nats.Conn
-	tsdb     *timescale.Client
-	logger   *zap.Logger
-	tenantID string
-	subs     []*nats.Subscription
+	nc     *nats.Conn
+	js     nats.JetStreamContext
+	tsdb   *timescale.Client
+	logger *zap.Logger
+	subs   []*nats.Subscription
+	batch  *batchBuffer
 }
 
-func NewIngestService(nc *nats.Conn, tsdb *timescale.Client, logger *zap.Logger) *IngestService {
+type batchBuffer struct {
+	metrics []timescale.MetricRow
+	events  []timescale.EventRow
+	mu      sync.Mutex
+	ticker  *time.Ticker
+	done    chan struct{}
+}
+
+func NewBatchBuffer(tickerDuration time.Duration) *batchBuffer {
+	return &batchBuffer{
+		ticker: time.NewTicker(tickerDuration),
+		done:   make(chan struct{}),
+	}
+}
+
+func (b *batchBuffer) AddMetric(row timescale.MetricRow) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.metrics = append(b.metrics, row)
+}
+
+func (b *batchBuffer) AddEvent(row timescale.EventRow) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.events = append(b.events, row)
+}
+
+func (b *batchBuffer) Flush(ctx context.Context, tsdb *timescale.Client) error {
+	b.mu.Lock()
+	metrics := b.metrics
+	events := b.events
+	b.metrics = nil
+	b.events = nil
+	b.mu.Unlock()
+
+	var errs []string
+	if len(metrics) > 0 {
+		if err := tsdb.InsertMetrics(ctx, metrics); err != nil {
+			errs = append(errs, fmt.Sprintf("insert metrics batch (%d rows): %v", len(metrics), err))
+		}
+	}
+	if len(events) > 0 {
+		if err := tsdb.InsertEvents(ctx, events); err != nil {
+			errs = append(errs, fmt.Sprintf("insert events batch (%d rows): %v", len(events), err))
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("batch flush errors: %s", strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+func (b *batchBuffer) StartLoop(ctx context.Context, tsdb *timescale.Client) {
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-b.done:
+				return
+			case <-b.ticker.C:
+				if err := b.Flush(ctx, tsdb); err != nil {
+					// Log error but don't stop the loop
+					fmt.Printf("batch flush error: %v\n", err)
+				}
+			}
+		}
+	}()
+}
+
+func (b *batchBuffer) Stop() {
+	close(b.done)
+	b.ticker.Stop()
+}
+
+func NewIngestService(nc *nats.Conn, tsdb *timescale.Client, logger *zap.Logger) (*IngestService, error) {
+	js, err := nc.JetStream()
+	if err != nil {
+		return nil, fmt.Errorf("create jetstream context: %w", err)
+	}
+
 	return &IngestService{
-		nats:   nc,
+		nc:     nc,
+		js:     js,
 		tsdb:   tsdb,
 		logger: logger,
-	}
+		batch:  NewBatchBuffer(5 * time.Second),
+	}, nil
 }
 
 func (s *IngestService) Start(ctx context.Context) error {
-	s.logger.Info("starting metrics ingestion service")
+	s.logger.Info("starting metrics ingestion service with JetStream")
 
-	agentMetricsSub, err := s.nats.Subscribe("tenant.*.agent.*.metrics", s.handleAgentMetrics)
+	// Create JetStream consumers with durable subscriptions and explicit ack
+	metricsSub, err := s.js.Subscribe(jetstream.SubjectMetrics, s.handleAgentMetricsJS,
+		nats.Durable(jetstream.ConsumerMetrics),
+		nats.AckWait(30*time.Second),
+		nats.MaxDeliver(10),
+		nats.ManualAck(),
+	)
 	if err != nil {
-		return fmt.Errorf("subscribing to agent metrics: %w", err)
+		return fmt.Errorf("subscribing to metrics: %w", err)
 	}
-	s.subs = append(s.subs, agentMetricsSub)
+	s.subs = append(s.subs, metricsSub)
 
-	agentEventsSub, err := s.nats.Subscribe("tenant.*.agent.*.events", s.handleAgentEvents)
+	eventsSub, err := s.js.Subscribe(jetstream.SubjectEvents, s.handleAgentEventsJS,
+		nats.Durable(jetstream.ConsumerEvents),
+		nats.AckWait(30*time.Second),
+		nats.MaxDeliver(10),
+		nats.ManualAck(),
+	)
 	if err != nil {
-		return fmt.Errorf("subscribing to agent events: %w", err)
+		return fmt.Errorf("subscribing to events: %w", err)
 	}
-	s.subs = append(s.subs, agentEventsSub)
+	s.subs = append(s.subs, eventsSub)
 
-	heartbeatSub, err := s.nats.Subscribe("tenant.*.agent.*.heartbeat", s.handleAgentHeartbeat)
+	heartbeatSub, err := s.js.Subscribe(jetstream.SubjectHeartbeat, s.handleAgentHeartbeatJS,
+		nats.Durable(jetstream.ConsumerHeartbeats),
+		nats.AckWait(30*time.Second),
+		nats.MaxDeliver(10),
+		nats.ManualAck(),
+	)
 	if err != nil {
 		return fmt.Errorf("subscribing to heartbeats: %w", err)
 	}
 	s.subs = append(s.subs, heartbeatSub)
 
-	probeSNMPSub, err := s.nats.Subscribe("tenant.*.probe.*.snmp", s.handleProbeSNMP)
+	probeSNMPSub, err := s.js.Subscribe(jetstream.SubjectProbeSNMP, s.handleProbeSNMPJS,
+		nats.Durable(jetstream.ConsumerProbes),
+		nats.AckWait(30*time.Second),
+		nats.MaxDeliver(10),
+		nats.ManualAck(),
+	)
 	if err != nil {
 		return fmt.Errorf("subscribing to probe snmp: %w", err)
 	}
 	s.subs = append(s.subs, probeSNMPSub)
 
-	probeFlowSub, err := s.nats.Subscribe("tenant.*.probe.*.flow", s.handleProbeFlow)
+	probeFlowSub, err := s.js.Subscribe(jetstream.SubjectProbeFlow, s.handleProbeFlowJS,
+		nats.Durable(jetstream.ConsumerProbes),
+		nats.AckWait(30*time.Second),
+		nats.MaxDeliver(10),
+		nats.ManualAck(),
+	)
 	if err != nil {
 		return fmt.Errorf("subscribing to probe flow: %w", err)
 	}
 	s.subs = append(s.subs, probeFlowSub)
 
-	probeDiscSub, err := s.nats.Subscribe("tenant.*.probe.*.discovery", s.handleProbeDiscovery)
+	probeDiscSub, err := s.js.Subscribe(jetstream.SubjectProbeDiscovery, s.handleProbeDiscoveryJS,
+		nats.Durable(jetstream.ConsumerDiscovery),
+		nats.AckWait(30*time.Second),
+		nats.MaxDeliver(10),
+		nats.ManualAck(),
+	)
 	if err != nil {
 		return fmt.Errorf("subscribing to probe discovery: %w", err)
 	}
@@ -71,12 +188,13 @@ func (s *IngestService) Start(ctx context.Context) error {
 		zap.Int("subscriptions", len(s.subs)),
 	)
 
-	go s.batchFlushLoop(ctx)
+	go s.batch.StartLoop(ctx, s.tsdb)
 
 	return nil
 }
 
 func (s *IngestService) Stop() {
+	s.batch.Stop()
 	for _, sub := range s.subs {
 		if err := sub.Unsubscribe(); err != nil {
 			s.logger.Warn("unsubscribing", zap.Error(err))
@@ -84,7 +202,9 @@ func (s *IngestService) Stop() {
 	}
 }
 
-func (s *IngestService) handleAgentMetrics(m *nats.Msg) {
+func (s *IngestService) handleAgentMetricsJS(m *nats.Msg) {
+	defer func() { _ = m.Ack() }()
+
 	var payload struct {
 		Samples []struct {
 			Name      string            `json:"name"`
@@ -122,14 +242,14 @@ func (s *IngestService) handleAgentMetrics(m *nats.Msg) {
 		})
 	}
 
-	if len(rows) > 0 {
-		if err := s.tsdb.InsertMetrics(context.Background(), rows); err != nil {
-			s.logger.Error("inserting metrics", zap.Error(err))
-		}
+	for _, row := range rows {
+		s.batch.AddMetric(row)
 	}
 }
 
-func (s *IngestService) handleAgentEvents(m *nats.Msg) {
+func (s *IngestService) handleAgentEventsJS(m *nats.Msg) {
+	defer func() { _ = m.Ack() }()
+
 	var payload struct {
 		Type      string            `json:"type"`
 		Message   string            `json:"message"`
@@ -163,12 +283,12 @@ func (s *IngestService) handleAgentEvents(m *nats.Msg) {
 		Tags:      payload.Tags,
 	}
 
-	if err := s.tsdb.InsertEvents(context.Background(), []timescale.EventRow{row}); err != nil {
-		s.logger.Error("inserting event", zap.Error(err))
-	}
+	s.batch.AddEvent(row)
 }
 
-func (s *IngestService) handleAgentHeartbeat(m *nats.Msg) {
+func (s *IngestService) handleAgentHeartbeatJS(m *nats.Msg) {
+	defer func() { _ = m.Ack() }()
+
 	var payload struct {
 		AgentID string `json:"agent_id"`
 		Time    int64  `json:"time"`
@@ -212,6 +332,7 @@ func (s *IngestService) handleAgentHeartbeat(m *nats.Msg) {
 	}
 }
 
+// Batch flush loop - previously a stub, now functional
 func (s *IngestService) batchFlushLoop(ctx context.Context) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
@@ -221,6 +342,9 @@ func (s *IngestService) batchFlushLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if err := s.batch.Flush(ctx, s.tsdb); err != nil {
+				s.logger.Error("batch flush error", zap.Error(err))
+			}
 		}
 	}
 }
@@ -264,8 +388,8 @@ func tokenize(s string, sep byte) []string {
 }
 
 // Probe handlers
-
-func (s *IngestService) handleProbeSNMP(m *nats.Msg) {
+func (s *IngestService) handleProbeSNMPJS(m *nats.Msg) {
+	defer func() { _ = m.Ack() }()
 	tenantID := extractProbeTenant(m.Subject)
 	if tenantID == "" {
 		return
@@ -273,7 +397,8 @@ func (s *IngestService) handleProbeSNMP(m *nats.Msg) {
 	s.logger.Debug("probe snmp data received", zap.String("subject", m.Subject))
 }
 
-func (s *IngestService) handleProbeFlow(m *nats.Msg) {
+func (s *IngestService) handleProbeFlowJS(m *nats.Msg) {
+	defer func() { _ = m.Ack() }()
 	tenantID := extractProbeTenant(m.Subject)
 	if tenantID == "" {
 		return
@@ -281,7 +406,8 @@ func (s *IngestService) handleProbeFlow(m *nats.Msg) {
 	s.logger.Debug("probe flow data received", zap.String("subject", m.Subject))
 }
 
-func (s *IngestService) handleProbeDiscovery(m *nats.Msg) {
+func (s *IngestService) handleProbeDiscoveryJS(m *nats.Msg) {
+	defer func() { _ = m.Ack() }()
 	tenantID := extractProbeTenant(m.Subject)
 	if tenantID == "" {
 		return

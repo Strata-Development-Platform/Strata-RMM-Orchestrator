@@ -144,7 +144,7 @@ func NewCommand(ctx context.Context, version, commit string, logger *zap.Logger)
 			// Stage 8: Connect database and apply migrations
 			advanceStage(8)
 			logger.Info("connecting to database")
-			tsdb, err := timescale.NewClient(ctx, cfg.DB.DSN)
+			tsdb, err := timescale.NewClient(ctx, cfg.DB.DSN, "")
 			if err != nil {
 				return fmt.Errorf("stage %d: connecting to database: %w", atomic.LoadInt32(&startupStage), err)
 			}
@@ -173,7 +173,10 @@ func NewCommand(ctx context.Context, version, commit string, logger *zap.Logger)
 			// Stage 9: Start ingestion
 			advanceStage(9)
 			logger.Info("starting metrics ingestion")
-			ingest := monitoring.NewIngestService(nc, tsdb, logger)
+			ingest, err := monitoring.NewIngestService(nc, tsdb, logger)
+			if err != nil {
+				return fmt.Errorf("stage %d: creating ingestion service: %w", atomic.LoadInt32(&startupStage), err)
+			}
 			if err := ingest.Start(ctx); err != nil {
 				return fmt.Errorf("stage %d: starting ingestion: %w", atomic.LoadInt32(&startupStage), err)
 			}
@@ -515,7 +518,7 @@ func newPreflightCommand(logger *zap.Logger) *cobra.Command {
 			}
 
 			// Connect to database
-			db, err := timescale.NewClient(cmd.Context(), cfg.DB.DSN)
+			db, err := timescale.NewClient(cmd.Context(), cfg.DB.DSN, "")
 			if err != nil {
 				logger.Error("failed to connect to database", zap.Error(err))
 			}
@@ -657,7 +660,7 @@ func newUpgradeCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 				targetVersion = int32(maxID) // #nosec G115 -- maxID is always < 1000 (migration count)
 			}
 
-			db, err := timescale.NewClient(ctx, cfg.DB.DSN)
+			db, err := timescale.NewClient(ctx, cfg.DB.DSN, "")
 			if err != nil {
 				return fmt.Errorf("connect to database: %w", err)
 			}
@@ -739,7 +742,7 @@ func newRollbackCommand(ctx context.Context, logger *zap.Logger) *cobra.Command 
 				return fmt.Errorf("rollback requires a target version: orchestrator rollback <version>")
 			}
 
-			db, err := timescale.NewClient(ctx, cfg.DB.DSN)
+			db, err := timescale.NewClient(ctx, cfg.DB.DSN, "")
 			if err != nil {
 				return fmt.Errorf("connect to database: %w", err)
 			}

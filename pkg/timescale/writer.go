@@ -11,7 +11,8 @@ import (
 )
 
 type Client struct {
-	db *sql.DB
+	writeDB *sql.DB
+	readDB  *sql.DB
 }
 
 type MetricRow struct {
@@ -41,47 +42,95 @@ type HeartbeatRow struct {
 	Metadata     map[string]string
 }
 
-func NewClient(ctx context.Context, dsn string) (*Client, error) {
-	db, err := sql.Open("postgres", dsn)
+func NewClient(ctx context.Context, primaryDSN, replicaDSN string) (*Client, error) {
+	writeDB, err := sql.Open("postgres", primaryDSN)
 	if err != nil {
-		return nil, fmt.Errorf("opening connection: %w", err)
+		return nil, fmt.Errorf("opening primary connection: %w", err)
 	}
 
-	db.SetMaxOpenConns(20)
-	db.SetMaxIdleConns(5)
-	db.SetConnMaxLifetime(5 * time.Minute)
+	writeDB.SetMaxOpenConns(20)
+	writeDB.SetMaxIdleConns(5)
+	writeDB.SetConnMaxLifetime(5 * time.Minute)
 
-	if err := db.PingContext(ctx); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("pinging: %w", err)
+	if err := writeDB.PingContext(ctx); err != nil {
+		_ = writeDB.Close()
+		return nil, fmt.Errorf("pinging primary: %w", err)
 	}
 
-	return &Client{db: db}, nil
+	var readDB *sql.DB
+	if replicaDSN != "" {
+		readDB, err = sql.Open("postgres", replicaDSN)
+		if err != nil {
+			_ = writeDB.Close()
+			return nil, fmt.Errorf("opening replica connection: %w", err)
+		}
+
+		readDB.SetMaxOpenConns(25)
+		readDB.SetMaxIdleConns(10)
+		readDB.SetConnMaxLifetime(5 * time.Minute)
+
+		if err := readDB.PingContext(ctx); err != nil {
+			_ = readDB.Close()
+			return nil, fmt.Errorf("pinging replica: %w", err)
+		}
+	}
+
+	return &Client{writeDB: writeDB, readDB: readDB}, nil
 }
 
 func (c *Client) SetPoolConfig(maxOpen, maxIdle int, maxLifetime time.Duration) {
-	if maxOpen > 0 {
-		c.db.SetMaxOpenConns(maxOpen)
+	if c.writeDB != nil {
+		if maxOpen > 0 {
+			c.writeDB.SetMaxOpenConns(maxOpen)
+		}
+		if maxIdle >= 0 {
+			c.writeDB.SetMaxIdleConns(maxIdle)
+		}
+		if maxLifetime > 0 {
+			c.writeDB.SetConnMaxLifetime(maxLifetime)
+		}
 	}
-	if maxIdle >= 0 {
-		c.db.SetMaxIdleConns(maxIdle)
-	}
-	if maxLifetime > 0 {
-		c.db.SetConnMaxLifetime(maxLifetime)
+	if c.readDB != nil {
+		if maxOpen > 0 {
+			c.readDB.SetMaxOpenConns(maxOpen)
+		}
+		if maxIdle >= 0 {
+			c.readDB.SetMaxIdleConns(maxIdle)
+		}
+		if maxLifetime > 0 {
+			c.readDB.SetConnMaxLifetime(maxLifetime)
+		}
 	}
 }
 
 func (c *Client) DB() *sql.DB {
-	return c.db
+	return c.writeDB
+}
+
+func (c *Client) ReadDB() *sql.DB {
+	return c.readDB
 }
 
 func (c *Client) Close() {
-	c.db.Close()
+	if c.writeDB != nil {
+		_ = c.writeDB.Close()
+	}
+	if c.readDB != nil {
+		_ = c.readDB.Close()
+	}
+}
+
+// DBFor reads from the replica if available, otherwise falls back to primary.
+func (c *Client) DBFor(queryType string) *sql.DB {
+	if queryType == "read" && c.readDB != nil {
+		return c.readDB
+	}
+	return c.writeDB
 }
 
 func (c *Client) ApplyMigrations(ctx context.Context) error {
 	for _, m := range AllMigrations() {
-		if _, err := c.db.ExecContext(ctx, m.SQL); err != nil {
+		if _, err := c.writeDB.ExecContext(ctx, m.SQL); err != nil {
 			return fmt.Errorf("migration %s: %w", m, err)
 		}
 	}
@@ -93,7 +142,7 @@ func (c *Client) InsertMetrics(ctx context.Context, metrics []MetricRow) error {
 		return nil
 	}
 
-	tx, err := c.db.BeginTx(ctx, nil)
+	tx, err := c.writeDB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
@@ -125,7 +174,7 @@ func (c *Client) InsertEvents(ctx context.Context, events []EventRow) error {
 		return nil
 	}
 
-	tx, err := c.db.BeginTx(ctx, nil)
+	tx, err := c.writeDB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
@@ -158,7 +207,7 @@ func (c *Client) RecordHeartbeat(ctx context.Context, hb HeartbeatRow) error {
 		metaJSON = mapToJSON(hb.Metadata)
 	}
 
-	_, err := c.db.ExecContext(ctx, `
+	_, err := c.writeDB.ExecContext(ctx, `
 		INSERT INTO heartbeats (time, tenant_id, device_id, status, agent_version, metadata)
 		VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
 		hb.Time, hb.TenantID, hb.DeviceID, hb.Status, hb.AgentVersion, metaJSON,
@@ -167,7 +216,7 @@ func (c *Client) RecordHeartbeat(ctx context.Context, hb HeartbeatRow) error {
 }
 
 func (c *Client) GetLatestHeartbeat(ctx context.Context, tenantID, deviceID string) (*HeartbeatRow, error) {
-	row := c.db.QueryRowContext(ctx, `
+	row := c.DBFor("read").QueryRowContext(ctx, `
 		SELECT time, tenant_id, device_id, status, agent_version, metadata
 		FROM heartbeats
 		WHERE tenant_id = $1 AND device_id = $2
@@ -189,7 +238,7 @@ func (c *Client) GetLatestHeartbeat(ctx context.Context, tenantID, deviceID stri
 }
 
 func (c *Client) QueryMetrics(ctx context.Context, tenantID, deviceID, metricName string, start, end time.Time) ([]MetricRow, error) {
-	rows, err := c.db.QueryContext(ctx, `
+	rows, err := c.DBFor("read").QueryContext(ctx, `
 		SELECT time, tenant_id, device_id, metric_name, value, tags
 		FROM metrics
 		WHERE tenant_id = $1
@@ -223,6 +272,9 @@ func (c *Client) QueryMetrics(ctx context.Context, tenantID, deviceID, metricNam
 }
 
 func (c *Client) QueryAggregated(ctx context.Context, tenantID, deviceID, metricName string, start, end time.Time, bucket string) ([]MetricRow, error) {
+	if c.readDB == nil {
+		return nil, fmt.Errorf("read replica not configured")
+	}
 	viewName := "metrics_1m"
 	switch bucket {
 	case "1m":
@@ -241,7 +293,7 @@ func (c *Client) QueryAggregated(ctx context.Context, tenantID, deviceID, metric
 			AND bucket <= $5
 		ORDER BY bucket ASC`, viewName)
 
-	rows, err := c.db.QueryContext(ctx, query, tenantID, deviceID, metricName, start, end)
+	rows, err := c.readDB.QueryContext(ctx, query, tenantID, deviceID, metricName, start, end)
 	if err != nil {
 		return nil, err
 	}
@@ -285,7 +337,7 @@ func (c *Client) SetRetentionPolicy(ctx context.Context, retentionDays int) erro
 	if retentionDays < 1 || retentionDays > 10000 {
 		return fmt.Errorf("retention_days must be between 1 and 10000, got %d", retentionDays)
 	}
-	_, err := c.db.ExecContext(ctx, `SELECT set_retention_policy('metrics', ($1 || ' days')::INTERVAL)`, retentionDays)
+	_, err := c.writeDB.ExecContext(ctx, `SELECT set_retention_policy('metrics', ($1 || ' days')::INTERVAL)`, retentionDays)
 	return err
 }
 
@@ -294,7 +346,7 @@ func (c *Client) SetHeartbeatsRetention(ctx context.Context, retentionDays int) 
 	if retentionDays < 1 || retentionDays > 10000 {
 		return fmt.Errorf("retention_days must be between 1 and 10000, got %d", retentionDays)
 	}
-	_, err := c.db.ExecContext(ctx, `SELECT set_retention_policy('heartbeats', ($1 || ' days')::INTERVAL)`, retentionDays)
+	_, err := c.writeDB.ExecContext(ctx, `SELECT set_retention_policy('heartbeats', ($1 || ' days')::INTERVAL)`, retentionDays)
 	return err
 }
 
@@ -303,7 +355,7 @@ func (c *Client) SetAlertsRetention(ctx context.Context, retentionDays int) erro
 	if retentionDays < 1 || retentionDays > 10000 {
 		return fmt.Errorf("retention_days must be between 1 and 10000, got %d", retentionDays)
 	}
-	_, err := c.db.ExecContext(ctx, `SELECT set_retention_policy('alerts_ts', ($1 || ' days')::INTERVAL)`, retentionDays)
+	_, err := c.writeDB.ExecContext(ctx, `SELECT set_retention_policy('alerts_ts', ($1 || ' days')::INTERVAL)`, retentionDays)
 	return err
 }
 
@@ -312,7 +364,7 @@ func (c *Client) SetSNMPPollsRetention(ctx context.Context, retentionDays int) e
 	if retentionDays < 1 || retentionDays > 10000 {
 		return fmt.Errorf("retention_days must be between 1 and 10000, got %d", retentionDays)
 	}
-	_, err := c.db.ExecContext(ctx, `SELECT set_retention_policy('snmp_polls', ($1 || ' days')::INTERVAL)`, retentionDays)
+	_, err := c.writeDB.ExecContext(ctx, `SELECT set_retention_policy('snmp_polls', ($1 || ' days')::INTERVAL)`, retentionDays)
 	return err
 }
 
@@ -321,7 +373,7 @@ func (c *Client) SetFlowRecordsRetention(ctx context.Context, retentionDays int)
 	if retentionDays < 1 || retentionDays > 10000 {
 		return fmt.Errorf("retention_days must be between 1 and 10000, got %d", retentionDays)
 	}
-	_, err := c.db.ExecContext(ctx, `SELECT set_retention_policy('flow_records', ($1 || ' days')::INTERVAL)`, retentionDays)
+	_, err := c.writeDB.ExecContext(ctx, `SELECT set_retention_policy('flow_records', ($1 || ' days')::INTERVAL)`, retentionDays)
 	return err
 }
 
@@ -330,19 +382,19 @@ func (c *Client) SetTopologyEdgesRetention(ctx context.Context, retentionDays in
 	if retentionDays < 1 || retentionDays > 10000 {
 		return fmt.Errorf("retention_days must be between 1 and 10000, got %d", retentionDays)
 	}
-	_, err := c.db.ExecContext(ctx, `SELECT set_retention_policy('topology_edges', ($1 || ' days')::INTERVAL)`, retentionDays)
+	_, err := c.writeDB.ExecContext(ctx, `SELECT set_retention_policy('topology_edges', ($1 || ' days')::INTERVAL)`, retentionDays)
 	return err
 }
 
 // GetRetentionPolicy returns the retention policy for the metrics hypertable.
 func (c *Client) GetRetentionPolicy(ctx context.Context) (*RetentionPolicy, error) {
-	row := c.db.QueryRowContext(ctx, `SELECT * FROM get_retention_policy('metrics')`)
+	row := c.writeDB.QueryRowContext(ctx, `SELECT * FROM get_retention_policy('metrics')`)
 	return scanRetentionPolicy(row)
 }
 
 // GetHeartbeatsRetentionPolicy returns the retention policy for the heartbeats hypertable.
 func (c *Client) GetHeartbeatsRetentionPolicy(ctx context.Context) (*RetentionPolicy, error) {
-	row := c.db.QueryRowContext(ctx, `SELECT * FROM get_retention_policy('heartbeats')`)
+	row := c.writeDB.QueryRowContext(ctx, `SELECT * FROM get_retention_policy('heartbeats')`)
 	return scanRetentionPolicy(row)
 }
 
@@ -351,7 +403,7 @@ func (c *Client) GetAllRetentionPolicies(ctx context.Context) ([]RetentionPolicy
 	tables := []string{"metrics", "heartbeats", "alerts_ts", "snmp_polls", "flow_records", "topology_edges"}
 	var results []RetentionPolicy
 	for _, table := range tables {
-		row := c.db.QueryRowContext(ctx, `SELECT * FROM get_retention_policy($1)`, table)
+		row := c.writeDB.QueryRowContext(ctx, `SELECT * FROM get_retention_policy($1)`, table)
 		policy, err := scanRetentionPolicy(row)
 		if err != nil {
 			if err == sql.ErrNoRows {

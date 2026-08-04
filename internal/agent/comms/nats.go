@@ -303,12 +303,12 @@ func (h *CommsHandler) replayQueued(ctx context.Context) {
 	if !h.client.IsConnected() {
 		return
 	}
-	metrics, err := h.store.PeekMetrics(1000)
+	metrics, err := h.store.PopMetrics(1000)
 	if err != nil {
 		h.logger.Error("reading queued metrics", "error", err)
 		return
 	}
-	events, err := h.store.PeekEvents(1000)
+	events, err := h.store.PopEvents(1000)
 	if err != nil {
 		h.logger.Error("reading queued events", "error", err)
 		return
@@ -316,8 +316,7 @@ func (h *CommsHandler) replayQueued(ctx context.Context) {
 
 	metricsReplayed := 0
 	eventsReplayed := 0
-	for _, queued := range metrics {
-		m := queued.Metric
+	for _, m := range metrics {
 		sample := core.MetricSample{
 			Name: m.Name, Value: m.Value,
 			Tags: m.Tags, Timestamp: m.Timestamp,
@@ -327,14 +326,9 @@ func (h *CommsHandler) replayQueued(ctx context.Context) {
 			h.logger.Warn("replaying queued metric", "error", err)
 			break
 		}
-		if err := h.store.AckMetrics([]string{queued.Key}); err != nil {
-			h.logger.Error("acknowledging queued metric", "error", err)
-			break
-		}
 		metricsReplayed++
 	}
-	for _, queued := range events {
-		e := queued.Event
+	for _, e := range events {
 		event := core.Event{
 			Type: e.Type, Message: e.Message,
 			Tags: e.Tags, Timestamp: e.Timestamp,
@@ -342,10 +336,6 @@ func (h *CommsHandler) replayQueued(ctx context.Context) {
 		payload := encodeEvent(event)
 		if err := h.client.Publish(ctx, h.subjects.AgentEvents(), payload); err != nil {
 			h.logger.Warn("replaying queued event", "error", err)
-			break
-		}
-		if err := h.store.AckEvents([]string{queued.Key}); err != nil {
-			h.logger.Error("acknowledging queued event", "error", err)
 			break
 		}
 		eventsReplayed++

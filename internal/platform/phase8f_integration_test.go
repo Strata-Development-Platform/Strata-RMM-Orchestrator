@@ -32,7 +32,7 @@ func phase8FDatabase(t *testing.T) (*sql.DB, *timescale.Client) {
 	if err := postgres.NewSchemaManager(raw).Apply(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	client, err := timescale.NewClient(context.Background(), dsn)
+	client, err := timescale.NewClient(context.Background(), dsn, "")
 	if err != nil {
 		t.Fatal(err)
 	}

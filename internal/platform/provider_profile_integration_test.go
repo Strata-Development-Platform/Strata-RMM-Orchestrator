@@ -53,7 +53,7 @@ func providerHandlerDatabase(t *testing.T) (*sql.DB, *timescale.Client) {
 	if err := postgres.NewSchemaManager(raw).Apply(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	client, err := timescale.NewClient(context.Background(), testURL.String())
+	client, err := timescale.NewClient(context.Background(), testURL.String(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
