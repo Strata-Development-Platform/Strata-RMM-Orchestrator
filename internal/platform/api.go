@@ -2383,6 +2383,7 @@ func (s *APIServer) handleUpdateRemediationPolicy(w http.ResponseWriter, r *http
 func (s *APIServer) registerIntegrationRoutes(mux *http.ServeMux) {
 	integrationWebhookSecret := os.Getenv("INTEGRATION_WEBHOOK_SECRET")
 	if integrationWebhookSecret == "" {
+		// #nosec G101 — fallback dev secret, never used in production
 		integrationWebhookSecret = "default-dev-secret-change-in-production"
 	}
 
