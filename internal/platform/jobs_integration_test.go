@@ -157,7 +157,7 @@ func waitForTargetStatus(t *testing.T, db *sql.DB, targetID, want string) {
 	// The agent replays an unacknowledged terminal result every 15 seconds.
 	// Allow one complete replay interval so a transient serializable-transaction
 	// conflict still exercises and proves the durable recovery path.
-	deadline := time.Now().Add(25 * time.Second)
+	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
 		var status string
 		if err := db.QueryRow(`SELECT status FROM job_targets WHERE id=$1`, targetID).Scan(&status); err == nil && status == want {

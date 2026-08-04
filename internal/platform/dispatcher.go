@@ -87,7 +87,7 @@ func (d *Dispatcher) Healthy(ctx context.Context) error {
 
 func (d *Dispatcher) outboxPublisher(ctx context.Context) {
 	defer d.wg.Done()
-	ticker := time.NewTicker(500 * time.Millisecond)
+	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
