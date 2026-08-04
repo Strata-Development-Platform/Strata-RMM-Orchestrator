@@ -530,8 +530,8 @@ func TestVaultEnforceNoDiskWrite(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	originalPanic := os.Getenv("STRATA_VAULT_TMPDIR")
-	os.Setenv("STRATA_VAULT_TMPDIR", tmpDir)
-	defer os.Setenv("STRATA_VAULT_TMPDIR", originalPanic)
+	_ = os.Setenv("STRATA_VAULT_TMPDIR", tmpDir)
+	defer func() { _ = os.Setenv("STRATA_VAULT_TMPDIR", originalPanic) }()
 
 	cek := deriveCEK("test-passphrase-12345")
 
