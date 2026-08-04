@@ -5,7 +5,6 @@ package platform
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"os"
 	"testing"
 	"time"
@@ -42,7 +41,7 @@ func TestScriptScheduleRunnerStartStop(t *testing.T) {
 
 	runner.Start(ctx)
 
-	if !runner.Healthy() {
+	if err := runner.Healthy(ctx); err != nil {
 		t.Fatal("runner should be healthy after start")
 	}
 
@@ -52,7 +51,7 @@ func TestScriptScheduleRunnerStartStop(t *testing.T) {
 
 	time.Sleep(100 * time.Millisecond)
 
-	if runner.Healthy() {
+	if err := runner.Healthy(ctx); err == nil {
 		t.Fatal("runner should not be healthy after stop")
 	}
 }
