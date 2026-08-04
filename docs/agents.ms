@@ -2523,3 +2523,19 @@ All 75 CI checks pass for head `d1eb0c4` (base):
 7. Exact-head workflow URLs and job results recorded in PR body ✓
 
 
+
+### Gate 10 — Merge and Post-Merge Verification
+
+- **Owner authorization**: Explicit — owner typed "merge"
+- **Authorized head SHA**: 8d18f8362060cb0c2eb5a526ac2196c0673bc780
+- **Draft marked ready**: Yes (prior to merge)
+- **Merge method**: Squash merge via `gh pr merge 51 --squash --delete-branch`
+- **Merge SHA**: 84b5ba180d50afcc0fe21bbc110ea271c5e5fe18
+- **Master verified**: master fast-forwarded from d1eb0c4 → 84b5ba1
+- **PR state**: MERGED
+- **Branch deleted**: Yes (feature/51-script-schedule-runner)
+- **Open dev PRs**: None
+- **Post-merge CI**: 84 pass, 0 fail
+- **No unintended development PR remains open**: Confirmed
+- **No new slice started**: Confirmed
+
