@@ -345,6 +345,112 @@ func (s *APIServer) handlePublishPolicy(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "published", "version": record.Version})
 }
 
+func (s *APIServer) handleRollbackPolicy(w http.ResponseWriter, r *http.Request) {
+	record, err := s.loadPolicy(r, r.PathValue("policyID"))
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "policy not found"})
+		return
+	}
+	if !s.AuthorizeMSPManage(w, r, record.MSPID) {
+		return
+	}
+	if record.Status != "active" {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "only active policies can be rolled back"})
+		return
+	}
+
+	var target struct {
+		TargetVersion int `json:"target_version"`
+	}
+	if r.Body != nil && r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&target); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid target version"})
+			return
+		}
+	}
+	if target.TargetVersion <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "target_version is required"})
+		return
+	}
+	if target.TargetVersion >= record.Version {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "target_version must be less than current version"})
+		return
+	}
+
+	actor, _ := r.Context().Value(ctxKeyUserID).(string)
+
+	// Find the target revision
+	var targetConfig, targetMaintenanceDaysText, targetMaintenanceTimezone string
+	var targetMaintenanceStart, targetMaintenanceEnd *string
+	err = s.requestDB(r).QueryRowContext(r.Context(), `
+		SELECT config::text, maintenance_start, maintenance_end, maintenance_days::text, maintenance_timezone
+		FROM policy_revisions
+		WHERE policy_id=$1 AND msp_id=$2 AND version=$3
+	`, record.ID, record.MSPID, target.TargetVersion).Scan(&targetConfig, &targetMaintenanceStart, &targetMaintenanceEnd, &targetMaintenanceDaysText, &targetMaintenanceTimezone)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "target revision not found"})
+		return
+	}
+
+	// Archive current active policy
+	if _, err := s.requestDB(r).ExecContext(r.Context(), `
+		UPDATE policies SET status='archived', updated_at=NOW()
+		WHERE id=$1 AND msp_id=$2 AND status='active' AND published_version IS NOT NULL
+	`, record.ID, record.MSPID); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "archive current policy failed"})
+		return
+	}
+
+	// Create new draft from target revision with incremented version
+	newVersion := record.Version + 1
+	configJSON := []byte(targetConfig)
+	if targetMaintenanceDaysText == "" || targetMaintenanceDaysText == "null" {
+		targetMaintenanceDaysText = "null"
+	}
+	if targetMaintenanceTimezone == "" {
+		targetMaintenanceTimezone = "UTC"
+	}
+	_, err = s.requestDB(r).ExecContext(r.Context(), `
+		INSERT INTO policies (id, msp_id, name, category, description, config, scope_level, status, version,
+		                      published_config, validated_at, previewed_at, client_id, site_id, device_id,
+		                      maintenance_start, maintenance_end, maintenance_days, maintenance_timezone)
+		VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, 'draft', $7,
+		        $8, NULL, NULL, $9, $10, $11,
+		        $12, $13, $14, $15)
+	`, record.MSPID, record.Name+" (rollback from v"+fmt.Sprint(target.TargetVersion)+")",
+		record.Category, record.Description, configJSON, record.ScopeLevel,
+		newVersion, targetConfig, record.ClientID, record.SiteID, record.DeviceID,
+		targetMaintenanceStart, targetMaintenanceEnd, targetMaintenanceDaysText,
+		targetMaintenanceTimezone)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create rollback draft failed"})
+		return
+	}
+
+	// Create revision entry for the rolled-back version
+	_, err = s.requestDB(r).ExecContext(r.Context(), `
+		INSERT INTO policy_revisions (policy_id,msp_id,version,name,category,description,config,scope_level,client_id,site_id,device_id,published_by,
+		                              maintenance_start,maintenance_end,maintenance_days,maintenance_timezone)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,'')::uuid,NULLIF($10,'')::uuid,NULLIF($11,'')::uuid,$12,
+		       $13,$14,$15,$16)
+	`, record.ID, record.MSPID, newVersion, record.Name+" (rollback from v"+fmt.Sprint(target.TargetVersion)+")",
+		record.Category, record.Description, configJSON, record.ScopeLevel,
+		record.ClientID, record.SiteID, record.DeviceID, actor,
+		targetMaintenanceStart, targetMaintenanceEnd, targetMaintenanceDaysText,
+		targetMaintenanceTimezone)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create rollback revision failed"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":            "rolled_back",
+		"current_version":   newVersion,
+		"rolled_back_from":  target.TargetVersion,
+		"archived_version":  record.PublishedVersion,
+	})
+}
+
 func (s *APIServer) handlePolicyRevisions(w http.ResponseWriter, r *http.Request) {
 	record, err := s.loadPolicy(r, r.PathValue("policyID"))
 	if err != nil {
