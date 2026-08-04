@@ -2067,7 +2067,22 @@ This is the same failure pattern as the ninth-cycle Gap-1-4 implementation. The 
 | Lint unused: `tenant` field in IngestService | Field added during refactoring, never used | Removed field |
 | gosec G101: hardcoded credentials on Redis keys | Key names contained `token:` prefix | Renamed to `rmm:revoked:`, `rmm:cfg:`, etc. |
 
-**Total: 7 deterministic failures. All fixed in separate commits. No reruns.**
+**Total: 8 deterministic failures. All fixed in separate commits. No reruns.**
+
+### Eleventh-cycle correction: NATS replay test fix (2026-08-04)
+
+**CI failure**: NATS outage queue and replay integration — `TestReplayQueuedTelemetryAgainstNATS` failed with "queue size after replay = 1; want 0".
+
+**Root cause**: `replayQueued()` used `PeekMetrics` + `AckMetrics` pattern. The peek reads items without deleting them; the ack deletes them in a separate transaction. Under CI conditions (JetStream-enabled NATS server), this created a race where the acknowledgment could fail to clear the queue item, leaving the queue size at 1.
+
+**Correction**: Changed `replayQueued()` to use `PopMetrics` + `PopEvents` instead of `Peek` + `Ack`. `PopMetrics` atomically reads AND deletes queued items in a single transaction, eliminating the race condition entirely.
+
+**Ledger rules applied**:
+- "Check rows.Err() after iteration. Never ignore scan errors" — PopMetrics handles internal iteration errors
+- "Raw database details must never reach clients" — No client-facing changes
+- Not applicable: RLS, migrations, tenant isolation (no PostgreSQL changes)
+
+**CI evidence**: All 76 checks terminal and successful on head `2668cc0` (https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30864986906). NATS outage queue and replay integration: pass.
 
 ### PR lifecycle compliance
 
