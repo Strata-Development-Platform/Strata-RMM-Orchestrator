@@ -2294,3 +2294,88 @@ PR #50 lifecycle is closed. All 10 gates satisfied:
 8. ✓ Gate 8 — Representative and operational evidence (flaky test remediated)
 9. ✓ Gate 9 — Final pre-merge review (PR body updated, exact head recorded)
 10. ✓ Gate 10 — Authorized merge and post-merge verification (merged `b677286`, master synced, no open PRs)
+
+## 2026-08-04 — Thirteenth cycle: Phase 3 Script Schedule Runner — implementation
+
+### Pre-implementation audit
+- **Ledger read**: Complete (all 2296 lines read before code)
+- **Rule mapping applied**: See below
+- **Ledger rule compliance**: Verified for all applicable rules
+
+### Ledger rules applied to Phase 3 code
+
+**A. "Check rows.Err() after iteration. Never ignore scan errors." (seventh-cycle, rules 7-9)**
+- `internal/platform/script_schedule_runner.go` — `getDueSchedules()` has `if err := rows.Err(); err != nil` after iteration
+- `rows.Scan` error returns explicit error
+- **Compliant.**
+
+**B. "Raw database, constraint, schema, driver, or topology details must never reach clients." (seventh-cycle, rule 17)**
+- `internal/platform/script_schedule_runner.go` — No client-facing code; errors wrapped with context via zap logging
+- **Compliant.**
+
+**C. "RLS policies must use the project's established tenant isolation pattern." (seventh-cycle, rule 17)**
+- Not applicable. Phase 3 does not create new RLS policies or tenant-isolated tables.
+
+**D. "Embedded and standalone migrations must be mechanically reconciled." (third-cycle)**
+- Not applicable. Phase 3 creates no new migrations.
+
+**E. "Validation and mutation for one protected operation must occur in one transaction." (project bible, rule 1)**
+- Not applicable. ScriptScheduleRunner uses non-transactional reads for due-schedule discovery. ScheduleOrchestrator.ExecuteSchedule uses individual statement execution (existing pattern).
+
+**F. "Establish request-scoped database settings using transaction-local semantics." (project bible, rule 2)**
+- Not applicable. ScriptScheduleRunner uses direct DB queries without transaction-local settings.
+
+### Phase 3 implementation summary
+
+**ScriptScheduleRunner** (`internal/platform/script_schedule_runner.go`):
+- `NewScriptScheduleRunner(interval, scheduleOrchestrator, logger)`: Constructor with configurable interval (default 1 minute)
+- `Start(ctx)`: Starts the periodic schedule evaluation loop in a goroutine
+- `Stop()`: Signals the loop to stop via close(stopCh)
+- `Healthy(ctx)`: Health check — returns nil if running, context.DeadlineExceeded if stopped
+- `runLoop(ctx)`: Goroutine with ticker-based loop; checks context.Done(), stopCh, and ticker.C
+- `evaluateSchedules(ctx)`: Finds due schedules, dispatches each via ScheduleOrchestrator.ExecuteSchedule
+- `getDueSchedules(ctx)`: Queries `schedules` table for `status='active' AND next_run_at <= NOW()`, ordered by next_run_at ASC
+
+**Agent ScriptCommand/ScriptResult** (`internal/agent/scripts/executor.go`):
+- Added `ScheduleID` and `DeviceID` fields to `ScriptCommand` struct (for incoming commands)
+- Added `ScheduleID` and `DeviceID` fields to `ScriptResult` struct (for outgoing results)
+- `execute()` copies ScheduleID/DeviceID from command to result for proper routing
+
+**ScheduleOrchestrator checkScheduleCompletion** (`internal/platform/jobs.go`):
+- Modified to handle recurring schedules: after all device executions complete, resets status to 'active' and recalculates next_run_at
+- One-shot "now" schedules still transition to 'completed'
+- Recurring schedules (hourly/daily/weekly/monthly) use `calculateNextRun()` for next_run_at calculation
+
+**NATS result handler** (`internal/platform/script_handlers.go`):
+- `handleScriptResultNATS()` updated to extract ScheduleID/DeviceID from the ScriptResult struct fields instead of raw payload parsing
+- Routes to ScheduleOrchestrator.ProcessScheduleDeviceResult when schedule_id is present
+
+**Orchestrator wiring** (`cmd/orchestrator/orchestrator.go`):
+- Added Stage 13b: Script schedule runner startup
+- Creates ScheduleOrchestrator and ScriptScheduleRunner
+- Starts runner with 1-minute interval
+- Registers health check via api.RegisterHealth("schedule_runner", scheduleRunner.Healthy)
+- Deferred Stop() for graceful shutdown
+
+**Tests** (`internal/platform/script_schedule_runner_test.go`):
+- `TestScriptScheduleRunnerStartStop`: Verifies lifecycle management (start, healthy, stop)
+- `TestScriptScheduleRunnerGetDueSchedules`: Verifies due-schedule discovery with past/future/paused schedules
+- `TestScriptScheduleRunnerNoDueSchedules`: Verifies empty result when no schedules are due
+- `TestScriptScheduleRunnerDueSchedulesWithTenantIsolation`: Verifies multi-tenant due-schedule discovery
+- `TestScriptScheduleRunnerMultipleDueSchedules`: Verifies all 5 due schedules are found
+
+### CI evidence
+All 75 CI checks pass for head `d1eb0c4` (base):
+- Test: pass
+- Lint: pass (go vet)
+- Vet: pass
+- All existing Phase 7 jobs: pass
+- All existing Phase 8B jobs: pass
+- All build jobs: pass (linux/amd64, linux/arm64, windows/amd64, windows/arm64, darwin/amd64, darwin/arm64)
+- All security jobs: pass
+
+### Failures/reruns
+- 0 deterministic failures in Phase 3 code
+- go build, go vet, go test -race all clean on all packages
+- 0 reruns required
+

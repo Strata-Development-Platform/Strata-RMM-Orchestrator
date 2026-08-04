@@ -350,6 +350,8 @@ func (s *APIServer) handleScriptResultNATS(msg *nats.Msg) {
 	var result struct {
 		Type        string `json:"type"`
 		ExecutionID string `json:"execution_id"`
+		ScheduleID  string `json:"schedule_id"`
+		DeviceID    string `json:"device_id"`
 		Status      string `json:"status"`
 		Stdout      string `json:"stdout"`
 		Stderr      string `json:"stderr"`
@@ -373,25 +375,17 @@ func (s *APIServer) handleScriptResultNATS(msg *nats.Msg) {
 		s.logger.Error("update script execution", zap.Error(err))
 	}
 
-	if result.Type == "script_result" {
-		var scheduleID, deviceID string
-		var payload map[string]interface{}
-		if err := json.Unmarshal(msg.Data, &payload); err == nil {
-			scheduleID, _ = payload["schedule_id"].(string)
-			deviceID, _ = payload["device_id"].(string)
-		}
-		if scheduleID != "" {
-			so := NewScheduleOrchestrator(s.nats, s.db.DB(), s.logger)
-			so.ProcessScheduleDeviceResult(map[string]interface{}{
-				"execution_id": result.ExecutionID,
-				"schedule_id":  scheduleID,
-				"device_id":    deviceID,
-				"status":       result.Status,
-				"stdout":       result.Stdout,
-				"stderr":       result.Stderr,
-				"exit_code":    result.ExitCode,
-				"duration_ms":  result.DurationMs,
-			})
-		}
+	if result.ScheduleID != "" {
+		so := NewScheduleOrchestrator(s.nats, s.db.DB(), s.logger)
+		so.ProcessScheduleDeviceResult(map[string]interface{}{
+			"execution_id": result.ExecutionID,
+			"schedule_id":  result.ScheduleID,
+			"device_id":    result.DeviceID,
+			"status":       result.Status,
+			"stdout":       result.Stdout,
+			"stderr":       result.Stderr,
+			"exit_code":    result.ExitCode,
+			"duration_ms":  result.DurationMs,
+		})
 	}
 }
