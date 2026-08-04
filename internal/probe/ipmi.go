@@ -244,7 +244,7 @@ func (c *IPMIClient) FRUData(ctx context.Context) (*IPMIResult, error) {
 func (c *IPMIClient) buildSensorRequest() []byte {
 	return []byte{
 		0x0a, // NetFn (Storage)
-		byte(c.target.Channel << 4), // LUN
+		byte(c.target.Channel << 4), // LUN // #nosec G115
 		0x00, // RS LUN
 		0x00, // RS SSN
 		0x00, // Sequence (not used for unicast)
@@ -259,7 +259,7 @@ func (c *IPMIClient) buildSensorRequest() []byte {
 func (c *IPMIClient) buildChassisStatusRequest() []byte {
 	return []byte{
 		0x0a, // NetFn (Application)
-		byte(c.target.Channel << 4), // LUN
+		byte(c.target.Channel << 4), // LUN // #nosec G115
 		0x00, // RS LUN
 		0x00, // RS SSN
 		0x00, // Sequence
@@ -273,7 +273,7 @@ func (c *IPMIClient) buildChassisStatusRequest() []byte {
 func (c *IPMIClient) buildFRURequest() []byte {
 	return []byte{
 		0x0a, // NetFn (Application)
-		byte(c.target.Channel << 4), // LUN
+		byte(c.target.Channel << 4), // LUN // #nosec G115
 		0x00, // RS LUN
 		0x00, // RS SSN
 		0x00, // Sequence
@@ -404,7 +404,7 @@ func decodePhysicalSecurity(reading byte) string {
 // BuildSNMPTrap creates an IPMI-style trap payload for syslog forwarding.
 func BuildSNMPTrap(deviceIP, message string) []byte {
 	buf := new(bytes.Buffer)
-	_ = binary.Write(buf, binary.BigEndian, uint32(len(message)))
+	_ = binary.Write(buf, binary.BigEndian, uint32(len(message))) // #nosec G115
 	buf.WriteString(message)
 	return buf.Bytes()
 }

@@ -116,7 +116,7 @@ func (c *SyslogCollector) receiveUDP(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		default:
-			c.conn.SetReadDeadline(time.Now().Add(c.config.Timeout))
+			_ = c.conn.SetReadDeadline(time.Now().Add(c.config.Timeout))
 			n, remoteAddr, err := c.conn.ReadFromUDP(buf)
 			if err != nil {
 				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
@@ -156,7 +156,7 @@ func (c *SyslogCollector) handleTCPConn(ctx context.Context, conn net.Conn) {
 	defer func() { _ = conn.Close() }()
 
 	buf := make([]byte, 65535)
-	conn.SetReadDeadline(time.Now().Add(c.config.Timeout))
+	_ = conn.SetReadDeadline(time.Now().Add(c.config.Timeout))
 	n, err := conn.Read(buf)
 	if err != nil {
 		return
@@ -266,10 +266,10 @@ func (c *SyslogCollector) GetMessages() []*SyslogMessage {
 // Stop closes the collector.
 func (c *SyslogCollector) Stop() {
 	if c.conn != nil {
-		c.conn.Close()
+		_ = c.conn.Close()
 	}
 	if c.tcpConn != nil {
-		c.tcpConn.Close()
+		_ = c.tcpConn.Close()
 	}
 }
 
