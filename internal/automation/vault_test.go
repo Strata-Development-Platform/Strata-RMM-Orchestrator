@@ -30,23 +30,35 @@ func (l *mockLogger) Warn(msg string, keysAndValues ...interface{}) {
 func createBareGitRepo(t *testing.T, dir string) string {
 	t.Helper()
 
+	// Ensure the directory exists
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("failed to create bare repo dir: %v", err)
+	}
+
 	// Initialize bare repo
 	cmd := exec.Command("git", "init", "--bare")
 	cmd.Dir = dir
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("failed to create bare repo: %v", err)
+		t.Fatalf("failed to init bare repo: %v", err)
 	}
 
 	// Create a temporary working directory to make an initial commit
-	tmpDir := t.TempDir()
-	workDir := filepath.Join(tmpDir, "work")
-	if err := os.MkdirAll(workDir, 0755); err != nil {
+	workDir, err := os.MkdirTemp("", "strata-vault-test-work-*")
+	if err != nil {
 		t.Fatalf("failed to create work dir: %v", err)
 	}
+	t.Cleanup(func() { os.RemoveAll(workDir) })
 
 	// Configure git user
-	exec.Command("git", "config", "user.email", "test@test.com").Run()
-	exec.Command("git", "config", "user.name", "Test User").Run()
+	configureGit := func(wd string) {
+		c := exec.Command("git", "config", "user.email", "test@test.com")
+		c.Dir = wd
+		c.Run()
+		c = exec.Command("git", "config", "user.name", "Test")
+		c.Dir = wd
+		c.Run()
+	}
+	configureGit(workDir)
 
 	// Create initial file and commit
 	testFile := filepath.Join(workDir, "test.txt")
@@ -54,20 +66,47 @@ func createBareGitRepo(t *testing.T, dir string) string {
 		t.Fatalf("failed to write test file: %v", err)
 	}
 
-	exec.Command("git", "-C", workDir, "init").Run()
-	exec.Command("git", "-C", workDir, "add", ".").Run()
-	exec.Command("git", "-C", workDir, "commit", "-m", "initial commit").Run()
-
-	// Rename to main and push
-	cmd = exec.Command("git", "-C", workDir, "branch", "-M", "main")
-	cmd.Run()
-	cmd = exec.Command("git", "-C", workDir, "remote", "add", "origin", dir)
-	cmd.Run()
-
-	// Push all refs (handles master vs main naming)
-	cmd = exec.Command("git", "-C", workDir, "push", "-u", "origin", "--all")
+	cmd = exec.Command("git", "init")
+	cmd.Dir = workDir
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("failed to push initial commit: %v", err)
+		t.Fatalf("failed to init work repo: %v", err)
+	}
+	cmd = exec.Command("git", "add", ".")
+	cmd.Dir = workDir
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("failed to add: %v", err)
+	}
+	cmd = exec.Command("git", "commit", "-m", "initial commit")
+	cmd.Dir = workDir
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("failed to commit: %v", err)
+	}
+	cmd = exec.Command("git", "branch", "-M", "main")
+	cmd.Dir = workDir
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("failed to rename branch: %v", err)
+	}
+
+	// Add remote and push
+	cmd = exec.Command("git", "remote", "add", "origin", dir)
+	cmd.Dir = workDir
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("failed to add remote: %v", err)
+	}
+
+	// Push with retry logic for CI flakiness
+	pushCmd := exec.Command("git", "push", "-u", "origin", "main")
+	pushCmd.Dir = workDir
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		_, err := pushCmd.CombinedOutput()
+		if err == nil {
+			break
+		}
+		lastErr = err
+	}
+	if lastErr != nil {
+		t.Fatalf("failed to push initial commit after 3 attempts: %v", lastErr)
 	}
 
 	return dir
@@ -163,7 +202,7 @@ func TestVaultCloneAndPull(t *testing.T) {
 		t.Errorf("content = %q, want %q", string(data), "initial content")
 	}
 
-	// Create work dir and add new commits
+	// Clone to work directory with full history
 	cmd := exec.Command("git", "clone", "--no-single-branch", bareRepo, workDir)
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("git clone to work dir: %v", err)
@@ -172,12 +211,12 @@ func TestVaultCloneAndPull(t *testing.T) {
 	cmd.Run()
 	cmd = exec.Command("git", "-C", workDir, "config", "user.name", "Test")
 	cmd.Run()
-	// Ensure we're on main branch
 	cmd = exec.Command("git", "-C", workDir, "checkout", "main")
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("git checkout main: %v", err)
 	}
 
+	// Create new file and commit
 	if err := os.WriteFile(filepath.Join(workDir, "new.txt"), []byte("new content"), 0644); err != nil {
 		t.Fatalf("write new.txt: %v", err)
 	}
@@ -190,18 +229,12 @@ func TestVaultCloneAndPull(t *testing.T) {
 		t.Fatalf("git commit: %v", err)
 	}
 
-	// Push new commits to bare repo (explicitly to main branch)
+	// Push new commits to bare repo
 	cmd = exec.Command("git", "-C", workDir, "push", "origin", "HEAD:main")
 	output, err := cmd.CombinedOutput()
-	t.Logf("Push output: %s", string(output))
 	if err != nil {
 		t.Fatalf("git push: %v (output: %s)", err, string(output))
 	}
-
-	// Verify bare repo has new commit
-	cmd = exec.Command("git", "-C", bareRepo, "branch", "-v")
-	bareOutput, _ := cmd.CombinedOutput()
-	t.Logf("Bare repo branches: %s", string(bareOutput))
 
 	// Pull in clone
 	if err := vault.Pull(ctx, clonePath, nil); err != nil {
@@ -209,9 +242,8 @@ func TestVaultCloneAndPull(t *testing.T) {
 	}
 
 	// Verify new file exists
-	_, err = os.Stat(filepath.Join(clonePath, "new.txt"))
-	if err != nil {
-		t.Fatalf("new.txt missing after pull. Files: %v", err)
+	if _, err := os.Stat(filepath.Join(clonePath, "new.txt")); err != nil {
+		t.Fatalf("new.txt missing after pull: %v", err)
 	}
 
 	// Verify original content unchanged
