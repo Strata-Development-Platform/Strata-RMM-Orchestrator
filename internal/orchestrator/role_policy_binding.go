@@ -126,7 +126,7 @@ func (b *RolePolicyBinder) findDefinitionsForRole(ctx context.Context, tenantID,
 	if err != nil {
 		return nil, fmt.Errorf("query definitions: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var defs []*MonitoringDefinition
 	for rows.Next() {
