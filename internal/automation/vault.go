@@ -182,7 +182,7 @@ func (v *Vault) setupSSHAuth(cmd *exec.Cmd, sshKeyPath string) *exec.Cmd {
 func (v *Vault) setupTokenAuth(cmd *exec.Cmd, token string) *exec.Cmd {
 	// Set credential helper to use the token via environment
 	cmd.Env = append(cmd.Env, "GIT_TERMINAL_PROMPT=0")
-	cmd.Env = append(cmd.Env, fmt.Sprintf("GIT_ASKPASS_ECHO=1"))
+	cmd.Env = append(cmd.Env, "GIT_ASKPASS_ECHO=1")
 
 	return cmd
 }

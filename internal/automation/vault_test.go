@@ -47,7 +47,7 @@ func createBareGitRepo(t *testing.T, dir string) string {
 	if err != nil {
 		t.Fatalf("failed to create work dir: %v", err)
 	}
-	t.Cleanup(func() { os.RemoveAll(workDir) })
+	t.Cleanup(func() { _ = os.RemoveAll(workDir) })
 
 	// Create initial file and commit
 	testFile := filepath.Join(workDir, "test.txt")
@@ -210,9 +210,13 @@ func TestVaultCloneAndPull(t *testing.T) {
 		t.Fatalf("git clone to work dir: %v", err)
 	}
 	cmd = exec.Command("git", "-C", workDir, "config", "user.email", "test@test.com")
-	cmd.Run()
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("git config email: %v", err)
+	}
 	cmd = exec.Command("git", "-C", workDir, "config", "user.name", "Test")
-	cmd.Run()
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("git config name: %v", err)
+	}
 	cmd = exec.Command("git", "-C", workDir, "checkout", "main")
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("git checkout main: %v", err)
@@ -465,10 +469,13 @@ func TestVaultPullContextCancelled(t *testing.T) {
 	logger := &mockLogger{}
 	vault := NewVault("main", logger)
 
-	// Create a fake git repo
+	// Create a fake git repo with a fresh (non-cancelled) context
 	bareRepo := createBareGitRepo(t, t.TempDir())
 	clonePath := filepath.Join(t.TempDir(), "cloned")
-	vault.Clone(ctx, bareRepo, clonePath, nil)
+	cloneCtx := context.Background()
+	if err := vault.Clone(cloneCtx, bareRepo, clonePath, nil); err != nil {
+		t.Fatalf("clone for cancelled pull test: %v", err)
+	}
 
 	err := vault.Pull(ctx, clonePath, nil)
 	if err == nil {
