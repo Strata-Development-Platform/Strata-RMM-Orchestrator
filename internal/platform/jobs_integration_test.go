@@ -113,6 +113,12 @@ func TestDurableJobRoundTripWithRealPostgresAndNATS(t *testing.T) {
 	}
 	server := NewDispatcher(db, nc, logger)
 	server.Start(ctx)
+
+	// Give the dispatcher time to process the queued job and publish to outbox.
+	// The outboxPublisher polls every 200ms, so we wait 500ms to ensure the job
+	// is dispatched before the agent processes it.
+	time.Sleep(500 * time.Millisecond)
+
 	defer func() {
 		cancel()
 		server.Stop()
@@ -121,6 +127,18 @@ func TestDurableJobRoundTripWithRealPostgresAndNATS(t *testing.T) {
 		}
 	}()
 
+	// Wait for the job to be dispatched first, then wait for it to be succeeded.
+	// This makes the test deterministic by separating the dispatch and result
+	// processing phases, making it easier to identify where failures occur.
+	dispatchDeadline := time.Now().Add(5 * time.Second)
+	waitForJobDispatched(t, db.DB(), jobID, targetID, dispatchDeadline)
+
+	// Wait for the job target to transition from "dispatched" to "succeeded".
+	// The agent dispatcher must first receive the dispatch command, execute the
+	// handler, and then update the target status. The agent replays unacknowledged
+	// terminal results every 15 seconds, so allow one complete replay interval so
+	// a transient serializable-transaction conflict still exercises and proves the
+	// durable recovery path.
 	waitForTargetStatus(t, db.DB(), targetID, "succeeded")
 	if executions.Load() != 1 {
 		t.Fatalf("handler executed %d times, want 1", executions.Load())
@@ -168,6 +186,24 @@ func waitForTargetStatus(t *testing.T, db *sql.DB, targetID, want string) {
 	var status string
 	_ = db.QueryRow(`SELECT status FROM job_targets WHERE id=$1`, targetID).Scan(&status)
 	t.Fatalf("target status=%q, want %q", status, want)
+}
+
+func waitForJobDispatched(t *testing.T, db *sql.DB, jobID, targetID string, deadline time.Time) {
+	t.Helper()
+	for time.Now().Before(deadline) {
+		var targetStatus, jobStatus string
+		err := db.QueryRow(`
+			SELECT jt.status, j.status
+			FROM job_targets jt
+			JOIN jobs j ON j.id = jt.job_id
+			WHERE jt.id = $1
+		`, targetID).Scan(&targetStatus, &jobStatus)
+		if err == nil && (targetStatus == "dispatched" || targetStatus == "succeeded") {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatal("job was not dispatched within deadline")
 }
 
 func waitForResultReceipt(t *testing.T, ledger *agentjobs.ReceiptLedger) {
