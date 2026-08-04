@@ -10,16 +10,16 @@ import (
 
 // EDRAlert represents a normalized alert from any EDR integration.
 type EDRAlert struct {
-	Provider     string    `json:"provider"`
-	AlertID      string    `json:"alert_id"`
-	DeviceID     string    `json:"device_id"`
-	TenantID     string    `json:"tenant_id"`
-	Severity     string    `json:"severity"`
-	Title        string    `json:"title"`
-	Description  string    `json:"description"`
-	Timestamp    string    `json:"timestamp"`
-	Actions      []Action  `json:"actions,omitempty"`
-	NetworkInfo  []Network `json:"network_info,omitempty"`
+	Provider    string    `json:"provider"`
+	AlertID     string    `json:"alert_id"`
+	DeviceID    string    `json:"device_id"`
+	TenantID    string    `json:"tenant_id"`
+	Severity    string    `json:"severity"`
+	Title       string    `json:"title"`
+	Description string    `json:"description"`
+	Timestamp   string    `json:"timestamp"`
+	Actions     []Action  `json:"actions,omitempty"`
+	NetworkInfo []Network `json:"network_info,omitempty"`
 }
 
 // Action represents a remediation action available for an alert.
@@ -39,24 +39,24 @@ type Network struct {
 
 // BackupSync represents a backup status event.
 type BackupSync struct {
-	Provider string `json:"provider"`
-	TenantID string `json:"tenant_id"`
-	DeviceID string `json:"device_id"`
-	Status   string `json:"status"` // "success", "failed", "in_progress"
-	Message  string `json:"message"`
+	Provider  string `json:"provider"`
+	TenantID  string `json:"tenant_id"`
+	DeviceID  string `json:"device_id"`
+	Status    string `json:"status"` // "success", "failed", "in_progress"
+	Message   string `json:"message"`
 	Timestamp string `json:"timestamp"`
 }
 
 // PSAWebhook represents a PSA ticket event.
 type PSAWebhook struct {
-	Provider string `json:"provider"`
-	TenantID string `json:"tenant_id"`
-	Action   string `json:"action"` // "created", "updated", "closed"
-	TicketID string `json:"ticket_id"`
-	Subject  string `json:"subject"`
-	DeviceID string `json:"device_id"`
-	Owner    string `json:"owner"`
-	Severity string `json:"severity"`
+	Provider  string `json:"provider"`
+	TenantID  string `json:"tenant_id"`
+	Action    string `json:"action"` // "created", "updated", "closed"
+	TicketID  string `json:"ticket_id"`
+	Subject   string `json:"subject"`
+	DeviceID  string `json:"device_id"`
+	Owner     string `json:"owner"`
+	Severity  string `json:"severity"`
 	Timestamp string `json:"timestamp"`
 }
 
@@ -134,8 +134,8 @@ func (h *WebhookHandler) HandleBackupSync(w http.ResponseWriter, r *http.Request
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":     "received",
-		"device_id":  sync.DeviceID,
+		"status":        "received",
+		"device_id":     sync.DeviceID,
 		"backup_status": sync.Status,
 	})
 }
@@ -168,9 +168,9 @@ func (h *WebhookHandler) HandlePSAWebhook(w http.ResponseWriter, r *http.Request
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":   "received",
+		"status":    "received",
 		"ticket_id": psa.TicketID,
-		"action":   psa.Action,
+		"action":    psa.Action,
 	})
 }
 

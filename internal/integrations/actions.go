@@ -17,20 +17,20 @@ type JetStreamPublisher interface {
 
 // PublishAck is a simplified publish acknowledgment.
 type PublishAck struct {
-	Subject    string
-	Sequence   uint64
-	Domain     string
-	Stream     string
+	Subject  string
+	Sequence uint64
+	Domain   string
+	Stream   string
 }
 
 // IsolationAction triggers automated security isolation for a device.
 type IsolationAction struct {
-	DeviceID  string `json:"device_id"`
-	TenantID  string `json:"tenant_id"`
-	Reason    string `json:"reason"`
-	Severity  string `json:"severity"`
-	AlertID   string `json:"alert_id"`
-	Provider  string `json:"provider"`
+	DeviceID string `json:"device_id"`
+	TenantID string `json:"tenant_id"`
+	Reason   string `json:"reason"`
+	Severity string `json:"severity"`
+	AlertID  string `json:"alert_id"`
+	Provider string `json:"provider"`
 }
 
 // IsolationCommand represents the NATS message sent to isolate a device.

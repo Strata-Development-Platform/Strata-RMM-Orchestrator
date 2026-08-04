@@ -70,7 +70,7 @@ func TestHandleIsolationValid(t *testing.T) {
 func TestHandleIsolationInvalidJSON(t *testing.T) {
 	handler := NewIsolationHandler(nil, nil)
 
-	req := httptest.NewRequest("POST", "/api/v1/integrations/isolate", bytes.NewReader([]byte("not json"))) 
+	req := httptest.NewRequest("POST", "/api/v1/integrations/isolate", bytes.NewReader([]byte("not json")))
 	rec := httptest.NewRecorder()
 
 	handler.HandleIsolation(rec, req)
