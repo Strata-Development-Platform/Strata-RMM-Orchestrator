@@ -4266,6 +4266,67 @@ DROP POLICY IF EXISTS "platform_admin_topology_edges" ON topology_edges;
 				ALTER TABLE devices DROP COLUMN IF EXISTS is_active;
 			`,
 		},
+		{
+			ID:   92,
+			Name: "monitoring_definitions",
+			Up: `
+				CREATE TABLE IF NOT EXISTS monitoring_definitions (
+					id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					tenant_id       UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+					name            TEXT NOT NULL,
+					description     TEXT DEFAULT '',
+					roles           TEXT[] NOT NULL DEFAULT '{}',
+					rule_type       TEXT NOT NULL DEFAULT 'threshold' CHECK (rule_type IN ('threshold', 'heartbeat', 'presence')),
+					metric_name     TEXT,
+					condition       TEXT CHECK (condition IN ('gt', 'gte', 'lt', 'lte', 'eq', 'neq', 'exists', 'missing')),
+					threshold       DOUBLE PRECISION,
+					timeout         INTERVAL DEFAULT '5 minutes',
+					severity        TEXT NOT NULL DEFAULT 'warning' CHECK (severity IN ('critical', 'warning', 'info')),
+					cooldown        INTERVAL DEFAULT '5 minutes',
+					enabled         BOOLEAN NOT NULL DEFAULT true,
+					created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+				CREATE INDEX IF NOT EXISTS idx_monitoring_def_tenant ON monitoring_definitions(tenant_id);
+				CREATE INDEX IF NOT EXISTS idx_monitoring_def_roles ON monitoring_definitions USING GIN (roles);
+				CREATE INDEX IF NOT EXISTS idx_monitoring_def_enabled ON monitoring_definitions(tenant_id, enabled);
+				ALTER TABLE monitoring_definitions ENABLE ROW LEVEL SECURITY;
+				CREATE POLICY monitoring_def_read ON monitoring_definitions FOR SELECT
+					USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::UUID);
+				CREATE POLICY monitoring_def_insert ON monitoring_definitions FOR INSERT
+					WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::UUID);
+				CREATE POLICY monitoring_def_update ON monitoring_definitions FOR UPDATE
+					USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::UUID);
+				CREATE POLICY monitoring_def_delete ON monitoring_definitions FOR DELETE
+					USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::UUID);
+			`,
+			Down: `DROP TABLE IF EXISTS monitoring_definitions;`,
+		},
+		{
+			ID:   93,
+			Name: "device_roles_binding",
+			Up: `
+				CREATE TABLE IF NOT EXISTS device_role_bindings (
+					id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					device_id     UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+					tenant_id     UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+					role          TEXT NOT NULL,
+					bound_rules   UUID[] NOT NULL DEFAULT '{}',
+					bound_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+				CREATE INDEX IF NOT EXISTS idx_device_role_bindings_device ON device_role_bindings(device_id);
+				CREATE INDEX IF NOT EXISTS idx_device_role_bindings_tenant ON device_role_bindings(tenant_id);
+				CREATE INDEX IF NOT EXISTS idx_device_role_bindings_role ON device_role_bindings(tenant_id, role);
+				ALTER TABLE device_role_bindings ENABLE ROW LEVEL SECURITY;
+				CREATE POLICY device_role_bindings_read ON device_role_bindings FOR SELECT
+					USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::UUID);
+				CREATE POLICY device_role_bindings_insert ON device_role_bindings FOR INSERT
+					WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::UUID);
+			`,
+			Down: `DROP TABLE IF EXISTS device_role_bindings;`,
+		},
 	}
 }
 
