@@ -127,6 +127,12 @@ ticket or PR when the team is ready to begin work.
 
 **Limitations (1.3):** Transient configs and ephemeral sessions are NOT migrated to Redis because they are per-agent (internal/agent/remotecontrol/session.go), not shared across orchestrator instances. Redis provides no benefit for non-shared state. This is a deliberate design decision, not an oversight.
 
+**Gate 2 audit trace for each Phase 2 PR:**
+
+**PR #57 (2.1a):** Entry points → ComputeEffectivePolicy() standalone function; Identity → N/A (no auth boundary); Authorization → called by handler which enforces MSP manage auth; Tenant → queries devices/policies by msp_id; Persistence → queries `policies` table for active/published, `devices` table for hierarchy; Messaging → N/A; Object storage → N/A; Endpoint execution → N/A; UI state → N/A; Audit records → N/A; Metrics → N/A; Alerts → N/A; Runbooks → N/A; Existing tests → policy_effective.go (mergePolicyLayers), policy_model_test.go, policy_enforcement_test.go.
+
+**PR #58 (2.1b):** Entry points → POST /api/v1/policies/{id}/rollback; Identity → JWT token via handler chain (AuthorizeMSPManage); Authorization → AuthorizeMSPManage(w, r, record.MSPID) — same as publish; Tenant → queries policies WHERE msp_id=$1; Persistence → `policies` table (archive/create), `policy_revisions` table (insert revision); Messaging → N/A; Object storage → N/A; Endpoint execution → N/A; UI state → N/A; Audit records → creates revision entry in policy_revisions; Metrics → N/A; Alerts → N/A; Runbooks → N/A; Existing tests → policy_model_test.go, policy_enforcement_test.go, policy_effective_test.go (PR #57).
+
 ### Phase 2: Hierarchical Policy Engine & Secure Script Vault
 
 | ID | Task | Target | Evidence required |
