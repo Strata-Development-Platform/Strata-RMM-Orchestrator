@@ -5,7 +5,6 @@ package platform
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"os"
 	"testing"
