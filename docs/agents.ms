@@ -2552,3 +2552,28 @@ All 75 CI checks pass for head `d1eb0c4` (base):
 - **Phase 5**: Not implemented (policy tree-view, integration settings panel)
 - **Phase 6**: Partial (POLICY_ENGINE.md covers 6.1; public-api.md and best-practice-templates.md remain)
 
+## 2026-08-04 Gate 10 — PR #52 Merge
+
+- **Owner authorization**: Explicit — owner typed "merge the move on to next item"
+- **Authorized head SHA**: 2b5f78f59ea245923824840dfae32c602dcb2ec3
+- **Merge method**: Squash merge via `gh pr merge 52 --squash --delete-branch`
+- **Merge SHA**: 449f09c07ccfcec84955a5ed1e0d91a0d990b383
+- **Master verified**: master fast-forwarded from 0816f00 → 449f09c
+- **PR state**: MERGED
+- **Branch deleted**: Yes (feature/3-3-power-shutdown-handler)
+- **Open dev PRs**: None
+- **Post-merge CI**: 84 pass, 0 fail, 0 pending (all terminal)
+- **No unintended development PR remains open**: Confirmed
+- **No new slice started**: Confirmed
+
+### Gate 7 — Exact-head CI Evidence (final head 2b5f78f)
+- Total: 84 pass, 0 fail, 0 pending
+- Lint (golangci-lint v2.11.2): pass (56s)
+- All Build (6 platforms), Unit tests, Security, Database, NATS/JetStream, Phase 7, Phase 8B: pass
+
+### Lint failure (original head 8363d23) and fix
+- 10 issues found: 2 errcheck (sub.Unsubscribe, rows.Close), 8 unused (mockUPSDB struct + 7 methods)
+- Classification: Deterministic (lint violations)
+- Action: Fix root cause, push new head (cea68d0), re-verify all workflows
+- Rerun: No — new head pushed, workflows re-ran automatically
+
