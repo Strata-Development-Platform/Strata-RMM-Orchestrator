@@ -105,7 +105,7 @@ func computeEffectiveForCategory(ctx context.Context, db *sql.DB, mspID, deviceI
 	if err != nil {
 		return EffectivePolicy{}, fmt.Errorf("query policies: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var layers []policyLayer
 	for rows.Next() {
