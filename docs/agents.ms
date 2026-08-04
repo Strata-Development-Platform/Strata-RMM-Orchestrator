@@ -2683,3 +2683,105 @@ All 75 CI checks pass for head `d1eb0c4` (base):
 - **Gate 9 (Final pre-merge)**: All criteria met.
 - **Gate 10 (Merge)**: Squash merged, master verified, branch deleted, no open dev PRs.
 
+## 2026-08-04 Phase 1.3 — Stateless Scaling (Redis Rate Limiter + Token Blacklist) (PR #54)
+
+### Gate 1 — Starting-State Verification
+- Base SHA: 813a57d (current origin/master after PR #53 merge)
+- Open PRs: None (PR #54 draft, PR #53 merged)
+- PR #53 state: MERGED
+- Repository status: clean working tree
+
+### Gate 2 — Evidence-First Audit
+- `pkg/redis/config.go` — Existing `Client` struct with `RDB() *redis.Client` method, `PoolConfig`, `NewClient()`, `Health()`, `Close()`
+- `pkg/redis/agent_registry.go` — Existing Redis-backed agent registry, revocations, config cache
+- `pkg/auth/ratelimit.go` — In-memory rate limiter (thread-local, not horizontally scalable)
+- `pkg/auth/jwt.go` — JWT generation/validation with `jti` claim (no blacklist)
+- **Gap**: In-memory rate limiter doesn't scale horizontally, no token revocation mechanism
+- Smallest coherent slice: Redis-backed rate limiter (sliding window via sorted sets), token blacklist (set), extractTokenIDFromJWT helper
+
+### Gate 3 — Plan the Bounded Vertical Slice
+- Scope: RedisRateLimiter (sliding window), TokenBlacklistMiddleware, extractTokenIDFromJWT helper, tests
+- Non-goals: Token blacklist storage/management APIs, Redis cleanup of expired entries, per-tenant rate limiting
+- Migration/rollback: No schema changes, no data impact, backward compatible (Redis not required, middleware can be disabled)
+
+### Gate 4 — Branch and Implementation
+- Branch: `feature/1-3-stateless-scaling` from `origin/master`
+- Files changed:
+  - `pkg/auth/redis_ratelimit.go` — RedisRateLimiter with sliding window (sorted sets), configurable burst limits per endpoint category
+  - `pkg/auth/token_blacklist_middleware.go` — TokenBlacklistMiddleware, extractTokenIDFromJWT helper
+  - `pkg/auth/redis_ratelimit_test.go` — RedisRateLimiterPolicy (10 test cases), extractTokenIDFromJWT (4 test cases)
+
+### Gate 5 — Local Verification
+- `go build ./...`: clean
+- `go vet ./...`: clean
+- `go test ./... -short`: all passing (all 19 packages)
+- `go test ./pkg/auth/... -v -run "TestRedis|TestExtractToken"`: all passing
+
+### Gate 6 — Draft PR Created
+- PR #54 opened, base master, head 280401d
+
+### Gate 7 — Exact-Head Workflow Verification
+**Run #30884651629, final head 280401d:**
+- Total: 84 pass, 0 fail, 0 pending (all terminal)
+- Security Scan: pass (G101 false positives suppressed with #nosec)
+- Lint: pass
+- Build (6 platforms): all pass
+- Unit tests (race detection): pass
+- Database/migration/backup: pass
+- NATS/JetStream: pass
+- Phase 7/8: pass
+- Other (60+ checks): pass
+
+**Failures encountered and fixed:**
+
+| Run | Failure | Classification | Action |
+|-----|---------|---------------|--------|
+| Run #30884159809 | Security Scan: G101 (Potential hardcoded credentials) on Redis key names | Deterministic (false positive) | Fix: Added #nosec G101 comments — Redis key names are not credentials |
+
+**No reruns performed** — deterministic fix pushed as new head (280401d)
+
+### Gate 8 — Representative and Operational Evidence
+- No environment-dependent exercises required for this slice
+- Rate limiter policy: fully testable via unit tests
+- Token ID extraction: testable with sample JWT payloads
+- Fail-open behavior: testable with nil Redis client
+
+### Gate 9 — Final Pre-Merge Review
+- Base: current master (813a57d)
+- Head: 280401d (unchanged since last push)
+- PR is sole authorized dev PR (ready)
+- All review threads resolved (none created)
+- All workflows terminal and successful (84 pass, 0 fail, 0 pending)
+- No migrations, no schema changes
+- Documentation: PR body updated with full scope, CI evidence, limitation notes
+- Backward compatible: Redis not required, middleware can be disabled
+
+### Gate 10 — Merge and Post-Merge Verification
+- **Owner authorization**: Explicit — owner typed "merge the move on to next item"
+- **Authorized head SHA**: 280401d30426d89b4a9000dbf0262e7bf841f2c9
+- **Draft marked ready**: Yes (already in ready state)
+- **Merge method**: Squash merge via `gh pr merge 54 --squash --delete-branch`
+- **Merge SHA**: 8237093 (fast-forward)
+- **Master verified**: master fast-forwarded from 813a57d → 8237093
+- **PR state**: MERGED
+- **Branch deleted**: Yes (feature/1-3-stateless-scaling)
+- **Open dev PRs**: None
+- **Post-merge CI**: 84 pass, 0 fail, 0 pending (all terminal)
+- **No unintended development PR remains open**: Confirmed
+- **No new slice started**: Confirmed
+
+## 2026-08-04 Gate 1-10 verification — PR #54 (Stateless Scaling: Redis Rate Limiter + Token Blacklist)
+
+- **Gate 1 (Orient)**: Fetched origin/master (after PR #53 merge), resolved 813a57d, verified PR #53 merged, no open dev PRs.
+- **Gate 2 (Audit)**: Traced existing Redis client — `pkg/redis/` has `Client` with `RDB()`, agent registry uses Redis. Existing in-memory rate limiter not horizontally scalable. JWT has jti but no blacklist. Gap: need Redis-backed rate limiter and token revocation.
+- **Gate 3 (Plan)**: Bounded slice: RedisRateLimiter (sliding window via sorted sets), TokenBlacklistMiddleware, extractTokenIDFromJWT. Non-goals: blacklist APIs, Redis cleanup, per-tenant rate limiting.
+- **Gate 4 (Implement)**: `pkg/auth/redis_ratelimit.go` (RedisRateLimiter, configurable burst limits), `pkg/auth/token_blacklist_middleware.go` (TokenBlacklistMiddleware, extractTokenIDFromJWT), `pkg/auth/redis_ratelimit_test.go` (14 test cases).
+- **Gate 5 (Validate locally)**: `go build ./...` clean, `go vet ./...` clean, `go test ./... -short` all passing.
+- **Gate 6 (Draft PR)**: Opened PR #54, base master, head 280401d.
+- **Gate 7 (Exact-head verification)**: CI run #30884651629, final head 280401d. 84 pass, 0 fail, 0 pending.
+  - Security Scan (run #30884159809): G101 false positive on Redis key names → fix pushed (280401d).
+  - No reruns performed — deterministic fix pushed as new head.
+- **Gate 8 (Representative evidence)**: No environment-dependent exercises required for middleware slice.
+- **Gate 9 (Final pre-merge)**: All criteria met.
+- **Gate 10 (Merge)**: Squash merged, master verified, branch deleted, no open dev PRs.
+
