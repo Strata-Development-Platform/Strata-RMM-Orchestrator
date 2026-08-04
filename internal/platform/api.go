@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"sync"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/alerting"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/inventory"
+	"github.com/strata-rmm/strata-rmm-orchestrator/internal/integrations"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/observability"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/patch"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/remote"
@@ -315,6 +317,9 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /api/v1/thirdparty/vendors", s.handleThirdPartyVendors)
 	mux.HandleFunc("POST /api/v1/thirdparty/vendors/{vendor}/sync", s.handleThirdPartySyncVendor)
 	mux.HandleFunc("GET /api/v1/thirdparty/vendors/status", s.handleThirdPartyVendorStatus)
+
+	// Integration webhook routes (public, HMAC-validated)
+	s.registerIntegrationRoutes(mux)
 
 	mux.HandleFunc("GET /api/v1/patch-policies", s.handleListPatchPolicies)
 	mux.HandleFunc("GET /api/v1/patch-policies/{policyID}", s.handleGetPatchPolicy)
@@ -2372,4 +2377,60 @@ func (s *APIServer) handleUpdateRemediationPolicy(w http.ResponseWriter, r *http
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}
+
+// registerIntegrationRoutes adds HMAC-validated integration webhook routes.
+func (s *APIServer) registerIntegrationRoutes(mux *http.ServeMux) {
+	integrationWebhookSecret := os.Getenv("INTEGRATION_WEBHOOK_SECRET")
+	if integrationWebhookSecret == "" {
+		integrationWebhookSecret = "default-dev-secret-change-in-production"
+	}
+
+	webhookHandler := integrations.NewWebhookHandler(s.logger)
+	isolationHandler := integrations.NewIsolationHandler(s.getJetStream(), s.logger)
+
+	verifier := integrations.NewHMACVerifier("X-Signature", []byte(integrationWebhookSecret)).
+		WithClockSkew(5 * time.Minute)
+
+	mux.HandleFunc("POST /api/v1/integrations/edr/alerts", func(w http.ResponseWriter, r *http.Request) {
+		verifier.Middleware(http.HandlerFunc(webhookHandler.HandleEDRAlert)).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("POST /api/v1/integrations/backup/sync", func(w http.ResponseWriter, r *http.Request) {
+		verifier.Middleware(http.HandlerFunc(webhookHandler.HandleBackupSync)).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("POST /api/v1/integrations/psa/webhooks", func(w http.ResponseWriter, r *http.Request) {
+		verifier.Middleware(http.HandlerFunc(webhookHandler.HandlePSAWebhook)).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("POST /api/v1/integrations/isolate", func(w http.ResponseWriter, r *http.Request) {
+		verifier.Middleware(http.HandlerFunc(isolationHandler.HandleIsolation)).ServeHTTP(w, r)
+	})
+}
+
+// getJetStream returns the NATS JetStream context from the connected NATS instance.
+func (s *APIServer) getJetStream() integrations.JetStreamPublisher {
+	if s.nats == nil {
+		return nil
+	}
+	js, err := s.nats.JetStream()
+	if err != nil {
+		return nil
+	}
+	return jetStreamWrapper{js}
+}
+
+type jetStreamWrapper struct {
+	nats.JetStreamContext
+}
+
+func (w jetStreamWrapper) Publish(subject string, data []byte) (*integrations.PublishAck, error) {
+	ack, err := w.JetStreamContext.Publish(subject, data)
+	if err != nil {
+		return nil, err
+	}
+	return &integrations.PublishAck{
+		Subject:  subject,
+		Sequence: ack.Sequence,
+		Domain:   ack.Domain,
+		Stream:   ack.Stream,
+	}, nil
 }
