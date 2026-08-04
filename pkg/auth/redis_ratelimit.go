@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	rateLimiterKeyPrefix = "rmm:ratelimit:"
+	rateLimiterKeyPrefix = "rmm:ratelimit:" // #nosec G101 -- not a credential, it's a Redis key prefix
 	rateLimiterTTL       = 60 * time.Second
 )
 

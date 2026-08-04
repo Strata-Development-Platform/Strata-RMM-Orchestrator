@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	tokenBlacklistKey = "rmm:auth:blacklisted_tokens"
+	tokenBlacklistKey = "rmm:auth:blacklisted_tokens" // #nosec G101 -- not a credential, it's a Redis key name
 	tokenBlacklistTTL = 24 * time.Hour
 )
 
