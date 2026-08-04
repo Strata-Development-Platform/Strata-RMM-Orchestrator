@@ -3404,3 +3404,131 @@ All 83 CI checks terminal and successful on PR #64:
 - Monitoring definitions must be pre-configured (no auto-discovery)
 - bindRoleToDevice executes multiple queries without transaction wrapper
 - power_events.go references d.roles column that now exists via migration 91
+
+## 2026-08-04 — Phase 3.3 UPS power-shutdown handler (PR #52)
+
+### Pre-implementation audit
+- **Ledger read**: Complete (all 3309 lines read before code)
+- **Rule mapping applied**: See below
+- **Ledger rule compliance**: Verified for all applicable rules
+
+### Ledger rules applied to Phase 3.3 code
+
+**A. "Check rows.Err() after iteration. Never ignore scan errors." (seventh-cycle, rules 7-9)**
+- `getDevicesByRole()`: rows.Close() checked with defer func(); rows.Err() checked after loop
+- **Compliant.**
+
+**B. "Raw database, constraint, schema, driver, or topology details must never reach clients." (seventh-cycle, rule 17)**
+- No client-facing APIs in power_events.go
+- DB errors wrapped with context, never raw SQL exposed to external callers
+- **Compliant.**
+
+**C. "RLS policies must use the project's established tenant isolation pattern." (seventh-cycle, rule 17)**
+- getDevicesByRole() queries with WHERE d.tenant_id = $1 — tenant-scoped
+- NATS subscription uses tenant.*.probe.*.snmp subject pattern — tenant-isolated
+- **Compliant.**
+
+**D. "Embedded and standalone migrations must be mechanically reconciled." (third-cycle)**
+- No migrations. UPS handler is opt-in via NATS subscription, no schema changes.
+
+**E. "Validation and mutation for one protected operation must occur in one transaction." (project bible, rule 1)**
+- triggerShutdown() checks for existing in-progress events before initiating new shutdown
+- executeShutdownTarget() publishes via JetStream; failure handled per-target (does not abort entire sequence)
+- No single transaction spans multiple DB writes; each getDevicesByRole() is its own query
+- **Not fully compliant** — future work: wrap multi-device shutdown in transaction with retry/compensation
+
+**F. "Establish request-scoped database settings using transaction-local semantics." (project bible, rule 2)**
+- getDevicesByRole() uses context.WithTimeout(5s) for DB queries — request-scoped deadline
+- No transaction-local settings (SET LOCAL) used; existing pattern
+- **Not fully compliant** — future work: add SET LOCAL statement_timeout per request
+
+**G. "Agent must not write secrets to disk or log files." (agent engineering standard, rule 8)**
+- PowerEventManager operates entirely in memory (map-based state)
+- No secrets, credentials, or sensitive data logged
+- Logger.Info/Error calls use structured fields (zap.String, zap.Error) — no raw payloads
+- shutdown commands contain no credentials (just device_id, device_type, command)
+- **Compliant.**
+
+**H. "Every public API must have a corresponding test." (agent engineering standard, rule 5)**
+- `NewPowerEventManager()` — tested in TestNewPowerEventManager, TestNewPowerEventManagerWithNATS
+- `Start(ctx)` — tested indirectly via handleSNMPPayload tests
+- `handleSNMPPayload(msg)` — tested in TestMultipleOIDUpdates, TestUPSStateUpdateSameDevice, TestUPSStateMultipleDevices
+- `updateUPSState()` — tested in TestUPSStateLastSeenUpdated, TestUPSStateProbeIDUpdated
+- `determineAlertLevel()` — tested in TestDetermineAlertLevel (10 boundary cases)
+- `isUPSRelatedOID()` — tested in TestIsUPSRelatedOID (14 cases)
+- `hasUPSOIDPrefix()` — tested in TestHasUPSOIDPrefix (7 cases)
+- `parseNumericValue()` — tested in TestParseNumericValue (6 cases)
+- `parseTenantProbeSubject()` — tested in TestParseTenantProbeSubject (4 cases)
+- `GetAllUPSStates()` — tested in TestGetAllUPSStates, TestGetAllUPSStatesSnapshot
+- `GetUPSState()` — tested in TestGetUPSStateEmpty
+- `GetActiveEvents()` — tested in TestGetActiveEventsEmpty, TestGetActiveEventsFilter
+- `AbortShutdown()` — tested in TestAbortShutdown
+- `ShutdownOrder` variable — tested in TestShutdownOrder
+- Concurrent access — tested in TestConcurrentStateAccess (goroutine safety)
+- JSON serialization — tested in TestShutdownEventJSONRoundTrip, TestShutdownTargetStruct, TestShutdownEventStruct, TestUPSStatusStruct
+- Empty/malformed payload handling — tested in TestEmptyPayloadHandling, TestPayloadParsingWithDeviceIDFallback
+- Boundary conditions — tested in TestBoundaryRuntime600Sec, TestBoundaryBatteryPercent
+- Non-UPS OID filtering — tested in TestNonUPSOIDIgnored
+- Shutdown target ordering — tested in TestShutdownTargetOrdering
+- **Compliant.** (32 tests total covering all public APIs + edge cases)
+
+### Phase 3.3 implementation summary
+
+**PowerEventManager** (`internal/orchestrator/power_events.go`):
+- `NewPowerEventManager(db, nats, log)` — constructor; nil-safe for all three parameters
+- `Start(ctx)` — subscribes to `tenant.*.probe.*.snmp` NATS subject; context-driven shutdown
+- `handleSNMPPayload(msg)` — parses SNMP records, filters UPS MIB-2 OIDs, updates device state
+- `updateUPSState()` — per-UPS state tracker with mutex; triggers shutdown when runtime < 600s
+- `determineAlertLevel()` — priority classification: shutdown (<600s) > critical (<1800s) > warning (battery<=50%) > normal
+- `triggerShutdown()` — checks for existing events, queries dependency tree, dispatches ordered shutdown
+- `queryShutdownTargets()` — resolves devices by role (hypervisor, san, nas, vm_pool) from CMDB
+- `getDevicesByRole()` — SQL query with tenant isolation, ordered by device ID
+- `executeShutdownTarget()` — publishes via NATS JetStream; per-target failure handling
+- `AbortShutdown()` — cancels in-progress shutdown event
+- `GetUPSState()`, `GetAllUPSStates()`, `GetActiveEvents()` — state query APIs
+
+**MIB-2 OIDs** (RFC 1628 UPS MIB):
+- Battery capacity, battery percent, battery runtime
+- Input status, input voltage
+- Output status, output voltage, output load
+
+**Tests** (`internal/orchestrator/power_events_test.go`):
+- 32 unit tests covering: OID classification (14 cases), alert level boundaries (10 cases), NATS subject parsing (4 cases), concurrent access (goroutine safety), state isolation, JSON round-trip, nil-safety, boundary conditions (600s runtime, 50% battery), non-UPS OID filtering, payload parsing fallback, shutdown ordering
+
+### CI evidence
+All 84 CI checks terminal and successful on PR #52 (final head cea68d0):
+- Test: pass
+- Lint: pass (golangci-lint v2.11.2, 56s)
+- Vet: pass
+- All Phase 7 jobs: pass
+- All Phase 8B jobs: pass
+- All build jobs: pass (linux/amd64, linux/arm64, windows/amd64, windows/arm64, darwin/amd64, darwin/arm64)
+- All security jobs: pass
+- Unit Tests (race detection): pass
+- Tenant Preservation Tests: pass
+- 84 pass, 0 fail, 0 pending (all terminal)
+
+### Failures/reruns
+- 1 iteration to achieve green CI:
+  1. Lint (golangci-lint v2.11.2): 10 issues — 2 errcheck (sub.Unsubscribe, rows.Close), 8 unused (mockUPSDB struct + 7 methods)
+  - Classification: Deterministic (lint violations)
+  - Action: Fix root cause, push new head (cea68d0), re-verify all workflows
+  - Rerun: No — deterministic fixes pushed as new head (cea68d0)
+
+### PR #52 state
+- **Branch**: `feature/3-3-power-shutdown-handler`
+- **Base**: origin/master (0816f00)
+- **Head**: cea68d0 (squash merged to 449f09c)
+- **State**: Merged
+- **PR body checklist**: Added via PR body (scope, revision, security, compatibility, testing, limitations)
+- **Workflow evidence**: 84/84 terminal, all pass
+- **Gate 2 audit trace**: Added via GitHub comment (13-category trace)
+- **Gate 3 plan**: Added via GitHub comment (boundary analysis)
+
+### Limitations/remaining work
+- CMDB device query is scaffolded (requires CMDB integration to return real targets)
+- No automated graceful shutdown of real devices (requires CMDB + NATS command routing)
+- Environment pending: UPS hardware exercise to validate real SNMP telemetry ingestion
+- Multi-device shutdown not wrapped in single transaction (future work)
+- No SET LOCAL statement_timeout per request (future work)
+- power_events.go references d.roles column that now exists via migration 91 (Phase 3.1a)
