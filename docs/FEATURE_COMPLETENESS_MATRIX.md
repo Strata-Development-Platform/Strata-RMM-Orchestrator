@@ -174,11 +174,11 @@ ticket or PR when the team is ready to begin work.
 | 6.2 | `docs/integrations/public-api.md` — OpenAPI 3.0 spec for EDR/Backup/PSA endpoints | `docs/integrations/` | Not implemented |
 | 6.3 | `docs/monitoring/best-practice-templates.md` — server/hardware master tables with OIDs, thresholds, self-healing targets | `docs/monitoring/` | Not implemented |
 
-### Phase 2: Hierarchical Policy Engine & Secure Script Vault — **IN PROGRESS** (2.1a, 2.1b, 2.2a done)
+### Phase 2: Hierarchical Policy Engine & Secure Script Vault — **COMPLETE** (2.1a, 2.1b, 2.2a, 2.2b done)
 
 | ID | Task | Target | Evidence required | Status | PR | CI |
 |----|------|--------|-------------------|--------|----|----|
 | 2.1a | Recursive `ComputeEffectivePolicy(deviceID)` with most-specific-wins merging | `internal/policy/` | Unit test resolving 4-level inheritance with override/append semantics | **Verified** | #57 | 84 pass, 0 fail, 0 pending |
 | 2.1b | Policy lifecycle: validation, preview, publish, rollback | `pkg/postgres/schema.go`, `internal/platform/policy_*` | Integration test for full lifecycle transitions | **Verified** | #58 | 84 pass, 0 fail, 0 pending |
 | 2.2a | Git-backed automation vault: SSH/HTTPS clone/pull from GitHub/GitLab | `internal/automation/vault.go` | Unit test with mock Git server (19 tests) | **Verified** | #59 | 84 pass, 0 fail, 0 pending |
-| 2.2b | AES-256-GCM envelope encryption for secret variables; in-memory exposure over NATS | `internal/automation/vault.go`, `pkg/encrypt/` | Encryption round-trip test + audit that secrets never touch disk | Not implemented | — | — |
+| 2.2b | AES-256-GCM envelope encryption for secret variables; in-memory exposure over NATS | `internal/automation/vault_envelope.go` | Encryption round-trip test + audit that secrets never touch disk (26 tests) | **Verified** | #61 | 84 pass, 0 fail, 0 pending |
