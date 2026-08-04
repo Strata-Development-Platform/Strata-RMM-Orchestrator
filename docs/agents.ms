@@ -3532,3 +3532,26 @@ All 84 CI checks terminal and successful on PR #52 (final head cea68d0):
 - Multi-device shutdown not wrapped in single transaction (future work)
 - No SET LOCAL statement_timeout per request (future work)
 - power_events.go references d.roles column that now exists via migration 91 (Phase 3.1a)
+
+## 2026-08-04 — Post-merge verification: Phase 3 complete
+
+### CI status for master (commit 17a12e1)
+- Phase 8D — Observability and Synthetics: success
+- Phase 8G Security Gate: success
+- Phase 8C — Backup, Restore, and Disaster Recovery: success
+- CI (Go): success
+- CI (Frontend): **failure** — pre-existing, unrelated to changes
+
+### Pre-existing frontend failure
+- Test: `src/pages/MSPListPage.test.tsx` — "Unable to find role='status'"
+- This is a known pre-existing issue documented in Phase 3.1a (PR #62)
+- NOT caused by this documentation-only commit
+- No Go code, no frontend code changes in this commit
+
+### Phase 3 complete summary
+- 3.1a Agent role scanner: Verified (PR #62, 83 pass, 1 fail pre-existing frontend)
+- 3.1b Auto policy binding: Verified (PR #64, 83 pass, 0 fail, 0 pending)
+- 3.2 Infrastructure probe engine: Verified (PR #65, 83 pass, 0 fail, 0 pending)
+- 3.3 UPS power-shutdown handler: Verified (PR #52, 84 pass, 0 fail, 0 pending)
+- Phase 3 status: COMPLETE (all 4 items verified)
+- Next item: Phase 4 (Third-Party Public Integration Router)
