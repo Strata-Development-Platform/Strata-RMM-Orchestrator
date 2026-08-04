@@ -692,7 +692,7 @@ func setenv(t *testing.T, key, value string) {
 func unsetenv(t *testing.T, keys ...string) {
 	t.Helper()
 	for _, key := range keys {
-		os.Unsetenv(key)
+		_ = os.Unsetenv(key)
 	}
 }
 
