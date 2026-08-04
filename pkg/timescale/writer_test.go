@@ -4,7 +4,6 @@ package timescale
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"testing"
 	"time"
