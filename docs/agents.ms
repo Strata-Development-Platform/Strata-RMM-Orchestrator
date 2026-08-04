@@ -2229,3 +2229,68 @@ All 75 CI checks pass for head `60940bb`:
 
 ### Behavioral lesson
 Integration tests that depend on real PostgreSQL + NATS service containers must account for CI resource contention. A 25-second deadline for a full job lifecycle (queue → dispatch → agent process → result → update) is too tight when race detection adds overhead and the service container takes time to initialize. 60 seconds is a reasonable timeout that still detects hung tests.
+
+## PR #50 merge completion (Gate 10 — Authorized Merge)
+
+### Merge authorization
+- Owner explicitly authorized merge of PR #50 after all CI checks pass (75/75)
+- Authorized head: `6eb850938f09a9f3f5d3304e047d957502f34d37` (final commit before merge)
+- Merge method: squash merge
+- Merge time: 2026-08-04
+
+### Merge verification
+- Merge SHA: `b677286`
+- `git rev-parse HEAD` resolves to: `b677286`
+- `git rev-parse origin/master` resolves to: `b677286`
+- `git log --oneline master..HEAD` = no output (confirmed in sync)
+- PR #50: merged at 2026-08-04T01:20:00Z
+- No unintended development PRs remain open (0 open PRs)
+- Feature branch `feature/50-ha-architecture`: deleted
+
+### Files merged (21 files, ~2,400+ lines)
+**New files (11):**
+- `internal/messaging/jetstream/config.go` — JetStream stream/consumer config
+- `internal/messaging/jetstream/context.go` — JetStream context wrapper
+- `internal/messaging/jetstream/stream_manager.go` — Stream lifecycle management
+- `internal/messaging/jetstream/consumer_manager.go` — Durable consumer management
+- `internal/messaging/jetstream/subjects.go` — Subject-to-stream mapping
+- `internal/messaging/nats/agent_client.go` — JetStream agent client
+- `internal/messaging/nats/agent_queue.go` — Agent session queue
+- `pkg/redis/config.go` — Redis client config
+- `pkg/redis/agent_registry.go` — Agent registry with blacklist/cache
+- `internal/platform/policy_enforcement.go` — Policy enforcement engine
+- `internal/platform/policy_enforcement_test.go` — Policy enforcement tests
+- `internal/platform/policy_scheduler.go` — Scheduled policy re-evaluation
+
+**Modified files (10):**
+- `internal/agent/comms/nats.go` — JetStream publish path, PopMetrics fix
+- `internal/monitoring/ingestion.go` — JetStream consumers with ManualAck
+- `pkg/timescale/writer.go` — Read/write pool routing (primary + replica)
+- `pkg/config/config.go` — Redis + JetStream config structs
+- `cmd/orchestrator/orchestrator.go` — Stage 9 ingestion with JetStream
+- `cmd/orchestrator/bootstrap_admin.go` — Bootstrap flow update
+- `internal/platform/dispatcher.go` — Outbox ticker 500ms → 200ms (flaky fix)
+- `internal/platform/jobs_integration_test.go` — Test deadline 25s → 60s (flaky fix)
+- `docs/FEATURE_COMPLETENESS_MATRIX.md` — Updated with HA architecture entries
+- `docs/agents.ms` — 12+ remediation cycles, ledger updates, merge completion
+
+**CI evidence:**
+- 75/75 CI checks terminal and successful on head `6eb8509`
+- All Phase 7 tests: pass
+- All Phase 8B tests: pass
+- Durable Jobs Integration: pass (previously flaky, fixed with timing adjustments)
+- All security scans: pass
+- All build platforms: pass
+
+### Lifecycle closure
+PR #50 lifecycle is closed. All 10 gates satisfied:
+1. ✓ Gate 1 — Starting-state verification (base `2e71bd4` confirmed)
+2. ✓ Gate 2 — Evidence-first audit (12+ remediation cycles)
+3. ✓ Gate 3 — Plan the bounded vertical slice (HA architecture: JetStream, Redis, R/W routing)
+4. ✓ Gate 4 — Branch and implementation (21 files, ~2,400+ lines)
+5. ✓ Gate 5 — Local verification (all Go build, test, vet, lint pass)
+6. ✓ Gate 6 — Open draft PR (PR #50 created draft)
+7. ✓ Gate 7 — Exact-head workflow verification (75/75 workflows terminal and successful)
+8. ✓ Gate 8 — Representative and operational evidence (flaky test remediated)
+9. ✓ Gate 9 — Final pre-merge review (PR body updated, exact head recorded)
+10. ✓ Gate 10 — Authorized merge and post-merge verification (merged `b677286`, master synced, no open PRs)
