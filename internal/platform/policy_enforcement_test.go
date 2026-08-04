@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/postgres"
 	"go.uber.org/zap"
 )
 
@@ -32,7 +31,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 func TestPolicyEnforcementEngineFindMatchingDevicesMSP(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
-	if err := applyMigrations(t, db); err != nil {
+	applyMigrations(t, db)
 		t.Fatalf("apply migrations: %v", err)
 	}
 
@@ -100,7 +99,7 @@ func TestPolicyEnforcementEngineFindMatchingDevicesMSP(t *testing.T) {
 func TestPolicyEnforcementEngineFindMatchingDevicesClient(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
-	if err := applyMigrations(t, db); err != nil {
+	applyMigrations(t, db)
 		t.Fatalf("apply migrations: %v", err)
 	}
 
@@ -166,7 +165,7 @@ func TestPolicyEnforcementEngineFindMatchingDevicesClient(t *testing.T) {
 func TestPolicySchedulerStartStop(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
-	if err := applyMigrations(t, db); err != nil {
+	applyMigrations(t, db)
 		t.Fatalf("apply migrations: %v", err)
 	}
 
@@ -187,7 +186,7 @@ func TestPolicySchedulerStartStop(t *testing.T) {
 func TestPolicyEnforcementEngineEmptyMSP(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
-	if err := applyMigrations(t, db); err != nil {
+	applyMigrations(t, db)
 		t.Fatalf("apply migrations: %v", err)
 	}
 
