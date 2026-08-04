@@ -28,13 +28,6 @@ func setupTestDB(t *testing.T) *sql.DB {
 	return db
 }
 
-func applyMigrations(t *testing.T, db *sql.DB) {
-	t.Helper()
-	mgr := postgres.NewSchemaManager(db)
-	if err := mgr.Apply(context.Background()); err != nil {
-		t.Fatalf("apply migrations: %v", err)
-	}
-}
 
 func TestPolicyEnforcementEngineFindMatchingDevicesMSP(t *testing.T) {
 	db := setupTestDB(t)
