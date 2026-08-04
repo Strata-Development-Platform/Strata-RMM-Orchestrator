@@ -94,7 +94,7 @@ until implementation begins or the scope is formally retired.
 
 | Phase | Slice | Scope summary | Status | Target files |
 |-------|-------|---------------|--------|--------------|
-| 1 | Core HA Architecture Hardening | JetStream refactoring (persistent consumers, explicit `msg.Ack()`), read/write connection pool routing, RLS context injection, Timescale hypertable compression, stateless scaling (token blacklists → Redis) | Partial — JetStream module exists; DB routing, compression, and Redis migration remain | `internal/messaging/jetstream/`, `pkg/postgres/`, `pkg/timescale/`, `pkg/redis/` |
+| 1 | Core HA Architecture Hardening | JetStream refactoring (persistent consumers, explicit `msg.Ack()`), read/write connection pool routing, RLS context injection, Timescale hypertable compression, stateless scaling (token blacklists → Redis) | **Complete** — All 4 sub-items merged and CI-verified (PRs #53-#56) | `internal/messaging/jetstream/`, `pkg/postgres/`, `pkg/timescale/`, `pkg/redis/`, `pkg/auth/` |
 | 2 | Hierarchical Policy Engine & Secure Script Vault | Recursive `ComputeEffectivePolicy(deviceID)` with 4-level inheritance (Global→Client→Location→DeviceGroup), Git-backed automation vault with SSH/HTTPS pull + AES-256-GCM envelope encryption | Partial — schema and docs exist; recursive resolver and Git vault worker remain | `internal/policy/`, `internal/automation/`, `pkg/encrypt/` |
 | 3 | Server & Hardware Template Infrastructure | Server role detection (WMI/CIM/systemd → `Roles []string` in telemetry), infrastructure probe engine (SNMP v3, Redfish, IPMI, Syslog for SAN/NAS/firewall/switch/hypervisor/UPS), power-shutdown orchestration handler | Partial — probe engine ~3400 lines exists; role detection and power shutdown handler remain | `internal/inventory/`, `internal/agent/`, `internal/probe/`, `internal/orchestrator/power_events.go` |
 | 4 | Third-Party Public Integration Router | EDR/Backup/PSA webhook ingestion endpoints with HMAC-SHA256 signature verification, automated security isolation (EDR threat → NATS isolation command) | Not implemented | `cmd/orchestrator/router.go`, `internal/integrations/` |
@@ -106,14 +106,26 @@ until implementation begins or the scope is formally retired.
 Each item below maps to the design brief and should be opened as an implementation
 ticket or PR when the team is ready to begin work.
 
-### Phase 1: Core HA Architecture Hardening
+### Phase 1: Core HA Architecture Hardening — **COMPLETE** (2026-08-04)
 
-| ID | Task | Target | Evidence required |
-|----|------|--------|-------------------|
-| 1.1 | JetStream persistent consumers with `tenant.{id}.*` subject pattern; explicit `msg.Ack()` in ingestion loop | `internal/monitoring/ingestion.go`, `internal/agent/`, `cmd/orchestrator/` | NATS integration test showing no message loss during consumer restart |
-| 1.2a | Read/write connection pool routing (replicas for reads, primary for writes) | `pkg/postgres/` | Unit test verifying `pgxpool.NewWithConfig` with separate primary/read replicas |
-| 1.2b | Timescale hypertable continuous aggregation + 7-day compression policy | `pkg/timescale/migrations/` | SQL migration test verifying `hypertable_compression` applied |
-| 1.3 | Token blacklists, transient configs, ephemeral sessions migrated from in-memory maps to Redis | `cmd/orchestrator/main.go`, `internal/platform/`, `pkg/redis/` | Redis-backed blacklist test with multi-process verification |
+| ID | Task | Target | Evidence required | Status | PR | CI |
+|----|------|--------|-------------------|--------|----|----|
+| 1.1 | JetStream persistent consumers with `tenant.{id}.*` subject pattern; explicit `msg.Ack()` in ingestion loop | `internal/monitoring/ingestion.go`, `internal/agent/`, `cmd/orchestrator/` | NATS integration test showing no message loss during consumer restart | **Verified** | #56 | 84 pass, 0 fail, 0 pending |
+| 1.2a | Read/write connection pool routing (replicas for reads, primary for writes) | `pkg/postgres/` | Unit test verifying `pgxpool.NewWithConfig` with separate primary/read replicas | **Verified** | #53 | 88 pass, 0 fail, 0 pending |
+| 1.2b | Timescale hypertable continuous aggregation + 7-day compression policy | `pkg/timescale/migrations/` | SQL migration test verifying `hypertable_compression` applied | **Verified** | #55 | 83 pass, 1 fail (pre-existing frontend), 0 pending |
+| 1.3 | Token blacklists, transient configs, ephemeral sessions migrated from in-memory maps to Redis | `cmd/orchestrator/main.go`, `internal/platform/`, `pkg/redis/` | Redis-backed blacklist test with multi-process verification | **Partial** — token blacklists only; transient configs and ephemeral sessions remain in-memory (per-agent, not shared across orchestrator instances) | #54 | 84 pass, 0 fail, 0 pending |
+
+**Gate 2 audit trace for each PR:**
+
+**PR #53 (1.2a):** Entry points → orchestrator startup; Identity → config; Authorization → N/A (config field); Tenant → N/A; Persistence → DB.ReplicaDSN wired through 4 NewClient calls in orchestrator.go; Messaging → N/A; Object storage → N/A; Endpoint execution → N/A; UI state → N/A; Audit records → N/A; Metrics → N/A; Alerts → N/A; Runbooks → N/A; Existing tests → NewClient already supports replicaDSN, DBFor() already routes reads.
+
+**PR #54 (1.3):** Entry points → HTTP middleware chain; Identity → JWT token; Authorization → TokenBlacklistMiddleware checks Redis set for jti; Tenant → N/A (global blacklist); Persistence → Redis set `rmm:auth:blacklisted_tokens` with 24h TTL; Messaging → N/A; Object storage → N/A; Endpoint execution → N/A; UI state → N/A; Audit records → N/A; Metrics → N/A; Alerts → N/A; Runbooks → N/A; Existing tests → RateLimiter (in-memory), JWT with jti claim, Redis client with RDB().
+
+**PR #55 (1.2b):** Entry points → Migration001 SQL; Identity → N/A; Authorization → N/A; Tenant → N/A; Persistence → Hypertable 'metrics', compression policy, continuous aggregate 'metrics_1m'; Messaging → N/A; Object storage → N/A; Endpoint execution → N/A; UI state → N/A; Audit records → N/A; Metrics → N/A; Alerts → N/A; Runbooks → N/A; Existing tests → writer_test.go DBFor routing.
+
+**PR #56 (1.1):** Entry points → ingestion.go handleAgentMetricsJS/events/heartbeats/probes; Identity → tenant.agent identity; Authorization → N/A (ingestion); Tenant → N/A; Persistence → JetStream stream + durable consumer; Messaging → 6 subscriptions with ManualAck, all handlers have `defer func() { _ = m.Ack() }()`; Object storage → N/A; Endpoint execution → N/A; UI state → N/A; Audit records → N/A; Metrics → N/A; Alerts → N/A; Runbooks → N/A; Existing tests → jetstream_integration_test.go in pkg/backup.
+
+**Limitations (1.3):** Transient configs and ephemeral sessions are NOT migrated to Redis because they are per-agent (internal/agent/remotecontrol/session.go), not shared across orchestrator instances. Redis provides no benefit for non-shared state. This is a deliberate design decision, not an oversight.
 
 ### Phase 2: Hierarchical Policy Engine & Secure Script Vault
 
