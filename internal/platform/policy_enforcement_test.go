@@ -28,12 +28,18 @@ func setupTestDB(t *testing.T) *sql.DB {
 	return db
 }
 
+func applyMigrations(t *testing.T, db *sql.DB) {
+	t.Helper()
+	mgr := postgres.NewSchemaManager(db)
+	if err := mgr.Apply(context.Background()); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+}
+
 func TestPolicyEnforcementEngineFindMatchingDevicesMSP(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
 	applyMigrations(t, db)
-		t.Fatalf("apply migrations: %v", err)
-	}
 
 	engine := NewPolicyEnforcementEngine(db, zap.NewNop())
 
@@ -100,8 +106,6 @@ func TestPolicyEnforcementEngineFindMatchingDevicesClient(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
 	applyMigrations(t, db)
-		t.Fatalf("apply migrations: %v", err)
-	}
 
 	engine := NewPolicyEnforcementEngine(db, zap.NewNop())
 
@@ -166,8 +170,6 @@ func TestPolicySchedulerStartStop(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
 	applyMigrations(t, db)
-		t.Fatalf("apply migrations: %v", err)
-	}
 
 	engine := NewPolicyEnforcementEngine(db, zap.NewNop())
 	scheduler := NewPolicyScheduler(100*time.Millisecond, engine, zap.NewNop())
@@ -187,8 +189,6 @@ func TestPolicyEnforcementEngineEmptyMSP(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
 	applyMigrations(t, db)
-		t.Fatalf("apply migrations: %v", err)
-	}
 
 	engine := NewPolicyEnforcementEngine(db, zap.NewNop())
 
