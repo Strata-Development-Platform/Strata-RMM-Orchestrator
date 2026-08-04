@@ -55,6 +55,7 @@ type NATSConfig struct {
 
 type DatabaseConfig struct {
 	DSN             string
+	ReplicaDSN      string
 	MaxOpenConns    int
 	MaxIdleConns    int
 	ConnMaxLifetime time.Duration
@@ -546,6 +547,12 @@ func LoadOrchestratorConfig() (*OrchestratorConfig, error) {
 	} else {
 		cfg.DB.DSN = dsn
 	}
+
+	if replicaDSN, err := resolveReplicaDSN(); err != nil {
+		errs = append(errs, fmt.Sprintf("database replica DSN: %v", err))
+	} else if replicaDSN != "" {
+		cfg.DB.ReplicaDSN = replicaDSN
+	}
 	cfg.NATS.URL = envStr("NATS_URL", cfg.NATS.URL)
 	if raw := strings.TrimSpace(os.Getenv("NATS_ADVERTISE_URLS")); raw != "" {
 		for _, candidate := range strings.Split(raw, ",") {
@@ -794,6 +801,19 @@ func resolveDSN() (string, error) {
 		}
 	}
 	return "postgres://localhost:5432/strata_rmm?sslmode=disable", nil
+}
+
+func resolveReplicaDSN() (string, error) {
+	for _, key := range []string{"DB_REPLICA_DSN", "TIMESCALE_REPLICA_DSN"} {
+		value, err := secretEnv(key)
+		if err != nil {
+			return "", err
+		}
+		if value != "" {
+			return value, nil
+		}
+	}
+	return "", nil
 }
 
 func secretEnv(key string) (string, error) {

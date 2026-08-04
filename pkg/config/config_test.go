@@ -421,6 +421,40 @@ func TestEnvIntLoader(t *testing.T) {
 	}
 }
 
+func TestDBReplicaDSNConfig(t *testing.T) {
+	setenv(t, "DB_REPLICA_DSN", "postgres://replica:5432/strata_rmm?sslmode=require")
+	setenv(t, "TIMESCALE_DSN", "postgres://primary:5432/strata_rmm?sslmode=require")
+	defer unsetenv(t, "DB_REPLICA_DSN", "TIMESCALE_DSN")
+
+	cfg, err := LoadOrchestratorConfig()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.DB.ReplicaDSN == "" {
+		t.Error("DB.ReplicaDSN should be set from DB_REPLICA_DSN env var")
+	}
+	if cfg.DB.ReplicaDSN != "postgres://replica:5432/strata_rmm?sslmode=require" {
+		t.Errorf("DB.ReplicaDSN = %q, want %q", cfg.DB.ReplicaDSN, "postgres://replica:5432/strata_rmm?sslmode=require")
+	}
+}
+
+func TestDBReplicaDSNTimescaleEnv(t *testing.T) {
+	setenv(t, "TIMESCALE_REPLICA_DSN", "postgres://timescale-replica:5432/strata_rmm?sslmode=require")
+	setenv(t, "TIMESCALE_DSN", "postgres://primary:5432/strata_rmm?sslmode=require")
+	defer unsetenv(t, "TIMESCALE_REPLICA_DSN", "TIMESCALE_DSN")
+
+	cfg, err := LoadOrchestratorConfig()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.DB.ReplicaDSN == "" {
+		t.Error("DB.ReplicaDSN should be set from TIMESCALE_REPLICA_DSN env var")
+	}
+	if cfg.DB.ReplicaDSN != "postgres://timescale-replica:5432/strata_rmm?sslmode=require" {
+		t.Errorf("DB.ReplicaDSN = %q, want %q", cfg.DB.ReplicaDSN, "postgres://timescale-replica:5432/strata_rmm?sslmode=require")
+	}
+}
+
 func TestLoadOrchestratorConfigMalformedEnv(t *testing.T) {
 	tests := []struct {
 		key   string
@@ -653,6 +687,13 @@ func setenv(t *testing.T, key, value string) {
 			_ = os.Setenv(key, prev)
 		}
 	})
+}
+
+func unsetenv(t *testing.T, keys ...string) {
+	t.Helper()
+	for _, key := range keys {
+		os.Unsetenv(key)
+	}
 }
 
 func TestSecretEnvReadsFileWithoutLoggingValue(t *testing.T) {
