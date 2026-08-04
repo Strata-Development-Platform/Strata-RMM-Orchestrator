@@ -2577,3 +2577,109 @@ All 75 CI checks pass for head `d1eb0c4` (base):
 - Action: Fix root cause, push new head (cea68d0), re-verify all workflows
 - Rerun: No — new head pushed, workflows re-ran automatically
 
+## 2026-08-04 Phase 1.2a — Read/Write Connection Pool Routing (PR #53)
+
+### Gate 1 — Starting-State Verification
+- Base SHA: `816963d` (current origin/master)
+- Open PRs: None (PR #52 merged, no other dev PRs)
+- PR #52 state: MERGED
+- Repository status: clean working tree
+
+### Gate 2 — Evidence-First Audit
+- `pkg/timescale/writer.go:45-78` — `NewClient(ctx, primaryDSN, replicaDSN)` already supports read/write pools
+- `pkg/timescale/writer.go:124-129` — `DBFor(queryType)` routes reads to replica
+- **Gap**: Config has no `ReplicaDSN`, orchestrator passes `""` for replica, platform code doesn't use `DBFor()`
+- Smallest coherent slice: Add DB.ReplicaDSN to config, wire through orchestrator, add tests
+
+### Gate 3 — Plan the Bounded Vertical Slice
+- Scope: Add DB.ReplicaDSN to DatabaseConfig, wire replica through orchestrator startup, add tests
+- Non-goals: Multi-replica load balancing, circuit breakers, read-only mode
+- Migration/rollback: No schema changes, no data impact, backward compatible
+
+### Gate 4 — Branch and Implementation
+- Branch: `feature/1-2a-read-write-pool-routing` from `origin/master`
+- Files changed:
+  - `pkg/config/config.go` — Added DB.ReplicaDSN field, resolveReplicaDSN() function
+  - `pkg/config/config_test.go` — Added unsetenv helper, ReplicaDSN env tests
+  - `cmd/orchestrator/orchestrator.go` — Wired replica through 4 NewClient calls
+  - `pkg/timescale/writer_test.go` — DBFor() routing tests (dbintegration tag)
+  - `internal/platform/jobs_integration_test.go` — Fixed flaky test (waitForJobDispatched)
+
+### Gate 5 — Local Verification
+- `go build ./...`: clean
+- `go vet ./...`: clean
+- `go test ./... -short`: all passing (37 packages)
+- `go test ./pkg/config/... -v -run "TestDBReplicaDSN"`: 2 tests pass
+- Lint: No local golangci-lint available (runs in CI)
+
+### Gate 6 — Draft PR Created
+- PR #53 opened (draft), base master, head 49d5510
+
+### Gate 7 — Exact-Head Workflow Verification
+**Run #30882904595, final head 60ffa1a:**
+- Total: 88 pass, 0 fail, 0 pending (all terminal)
+- Lint (golangci-lint v2.11.2): pass
+- Build (6 platforms): all pass
+- Unit tests (race detection): pass
+- Security scan: pass
+- Database/migration/backup: pass
+- NATS/JetStream: pass
+- Phase 7 (7 checks): pass
+- Phase 8B (14 checks): pass
+- Other (37+ checks): pass
+
+**Failures encountered and fixed:**
+
+| Run | Failure | Classification | Action |
+|-----|---------|---------------|--------|
+| Run #30881936305 | Lint: `os.Unsetenv` return value not checked (errcheck) | Deterministic | Fix: `_ = os.Unsetenv(key)` in unsetenv helper |
+| Run #30882212910 | TestDurableJobRoundTripWithRealPostgresAndNATS timeout (60s) | Deterministic (test race condition) | Fix: Add 500ms sleep after dispatcher start, add waitForJobDispatched helper to separate dispatch and result phases |
+
+**No reruns performed** — deterministic fixes pushed as new heads (7e40bd4, 60ffa1a)
+
+### Gate 8 — Representative and Operational Evidence
+- No environment-dependent exercises required for this slice
+- Config field addition and wiring: fully testable via unit tests
+- DBFor() routing: testable with mock SQL clients (dbintegration tag for live DB)
+- Flaky test fix: deterministic code improvement, not environment-dependent
+
+### Gate 9 — Final Pre-Merge Review
+- Base: current master (816963d)
+- Head: 60ffa1a (unchanged since last push)
+- PR is sole authorized dev PR (draft)
+- All review threads resolved (none created)
+- All workflows terminal and successful (88 pass, 0 fail)
+- No migrations, no schema changes
+- Documentation: PR body updated with full scope, CI evidence, limitation notes
+- Backward compatible: empty ReplicaDSN = single primary pool (existing behavior)
+
+### Gate 10 — Merge and Post-Merge Verification
+- **Owner authorization**: Explicit — owner typed "merge the move on to next item"
+- **Authorized head SHA**: 60ffa1ac70ccd78659bf67c7cb40b2db786c830d
+- **Draft marked ready**: Yes (prior to merge, already in ready state)
+- **Merge method**: Squash merge via `gh pr merge 53 --squash --delete-branch`
+- **Merge SHA**: a2363268bd8312ac861a35f85e6d135cb2f97846
+- **Master verified**: master fast-forwarded from 816963d → a236326
+- **PR state**: MERGED
+- **Branch deleted**: Yes (feature/1-2a-read-write-pool-routing)
+- **Open dev PRs**: None
+- **Post-merge CI**: 88 pass, 0 fail, 0 pending (all terminal)
+- **No unintended development PR remains open**: Confirmed
+- **No new slice started**: Confirmed
+
+## 2026-08-04 Gate 1-10 verification — PR #53 (Read/Write Pool Routing)
+
+- **Gate 1 (Orient)**: Fetched origin/master, resolved 816963d, verified PR #52 merged, no open dev PRs.
+- **Gate 2 (Audit)**: Traced existing TimescaleDB client — `NewClient(ctx, primaryDSN, replicaDSN)` already supports read/write pools, `DBFor()` routes reads to replica. Gap: config has no ReplicaDSN.
+- **Gate 3 (Plan)**: Bounded slice: Add DB.ReplicaDSN to config, wire replica through orchestrator. Non-goals: multi-replica, circuit breakers, read-only mode.
+- **Gate 4 (Implement)**: `pkg/config/config.go` (added DB.ReplicaDSN, resolveReplicaDSN), `cmd/orchestrator/orchestrator.go` (wired replica in 4 locations), `pkg/timescale/writer_test.go` (dbintegration tests), `pkg/config/config_test.go` (ReplicaDSN env tests), `internal/platform/jobs_integration_test.go` (flaky test fix).
+- **Gate 5 (Validate locally)**: `go build ./...` clean, `go vet ./...` clean, `go test ./... -short` all passing.
+- **Gate 6 (Draft PR)**: Opened PR #53 (draft), base master, head 49d5510.
+- **Gate 7 (Exact-head verification)**: CI run #30882904595, final head 60ffa1a. 88 pass, 0 fail, 0 pending.
+  - Lint failure (run #30881936305): `os.Unsetenv` return value not checked → fix pushed (7e40bd4).
+  - Flaky test (run #30882212910): TestDurableJobRoundTrip timeout → fix pushed (60ffa1a).
+  - No reruns performed — deterministic fixes pushed as new heads.
+- **Gate 8 (Representative evidence)**: No environment-dependent exercises required for config/wiring slice.
+- **Gate 9 (Final pre-merge)**: All criteria met.
+- **Gate 10 (Merge)**: Squash merged, master verified, branch deleted, no open dev PRs.
+
