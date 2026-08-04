@@ -49,17 +49,6 @@ func createBareGitRepo(t *testing.T, dir string) string {
 	}
 	t.Cleanup(func() { os.RemoveAll(workDir) })
 
-	// Configure git user
-	configureGit := func(wd string) {
-		c := exec.Command("git", "config", "user.email", "test@test.com")
-		c.Dir = wd
-		c.Run()
-		c = exec.Command("git", "config", "user.name", "Test")
-		c.Dir = wd
-		c.Run()
-	}
-	configureGit(workDir)
-
 	// Create initial file and commit
 	testFile := filepath.Join(workDir, "test.txt")
 	if err := os.WriteFile(testFile, []byte("initial content"), 0644); err != nil {
@@ -68,18 +57,31 @@ func createBareGitRepo(t *testing.T, dir string) string {
 
 	cmd = exec.Command("git", "init")
 	cmd.Dir = workDir
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("failed to init work repo: %v", err)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init failed: %v (%s)", err, string(out))
 	}
+
+	// Configure git user (must come after git init)
+	cmd = exec.Command("git", "config", "user.email", "test@test.com")
+	cmd.Dir = workDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git config email failed: %v (%s)", err, string(out))
+	}
+	cmd = exec.Command("git", "config", "user.name", "Test")
+	cmd.Dir = workDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git config name failed: %v (%s)", err, string(out))
+	}
+
 	cmd = exec.Command("git", "add", ".")
 	cmd.Dir = workDir
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("failed to add: %v", err)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add failed: %v (%s)", err, string(out))
 	}
 	cmd = exec.Command("git", "commit", "-m", "initial commit")
 	cmd.Dir = workDir
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("failed to commit: %v", err)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit failed: %v (%s)", err, string(out))
 	}
 	cmd = exec.Command("git", "branch", "-M", "main")
 	cmd.Dir = workDir
