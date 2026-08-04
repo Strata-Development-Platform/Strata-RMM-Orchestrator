@@ -721,10 +721,45 @@ func (so *ScheduleOrchestrator) checkScheduleCompletion(scheduleID string) (bool
 	}
 
 	if completed+failed == total && total > 0 {
-		so.db.ExecContext(context.Background(), `
-			UPDATE schedules SET status = 'completed', completed_at = NOW()
-			WHERE id = $1
-		`, scheduleID)
+		var scheduleType string
+		var scheduleParams json.RawMessage
+		err = so.db.QueryRowContext(context.Background(), `
+			SELECT schedule_type, schedule_params FROM schedules WHERE id = $1
+		`, scheduleID).Scan(&scheduleType, &scheduleParams)
+		if err != nil {
+			so.logger.Warn("get schedule type for completion", zap.Error(err))
+			if _, execErr := so.db.ExecContext(context.Background(), `
+				UPDATE schedules SET status = 'completed', completed_at = NOW()
+				WHERE id = $1
+			`, scheduleID); execErr != nil {
+				so.logger.Error("failed to complete schedule", zap.Error(execErr))
+			}
+			return true, nil
+		}
+
+		// Recurring schedules: reset to active with new next_run_at
+		// One-shot "now" schedules: mark as completed
+		switch scheduleType {
+		case "hourly", "daily", "weekly", "monthly":
+			nextRunAt := calculateNextRun(scheduleType, scheduleParams)
+			if _, execErr := so.db.ExecContext(context.Background(), `
+				UPDATE schedules SET status = 'active', next_run_at = $1
+				WHERE id = $2
+			`, nextRunAt, scheduleID); execErr != nil {
+				so.logger.Error("failed to reschedule", zap.Error(execErr))
+			} else {
+				so.logger.Info("schedule rescheduled",
+					zap.String("schedule_id", scheduleID),
+					zap.Time("next_run_at", nextRunAt))
+			}
+		default:
+			if _, execErr := so.db.ExecContext(context.Background(), `
+				UPDATE schedules SET status = 'completed', completed_at = NOW()
+				WHERE id = $1
+			`, scheduleID); execErr != nil {
+				so.logger.Error("failed to complete schedule", zap.Error(execErr))
+			}
+		}
 		return true, nil
 	}
 

@@ -19,6 +19,8 @@ import (
 type ScriptCommand struct {
 	Type        string            `json:"type"`
 	ExecutionID string            `json:"execution_id"`
+	ScheduleID  string            `json:"schedule_id"`
+	DeviceID    string            `json:"device_id"`
 	Language    string            `json:"language"`
 	Content     string            `json:"content"`
 	Parameters  map[string]string `json:"parameters"`
@@ -28,6 +30,8 @@ type ScriptCommand struct {
 type ScriptResult struct {
 	Type        string `json:"type"`
 	ExecutionID string `json:"execution_id"`
+	ScheduleID  string `json:"schedule_id"`
+	DeviceID    string `json:"device_id"`
 	Status      string `json:"status"`
 	Stdout      string `json:"stdout"`
 	Stderr      string `json:"stderr"`
@@ -139,6 +143,8 @@ func (e *Executor) execute(cmd ScriptCommand) {
 	result := ScriptResult{
 		Type:        "script_result",
 		ExecutionID: cmd.ExecutionID,
+		ScheduleID:  cmd.ScheduleID,
+		DeviceID:    cmd.DeviceID,
 	}
 
 	content, err := interpolateParams(cmd.Content, cmd.Parameters)

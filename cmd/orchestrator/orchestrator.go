@@ -389,6 +389,15 @@ func NewCommand(ctx context.Context, version, commit string, logger *zap.Logger)
 			api.RegisterHealth("dispatcher", dispatcher.Healthy)
 			logger.Info("job dispatcher started")
 
+			// Stage 13b: Script schedule runner
+			advanceStage(13)
+			scheduleOrchestrator := platform.NewScheduleOrchestrator(nc, tsdb.DB(), logger)
+			scheduleRunner := platform.NewScriptScheduleRunner(1*time.Minute, scheduleOrchestrator, logger)
+			scheduleRunner.Start(ctx)
+			defer scheduleRunner.Stop()
+			api.RegisterHealth("schedule_runner", scheduleRunner.Healthy)
+			logger.Info("script schedule runner started")
+
 			// Stage 14: API server
 			advanceStage(14)
 			if err := api.Start(ctx); err != nil {
