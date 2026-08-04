@@ -3112,3 +3112,103 @@ All 84 CI checks terminal and successful on merged commit `5ce0d3d`:
 - No webhook support for push notifications
 - Phase 2.2b (AES-256-GCM envelope encryption) not yet implemented
 
+
+## 2026-08-04 — Fourteenth cycle: Phase 2.2b AES-256-GCM envelope encryption
+
+### Pre-implementation audit
+- **Ledger read**: Complete (all 3114 lines read before code)
+- **Rule mapping applied**: See below
+- **Ledger rule compliance**: Verified for all applicable rules
+
+### Ledger rules applied to Phase 2.2b code
+
+**A. "Check rows.Err() after iteration. Never ignore scan errors." (seventh-cycle, rules 7-9)**
+- Not applicable. No database operations.
+
+**B. "Raw database, constraint, schema, driver, or topology details must never reach clients." (seventh-cycle, rule 17)**
+- Not applicable. No HTTP handlers or client-facing APIs.
+
+**C. "RLS policies must use the project's established tenant isolation pattern." (seventh-cycle, rule 17)**
+- Not applicable. No database operations.
+
+**D. "Embedded and standalone migrations must be mechanically reconciled." (third-cycle)**
+- Not applicable. No migrations created.
+
+**E. "Validation and mutation for one protected operation must occur in one transaction." (project bible, rule 1)**
+- Not applicable. No transactions.
+
+**F. "Establish request-scoped database settings using transaction-local semantics." (project bible, rule 2)**
+- Not applicable. No database.
+
+**G. "Agent must not write secrets to disk or log files." (agent engineering standard, rule 8)**
+- EnvelopeEncryptor operates entirely in memory — no file I/O for secrets
+- `SecretVault.Store()` returns serialized ciphertext; plaintext never written to disk
+- `SecretVault.Retrieve()` returns plaintext to caller; caller must zero local copy
+- `TestVaultEnforceNoDiskExposure` verifies no files created during vault operations
+- **Compliant.**
+
+**H. "Every public API must have a corresponding test." (agent engineering standard, rule 5)**
+- `EnvelopeEncryptor.Encrypt()` — tested in TestEnvelopeEncryptorEncryptDecrypt, TestEnvelopeEncryptorLargeSecret, TestEnvelopeEncryptorEmptySecret, TestEnvelopeEncryptorUnicodeSecret, TestEnvelopeEncryptorNullByteSecret
+- `EnvelopeEncryptor.Decrypt()` — tested in all encrypt tests + TestEnvelopeEncryptorDecryptTamperedCiphertext
+- `EnvelopeCiphertext.Serialize()`/`DeserializeCiphertext()` — tested in TestEnvelopeCiphertextRoundTrip, TestDeserializeCiphertextInvalidFormat, TestDeserializeCiphertextInvalidBase64
+- `SecretVault.Store()`/`Retrieve()` — tested in TestSecretVaultStoreRetrieve, TestSecretVaultMultipleSecrets
+- `SecretVault.RotateCEK()` — tested in TestSecretVaultRotateCEK
+- `deriveCEK()` — tested in TestEnvEncryptionKeyDerivation
+- `splitCiphertext()` — tested in TestSplitCiphertext
+- **Compliant.**
+
+### Phase 2.2b implementation summary
+
+**Envelope Encryptor** (`internal/automation/vault_envelope.go`):
+- `EnvelopeEncryptor`: AES-256-GCM envelope encryption with unique DEK per secret
+- `EnvelopeCiphertext`: Structured format (nonce + encrypted_DEK + DEK_nonce + encrypted_data)
+- `NewEnvelopeEncryptor(cek)`: Factory with 32-byte CEK validation
+- `Encrypt(plaintext)`: Generates DEK, encrypts secret with DEK, encrypts DEK with CEK
+- `Decrypt(ciphertext)`: Decrypts DEK with CEK, decrypts secret with DEK
+- `Serialize()`/`DeserializeCiphertext()`: Base64 string transport format
+
+**Secret Vault** (`internal/automation/vault_envelope.go`):
+- `SecretVault`: High-level API wrapping EnvelopeEncryptor
+- `Store(secretID, plaintext)`: Returns base64 ciphertext string
+- `Retrieve(serializedCiphertext)`: Returns plaintext []byte
+- `RotateCEK()`: Generates new CEK (old ciphertext becomes undecryptable)
+- `deriveCEK(passphrase)`: SHA-256 derivation (testing only)
+
+**Tests** (`internal/automation/vault_envelope_test.go`):
+- 26 unit tests covering: basic encrypt/decrypt, tamper detection, serialization round-trip, CEK rotation, large secrets (1MB), empty secrets, unicode, null bytes, audit verification, benchmark
+- `TestVaultEnforceNoDiskExposure`: Verifies no temp files created during vault operations
+
+### CI evidence
+All 84 CI checks terminal and successful on PR #61:
+- Test: pass
+- Lint: pass
+- Vet: pass
+- All Phase 7 jobs: pass
+- All Phase 8B jobs: pass
+- All build jobs: pass (linux/amd64, linux/arm64, windows/amd64, windows/arm64, darwin/amd64, darwin/arm64)
+- All security jobs: pass
+- Unit Tests (race detection): pass
+- Tenant Preservation Tests: pass
+
+### Failures/reruns
+- 1 iteration to achieve green CI:
+  1. Lint: errcheck for os.Setenv → fixed with _ assignment
+- All fixes pushed as new heads (deterministic)
+
+### PR #61 state
+- **Branch**: `feature/2-2b-envelope-encryption`
+- **Base**: origin/master
+- **Head**: a826527 (squash merged)
+- **State**: Merged
+- **PR body checklist**: Added via GitHub comment (Gate 6)
+- **Workflow evidence**: Added via GitHub comment (exact-head URLs, failures/fixes table)
+- **Gate 2 audit trace**: Added via GitHub comment (13-category trace)
+- **Gate 3 plan**: Added via GitHub comment (boundary analysis)
+
+### Limitations/remaining work
+- CEK must be exactly 32 bytes
+- Existing ciphertexts cannot be decrypted after CEK rotation (no automatic re-encryption)
+- `deriveCEK()` uses SHA-256 (for testing only; production should use KMS provider)
+- No KMS provider integration (AWS KMS, GCP KMS, Azure Key Vault)
+- No NATS transport (secrets would need to be serialized and sent as messages)
+- Phase 3+ not yet started
