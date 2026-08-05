@@ -3850,3 +3850,22 @@ All 7 CI checks terminal and successful on PR #67 (final head 7733ad7):
 - 4.1b HMAC-SHA256 signature verification middleware: Verified (PR #66)
 - 4.2 Automated security isolation: Verified (PR #67, 2 integration tests with real NATS)
 - Phase 4: IN PROGRESS (Phase 5 UI Configuration Components not yet started)
+
+## 2026-08-05 — Post-merge verification: Phase 5.1
+
+### Gate 10 — PR #68 Merge
+- **Owner authorization**: Explicit — owner typed "merge the move on to next item"
+- **Authorized head SHA**: d52c6eec794a394632c5ba0632d303e6f5034eda
+- **Merge method**: Squash merge via `gh pr merge 68 --squash --delete-branch`
+- **Merge SHA**: e4308178c98646317278d1fa6d6b4c58b7118468
+- **Master verified**: master fast-forwarded from bbdcf2a → e430817
+- **PR state**: MERGED
+- **Branch deleted**: Yes (feature/5-1-hierarchical-policy-tree-view)
+- **Open dev PRs**: None
+- **Post-merge CI**: 8 pass, 0 fail, 0 pending (all terminal)
+- **No unintended development PR remains open**: Confirmed
+- **No new slice started**: Confirmed
+
+### Phase 5 status
+- 5.1 Hierarchical policy tree-view: Verified (PR #68, 8 pass, 0 fail, 0 pending)
+- Phase 5: IN PROGRESS (5.2 Integration settings panel not yet started)
