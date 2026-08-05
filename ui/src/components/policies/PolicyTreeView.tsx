@@ -8,7 +8,7 @@ import type {
   PolicyScope,
 } from './PolicyTreeTypes';
 
-type OnFieldToggle = (category: PolicyCategory, scope: PolicyScope, fieldName: string, value: string | number | boolean | null) => void;
+type OnFieldToggle = (fieldName: string, value: string | number | boolean | null) => void;
 
 interface PolicyTreeViewProps {
   tree: PolicyTree;

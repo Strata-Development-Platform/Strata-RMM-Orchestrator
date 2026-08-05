@@ -46,10 +46,10 @@ function defaultLevels(category: PolicyCategory): PolicyLevel[] {
 
 // Helper to create a minimal policy tree for testing.
 function createTestTree(
-  categories: Record<PolicyCategory, PolicyLevel[]> = {}
+  categories: Partial<Record<PolicyCategory, PolicyLevel[]>> = {}
 ): PolicyTree {
   const allCategories: PolicyCategory[] = ['patch', 'alerting', 'monitoring', 'software', 'scripts', 'maintenance'];
-  const defaultCategories: Record<PolicyCategory, PolicyLevel[]> = {};
+  const defaultCategories: Record<PolicyCategory, PolicyLevel[]> = {} as Record<PolicyCategory, PolicyLevel[]>;
   // Initialize all categories with defaults.
   for (const cat of allCategories) {
     defaultCategories[cat] = defaultLevels(cat);
@@ -69,13 +69,13 @@ function createTestTree(
         }
       }
     } else {
-      defaultCategories[cat] = provided;
+      defaultCategories[cat] = provided!;
     }
   }
   return {
     tenantId: 'tenant-123',
     targetDeviceId: 'device-456',
-    categories: defaultCategories as Record<PolicyCategory, PolicyLevel[]>,
+    categories: defaultCategories,
   };
 }
 
@@ -96,7 +96,7 @@ function renderTreeView(
 describe('PolicyTreeView', () => {
   describe('rendering', () => {
     it('renders the category selector with all categories', () => {
-      const tree = createTestTree([]);
+      const tree = createTestTree({});
       renderTreeView(tree);
 
       // Check category labels are rendered.
@@ -109,7 +109,7 @@ describe('PolicyTreeView', () => {
     });
 
     it('highlights the active category', () => {
-      const tree = createTestTree([]);
+      const tree = createTestTree({});
       renderTreeView(tree, 'patch');
 
       const patchButton = screen.getByText('Patch Management');
@@ -121,7 +121,7 @@ describe('PolicyTreeView', () => {
     });
 
     it('renders the hierarchy levels in order', () => {
-      const tree = createTestTree([]);
+      const tree = createTestTree({});
       renderTreeView(tree);
 
       expect(screen.getByText('Platform Level')).toBeInTheDocument();
@@ -132,7 +132,7 @@ describe('PolicyTreeView', () => {
     });
 
     it('renders the effective policy panel', () => {
-      const tree = createTestTree([]);
+      const tree = createTestTree({});
       renderTreeView(tree);
 
       expect(
@@ -141,7 +141,7 @@ describe('PolicyTreeView', () => {
     });
 
     it('shows inheritance info when no overrides exist', () => {
-      const tree = createTestTree([]);
+      const tree = createTestTree({});
       renderTreeView(tree);
 
       const elements = screen.getAllByText('No overrides — inherits from nearest ancestor');
@@ -183,7 +183,7 @@ describe('PolicyTreeView', () => {
     });
 
     it('renders field values in the effective policy panel', () => {
-      const tree = createTestTree([]);
+      const tree = createTestTree({});
       renderTreeView(tree);
 
       // The field name appears in the effective policy panel.
@@ -219,7 +219,7 @@ describe('PolicyTreeView', () => {
   describe('category switching', () => {
     it('calls onCategoryChange when a category button is clicked', async () => {
       const onCategoryChange = vi.fn();
-      const tree = createTestTree([]);
+      const tree = createTestTree({});
       render(
         <PolicyTreeView
           tree={tree}
@@ -296,7 +296,7 @@ describe('PolicyTreeView', () => {
 
   describe('expand/collapse', () => {
     it('expands level by default', () => {
-      const tree = createTestTree([]);
+      const tree = createTestTree({});
       renderTreeView(tree);
 
       // The expansion content should be visible by default.
@@ -305,7 +305,7 @@ describe('PolicyTreeView', () => {
     });
 
     it('collapses level when header is clicked', async () => {
-      const tree = createTestTree([]);
+      const tree = createTestTree({});
       renderTreeView(tree);
 
       // Click the Platform Level header to collapse.
@@ -372,7 +372,7 @@ describe('resolveEffectivePolicy', () => {
   });
 
   it('returns empty object for unknown category', () => {
-    const tree = createTestTree([]);
+    const tree = createTestTree({});
     const result = resolveEffectivePolicy(tree, 'patch');
     expect(result).not.toBeNull();
   });
@@ -409,7 +409,7 @@ describe('countOverrides', () => {
   });
 
   it('returns 0 when no fields are overridden', () => {
-    const tree = createTestTree([]);
+    const tree = createTestTree({});
     expect(countOverrides(tree, 'patch')).toBe(0);
   });
 });
@@ -434,7 +434,7 @@ describe('getOverriddenFields', () => {
   });
 
   it('returns empty array when no overrides exist', () => {
-    const tree = createTestTree([]);
+    const tree = createTestTree({});
     expect(getOverriddenFields(tree, 'patch')).toHaveLength(0);
   });
 });
