@@ -3943,3 +3943,50 @@ All 7 CI checks terminal and successful on PR #67 (final head 7733ad7):
 ### Phase 5 status
 
 - All phases complete. Remaining work: Phase 6 (Core Technical Documentation)
+
+### Phase 6.2 OpenAPI 3.0 spec for EDR/Backup/PSA endpoints — OPEN (PR #70)
+
+**Slice**: Phase 6.2 — OpenAPI 3.0 spec for EDR/Backup/PSA endpoints
+**PR**: #70
+**Branch**: feature/6-2-openapi-spec
+**State**: OPEN (awaiting CI)
+**Target file**: `docs/integrations/public-api.md` (651 lines)
+
+#### Implementation Summary
+
+- Single new file: `docs/integrations/public-api.md` — OpenAPI 3.0.3 specification
+- Documents all 4 integration webhook endpoints from `internal/integrations/`:
+  - `POST /api/v1/integrations/edr/alerts` (EdrAlert schema with Action, NetworkInfo)
+  - `POST /api/v1/integrations/backup/sync` (BackupSync schema)
+  - `POST /api/v1/integrations/psa/webhooks` (PSAWebhook schema)
+  - `POST /api/v1/integrations/isolate` (IsolationAction schema)
+- Includes: security scheme (HMAC-SHA256 via X-Signature), request/response schemas, all error responses (400, 401, 503), server config, examples
+
+#### Gate 2 Audit Trace
+
+- Entry points → Documentation file only, no runtime changes
+- Identity → Security scheme documented (matches middleware.go HMACVerifier)
+- Authorization → Public routes documented; HMAC validation documented
+- Tenant → tenant_id field in request schemas
+- Persistence → N/A (documentation only)
+- Messaging → NATS subjects documented (tenant.{tid}.edrs.alert, tenant.{tid}.cmd.isolate)
+- Object storage → N/A
+- Endpoint execution → All 4 handlers cross-referenced against source
+- UI state → N/A
+- Audit records → N/A
+- Metrics → N/A
+- Alerts → Severity normalization documented
+- Runbooks → N/A
+- Existing tests → No code changes, no new tests needed
+
+#### Failures and reruns
+
+- None so far.
+
+#### PR state: OPEN
+
+#### Phase 6 status
+- 6.1 policy-engine: Exists (docs/POLICY_ENGINE.md)
+- 6.2 OpenAPI spec: In progress (PR #70)
+- 6.3 best-practice-templates: Not started
+- Phase 6: IN PROGRESS
