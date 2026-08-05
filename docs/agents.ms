@@ -3829,3 +3829,24 @@ All 7 CI checks terminal and successful on PR #67 (final head 7733ad7):
 - Skipped in -short mode
 - Environment pending: CI integration test runner with NATS
 - Phase 4.2 handler (IsolationHandler) exists in PR #66; this PR adds integration test evidence
+
+## 2026-08-05 — Post-merge verification: Phase 4.2
+
+### Gate 10 — PR #67 Merge
+- **Owner authorization**: Explicit — owner typed "merge the move on to next item"
+- **Authorized head SHA**: 7733ad7cf3ed6833eb3aec9b8e7810126de75c56
+- **Merge method**: Squash merge via `gh pr merge 67 --squash --delete-branch`
+- **Merge SHA**: e510c59db2617a7b1d8394b301c42de55b78e77b
+- **Master verified**: master fast-forwarded from 1b7f57d → e510c59
+- **PR state**: MERGED
+- **Branch deleted**: Yes (feature/4-2-automated-security-isolation)
+- **Open dev PRs**: None
+- **Post-merge CI**: 7 pass, 0 fail, 0 pending (all terminal)
+- **No unintended development PR remains open**: Confirmed
+- **No new slice started**: Confirmed
+
+### Phase 4 status
+- 4.1a Webhook ingestion routes: Verified (PR #66)
+- 4.1b HMAC-SHA256 signature verification middleware: Verified (PR #66)
+- 4.2 Automated security isolation: Verified (PR #67, 2 integration tests with real NATS)
+- Phase 4: IN PROGRESS (Phase 5 UI Configuration Components not yet started)

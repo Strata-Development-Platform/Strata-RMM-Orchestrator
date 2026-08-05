@@ -151,7 +151,7 @@ ticket or PR when the team is ready to begin work.
 | 3.2 | Infrastructure probe engine: SNMP v3, Redfish, IPMI, Syslog collectors for SAN/NAS/firewall/switch/hypervisor/UPS | `internal/probe/` | Protocol-specific unit tests (49 tests: Redfish 13 + IPMI 18 + Syslog 18) | **Verified** | #65 | 83 pass, 0 fail, 0 pending |
 | 3.3 | UPS power-shutdown handler: runtime tracking, dependency tree evaluation, ordered graceful shutdown via NATS | `internal/orchestrator/power_events.go` | Unit test with mocked UPS telemetry and shutdown sequence verification (32 tests) | **Verified** | #52 | 84 pass, 0 fail, 0 pending |
 
-### Phase 4: Third-Party Public Integration Router
+### Phase 4: Third-Party Public Integration Router — **IN PROGRESS** (4.1a, 4.1b, 4.2 verified)
 
 | ID | Task | Target | Evidence required |
 |----|------|--------|-------------------|
