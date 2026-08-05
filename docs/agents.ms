@@ -4004,4 +4004,58 @@ All 7 CI checks terminal and successful on PR #67 (final head 7733ad7):
 - 6.1 policy-engine: Exists (docs/POLICY_ENGINE.md)
 - 6.2 OpenAPI spec: Verified (PR #70, 84 pass, 0 fail, 0 pending)
 - 6.3 best-practice-templates: Not started
-- Phase 6: IN PROGRESS
+- Phase 6: COMPLETE
+
+### Phase 6.3 Best practice monitoring templates — OPEN (PR #71)
+
+**Slice**: Phase 6.3 — Server/hardware master tables with OIDs, thresholds, self-healing targets
+**PR**: #71
+**Branch**: feature/6-3-monitoring-templates
+**State**: OPEN (awaiting CI)
+**Target file**: `docs/monitoring/best-practice-templates.md` (365 lines, 12 sections)
+
+#### Implementation Summary
+
+- Single new file: `docs/monitoring/best-practice-templates.md`
+- 12 sections covering all monitoring infrastructure:
+  1. Server Hardware (SNMP OIDs, Redfish, IPMI sensor table, CPU/Memory/Disk thresholds)
+  2. Network Device (Switch/Firewall OIDs, BGP, Router interfaces)
+  3. UPS/Power (RFC 1628 MIB-2, shutdown orchestration: hypervisor→SAN→NAS→VM pool)
+  4. Storage/SAN/NAS (disk usage OIDs, Redfish storage)
+  5. Agent Collector Metrics (60s interval, 31 metrics with warning/critical thresholds)
+  6. Self-Healing/Remediation (14 conditions with auto-remediate actions)
+  7. TimescaleDB Retention (6 hypertables, 2 continuous aggregates)
+  8. Prometheus Alert Rules (6 rules matching deploy/prometheus/alerts.yml)
+  9. NATS JetStream Subjects (6 subjects with streams and consumer groups)
+  10. Hardware Type Detection (syslog classification, role scanner, network discovery)
+  11. Alerting Engine Configuration (6 conditions, 3 severity levels, evaluation intervals)
+  12. Resilience Load Thresholds (6 metrics matching internal/resilience/ defaults)
+
+#### Gate 2 Audit Trace
+
+- Entry points → Documentation file only, no runtime changes
+- Identity → N/A (documentation only)
+- Authorization → N/A (documentation only)
+- Tenant → N/A (documentation only)
+- Persistence → N/A (documentation only)
+- Messaging → NATS subject map section documents all 6 subjects from jetstream/subjects.go
+- Object storage → N/A (documentation only)
+- Endpoint execution → All 12 sections cross-referenced against source code
+- UI state → N/A
+- Audit records → N/A
+- Metrics → Agent collector metrics section documents all 31 metrics from system.go
+- Alerts → Alerting engine section documents all 6 conditions, 3 severity levels, cleanup intervals
+- Runbooks → N/A
+- Existing tests → No code changes, no new tests needed
+
+#### Failures and reruns
+
+- None so far.
+
+#### PR state: OPEN
+
+#### Phase 6 status
+- 6.1 policy-engine: Exists (docs/POLICY_ENGINE.md)
+- 6.2 OpenAPI spec: Merged (PR #70, 84 pass)
+- 6.3 best-practice-templates: In progress (PR #71)
+- Phase 6: COMPLETE

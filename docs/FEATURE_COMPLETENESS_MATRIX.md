@@ -99,7 +99,7 @@ until implementation begins or the scope is formally retired.
 | 3 | Server & Hardware Template Infrastructure | Server role detection (WMI/CIM/systemd → `Roles []string` in telemetry), infrastructure probe engine (SNMP v3, Redfish, IPMI, Syslog for SAN/NAS/firewall/switch/hypervisor/UPS), power-shutdown orchestration handler | Partial — probe engine ~3400 lines exists; role detection and power shutdown handler remain | `internal/inventory/`, `internal/agent/`, `internal/probe/`, `internal/orchestrator/power_events.go` |
 | 4 | Third-Party Public Integration Router | EDR/Backup/PSA webhook ingestion endpoints with HMAC-SHA256 signature verification, automated security isolation (EDR threat → NATS isolation command) | **Complete** — 4.1a/4.1b/4.2 (PRs #66/#67), 6.2 OpenAPI spec (PR #70) | `internal/integrations/`, `docs/integrations/` |
 | 5 | UI Configuration Components | Hierarchical policy dashboard tree-view with inheritance tags and override toggles, integration settings panel (API key management, webhook URL display) | **Complete** — 5.1 (PR #68, 8 pass), 5.2 (PR #69, 36 pass) | `ui/src/components/policies/`, `ui/src/components/settings/` |
-| 6 | Core Technical Documentation | `docs/architecture/policy-engine.md` (override precedence + ASCII diagram), `docs/integrations/public-api.md` (OpenAPI 3.0 spec for EDR/Backup/PSA), `docs/monitoring/best-practice-templates.md` (server/hardware template master tables with OIDs and thresholds) | **Partial** — 6.1 exists, 6.2 (PR #70, 84 pass), 6.3 (PR #71, in progress) | `docs/architecture/`, `docs/integrations/`, `docs/monitoring/` |
+| 6 | Core Technical Documentation | `docs/architecture/policy-engine.md` (override precedence + ASCII diagram), `docs/integrations/public-api.md` (OpenAPI 3.0 spec for EDR/Backup/PSA), `docs/monitoring/best-practice-templates.md` (server/hardware template master tables with OIDs and thresholds) | **Complete** — 6.1 exists, 6.2 (PR #70, 84 pass), 6.3 (PR #71, 84 pass) | `docs/architecture/`, `docs/integrations/`, `docs/monitoring/` |
 
 ## Planned expansion — detailed task traceability
 
@@ -166,13 +166,13 @@ ticket or PR when the team is ready to begin work.
 | 5.1 | Hierarchical policy tree-view with inheritance tags and override toggles | `ui/src/components/policies/` | React component test + Playwright browser test (21 tests) | **Verified** | #68 | 8 pass, 0 fail, 0 pending |
 | 5.2 | Integration settings panel: API key CRUD, webhook URL copy-paste | `ui/src/components/settings/` | React component test + Playwright browser test (36 tests) | **Verified** | #69 | 36 pass, 0 fail, 0 pending |
 
-### Phase 6: Core Technical Documentation — **IN PROGRESS** (6.1 exists, 6.2 merged, 6.3 in progress)
+### Phase 6: Core Technical Documentation — **COMPLETE** (6.1 exists, 6.2 merged, 6.3 merged)
 
 | ID | Task | Target | Status | PR | CI |
 |----|------|--------|--------|----|----|
-| 6.1 | `docs/architecture/policy-engine.md` — override precedence + ASCII evaluation diagram | `docs/architecture/` | `docs/POLICY_ENGINE.md` exists and covers this | — | — |
+| 6.1 | `docs/architecture/policy-engine.md` — override precedence + ASCII evaluation diagram | `docs/architecture/` | Exists (`docs/POLICY_ENGINE.md`) | — | — |
 | 6.2 | `docs/integrations/public-api.md` — OpenAPI 3.0 spec for EDR/Backup/PSA endpoints | `docs/integrations/` | **Verified** (651 lines) | #70 | 84 pass, 0 fail, 0 pending |
-| 6.3 | `docs/monitoring/best-practice-templates.md` — server/hardware master tables with OIDs, thresholds, self-healing targets | `docs/monitoring/` | **In progress** (365 lines, PR #71) | #71 | Pending CI |
+| 6.3 | `docs/monitoring/best-practice-templates.md` — server/hardware master tables with OIDs, thresholds, self-healing targets | `docs/monitoring/` | **Verified** (365 lines, 12 sections) | #71 | 84 pass, 0 fail, 0 pending |
 
 ### Phase 2: Hierarchical Policy Engine & Secure Script Vault — **COMPLETE** (2.1a, 2.1b, 2.2a, 2.2b done)
 
