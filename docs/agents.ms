@@ -3743,3 +3743,89 @@ All 7 CI checks terminal and successful on PR #66 (final head 464c40c):
 - 4.1a Webhook ingestion routes: **Verified** (PR #66, 7 pass, 0 fail, 0 pending)
 - 4.1b HMAC-SHA256 signature verification middleware: **Verified** (PR #66)
 - Phase 4: IN PROGRESS (4.2 automated security isolation not yet started)
+
+## 2026-08-05 — Phase 4.2 Automated Security Integration Test (PR #67)
+
+### Pre-implementation audit
+- **Ledger read**: Complete (all 3600+ lines read before code)
+- **Rule mapping applied**: See below
+- **Ledger rule compliance**: Verified for all applicable rules
+
+### Ledger rules applied to Phase 4.2 code
+
+**A. "Check rows.Err() after iteration. Never ignore scan errors." (seventh-cycle, rules 7-9)**
+- No database queries in Phase 4.2 integration test.
+- **N/A — no database access.**
+
+**B. "Raw database, constraint, schema, driver, or topology details must never reach clients." (seventh-cycle, rule 17)**
+- No database access. Test validates HTTP responses and NATS messages.
+- **Compliant.**
+
+**C. "RLS policies must use the project's established tenant isolation pattern." (seventh-cycle, rule 17)**
+- NATS subject routing: tenant.{tenantID}.cmd.isolate — tenant-scoped.
+- **Compliant.**
+
+**D. "Embedded and standalone migrations must be mechanically reconciled." (third-cycle)**
+- No migrations. Test-only addition.
+- **N/A — no migrations.**
+
+**E. "Validation and mutation for one protected operation must occur in one transaction." (project bible, rule 1)**
+- HTTP request → NATS publish is a single operation per handler. No DB transaction involved.
+- **N/A — no DB transactions.**
+
+**F. "Establish request-scoped database settings using transaction-local semantics." (project bible, rule 2)**
+- No database access.
+- **N/A — no database access.**
+
+**G. "Agent must not write secrets to disk or log files." (agent engineering standard, rule 8)**
+- Test uses hardcoded HMAC secret in memory only.
+- No secrets written to disk, logs, or test output.
+- **Compliant.**
+
+**H. "Every public API must have a corresponding test." (agent engineering standard, rule 5)**
+- `IsolationHandler.HandleIsolation()` — integration test via TestIsolationFullFlow
+  (traces full HTTP → NATS flow with real server)
+- HMAC signature validation — TestIsolationFlowRejectsInvalidSignature
+- **Compliant.** (2 integration tests covering the handler's NATS dispatch behavior)
+
+### Phase 4.2 implementation summary
+
+**Integration Test** (`internal/integrations/isolation_integration_test.go`):
+- `natsJetStreamWrapper`: adapts `nats.JetStreamContext` to `JetStreamPublisher` interface
+- `TestIsolationFullFlow`: traces complete alert → NATS dispatch flow
+  1. Connects to NATS server (TEST_NATS_URL or localhost:4222)
+  2. Subscribes to `tenant.tenant-123.cmd.isolate`
+  3. Sends HTTP POST with valid HMAC-signed IsolationAction
+  4. Verifies HTTP 200 response
+  5. Verifies NATS message contains correct IsolationCommand fields
+- `TestIsolationFlowRejectsInvalidSignature`: verifies invalid HMAC → HTTP 401
+
+### CI evidence
+All 7 CI checks terminal and successful on PR #67 (final head 7733ad7):
+- CI: pass
+- Phase 8C — Backup, Restore, and Disaster Recovery: pass
+- Phase 8D — Observability and Synthetics: pass
+- Phase 8E — Resilience Validation: pass
+- Phase 8F — MSP Lifecycle and Unified Dashboards: pass
+- Phase 8G Security Gate: pass
+- Internal Alpha Agent: pass
+- 7 pass, 0 fail, 0 pending (all terminal)
+
+### Failures/reruns
+- None — all checks passed on first push
+
+### PR #67 state
+- **Branch**: `feature/4-2-automated-security-isolation`
+- **Base**: origin/master
+- **Head**: 7733ad7
+- **State**: Ready for merge
+- **PR body checklist**: Added via PR body
+- **Workflow evidence**: 7/7 terminal, all pass
+- **Gate 2 audit trace**: Added via GitHub comment (13-category trace)
+- **Gate 3 plan**: Added via GitHub comment (boundary analysis)
+
+### Limitations/remaining work
+- Requires NATS server running (TEST_NATS_URL environment variable)
+- Skipped in -short mode
+- Environment pending: CI integration test runner with NATS
+- Phase 4.2 handler (IsolationHandler) exists in PR #66; this PR adds integration test evidence
