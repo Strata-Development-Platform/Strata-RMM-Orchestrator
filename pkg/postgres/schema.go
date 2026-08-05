@@ -4327,6 +4327,36 @@ DROP POLICY IF EXISTS "platform_admin_topology_edges" ON topology_edges;
 			`,
 			Down: `DROP TABLE IF EXISTS device_role_bindings;`,
 		},
+		{
+			ID:   94,
+			Name: "add_smart_groups_to_device_groups",
+			Up: `
+				ALTER TABLE device_groups ADD COLUMN IF NOT EXISTS filter_expression JSONB NOT NULL DEFAULT '{}';
+				ALTER TABLE device_groups ADD COLUMN IF NOT EXISTS is_smart BOOLEAN NOT NULL DEFAULT false;
+				ALTER TABLE device_groups ADD COLUMN IF NOT EXISTS last_evaluated TIMESTAMPTZ;
+				ALTER TABLE device_groups ADD COLUMN IF NOT EXISTS member_count INT NOT NULL DEFAULT 0;
+
+				CREATE TABLE IF NOT EXISTS group_memberships (
+					group_id     UUID NOT NULL REFERENCES device_groups(id) ON DELETE CASCADE,
+					device_id    UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+					evaluated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					PRIMARY KEY (group_id, device_id)
+				);
+				CREATE INDEX IF NOT EXISTS idx_group_memberships_device ON group_memberships(device_id);
+				CREATE INDEX IF NOT EXISTS idx_group_memberships_group ON group_memberships(group_id, evaluated_at);
+
+				-- Backfill existing device_groups: set is_smart=true for any group with non-empty filter_tags
+				UPDATE device_groups SET is_smart = true, filter_expression = '{"condition":"AND","filters":[]}'
+					WHERE filter_tags IS NOT NULL AND filter_tags != '{}' AND is_smart = false;
+			`,
+			Down: `
+				DROP TABLE IF EXISTS group_memberships;
+				ALTER TABLE device_groups DROP COLUMN IF EXISTS filter_expression;
+				ALTER TABLE device_groups DROP COLUMN IF EXISTS is_smart;
+				ALTER TABLE device_groups DROP COLUMN IF EXISTS last_evaluated;
+				ALTER TABLE device_groups DROP COLUMN IF EXISTS member_count;
+			`,
+		},
 	}
 }
 
