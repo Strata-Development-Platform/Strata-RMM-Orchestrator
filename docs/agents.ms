@@ -3989,4 +3989,4 @@ All 7 CI checks terminal and successful on PR #67 (final head 7733ad7):
 - 6.1 policy-engine: Exists (docs/POLICY_ENGINE.md)
 - 6.2 OpenAPI spec: In progress (PR #70)
 - 6.3 best-practice-templates: Not started
-- Phase 6: IN PROGRESS
+- Phase 6: IN PROGRESS (6.2 merged)
