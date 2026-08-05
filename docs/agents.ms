@@ -3696,3 +3696,50 @@ All 7 CI checks terminal and successful on PR #66 (final head 464c40c):
 - Severity normalization is a best-effort mapping (provider-specific terms may not map cleanly)
 - Environment pending: real integration testing with SentinelOne/CrowdStrike/Veeam/HaloPSA payloads
 - No dashboard UI for integration configuration (Phase 5 in future)
+
+## 2026-08-05 — Post-merge verification: Phase 4.1a/4.1b
+
+### Gate 10 — PR #66 Merge
+- **Owner authorization**: Explicit — owner typed "merge the move on to next item"
+- **Authorized head SHA**: 464c40cc7f94473ede7b913186eb84e91376b025
+- **Merge method**: Marked ready, squash merge via `gh pr merge 66 --squash --delete-branch`
+- **Merge SHA**: e8b252a4f8859f08e4d3a22ce8001f3b9db5795c
+- **Master verified**: master fast-forwarded from e6425c4 → e8b252a
+- **PR state**: MERGED
+- **Branch deleted**: Yes (feature/4-1a-1b-integration-router)
+- **Open dev PRs**: None
+- **Post-merge CI**: 7 pass, 0 fail, 0 pending (all terminal)
+- **No unintended development PR remains open**: Confirmed
+- **No new slice started**: Confirmed
+
+### Gate 7 — Exact-head CI Evidence (final head 464c40c)
+- Total: 7 pass, 0 fail, 0 pending
+- CI: pass
+- Phase 8C — Backup, Restore, and Disaster Recovery: pass
+- Phase 8D — Observability and Synthetics: pass
+- Phase 8E — Resilience Validation: pass
+- Phase 8F — MSP Lifecycle and Unified Dashboards: pass
+- Phase 8G Security Gate: pass
+- Internal Alpha Agent: pass
+
+### Gate 6 — PR Body Checklist
+- All required sections present in PR body
+- GitHub comment: https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/pull/66#issuecomment-5185957501
+
+### Gate 7 — Workflow Evidence
+- GitHub comment: https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/pull/66#issuecomment-5185959401
+- 2 failures fixed: lint errcheck (json.Encoder.Encode, json.Unmarshal, w.Write), GoSec G101 (dev secret fallback)
+- No reruns performed — deterministic fixes pushed as new heads
+
+### Gate 2 — Audit Trace
+- GitHub comment: https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/pull/66#issuecomment-5185960758
+- 13 categories: Entry points (Verified), Identity (Verified), Authorization (Verified), Tenant isolation (Verified), Persistence (Partial), Messaging (Verified), Object storage (N/A), Endpoint execution (Verified), UI state (N/A), Audit (Verified), Metrics (N/A), Alerts (Partial), Runbooks (Environment pending)
+
+### Gate 3 — Plan
+- GitHub comment: https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/pull/66#issuecomment-5185962378
+- Threat analysis, authorization model, tenant isolation, client boundary, endpoint boundary, data flow, failure mode all documented
+
+### Phase 4 status
+- 4.1a Webhook ingestion routes: **Verified** (PR #66, 7 pass, 0 fail, 0 pending)
+- 4.1b HMAC-SHA256 signature verification middleware: **Verified** (PR #66)
+- Phase 4: IN PROGRESS (4.2 automated security isolation not yet started)

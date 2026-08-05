@@ -155,8 +155,8 @@ ticket or PR when the team is ready to begin work.
 
 | ID | Task | Target | Evidence required |
 |----|------|--------|-------------------|
-| 4.1a | Webhook ingestion routes: `/api/v1/integrations/edr/alerts`, `/backup/sync`, `/psa/webhooks` | `cmd/orchestrator/router.go`, `internal/integrations/` | HTTP handler tests with mock payloads from SentinelOne/CrowdStrike/Veeam/HaloPSA |
-| 4.1b | HMAC-SHA256 signature verification middleware | `internal/integrations/middleware.go` | Auth test verifying valid/invalid signatures are accepted/rejected |
+| 4.1a | Webhook ingestion routes: `/api/v1/integrations/edr/alerts`, `/backup/sync`, `/psa/webhooks` | `internal/integrations/webhooks.go` | HTTP handler tests with mock payloads (3 tests: valid/invalid JSON/missing fields) | **Verified** | #66 | 7 pass, 0 fail, 0 pending |
+| 4.1b | HMAC-SHA256 signature verification middleware | `internal/integrations/middleware.go` | Auth test verifying valid/invalid/expired signatures (15 tests) | **Verified** | #66 | 7 pass, 0 fail, 0 pending |
 | 4.2 | Automated security isolation: EDR high-severity alert → NATS isolation command to target agent | `internal/integrations/actions.go` | Integration test tracing alert receipt → isolation command dispatch |
 
 ### Phase 5: UI Configuration Components
