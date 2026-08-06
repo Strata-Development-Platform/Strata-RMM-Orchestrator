@@ -66,6 +66,7 @@ export default function MSPListPage() {
   const [error, setError] = useState('');
   const [createErrors, setCreateErrors] = useState<CreateErrors>({});
   const [creationError, setCreationError] = useState('');
+  const [creationSuccess, setCreationSuccess] = useState('');
   const [creating, setCreating] = useState(false);
   const [resendingMSPID, setResendingMSPID] = useState('');
   const createErrorRef = useRef<HTMLDivElement>(null);
@@ -99,6 +100,7 @@ export default function MSPListPage() {
       plan: String(data.get('plan')),
       owner_email: String(data.get('owner_email')).trim(),
     };
+    setCreationSuccess('');
     const nextErrors: CreateErrors = {};
     if (!request.name) nextErrors.name = 'MSP name is required.';
     if (!request.slug) {
@@ -127,6 +129,7 @@ export default function MSPListPage() {
       const created = await api.createMSPWithOwner(request);
       form.reset();
       const delivery = invitationDeliveryLabel(created.delivery_status);
+      setCreationSuccess(created.delivery_status === 'delivered' ? 'owner invitation delivered' : `invitation status: ${delivery}`);
       showToast('success', created.delivery_status === 'delivered'
         ? 'MSP tenant created and owner invitation delivered.'
         : `MSP tenant created. Invitation status: ${delivery}.`);
@@ -142,9 +145,13 @@ export default function MSPListPage() {
   const handleResend = async (msp: MSPTenant) => {
     if (resendingMSPID) return;
     setResendingMSPID(msp.id);
+    setCreationSuccess('');
     try {
       const result = await api.resendOwnerInvitation(msp.id);
       const delivery = invitationDeliveryLabel(result.delivery_status);
+      setCreationSuccess(result.delivery_status === 'delivered'
+        ? `Owner invitation for ${msp.name} was delivered.`
+        : `Owner invitation for ${msp.name} was rotated. Invitation status: ${delivery}.`);
       showToast('success', result.delivery_status === 'delivered'
         ? `Owner invitation for ${msp.name} was delivered.`
         : `Owner invitation for ${msp.name} was rotated. Invitation status: ${delivery}.`);
@@ -185,6 +192,11 @@ export default function MSPListPage() {
                 {createErrors.owner_email && <li>{createErrors.owner_email}</li>}
               </ul>
             )}
+          </div>
+        )}
+        {creationSuccess && (
+          <div role="status" className="mt-3 rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-900 dark:border-green-900 dark:bg-green-950/40 dark:text-green-100">
+            <p>{creationSuccess}</p>
           </div>
         )}
         <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
