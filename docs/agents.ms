@@ -4321,3 +4321,23 @@ PR #82: Entry points → `DeviceGroupListPage.tsx` (list page, 273 lines), `Smar
 - **Routes**: POST/GET/PUT/DELETE /integrations/psa/tickets, GET /integrations/psa/tickets/device/{deviceID}, POST /integrations/psa/feedback, POST /integrations/psa/webhooks
 - **Gate 2 audit**: Entry → psa_handlers.go; Identity → JWT via handler chain; Authorization → AuthorizeMSPManage; Tenant → PSA tickets scoped to tenant_id; Persistence → In-memory simulation; Messaging → NATS events; Endpoint execution → 6 PSA API routes
 - **Limitations**: PSA API calls simulated (no real API integration); Ticket-device correlation uses in-memory list; Auto-remediation triggers NATS events only
+
+## PR #88: WebRTC Remote Support + LAN Cache - P2P video, recording, transcription, local package distribution
+- **Merged**: 53e97db (squash merge)
+- **Branch**: feat/webrtc-lancache
+- **CI Evidence**: All 83 checks pass, 0 fail
+  - Backend: all 29 packages pass (webrtc: 80+ tests, lancache: 45 tests)
+  - Frontend: 110 tests pass (10 files)
+- **Files**: 
+  - internal/webrtc/config.go (205), config_test.go (484), handler.go (467), handler_test.go (330), peer.go (308), peer_test.go (410), recording.go (189), recording_test.go (216), transcription.go (264), transcription_test.go (242)
+  - internal/lancache/config.go (177), config_test.go (270), server.go (289), server_test.go (309)
+  - internal/platform/api.go (+104), internal/platform/middleware.go (+21)
+- **WebRTC Methods**: HandleCreateSession, HandleGetSession, HandleCreateOffer, HandleHandleAnswer, HandleAddICECandidate, HandleEndSession, HandleListSessions, HandleGetRelayConfig, HandleStartRecording, HandleStopRecording, HandleListRecordings, HandleStartTranscription, HandleStopTranscription, HandleListTranscriptions, HandleListTranscriptions
+- **LAN Cache Methods**: HandleCreateEntry, HandleGetEntry, HandleListEntries, HandleCacheStats, HandleServeHTTP
+- **Routes**: 15 WebRTC + 5 LAN Cache = 20 new endpoints
+- **Gate 2 audit**: Entry → webrtc/handler.go, lancache/server.go; Identity → JWT via handler chain; Authorization → AuthorizeMSPManage; Tenant → sessions/cache entries scoped to tenant_id; Persistence → In-memory; Messaging → NATS events (webrtc signaling, lancache notifications); Endpoint execution → 20 new REST endpoints; Metrics → WebRTC session stats, LAN Cache stats
+
+**Limitations:**
+- WebRTC: Media data is mock SDP only (no actual P2P streaming); TURN/STUN credentials not configured; STT transcription uses mock data. Production WebRTC requires actual P2P media infrastructure, TURN server deployment, and STT API integration.
+- LAN Cache: Cache files served via HTTP mock (not actual file streaming); P2P sharing logic simulated. Production LAN Cache requires actual file storage, P2P networking stack, and bandwidth throttling.
+- Persistence: Both WebRTC sessions and LAN Cache are in-memory only — data is lost on restart.
