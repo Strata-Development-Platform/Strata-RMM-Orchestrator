@@ -18,10 +18,12 @@ import (
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/alerting"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/integrations"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/inventory"
+	"github.com/strata-rmm/strata-rmm-orchestrator/internal/lancache"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/observability"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/patch"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/remote"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/reporting"
+	"github.com/strata-rmm/strata-rmm-orchestrator/internal/webrtc"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/auth"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/encrypt"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/storage"
@@ -44,7 +46,9 @@ type APIServer struct {
 	updateMgr      *UpdateManager
 	releaseServer  *ReleaseServer
 	keyStore       *encrypt.KeyStore
+	lancacheServer *lancache.Server
 	recordingStore *remote.RecordingStore
+	recorder       *remote.Recorder
 	storageBackend storage.Backend
 	accountMailer  AccountMailer
 	publicURL      string
@@ -186,6 +190,11 @@ func (s *APIServer) WithReleaseServer(rs *ReleaseServer) *APIServer {
 
 func (s *APIServer) WithRecordingStore(rs *remote.RecordingStore) *APIServer {
 	s.recordingStore = rs
+	return s
+}
+
+func (s *APIServer) WithRecorder(rc *remote.Recorder) *APIServer {
+	s.recorder = rc
 	return s
 }
 
@@ -2556,6 +2565,101 @@ func (s *APIServer) registerIntegrationRoutes(mux *http.ServeMux) {
 	})
 	mux.HandleFunc("POST /api/v1/integrations/isolate", func(w http.ResponseWriter, r *http.Request) {
 		verifier.Middleware(http.HandlerFunc(isolationHandler.HandleIsolation)).ServeHTTP(w, r)
+	})
+	// WebRTC remote support routes
+	webRTCHandler := webrtc.NewHandler(s.nats, s.recorder, s.logger)
+	mux.HandleFunc("POST /api/v1/webrtc/sessions", func(w http.ResponseWriter, r *http.Request) {
+		verifier.Middleware(http.HandlerFunc(webRTCHandler.HandleCreateSession)).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("GET /api/v1/webrtc/sessions/{sessionID}", func(w http.ResponseWriter, r *http.Request) {
+		verifier.Middleware(http.HandlerFunc(webRTCHandler.HandleGetSession)).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("POST /api/v1/webrtc/sessions/{sessionID}/offer", func(w http.ResponseWriter, r *http.Request) {
+		verifier.Middleware(http.HandlerFunc(webRTCHandler.HandleCreateOffer)).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("POST /api/v1/webrtc/sessions/{sessionID}/answer", func(w http.ResponseWriter, r *http.Request) {
+		verifier.Middleware(http.HandlerFunc(webRTCHandler.HandleHandleAnswer)).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("POST /api/v1/webrtc/sessions/{sessionID}/ice-candidate", func(w http.ResponseWriter, r *http.Request) {
+		verifier.Middleware(http.HandlerFunc(webRTCHandler.HandleAddICECandidate)).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("POST /api/v1/webrtc/sessions/{sessionID}/end", func(w http.ResponseWriter, r *http.Request) {
+		verifier.Middleware(http.HandlerFunc(webRTCHandler.HandleEndSession)).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("GET /api/v1/webrtc/sessions", func(w http.ResponseWriter, r *http.Request) {
+		verifier.Middleware(http.HandlerFunc(webRTCHandler.HandleListSessions)).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("GET /api/v1/webrtc/sessions/{sessionID}/relay-config", func(w http.ResponseWriter, r *http.Request) {
+		verifier.Middleware(http.HandlerFunc(webRTCHandler.HandleGetRelayConfig)).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("POST /api/v1/webrtc/sessions/{sessionID}/record", func(w http.ResponseWriter, r *http.Request) {
+		verifier.Middleware(http.HandlerFunc(webRTCHandler.HandleStartRecording)).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("POST /api/v1/webrtc/recordings/{recordingID}/stop", func(w http.ResponseWriter, r *http.Request) {
+		verifier.Middleware(http.HandlerFunc(webRTCHandler.HandleStopRecording)).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("GET /api/v1/webrtc/sessions/{sessionID}/recordings", func(w http.ResponseWriter, r *http.Request) {
+		verifier.Middleware(http.HandlerFunc(webRTCHandler.HandleListRecordings)).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("POST /api/v1/webrtc/sessions/{sessionID}/transcribe", func(w http.ResponseWriter, r *http.Request) {
+		verifier.Middleware(http.HandlerFunc(webRTCHandler.HandleStartTranscription)).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("POST /api/v1/webrtc/transcriptions/{transcriptionID}/stop", func(w http.ResponseWriter, r *http.Request) {
+		verifier.Middleware(http.HandlerFunc(webRTCHandler.HandleStopTranscription)).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("GET /api/v1/webrtc/sessions/{sessionID}/transcriptions", func(w http.ResponseWriter, r *http.Request) {
+		verifier.Middleware(http.HandlerFunc(webRTCHandler.HandleListTranscriptions)).ServeHTTP(w, r)
+	})
+	// LAN Cache routes
+	lancacheServer := lancache.NewServer(lancache.DefaultCacheConfig(), s.logger, s.nats)
+	lancacheServer.Start()
+	s.lancacheServer = lancacheServer
+	mux.HandleFunc("POST /api/v1/lancache/entries", func(w http.ResponseWriter, r *http.Request) {
+		var req lancache.CreateCacheRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
+			return
+		}
+		entry, err := lancacheServer.AddCacheEntry(&req)
+		if err != nil {
+			http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(entry)
+	})
+	mux.HandleFunc("GET /api/v1/lancache/entries/{entryID}", func(w http.ResponseWriter, r *http.Request) {
+		entryID := r.PathValue("entryID")
+		entry, err := lancacheServer.GetCacheEntry(entryID)
+		if err != nil {
+			http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(entry)
+	})
+	mux.HandleFunc("GET /api/v1/lancache/entries", func(w http.ResponseWriter, r *http.Request) {
+		tenantID := r.URL.Query().Get("tenant_id")
+		if tenantID == "" {
+			http.Error(w, `{"error":"missing tenant_id"}`, http.StatusBadRequest)
+			return
+		}
+		entries := lancacheServer.ListCacheEntries(tenantID)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"entries": entries, "total": len(entries)})
+	})
+	mux.HandleFunc("DELETE /api/v1/lancache/entries/{entryID}", func(w http.ResponseWriter, r *http.Request) {
+		entryID := r.PathValue("entryID")
+		if err := lancacheServer.EvictCacheEntry(entryID); err != nil {
+			http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "evicted", "entry_id": entryID})
+	})
+	mux.HandleFunc("GET /api/v1/lancache/stats", func(w http.ResponseWriter, r *http.Request) {
+		lancacheServer.HandleCacheStats(w, r)
 	})
 }
 
