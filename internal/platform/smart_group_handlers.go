@@ -160,7 +160,7 @@ func (s *APIServer) handleListDeviceGroupMembers(w http.ResponseWriter, r *http.
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var members []map[string]interface{}
 	for rows.Next() {
@@ -183,9 +183,12 @@ func (s *APIServer) handleListDeviceGroupMembers(w http.ResponseWriter, r *http.
 	}
 
 	var totalCount int
-	s.requestDB(r).QueryRowContext(r.Context(), `
+	if err := s.requestDB(r).QueryRowContext(r.Context(), `
 		SELECT COUNT(*) FROM group_memberships WHERE group_id = $1
-	`, groupID).Scan(&totalCount)
+	`, groupID).Scan(&totalCount); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"members":   members,
@@ -306,7 +309,7 @@ func (s *APIServer) evaluateSingleGroup(groupID, mspID string) {
 		s.logger.Error("evaluateSingleGroup: query devices", zap.String("group_id", groupID), zap.Error(err))
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	type deviceInfo struct {
 		ID       string
@@ -434,7 +437,7 @@ func (s *APIServer) evaluateAllSmartGroups(ctx context.Context) {
 		s.logger.Error("evaluateAllSmartGroups: query smart groups", zap.Error(err))
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	type smartGroup struct {
 		ID               string
