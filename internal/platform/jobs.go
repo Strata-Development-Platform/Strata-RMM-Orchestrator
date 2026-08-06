@@ -647,7 +647,7 @@ func (so *ScheduleOrchestrator) ExecuteScheduleDevice(ctx context.Context, sched
 		return fmt.Errorf("schedule not found or not active: %w", err)
 	}
 
-	if params != nil && len(params) > 0 {
+	if len(params) > 0 {
 		schedule.ScheduleParams = params
 	}
 
@@ -694,7 +694,7 @@ func (so *ScheduleOrchestrator) ExecuteScheduleDevice(ctx context.Context, sched
 	subject := fmt.Sprintf("tenant.%s.cmd.%s", schedule.TenantID, deviceID)
 	if err := so.nc.Publish(subject, cmdPayload); err != nil {
 		so.logger.Warn("publish schedule command", zap.Error(err))
-		so.db.ExecContext(ctx, `
+		_, _ = so.db.ExecContext(ctx, `
 			UPDATE schedule_device_executions SET status = 'failed', stderr = 'NATS publish failed'
 			WHERE id = $1
 		`, execID)
