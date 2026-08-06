@@ -43,7 +43,7 @@ exercise unless the internal-alpha scope is expanded.
 
 | Capability | Status | Runtime evidence | Automated evidence | Material gap to specification |
 |---|---|---|---|---|
-| Tenant hierarchy, device enrollment, and identity | Verified for internal alpha; Partial for full specification | `internal/platform/enrollment.go`, `internal/platform/device_handlers.go`, `internal/agent/core/identity.go`, `internal/agent/core/store.go` | `agent_enrollment_test.go`, `device_handlers_test.go`, `bootstrap_test.go`, `store_queue_test.go`, `phase8f_integration_test.go` | CMDB dependency relationships and all advertised device-level overrides are not evidenced. |
+| Tenant hierarchy, device enrollment, and identity | Verified for internal alpha; Partial for full specification | `internal/platform/enrollment.go`, `internal/platform/device_handlers.go`, `internal/agent/core/identity.go`, `internal/agent/core/store.go` | `agent_enrollment_test.go`, `device_handlers_test.go`, `bootstrap_test.go`, `store_queue_test.go`, `phase8f_integration_test.go`, `cmdb_hierarchy_test.go` (RLS), `device_handlers_test.go` (7 new device relationship tests) | CMDB dependency relationships **verified** (PR #80, 7 unit tests; PR #79 Integration Dashboard). All advertised device-level overrides remain not fully evidenced. |
 | Metrics collection, ingestion, and storage | Verified for internal alpha; Partial for full specification | `internal/agent/collectors/system.go`, `internal/monitoring/ingestion.go`, `pkg/timescale` | `collector_test.go`, `ingestion_identity_test.go`, NATS integration tests, Phase 8C integration jobs | IPMI/Redfish, SIP/RTP, multi-vantage checks, and the full hot/warm/cold retention policy are not evidenced. |
 | Dashboard visibility | Environment pending | `deploy/grafana`, telemetry APIs, UI dashboard pages | UI unit/build/browser jobs and dashboard provisioning validation | A live dashboard observation using telemetry from the enrolled hosted agent is still required. |
 | Alert evaluation and state transitions | Verified core lifecycle; Partial for full specification | `internal/alerting/engine.go`, `rules.go`, `store.go` | `internal/alerting/engine_test.go` covers threshold and heartbeat fire/recovery correlation, cooldown, disabled rules, UUID persistence, restart restoration, and tenant/device-scoped CVE deduplication and resolution; PR #28 exact-head workflows passed 80/80. | Grouping and maintenance-window silence remain absent. |
@@ -167,6 +167,18 @@ ticket or PR when the team is ready to begin work.
 PR #79 (4.3): Entry points → `IntegrationDashboardPanel.tsx` (IntegrationDashboardPanel component); Identity → N/A (UI component); Authorization → N/A (UI component uses mock data); Tenant → N/A (mock data); Persistence → N/A (mock data); Messaging → N/A; Object storage → N/A; Endpoint execution → N/A; UI state → useState for dashboard data, active filter, expanded event, unacknowledged toggle; Audit records → N/A; Metrics → N/A; Alerts → N/A; Runbooks → N/A; Existing tests → 15 tests in `IntegrationDashboardPanel.test.tsx` covering render, summary cards, provider cards, events feed, filters, toggle, latency, uptime.
 
 **Limitations (4.3):** No real API integration (uses mock data), no live data refresh (manual refresh only), no provider configuration from dashboard, no event deduplication or alert routing, no provider-specific dashboard views.
+
+### Phase 9: CMDB Dependency Relationships — **COMPLETE** (9.1 verified)
+
+| ID | Task | Target | Evidence required | Status | PR | CI |
+|----|------|--------|-------------------|--------|----|----|
+| 9.1 | CMDB dependency relationships API + unit tests (GET/POST/DELETE /devices/relationships, 7 tests) | `device_handlers.go`, `device_handlers_test.go` | 7 tests: request validation, response structure, relationship types, metadata | **Verified** | #80 | all pass |
+
+**Gate 2 audit trace for PR #80:**
+
+PR #80 (9.1): Entry points → `device_handlers.go` (handleCreateDeviceRelationship, handleGetDeviceRelationships, handleDeleteDeviceRelationship), `device_handlers_test.go` (7 tests); Identity → N/A (middleware handles auth); Authorization → AuthorizeMSPManage on all handlers, msp_id scoping on all queries; Tenant → device_relationships scoped to msp_id with RLS policies (verified by cmdb_hierarchy_test.go); Persistence → device_relationships table (existing Migration 68), RLS enforced via WITH CHECK clause; Messaging → N/A; Object storage → N/A; Endpoint execution → GET/POST/DELETE /api/v1/devices/relationships; UI state → N/A; Audit records → N/A; Metrics → N/A; Alerts → N/A; Runbooks → N/A; Existing tests → 7 unit tests in `device_handlers_test.go` + RLS tests in `cmdb_hierarchy_test.go`.
+
+**Limitations (9.1):** No UI component for managing device relationships (future), no automated relationship discovery from inventory data (future), no relationship type validation beyond string (future), no relationship hierarchy visualization (future).
 
 ### Phase 5: UI Configuration Components — **COMPLETE** (5.1, 5.2 verified)
 

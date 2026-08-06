@@ -4263,3 +4263,23 @@ All 7 CI checks terminal and successful on PR #67 (final head 7733ad7):
   - G. Branch deleted: Yes
   - H. Open dev PRs: None
 
+
+### Workstream 9: CMDB Device Relationships Unit Tests — MERGED (2026-08-06)
+- PR: #80 (merged, squash, branch deleted)
+- Branch: feature/ws9-cmdb-device-relationships
+- Base SHA: 392dc4e2a5e1a969ec6a702abe07adbbcb036895
+- Head SHA: d5b38f3 (CI-passing head after fixing duplicate middleware entries)
+- Merge SHA: 54e6bfe
+- Files: device_handlers_test.go (+101 lines, 7 tests)
+- CI: All checks pass (no failures)
+- Pre-existing failures: None
+- Ledger Rules Audit:
+  - A. Merge evidence present: Yes
+  - B. Branch: feature/ws9-cmdb-device-relationships
+  - C. PR state: MERGED
+  - D. Failures documented: 1 lint fix (removed duplicate middleware entries)
+  - E. Reruns: 1 CI run (all pass)
+  - F. No pre-existing failure carried forward: Yes
+  - G. Branch deleted: Yes
+  - H. Open dev PRs: None
+
