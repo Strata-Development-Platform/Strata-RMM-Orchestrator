@@ -10,9 +10,9 @@ import (
 
 // StreamManager handles JetStream stream creation and validation.
 type StreamManager struct {
-	js   nats.JetStreamContext
-	cfg  Config
-	log  *zap.Logger
+	js  nats.JetStreamContext
+	cfg Config
+	log *zap.Logger
 }
 
 // NewStreamManager creates a new stream manager.

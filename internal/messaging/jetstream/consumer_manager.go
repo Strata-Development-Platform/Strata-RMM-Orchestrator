@@ -10,9 +10,9 @@ import (
 
 // ConsumerManager handles JetStream consumer creation and validation.
 type ConsumerManager struct {
-	js   nats.JetStreamContext
-	cfg  Config
-	log  *zap.Logger
+	js  nats.JetStreamContext
+	cfg Config
+	log *zap.Logger
 }
 
 // NewConsumerManager creates a new consumer manager.
@@ -41,13 +41,13 @@ func (m *ConsumerManager) ensureConsumer(ctx context.Context, cc *ConsumerConfig
 
 	// Consumer doesn't exist, create it
 	_, err = m.js.AddConsumer(cc.Stream, &nats.ConsumerConfig{
-		Durable:   cc.Durable,
-		Name:      cc.Name,
-		AckPolicy: m.ackPolicyToNats(cc.AckPolicy),
-		AckWait:   cc.AckWait,
-		MaxDeliver: cc.MaxDeliver,
+		Durable:      cc.Durable,
+		Name:         cc.Name,
+		AckPolicy:    m.ackPolicyToNats(cc.AckPolicy),
+		AckWait:      cc.AckWait,
+		MaxDeliver:   cc.MaxDeliver,
 		ReplayPolicy: m.replayPolicyToNats(cc.Replay),
-		RateLimit: cc.RateLimit,
+		RateLimit:    cc.RateLimit,
 	})
 	if err != nil {
 		m.log.Warn("jetstream consumer add failed (may already exist)",

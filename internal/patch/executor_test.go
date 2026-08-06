@@ -9,17 +9,17 @@ import (
 
 func TestParseAptUpgradable(t *testing.T) {
 	tests := []struct {
-		name       string
-		output     string
-		wantCount  int
-		wantNames  []string
+		name        string
+		output      string
+		wantCount   int
+		wantNames   []string
 		wantVerions []string
 	}{
 		{
-			name: "single package",
-			output: `libcurl4/oldoldstable 7.88.1-10+deb12u12 amd64 [upgradable from: 7.88.1-10+deb12u8]`,
-			wantCount:  1,
-			wantNames:  []string{"libcurl4"},
+			name:        "single package",
+			output:      `libcurl4/oldoldstable 7.88.1-10+deb12u12 amd64 [upgradable from: 7.88.1-10+deb12u8]`,
+			wantCount:   1,
+			wantNames:   []string{"libcurl4"},
 			wantVerions: []string{"7.88.1-10+deb12u12"},
 		},
 		{
@@ -27,39 +27,39 @@ func TestParseAptUpgradable(t *testing.T) {
 			output: `libcurl4/oldoldstable 7.88.1-10+deb12u12 amd64 [upgradable from: 7.88.1-10+deb12u8]
 openssl/stable-security 3.0.17-1~deb12u3 amd64 [upgradable from: 3.0.11-1~deb12u2]
 zlib1g/oldoldstable 1:1.2.13.dfsg-1 amd64 [upgradable from: 1:1.2.13.dfsg-1+deb12u1]`,
-			wantCount:  3,
-			wantNames:  []string{"libcurl4", "openssl", "zlib1g"},
+			wantCount:   3,
+			wantNames:   []string{"libcurl4", "openssl", "zlib1g"},
 			wantVerions: []string{"7.88.1-10+deb12u12", "3.0.17-1~deb12u3", "1:1.2.13.dfsg-1"},
 		},
 		{
-			name: "empty output",
-			output: "",
-			wantCount:  0,
+			name:      "empty output",
+			output:    "",
+			wantCount: 0,
 		},
 		{
 			name: "no upgradable packages",
 			output: `libcurl4/oldoldstable 7.88.1-10+deb12u8 amd64
 openssl/stable-security 3.0.11-1~deb12u2 amd64`,
-			wantCount:  0,
+			wantCount: 0,
 		},
 		{
-			name: "partial line with empty version",
-			output: `pkgname/branch [upgradable from: ]`,
-			wantCount:  1, // versionPart is "branch" which is not empty
-			wantNames:  []string{"pkgname"},
+			name:      "partial line with empty version",
+			output:    `pkgname/branch [upgradable from: ]`,
+			wantCount: 1, // versionPart is "branch" which is not empty
+			wantNames: []string{"pkgname"},
 		},
 		{
-			name: "malformed line no slash",
-			output: `this is not a valid line`,
-			wantCount:  0,
+			name:      "malformed line no slash",
+			output:    `this is not a valid line`,
+			wantCount: 0,
 		},
 		{
 			name: "mixed valid and invalid",
 			output: `libcurl4/oldoldstable 7.88.1-10+deb12u12 amd64 [upgradable from: 7.88.1-10+deb12u8]
 this is invalid
 openssl/stable 3.0.17-1 amd64 [upgradable from: 3.0.11-1]`,
-			wantCount:  2,
-			wantNames:  []string{"libcurl4", "openssl"},
+			wantCount:   2,
+			wantNames:   []string{"libcurl4", "openssl"},
 			wantVerions: []string{"7.88.1-10+deb12u12", "3.0.17-1"},
 		},
 	}
@@ -100,40 +100,40 @@ func TestParseDnfCheckUpdate(t *testing.T) {
 		wantNames []string
 	}{
 		{
-			name: "single package",
-			output: `kernel.x86_64              5.14.0-427.16.1.el9_4      @appstream`,
-			wantCount:  1,
-			wantNames:  []string{"kernel.x86_64"},
+			name:      "single package",
+			output:    `kernel.x86_64              5.14.0-427.16.1.el9_4      @appstream`,
+			wantCount: 1,
+			wantNames: []string{"kernel.x86_64"},
 		},
 		{
 			name: "multiple packages",
 			output: `kernel.x86_64              5.14.0-427.16.1.el9_4      @appstream
 openssl.x86_64             3.0.7-25.el9_4             @appstream
 glibc.x86_64               2.34-64.el9_4              @baseos`,
-			wantCount:  3,
-			wantNames:  []string{"kernel.x86_64", "openssl.x86_64", "glibc.x86_64"},
+			wantCount: 3,
+			wantNames: []string{"kernel.x86_64", "openssl.x86_64", "glibc.x86_64"},
 		},
 		{
-			name: "empty output",
-			output: "",
-			wantCount:  0,
+			name:      "empty output",
+			output:    "",
+			wantCount: 0,
 		},
 		{
-			name: "no updates (plugin line parsed as patch)",
-			output: `Loading plugin fastestmirror`,
-			wantCount:  1, // parsed as "Loading-plugin" due to field splitting
+			name:      "no updates (plugin line parsed as patch)",
+			output:    `Loading plugin fastestmirror`,
+			wantCount: 1, // parsed as "Loading-plugin" due to field splitting
 		},
 		{
 			name: "line with trailing dash (multi-line)",
 			output: `some-package.x86_64  1.0-1.el9      repo-
 other-package.x86_64   2.0-2.el9      repo`,
-			wantCount:  1, // trailing-dash line is skipped, only second line parsed
-			wantNames:  []string{"other-package.x86_64"},
+			wantCount: 1, // trailing-dash line is skipped, only second line parsed
+			wantNames: []string{"other-package.x86_64"},
 		},
 		{
-			name: "single field only",
-			output: `pkgname`,
-			wantCount:  0,
+			name:      "single field only",
+			output:    `pkgname`,
+			wantCount: 0,
 		},
 	}
 
@@ -170,27 +170,27 @@ func TestParseYumCheckUpdate(t *testing.T) {
 		wantNames []string
 	}{
 		{
-			name: "single package",
-			output: `kernel.x86_64              5.14.0-427.16.1.el9_4      @appstream`,
-			wantCount:  1,
-			wantNames:  []string{"kernel.x86_64"},
+			name:      "single package",
+			output:    `kernel.x86_64              5.14.0-427.16.1.el9_4      @appstream`,
+			wantCount: 1,
+			wantNames: []string{"kernel.x86_64"},
 		},
 		{
 			name: "multiple packages",
 			output: `kernel.x86_64              5.14.0-427.16.1.el9_4      @appstream
 openssl.x86_64             3.0.7-25.el9_4             @appstream`,
-			wantCount:  2,
-			wantNames:  []string{"kernel.x86_64", "openssl.x86_64"},
+			wantCount: 2,
+			wantNames: []string{"kernel.x86_64", "openssl.x86_64"},
 		},
 		{
-			name: "empty output",
-			output: "",
-			wantCount:  0,
+			name:      "empty output",
+			output:    "",
+			wantCount: 0,
 		},
 		{
-			name: "no updates (plugin line parsed as patch)",
-			output: `Loading plugin fastestmirror`,
-			wantCount:  1,
+			name:      "no updates (plugin line parsed as patch)",
+			output:    `Loading plugin fastestmirror`,
+			wantCount: 1,
 		},
 	}
 
@@ -227,47 +227,47 @@ func TestParseZypperListPatches(t *testing.T) {
 		wantNames []string
 	}{
 		{
-			name: "single patch",
-			output: `i | SUSE-SU-2024:1234-1 | important | openssl-3.0.13`,
-			wantCount:  1,
-			wantNames:  []string{"SUSE-SU-2024:1234-1"}, // fields[2] is advisory-id
+			name:      "single patch",
+			output:    `i | SUSE-SU-2024:1234-1 | important | openssl-3.0.13`,
+			wantCount: 1,
+			wantNames: []string{"SUSE-SU-2024:1234-1"}, // fields[2] is advisory-id
 		},
 		{
-			name: "uppercase status",
-			output: `I | SUSE-SU-2024:5678-1 | moderate | kernel-default-6.4.0`,
-			wantCount:  1,
-			wantNames:  []string{"SUSE-SU-2024:5678-1"},
+			name:      "uppercase status",
+			output:    `I | SUSE-SU-2024:5678-1 | moderate | kernel-default-6.4.0`,
+			wantCount: 1,
+			wantNames: []string{"SUSE-SU-2024:5678-1"},
 		},
 		{
 			name: "multiple patches",
 			output: `i | SUSE-SU-2024:1234-1 | important | openssl-3.0.13
 I | SUSE-SU-2024:5678-1 | moderate | kernel-default-6.4.0
 i | SUSE-SU-2024:9012-1 | low | curl-8.5.0`,
-			wantCount:  3,
-			wantNames:  []string{"SUSE-SU-2024:1234-1", "SUSE-SU-2024:5678-1", "SUSE-SU-2024:9012-1"},
+			wantCount: 3,
+			wantNames: []string{"SUSE-SU-2024:1234-1", "SUSE-SU-2024:5678-1", "SUSE-SU-2024:9012-1"},
 		},
 		{
-			name: "empty output",
-			output: "",
-			wantCount:  0,
+			name:      "empty output",
+			output:    "",
+			wantCount: 0,
 		},
 		{
-			name: "no patches",
-			output: `There are no enabled patches to display.`,
-			wantCount:  0,
+			name:      "no patches",
+			output:    `There are no enabled patches to display.`,
+			wantCount: 0,
 		},
 		{
-			name: "not enough fields",
-			output: `i | SUSE-SU-2024:1234-1`,
-			wantCount:  0,
+			name:      "not enough fields",
+			output:    `i | SUSE-SU-2024:1234-1`,
+			wantCount: 0,
 		},
 		{
 			name: "mixed valid and invalid",
 			output: `i | SUSE-SU-2024:1234-1 | important | openssl-3.0.13
 This is a header line
 I | SUSE-SU-2024:5678-1 | moderate | kernel-default-6.4.0`,
-			wantCount:  2,
-			wantNames:  []string{"SUSE-SU-2024:1234-1", "SUSE-SU-2024:5678-1"},
+			wantCount: 2,
+			wantNames: []string{"SUSE-SU-2024:1234-1", "SUSE-SU-2024:5678-1"},
 		},
 	}
 

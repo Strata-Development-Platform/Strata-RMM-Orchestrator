@@ -61,11 +61,11 @@ func (s *APIServer) handleCreateDeviceGroupV2(w http.ResponseWriter, r *http.Req
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
-		"id":              id,
-		"name":            req.Name,
-		"is_smart":        isSmart,
-		"member_count":    0,
-		"status":          "created",
+		"id":           id,
+		"name":         req.Name,
+		"is_smart":     isSmart,
+		"member_count": 0,
+		"status":       "created",
 	})
 }
 
@@ -281,10 +281,10 @@ func (s *APIServer) handleListDeviceGroupMembers(w http.ResponseWriter, r *http.
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"members":   members,
-		"total":     totalCount,
-		"limit":     limit,
-		"offset":    offset,
+		"members": members,
+		"total":   totalCount,
+		"limit":   limit,
+		"offset":  offset,
 	})
 }
 
@@ -317,9 +317,9 @@ func (s *APIServer) handleTriggerGroupEvaluate(w http.ResponseWriter, r *http.Re
 	go s.evaluateSingleGroup(groupID, mspID)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"group_id":      groupID,
-		"status":        "evaluation_started",
-		"message":       "group evaluation triggered",
+		"group_id": groupID,
+		"status":   "evaluation_started",
+		"message":  "group evaluation triggered",
 	})
 }
 
@@ -349,9 +349,9 @@ func (s *APIServer) handleGetEvaluationStatus(w http.ResponseWriter, r *http.Req
 	}
 
 	resp := map[string]interface{}{
-		"group_id":      groupID,
-		"is_smart":      isSmart,
-		"member_count":  memberCount,
+		"group_id":           groupID,
+		"is_smart":           isSmart,
+		"member_count":       memberCount,
 		"evaluation_pending": !isSmart,
 	}
 	if isSmart {
@@ -590,9 +590,9 @@ func (s *APIServer) handleBindScriptToSmartGroup(w http.ResponseWriter, r *http.
 	}
 
 	var req struct {
-		ScheduleID string `json:"schedule_id"`
+		ScheduleID  string `json:"schedule_id"`
 		BindingType string `json:"binding_type"`
-		Priority   int    `json:"priority"`
+		Priority    int    `json:"priority"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
@@ -636,13 +636,13 @@ func (s *APIServer) handleBindScriptToSmartGroup(w http.ResponseWriter, r *http.
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
-		"id":            bindingID,
-		"group_id":      groupID,
-		"schedule_id":   req.ScheduleID,
-		"binding_type":  req.BindingType,
-		"priority":      req.Priority,
-		"enabled":       true,
-		"created_at":    createdAt,
+		"id":           bindingID,
+		"group_id":     groupID,
+		"schedule_id":  req.ScheduleID,
+		"binding_type": req.BindingType,
+		"priority":     req.Priority,
+		"enabled":      true,
+		"created_at":   createdAt,
 	})
 }
 
@@ -702,13 +702,13 @@ func (s *APIServer) handleListSmartGroupBindings(w http.ResponseWriter, r *http.
 	defer func() { _ = rows.Close() }()
 
 	type binding struct {
-		ID            string    `json:"id"`
-		ScheduleID    string    `json:"schedule_id"`
-		BindingType   string    `json:"binding_type"`
-		Priority      int       `json:"priority"`
-		Enabled       bool      `json:"enabled"`
-		CreatedAt     string    `json:"created_at"`
-		UpdatedAt     string    `json:"updated_at"`
+		ID          string `json:"id"`
+		ScheduleID  string `json:"schedule_id"`
+		BindingType string `json:"binding_type"`
+		Priority    int    `json:"priority"`
+		Enabled     bool   `json:"enabled"`
+		CreatedAt   string `json:"created_at"`
+		UpdatedAt   string `json:"updated_at"`
 	}
 
 	var bindings []binding

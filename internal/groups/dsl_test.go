@@ -8,8 +8,8 @@ import (
 
 func TestFilterValidate(t *testing.T) {
 	tests := []struct {
-		name   string
-		filter Filter
+		name    string
+		filter  Filter
 		wantErr bool
 	}{
 		{"valid eq", Filter{Field: "os", Op: OpEq, Value: "linux"}, false},
@@ -58,11 +58,11 @@ func TestExpressionValidate(t *testing.T) {
 
 func TestEvaluate_Equality(t *testing.T) {
 	dev := Device{
-		Hostname: "web-server-01",
-		OS:       "linux",
+		Hostname:  "web-server-01",
+		OS:        "linux",
 		OSVersion: "ubuntu-22.04",
-		Arch:     "amd64",
-		Status:   "online",
+		Arch:      "amd64",
+		Status:    "online",
 	}
 
 	tests := []struct {
@@ -164,8 +164,8 @@ func TestEvaluate_NumericOps(t *testing.T) {
 
 func TestEvaluate_SetOps(t *testing.T) {
 	dev := Device{
-		Status:  "online",
-		Tags:    []string{"production", "web", "critical"},
+		Status:     "online",
+		Tags:       []string{"production", "web", "critical"},
 		PrivateIPs: []string{"10.0.1.5", "10.0.2.5"},
 	}
 
@@ -474,25 +474,25 @@ func TestSerializeExpression(t *testing.T) {
 
 func TestIsSmartGroup(t *testing.T) {
 	tests := []struct {
-			name       string
-			raw        json.RawMessage
-			wantSmart  bool
-		}{
-			{"empty", json.RawMessage(`{}`), false},
-			{"null", json.RawMessage(`null`), false},
-			{"empty string", json.RawMessage(`""`), false},
-			{"has filters", json.RawMessage(`{"condition":"AND","filters":[{"field":"os","op":"eq","value":"linux"}]}`), true},
-			{"has nested", json.RawMessage(`{"condition":"AND","nested":{"condition":"OR","filters":[{"field":"status","op":"eq","value":"online"}]}}`), true},
-		}
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				got := IsSmartGroup(tt.raw)
-				if got != tt.wantSmart {
-					t.Errorf("IsSmartGroup() = %v, want %v", got, tt.wantSmart)
-				}
-			})
-		}
+		name      string
+		raw       json.RawMessage
+		wantSmart bool
+	}{
+		{"empty", json.RawMessage(`{}`), false},
+		{"null", json.RawMessage(`null`), false},
+		{"empty string", json.RawMessage(`""`), false},
+		{"has filters", json.RawMessage(`{"condition":"AND","filters":[{"field":"os","op":"eq","value":"linux"}]}`), true},
+		{"has nested", json.RawMessage(`{"condition":"AND","nested":{"condition":"OR","filters":[{"field":"status","op":"eq","value":"online"}]}}`), true},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := IsSmartGroup(tt.raw)
+			if got != tt.wantSmart {
+				t.Errorf("IsSmartGroup() = %v, want %v", got, tt.wantSmart)
+			}
+		})
+	}
+}
 
 func TestValuesEqual(t *testing.T) {
 	tests := []struct {

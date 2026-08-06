@@ -34,13 +34,13 @@ type IPMIResult struct {
 
 // IPMITarget is an IPMI-capable device (BMC, CIMC, etc.).
 type IPMITarget struct {
-	Host      string `json:"host"`
-	Port      int    `json:"port"`       // Default 623
-	Channel   int    `json:"channel"`    // Default 0
-	Username  string `json:"username"`
-	Password  string `json:"password"`
-	AuthType  string `json:"auth_type"` // md5, sha, none
-	Timeout   int    `json:"timeout"`   // seconds
+	Host     string `json:"host"`
+	Port     int    `json:"port"`    // Default 623
+	Channel  int    `json:"channel"` // Default 0
+	Username string `json:"username"`
+	Password string `json:"password"`
+	AuthType string `json:"auth_type"` // md5, sha, none
+	Timeout  int    `json:"timeout"`   // seconds
 }
 
 // IPMIClient communicates with IPMI devices.
@@ -246,13 +246,13 @@ func (c *IPMIClient) buildSensorRequest() []byte {
 		0x0a, // NetFn (Storage)
 		// #nosec G115
 		byte(c.target.Channel << 4), // LUN
-		0x00, // RS LUN
-		0x00, // RS SSN
-		0x00, // Sequence (not used for unicast)
-		0x00, // Checksum
-		0x0c, // Address type (Broadcast LUN)
-		0x2d, // Request (Sensor Reading)
-		0x00, // Number of bytes (optional)
+		0x00,                        // RS LUN
+		0x00,                        // RS SSN
+		0x00,                        // Sequence (not used for unicast)
+		0x00,                        // Checksum
+		0x0c,                        // Address type (Broadcast LUN)
+		0x2d,                        // Request (Sensor Reading)
+		0x00,                        // Number of bytes (optional)
 	}
 }
 
@@ -262,12 +262,12 @@ func (c *IPMIClient) buildChassisStatusRequest() []byte {
 		0x0a, // NetFn (Application)
 		// #nosec G115
 		byte(c.target.Channel << 4), // LUN
-		0x00, // RS LUN
-		0x00, // RS SSN
-		0x00, // Sequence
-		0x00, // Checksum
-		0x0c, // Address type
-		0x01, // Request (Chassis Status)
+		0x00,                        // RS LUN
+		0x00,                        // RS SSN
+		0x00,                        // Sequence
+		0x00,                        // Checksum
+		0x0c,                        // Address type
+		0x01,                        // Request (Chassis Status)
 	}
 }
 
@@ -277,15 +277,15 @@ func (c *IPMIClient) buildFRURequest() []byte {
 		0x0a, // NetFn (Application)
 		// #nosec G115
 		byte(c.target.Channel << 4), // LUN
-		0x00, // RS LUN
-		0x00, // RS SSN
-		0x00, // Sequence
-		0x00, // Checksum
-		0x0c, // Address type
-		0x39, // Request (FRU Device Read)
-		0x00, // FRU Device ID
-		0x00, // Offset
-		0x00, // Length
+		0x00,                        // RS LUN
+		0x00,                        // RS SSN
+		0x00,                        // Sequence
+		0x00,                        // Checksum
+		0x0c,                        // Address type
+		0x39,                        // Request (FRU Device Read)
+		0x00,                        // FRU Device ID
+		0x00,                        // Offset
+		0x00,                        // Length
 	}
 }
 

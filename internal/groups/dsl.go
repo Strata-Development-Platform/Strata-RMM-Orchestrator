@@ -13,19 +13,19 @@ import (
 type FilterOperator string
 
 const (
-	OpEq        FilterOperator = "eq"
-	OpNeq       FilterOperator = "neq"
-	OpGT        FilterOperator = "gt"
-	OpGTE       FilterOperator = "gte"
-	OpLT        FilterOperator = "lt"
-	OpLTE       FilterOperator = "lte"
-	OpContains  FilterOperator = "contains"
-	OpStartsWith FilterOperator = "startswith"
-	OpIn        FilterOperator = "in"
+	OpEq          FilterOperator = "eq"
+	OpNeq         FilterOperator = "neq"
+	OpGT          FilterOperator = "gt"
+	OpGTE         FilterOperator = "gte"
+	OpLT          FilterOperator = "lt"
+	OpLTE         FilterOperator = "lte"
+	OpContains    FilterOperator = "contains"
+	OpStartsWith  FilterOperator = "startswith"
+	OpIn          FilterOperator = "in"
 	OpContainsAny FilterOperator = "contains_any"
-	OpIsNull    FilterOperator = "is_null"
-	OpNotNull   FilterOperator = "not_null"
-	OpRegex     FilterOperator = "regex"
+	OpIsNull      FilterOperator = "is_null"
+	OpNotNull     FilterOperator = "not_null"
+	OpRegex       FilterOperator = "regex"
 )
 
 // Supported operators list.
@@ -37,9 +37,9 @@ var validOperators = map[FilterOperator]struct{}{
 
 // Filter represents a single filter condition in a Smart Group expression.
 type Filter struct {
-	Field string      `json:"field"`
+	Field string         `json:"field"`
 	Op    FilterOperator `json:"op"`
-	Value interface{} `json:"value"`
+	Value interface{}    `json:"value"`
 }
 
 // Validate checks that the filter has a valid operator and non-empty field.
@@ -56,8 +56,8 @@ func (f Filter) Validate() error {
 // Expression represents a complete Smart Group filter expression.
 // Supports AND/OR top-level with flat or nested filters.
 type Expression struct {
-	Condition string    `json:"condition"` // "AND" or "OR"
-	Filters   []Filter  `json:"filters"`
+	Condition string      `json:"condition"` // "AND" or "OR"
+	Filters   []Filter    `json:"filters"`
 	Nested    *Expression `json:"nested,omitempty"` // for nested expressions
 }
 
@@ -86,20 +86,20 @@ func (e Expression) Validate() error {
 // Device represents the subset of device properties used for Smart Group evaluation.
 // Mirrors the columns available from the devices table.
 type Device struct {
-	Hostname             string     `json:"hostname"`
-	OS                   string     `json:"os"`
-	OSVersion            string     `json:"os_version"`
-	Arch                 string     `json:"arch"`
-	CPUCores             int        `json:"cpu_cores"`
-	RAMTotalMB           int64      `json:"ram_total_mb"`
-	DiskTotalMB          int64      `json:"disk_total_mb"`
-	AgentVersion         string     `json:"agent_version"`
-	Status               string     `json:"status"`
-	LastHeartbeat        *time.Time `json:"last_heartbeat"`
-	CreatedAt            time.Time  `json:"created_at"`
-	Tags                 []string   `json:"tags"`
-	PublicIP             string     `json:"public_ip"`
-	PrivateIPs           []string   `json:"private_ips"`
+	Hostname      string     `json:"hostname"`
+	OS            string     `json:"os"`
+	OSVersion     string     `json:"os_version"`
+	Arch          string     `json:"arch"`
+	CPUCores      int        `json:"cpu_cores"`
+	RAMTotalMB    int64      `json:"ram_total_mb"`
+	DiskTotalMB   int64      `json:"disk_total_mb"`
+	AgentVersion  string     `json:"agent_version"`
+	Status        string     `json:"status"`
+	LastHeartbeat *time.Time `json:"last_heartbeat"`
+	CreatedAt     time.Time  `json:"created_at"`
+	Tags          []string   `json:"tags"`
+	PublicIP      string     `json:"public_ip"`
+	PrivateIPs    []string   `json:"private_ips"`
 }
 
 // Evaluate checks whether the given Device matches this expression.

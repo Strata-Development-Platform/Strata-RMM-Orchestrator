@@ -14,7 +14,7 @@ const AgentSessionSubject = "strata.agent.session"
 
 // SessionMessage represents a queued telemetry message for replay.
 type SessionMessage struct {
-	Type      string    `json:"type"`      // "metric" or "event"
+	Type      string    `json:"type"` // "metric" or "event"
 	AgentID   string    `json:"agent_id"`
 	TenantID  string    `json:"tenant_id"`
 	Payload   []byte    `json:"payload"`

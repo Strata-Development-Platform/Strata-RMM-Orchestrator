@@ -48,12 +48,12 @@ func (e *Executor) Install(ctx context.Context, patchIDs []string) (*ExecResult,
 }
 
 type windowsPatch struct {
-	Title         string   `json:"Title"`
-	KBArticleIDs  []string `json:"KBArticleIDs"`
-	MsrcSeverity  string   `json:"MsrcSeverity"`
-	Description   string   `json:"Description"`
-	Categories    []string `json:"Categories"`
-	DeployTime    string   `json:"LastDeploymentChangeTime"`
+	Title        string   `json:"Title"`
+	KBArticleIDs []string `json:"KBArticleIDs"`
+	MsrcSeverity string   `json:"MsrcSeverity"`
+	Description  string   `json:"Description"`
+	Categories   []string `json:"Categories"`
+	DeployTime   string   `json:"LastDeploymentChangeTime"`
 }
 
 func (e *Executor) scanWindows(ctx context.Context) ([]*Patch, []*Patch, error) {

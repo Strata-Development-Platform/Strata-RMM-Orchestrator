@@ -88,9 +88,9 @@ func TestEvaluateSingleGroup_NoSmartGroups(t *testing.T) {
 
 func TestParseStringArray(t *testing.T) {
 	tests := []struct {
-		name string
+		name  string
 		input string
-		want []string
+		want  []string
 	}{
 		{"empty string", "", []string{}},
 		{"null", "null", []string{}},
@@ -595,13 +595,13 @@ func TestHandleListSmartGroupBindings_ResponseStructure(t *testing.T) {
 	_ = logger
 
 	type binding struct {
-		ID            string `json:"id"`
-		ScheduleID    string `json:"schedule_id"`
-		BindingType   string `json:"binding_type"`
-		Priority      int    `json:"priority"`
-		Enabled       bool   `json:"enabled"`
-		CreatedAt     string `json:"created_at"`
-		UpdatedAt     string `json:"updated_at"`
+		ID          string `json:"id"`
+		ScheduleID  string `json:"schedule_id"`
+		BindingType string `json:"binding_type"`
+		Priority    int    `json:"priority"`
+		Enabled     bool   `json:"enabled"`
+		CreatedAt   string `json:"created_at"`
+		UpdatedAt   string `json:"updated_at"`
 	}
 
 	response := map[string]interface{}{
@@ -638,13 +638,13 @@ func TestHandleBindScriptToSmartGroup_BindingResponse(t *testing.T) {
 	_ = logger
 
 	response := map[string]interface{}{
-		"id":            "b-123",
-		"group_id":      "g-123",
-		"schedule_id":   "sched-123",
-		"binding_type":  "scheduled",
-		"priority":      50,
-		"enabled":       true,
-		"created_at":    "2026-08-06T00:00:00Z",
+		"id":           "b-123",
+		"group_id":     "g-123",
+		"schedule_id":  "sched-123",
+		"binding_type": "scheduled",
+		"priority":     50,
+		"enabled":      true,
+		"created_at":   "2026-08-06T00:00:00Z",
 	}
 
 	if response["enabled"] != true {
@@ -679,29 +679,29 @@ func TestScheduleRunner_DispatchToDevice(t *testing.T) {
 
 	// Verify dispatch payload structure
 	type dispatchPayload struct {
-		Type         string `json:"type"`
-		ExecutionID  string `json:"execution_id"`
-		ScheduleID   string `json:"schedule_id"`
-		DeviceID     string `json:"device_id"`
-		Language     string `json:"language"`
-		Content      string `json:"content"`
-		Parameters   any    `json:"parameters"`
-		Timeout      int    `json:"timeout"`
-		MaxRetries   int    `json:"max_retries"`
-		RetryCount   int    `json:"retry_count"`
+		Type        string `json:"type"`
+		ExecutionID string `json:"execution_id"`
+		ScheduleID  string `json:"schedule_id"`
+		DeviceID    string `json:"device_id"`
+		Language    string `json:"language"`
+		Content     string `json:"content"`
+		Parameters  any    `json:"parameters"`
+		Timeout     int    `json:"timeout"`
+		MaxRetries  int    `json:"max_retries"`
+		RetryCount  int    `json:"retry_count"`
 	}
 
 	payload := dispatchPayload{
-		Type:         "script_exec",
-		ExecutionID:  "exec-123",
-		ScheduleID:   "sched-123",
-		DeviceID:     "dev-123",
-		Language:     "bash",
-		Content:      "echo hello",
-		Parameters:   nil,
-		Timeout:      30,
-		MaxRetries:   3,
-		RetryCount:   0,
+		Type:        "script_exec",
+		ExecutionID: "exec-123",
+		ScheduleID:  "sched-123",
+		DeviceID:    "dev-123",
+		Language:    "bash",
+		Content:     "echo hello",
+		Parameters:  nil,
+		Timeout:     30,
+		MaxRetries:  3,
+		RetryCount:  0,
 	}
 
 	if payload.Type != "script_exec" {

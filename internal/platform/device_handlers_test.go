@@ -74,9 +74,9 @@ func TestPhase7AgentRoutesRequireAgentPrincipal(t *testing.T) {
 func TestHandleCreateDeviceRelationship_RequestValidation(t *testing.T) {
 	// Missing source_device_id
 	var req struct {
-		SourceDeviceID   string                 `json:"source_device_id"`
-		TargetDeviceID   string                 `json:"target_device_id"`
-		RelationshipType string                 `json:"relationship_type"`
+		SourceDeviceID   string `json:"source_device_id"`
+		TargetDeviceID   string `json:"target_device_id"`
+		RelationshipType string `json:"relationship_type"`
 	}
 	if err := json.Unmarshal([]byte(`{"target_device_id":"dev-2","relationship_type":"depends_on"}`), &req); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -90,12 +90,12 @@ func TestHandleCreateDeviceRelationship_RequestValidation(t *testing.T) {
 // structure for a successful device relationship creation.
 func TestHandleCreateDeviceRelationship_ResponseStructure(t *testing.T) {
 	response := map[string]interface{}{
-		"id":                   "rel-123",
-		"source_device_id":     "dev-1",
-		"target_device_id":     "dev-2",
-		"relationship_type":    "depends_on",
-		"is_active":            true,
-		"created_at":           "2026-08-06T00:00:00Z",
+		"id":                "rel-123",
+		"source_device_id":  "dev-1",
+		"target_device_id":  "dev-2",
+		"relationship_type": "depends_on",
+		"is_active":         true,
+		"created_at":        "2026-08-06T00:00:00Z",
 	}
 	if response["relationship_type"] != "depends_on" {
 		t.Errorf("expected relationship_type 'depends_on', got %v", response["relationship_type"])
@@ -134,7 +134,7 @@ func TestHandleDeleteDeviceRelationship_RequestValidation(t *testing.T) {
 // structure for a successful device relationship deletion.
 func TestHandleDeleteDeviceRelationship_ResponseStructure(t *testing.T) {
 	response := map[string]interface{}{
-		"status":  "deleted",
+		"status":       "deleted",
 		"relationship": "rel-123",
 	}
 	if response["status"] != "deleted" {
@@ -145,11 +145,11 @@ func TestHandleDeleteDeviceRelationship_ResponseStructure(t *testing.T) {
 // TestDeviceRelationshipTypes tests known relationship type constants.
 func TestDeviceRelationshipTypes(t *testing.T) {
 	validTypes := map[string]bool{
-		"depends_on":    true,
-		"communicates":  true,
-		"manages":       true,
-		"backed_up_by":  true,
-		"monitored_by":  true,
+		"depends_on":   true,
+		"communicates": true,
+		"manages":      true,
+		"backed_up_by": true,
+		"monitored_by": true,
 	}
 	for relType := range validTypes {
 		if !validTypes[relType] {
@@ -161,7 +161,7 @@ func TestDeviceRelationshipTypes(t *testing.T) {
 // TestDeviceRelationshipMetadata tests metadata handling for device relationships.
 func TestDeviceRelationshipMetadata(t *testing.T) {
 	metadata := map[string]interface{}{
-		"notes":   "Production to DR",
+		"notes":    "Production to DR",
 		"verified": true,
 	}
 	if len(metadata) != 2 {

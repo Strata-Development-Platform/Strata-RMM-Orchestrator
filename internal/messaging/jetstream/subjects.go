@@ -2,42 +2,42 @@ package jetstream
 
 // Subject namespaces used throughout the platform.
 const (
-	SubjectMetrics  = "tenant.*.agent.*.metrics"
-	SubjectEvents   = "tenant.*.agent.*.events"
-	SubjectHeartbeat = "tenant.*.agent.*.heartbeat"
-	SubjectCmdAck   = "tenant.*.agent.*.ack"
-	SubjectCmdResult = "tenant.*.agent.*.result"
-	SubjectProbeSNMP = "tenant.*.probe.*.snmp"
-	SubjectProbeFlow = "tenant.*.probe.*.flow"
+	SubjectMetrics        = "tenant.*.agent.*.metrics"
+	SubjectEvents         = "tenant.*.agent.*.events"
+	SubjectHeartbeat      = "tenant.*.agent.*.heartbeat"
+	SubjectCmdAck         = "tenant.*.agent.*.ack"
+	SubjectCmdResult      = "tenant.*.agent.*.result"
+	SubjectProbeSNMP      = "tenant.*.probe.*.snmp"
+	SubjectProbeFlow      = "tenant.*.probe.*.flow"
 	SubjectProbeDiscovery = "tenant.*.probe.*.discovery"
-	SubjectScriptResult = "tenant.*.agent.*.script.result"
+	SubjectScriptResult   = "tenant.*.agent.*.script.result"
 	SubjectSoftwareResult = "tenant.*.agent.*.software.result"
-	SubjectAlerts = "tenant.*.alerts"
-	SubjectConfig   = "tenant.*.config.*"
-	SubjectCmd      = "tenant.*.cmd.*"
+	SubjectAlerts         = "tenant.*.alerts"
+	SubjectConfig         = "tenant.*.config.*"
+	SubjectCmd            = "tenant.*.cmd.*"
 )
 
 // Stream names for JetStream streams.
 const (
-	StreamMetrics    = "STRATA_METRICS"
-	StreamEvents     = "STRATA_EVENTS"
-	StreamHeartbeats = "STRATA_HEARTBEATS"
-	StreamCmdResults = "STRATA_CMD_RESULTS"
-	StreamProbes     = "STRATA_PROBES"
-	StreamDiscovery  = "STRATA_DISCOVERY"
+	StreamMetrics      = "STRATA_METRICS"
+	StreamEvents       = "STRATA_EVENTS"
+	StreamHeartbeats   = "STRATA_HEARTBEATS"
+	StreamCmdResults   = "STRATA_CMD_RESULTS"
+	StreamProbes       = "STRATA_PROBES"
+	StreamDiscovery    = "STRATA_DISCOVERY"
 	StreamAgentSession = "STRATA_AGENT_SESSION"
 	StreamIntegrations = "STRATA_INTEGRATIONS"
 )
 
 // Consumer groups for pull/push consumers.
 const (
-	ConsumerMetrics   = "ingestion"
-	ConsumerEvents    = "ingestion"
-	ConsumerHeartbeats = "ingestion"
-	ConsumerCmdResults = "platform"
-	ConsumerProbes    = "probe"
-	ConsumerDiscovery = "probe"
-	ConsumerAgentReplay = "replay"
+	ConsumerMetrics      = "ingestion"
+	ConsumerEvents       = "ingestion"
+	ConsumerHeartbeats   = "ingestion"
+	ConsumerCmdResults   = "platform"
+	ConsumerProbes       = "probe"
+	ConsumerDiscovery    = "probe"
+	ConsumerAgentReplay  = "replay"
 	ConsumerIntegrations = "integration"
 )
 

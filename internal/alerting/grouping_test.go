@@ -264,11 +264,11 @@ func TestGroupingEngineFormatGroupMessageWithSeverity(t *testing.T) {
 // API endpoint tests
 
 type testAlertServer struct {
-	store      *memoryAlertStore
-	mStore     *memoryMaintenanceStore
-	engine     *Engine
-	httptest   *httptest.Server
-	handler    http.Handler
+	store    *memoryAlertStore
+	mStore   *memoryMaintenanceStore
+	engine   *Engine
+	httptest *httptest.Server
+	handler  http.Handler
 }
 
 func setupTestAlertServer(t *testing.T) *testAlertServer {

@@ -444,10 +444,10 @@ func (s *APIServer) handleRollbackPolicy(w http.ResponseWriter, r *http.Request)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"status":            "rolled_back",
-		"current_version":   newVersion,
-		"rolled_back_from":  target.TargetVersion,
-		"archived_version":  record.PublishedVersion,
+		"status":           "rolled_back",
+		"current_version":  newVersion,
+		"rolled_back_from": target.TargetVersion,
+		"archived_version": record.PublishedVersion,
 	})
 }
 

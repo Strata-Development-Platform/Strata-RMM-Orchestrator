@@ -22,10 +22,10 @@ func TestRolePolicyBinderProcessMonitorEventEmptyRoles(t *testing.T) {
 	binder := NewRolePolicyBinder(nil, nil, &testLogger{})
 
 	event := MonitorEvent{
-		AgentID:  "agent-1",
-		TenantID: "tenant-1",
-		DeviceID: "device-1",
-		Roles:    []string{},
+		AgentID:   "agent-1",
+		TenantID:  "tenant-1",
+		DeviceID:  "device-1",
+		Roles:     []string{},
 		Timestamp: time.Now(),
 	}
 
@@ -40,10 +40,10 @@ func TestRolePolicyBinderProcessMonitorEventNilRoles(t *testing.T) {
 	binder := NewRolePolicyBinder(nil, nil, &testLogger{})
 
 	event := MonitorEvent{
-		AgentID:  "agent-1",
-		TenantID: "tenant-1",
-		DeviceID: "device-1",
-		Roles:    nil,
+		AgentID:   "agent-1",
+		TenantID:  "tenant-1",
+		DeviceID:  "device-1",
+		Roles:     nil,
 		Timestamp: time.Now(),
 	}
 
@@ -81,10 +81,10 @@ func TestRolePolicyBinderBindRoleToDeviceEmptyParams(t *testing.T) {
 // TestMonitorEventJSONSerialization verifies MonitorEvent JSON tags are correct.
 func TestMonitorEventJSONSerialization(t *testing.T) {
 	event := MonitorEvent{
-		AgentID:  "agent-1",
-		TenantID: "tenant-1",
-		DeviceID: "device-1",
-		Roles:    []string{"sql_server", "ad_dc"},
+		AgentID:   "agent-1",
+		TenantID:  "tenant-1",
+		DeviceID:  "device-1",
+		Roles:     []string{"sql_server", "ad_dc"},
 		Timestamp: time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC),
 	}
 
@@ -136,6 +136,6 @@ func TestMonitoringDefinitionFields(t *testing.T) {
 // TestLogger is a minimal test logger.
 type testLogger struct{}
 
-func (l *testLogger) Info(msg string, keysAndValues ...interface{}) {}
+func (l *testLogger) Info(msg string, keysAndValues ...interface{})  {}
 func (l *testLogger) Error(msg string, keysAndValues ...interface{}) {}
 func (l *testLogger) Warn(msg string, keysAndValues ...interface{})  {}

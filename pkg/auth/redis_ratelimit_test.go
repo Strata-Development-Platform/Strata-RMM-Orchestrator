@@ -8,9 +8,9 @@ func TestRedisRateLimiterPolicy(t *testing.T) {
 	rl := &RedisRateLimiter{rdb: nil, rate: 10, burst: 30}
 
 	tests := []struct {
-		method  string
-		path    string
-		want    string
+		method    string
+		path      string
+		want      string
 		wantBurst int
 	}{
 		{"POST", "/api/v1/admin/users", "admin", 20},
@@ -40,9 +40,9 @@ func TestRedisRateLimiterPolicy(t *testing.T) {
 
 func TestExtractTokenIDFromJWT(t *testing.T) {
 	tests := []struct {
-		name    string
-		token   string
-		wantID  string
+		name   string
+		token  string
+		wantID string
 	}{
 		{
 			name: "valid JWT with jti",
@@ -52,17 +52,17 @@ func TestExtractTokenIDFromJWT(t *testing.T) {
 			wantID: "token-abc123",
 		},
 		{
-			name:    "malformed JWT",
-			token:   "not.a.valid.jwt",
-			wantID:  "",
+			name:   "malformed JWT",
+			token:  "not.a.valid.jwt",
+			wantID: "",
 		},
 		{
-			name:    "empty token",
-			token:   "",
-			wantID:  "",
+			name:   "empty token",
+			token:  "",
+			wantID: "",
 		},
 		{
-			name:    "JWT without jti",
+			name: "JWT without jti",
 			token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9." +
 				"eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ." +
 				"fake_signature",
