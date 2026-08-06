@@ -100,7 +100,8 @@ until implementation begins or the scope is formally retired.
 | 4 | Third-Party Public Integration Router | EDR/Backup/PSA webhook ingestion endpoints with HMAC-SHA256 signature verification, automated security isolation (EDR threat → NATS isolation command) | **Complete** — 4.1a/4.1b/4.2 (PRs #66/#67), 6.2 OpenAPI spec (PR #70) | `internal/integrations/`, `docs/integrations/` |
 | 5 | UI Configuration Components | Hierarchical policy dashboard tree-view with inheritance tags and override toggles, integration settings panel (API key management, webhook URL display) | **Complete** — 5.1 (PR #68, 8 pass), 5.2 (PR #69, 36 pass) | `ui/src/components/policies/`, `ui/src/components/settings/` |
 | 6 | Core Technical Documentation | `docs/architecture/policy-engine.md` (override precedence + ASCII diagram), `docs/integrations/public-api.md` (OpenAPI 3.0 spec for EDR/Backup/PSA), `docs/monitoring/best-practice-templates.md` (server/hardware template master tables with OIDs and thresholds) | **Complete** — 6.1 exists, 6.2 (PR #70, 84 pass), 6.3 (PR #71, 84 pass) | `docs/architecture/`, `docs/integrations/`, `docs/monitoring/` |
-| 7 | Dynamic Device Grouping (Smart Groups) — DSL + Schema | Expression DSL evaluator (13 operators: eq, neq, gt, gte, lt, lte, contains, startswith, in, contains_any, is_null, not_null, regex), nested AND/OR expressions, Migration 94 adds filter_expression/is_smart/last_evaluated/member_count to device_groups + creates group_memberships table | **Complete** — 7.1 (PR #73, 86 pass) | `internal/groups/`, `pkg/postgres/schema.go` (M94) |
+| 7 | Dynamic Device Grouping (Smart Groups) — DSL + Schema | Expression DSL evaluator (13 operators: eq, neq, gt, gte, lt, lte, contains, startswith, in, contains_any, is_null, not_null, regex), nested AND/OR expressions, Migration 94 adds filter_expression/is_smart/last_evaluated/member_count to device_groups + creates group_memberships table | **Complete** — 7.1 (PR #73, 86 pass), 7.2 (PR #74, 84 pass), 7.3 (PR #75, 65 pass) | `internal/groups/`, `pkg/postgres/schema.go` (M94) |
+| 8 | Script Vault & Policy Binding | Smart group script bindings (Migration 95), 3 endpoints (POST/GET/DELETE /script-bindings), schedule dispatch integration | **In Progress** — 8A (PR #76, 66 pass) | `internal/platform/smart_group_handlers.go`, `pkg/postgres/schema.go` (M95) |
 
 ## Planned expansion — detailed task traceability
 
@@ -210,3 +211,15 @@ PR #75 (7.3): Entry points → `smart_group_handlers.go` (handleUpdateDeviceGrou
 - PR #73: `MSPListPage.test.tsx` (duplicate `role="status"` in Toast.tsx + success div). Fix: Toast.tsx role "status" → "log", MSPListPage.tsx added creationSuccess state + role="status" div. Frontend: 87/87 pass (was 86/87, 1 fail).
 - PR #74: 4 lint fixes (rows.Close errcheck, Scan error check, SA4000 identical expressions, SA9003 empty branch) + 1 panic fix (SmartGroupSync.Stop() double-close → running guard + select).
 - PR #75: 1 pre-existing DB serialization conflict in Durable Jobs Integration test (unrelated to PUT handler — concurrent transaction race on job_inbox INSERT ON CONFLICT).
+
+### Phase 8: Script Vault & Policy Binding
+
+| ID | Task | Target | Evidence required | Status | PR | CI |
+|----|------|--------|-------------------|--------|----|----|
+| 8A | Smart group script bindings (Migration 95, 3 endpoints: POST/GET/DELETE /script-bindings) | `smart_group_handlers.go`, `schema.go` (M95) | 6 tests: request validation, defaults, response structure, unbind validation, empty list, binding response | **Verified** | #76 | 66 pass, 0 fail, 0 pending |
+
+**Gate 2 audit trace for PR #76:**
+
+PR #76 (8A): Entry points → `smart_group_handlers.go` (handleBindScriptToSmartGroup, handleUnbindScriptFromSmartGroup, handleListSmartGroupBindings), Migration 95 in `pkg/postgres/schema.go`; Identity → N/A (middleware handles auth); Authorization → AuthorizeMSPManage on all handlers, msp_id scoping on all queries; Tenant → device_groups scoped to msp_id with RLS; Persistence → New `smart_group_script_bindings` table (unique(group_id, schedule_id), indexed by group_id/schedule_id/msp_id); Messaging → N/A (future: schedule runner integration); Object storage → N/A; Endpoint execution → POST/GET/DELETE /api/v1/device-groups/{groupID}/script-bindings; UI state → N/A; Audit records → N/A; Metrics → N/A; Alerts → N/A; Runbooks → N/A; Existing tests → 6 tests in `smart_group_sync_test.go`.
+
+**Limitations (8A):** No schedule runner integration to auto-dispatch scripts to smart group members, no script execution history per binding, no binding priority-based dispatch order, no binding TTL/auto-expiry, no webhook notification on binding change.

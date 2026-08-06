@@ -4179,3 +4179,25 @@ All 7 CI checks terminal and successful on PR #67 (final head 7733ad7):
   - G. Branch deleted: Yes
   - H. Open dev PRs: None
 
+
+### Workstream 8A: Smart Group Script Bindings — MERGED (2026-08-06)
+- PR: #76 (merged, squash, branch deleted)
+- Branch: feature/ws8a-script-bindings
+- Base SHA: f7ff50fa6b3d5e4f85ebf77da435745fe37d600e
+- Head SHA: 92e6b7c (final CI-passing head after lint fix)
+- Merge SHA: 95800ef
+- Files: smart_group_handlers.go (+171 lines, 3 handlers), api.go (+3 routes), middleware.go (+3 classifications), smart_group_sync_test.go (+126 lines, 6 tests), schema.go (+25 lines, Migration 95)
+- CI: 66 pass, 0 fail, 0 pending (all workflows terminal)
+- CI Run: 31064325536 (final green run)
+- Lint fixes during CI: rows.Close() errcheck (defer func() { _ = rows.Close() }())
+- Pre-existing failures: None
+- Ledger Rules Audit:
+  - A. Merge evidence present: Yes
+  - B. Branch: feature/ws8a-script-bindings
+  - C. PR state: MERGED
+  - D. Failures documented: 1 lint fix (rows.Close errcheck)
+  - E. Reruns: 2 CI runs (initial lint fail → lint fix → all green)
+  - F. No pre-existing failure carried forward: Yes
+  - G. Branch deleted: Yes
+  - H. Open dev PRs: None
+
