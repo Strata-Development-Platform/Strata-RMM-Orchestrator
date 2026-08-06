@@ -106,7 +106,8 @@ export default function SmartGroupExpressionBuilder({
   const serializeExpression = () => {
     try {
       const json = JSON.stringify(expression, null, 2);
-      showToast('info', 'Expression copied to clipboard', json);
+      navigator.clipboard.writeText(json);
+      showToast('info', 'Expression serialized successfully');
     } catch {
       showToast('error', 'Failed to serialize expression');
     }
@@ -114,10 +115,10 @@ export default function SmartGroupExpressionBuilder({
 
   const expressionIsValid = (): boolean => {
     if (!expression.filters || expression.filters.length === 0) {
-      return expression.children && expression.children.length > 0;
+      return (expression.children?.length ?? 0) > 0;
     }
     return expression.filters.every(
-      (f) => f.field !== '' && f.op !== '' && f.value !== ''
+      (f) => f.field !== '' && String(f.op).length > 0 && f.value !== ''
     );
   };
 
