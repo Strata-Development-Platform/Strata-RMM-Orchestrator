@@ -86,6 +86,7 @@ type APIServer struct {
 	inventoryEngine   *inventory.ReportingEngine
 	remediationEngine *inventory.RemediationEngine
 	patchMgr          *patch.Manager
+	smartGroupSync    *SmartGroupSync
 }
 
 func NewAPIServer(addr string, db *timescale.Client, nc *nats.Conn, logger *zap.Logger, tokenGen *auth.TokenGenerator) (*APIServer, error) {
@@ -201,6 +202,12 @@ func (s *APIServer) WithVersion(version, commit string) *APIServer {
 
 func (s *APIServer) WithDeploymentController(dc *DeploymentController) *APIServer {
 	s.deploymentController = dc
+	return s
+}
+
+// WithSmartGroupSync registers a SmartGroupSync that will be started when the API server starts.
+func (s *APIServer) WithSmartGroupSync(sync *SmartGroupSync) *APIServer {
+	s.smartGroupSync = sync
 	return s
 }
 
@@ -460,9 +467,17 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("POST /api/v1/maintenance-windows", s.handleCreateMaintenanceWindow)
 	mux.HandleFunc("GET /api/v1/maintenance-windows", s.handleListMaintenanceWindows)
 	mux.HandleFunc("DELETE /api/v1/maintenance-windows/{windowID}", s.handleDeleteMaintenanceWindow)
+	// Device groups (legacy static members only)
 	mux.HandleFunc("POST /api/v1/device-groups", s.handleCreateDeviceGroup)
 	mux.HandleFunc("GET /api/v1/device-groups", s.handleListDeviceGroups)
 	mux.HandleFunc("DELETE /api/v1/device-groups/{groupID}", s.handleDeleteDeviceGroup)
+
+	// Smart Groups API
+	mux.HandleFunc("POST /api/v1/device-groups/smart", s.handleCreateDeviceGroupV2)
+	mux.HandleFunc("GET /api/v1/device-groups/{groupID}/detail", s.handleGetDeviceGroup)
+	mux.HandleFunc("GET /api/v1/device-groups/{groupID}/members", s.handleListDeviceGroupMembers)
+	mux.HandleFunc("POST /api/v1/device-groups/{groupID}/evaluate", s.handleTriggerGroupEvaluate)
+	mux.HandleFunc("GET /api/v1/device-groups/{groupID}/evaluation-status", s.handleGetEvaluationStatus)
 	mux.HandleFunc("POST /api/v1/policies", s.handleCreatePolicy)
 	mux.HandleFunc("GET /api/v1/policies", s.handleListRetentionPolicies)
 	mux.HandleFunc("GET /api/v1/policies/{policyID}", s.handleGetPolicy)
@@ -648,6 +663,10 @@ func (s *APIServer) Start(ctx context.Context) error {
 			s.logger.Fatal("API server error", zap.Error(err))
 		}
 	}()
+
+	if s.smartGroupSync != nil {
+		s.smartGroupSync.Start(ctx)
+	}
 
 	s.setReadiness(true)
 	s.logger.Info("API server ready")
