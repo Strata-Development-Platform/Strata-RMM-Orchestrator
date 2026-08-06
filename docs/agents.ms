@@ -4310,3 +4310,13 @@ PR #82: Entry points → `DeviceGroupListPage.tsx` (list page, 273 lines), `Smar
 
 **Limitations:** No pagination for large member lists. No inline script binding creation (requires separate modal). No real-time evaluation progress updates. No bulk operations.
 
+
+## PR #83: OS Patch Management - Chocolatey, Winget, Flatpak, Snap, canary, rollback
+- **Merged**: e712724 (squash merge)
+- **Branch**: feat/os-patch-management-choco-winget-flatpak-snap
+- **CI Evidence**: Backend: all 29 packages pass (patch: 43 tests); Frontend: 110 tests pass (10 files)
+- **Files**: executor_extended.go (409 lines), executor_extended_test.go (345 lines)
+- **Methods**: scanChocolatey, installChocolatey, scanWinget, installWinget, scanFlatpak, installFlatpak, scanSnap, installSnap, scanWSUS, CanaryValidate, RollbackPatch
+- **Types**: CanaryPatchResult, CanaryResult, CanaryProgress, PatchPolicy, Deployment, DevicePatchState
+- **Gate 2 audit**: Entry → executor_extended.go; Authorization → N/A (agent-side); Persistence → N/A; Messaging → N/A; Endpoint execution → New platform handlers
+- **Limitations**: Chocolatey/Winget require Windows; Flatpak/Snap require Linux; Canary uses empty device list until deployment integration
