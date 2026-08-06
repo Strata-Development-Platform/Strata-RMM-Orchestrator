@@ -239,6 +239,32 @@ class ApiClient {
     this.request<{ audit_entries: Record<string, unknown>[] }>('GET', `/api/v1/access/audit/${tenantID}`);
   getTenantPermissions = (tenantID: string) =>
     this.request<{ permissions: Record<string, unknown>[] }>('GET', `/api/v1/access/permissions/${tenantID}`);
+
+  // Device Groups
+  getDeviceGroups = (mspID: string, clientID: string) =>
+    this.request<{ device_groups: import('./types').DeviceGroup[] }>('GET', `/api/v1/device-groups?msp_id=${mspID}&client_id=${clientID}`);
+  createDeviceGroup = (mspID: string, clientID: string, data: import('./types').CreateDeviceGroupRequest) =>
+    this.request<{ id: string; status: string }>('POST', `/api/v1/device-groups?msp_id=${mspID}&client_id=${clientID}`, data);
+  createSmartGroup = (mspID: string, clientID: string, data: { name: string; description?: string; filter_expression: Record<string, unknown> }) =>
+    this.request<{ id: string; status: string }>('POST', `/api/v1/device-groups/smart?msp_id=${mspID}&client_id=${clientID}`, data);
+  updateDeviceGroup = (groupID: string, data: import('./types').UpdateDeviceGroupRequest) =>
+    this.request<import('./types').DeviceGroup>('PUT', `/api/v1/device-groups/${groupID}`, data);
+  deleteDeviceGroup = (groupID: string) =>
+    this.request<{ status: string }>('DELETE', `/api/v1/device-groups/${groupID}`);
+  getDeviceGroupDetail = (groupID: string) =>
+    this.request<import('./types').DeviceGroup>('GET', `/api/v1/device-groups/${groupID}/detail`);
+  getDeviceGroupMembers = (groupID: string) =>
+    this.request<{ members: import('./types').DeviceGroupMember[]; total: number }>('GET', `/api/v1/device-groups/${groupID}/members`);
+  triggerGroupEvaluation = (groupID: string) =>
+    this.request<{ evaluation_id: string }>('POST', `/api/v1/device-groups/${groupID}/evaluate`);
+  getEvaluationStatus = (groupID: string) =>
+    this.request<import('./types').DeviceGroupEvaluationStatus>('GET', `/api/v1/device-groups/${groupID}/evaluation-status`);
+  listDeviceGroupBindings = (groupID: string) =>
+    this.request<{ bindings: import('./types').DeviceGroupScriptBinding[] }>('GET', `/api/v1/device-groups/${groupID}/script-bindings`);
+  bindScriptToGroup = (groupID: string, scheduleID: string) =>
+    this.request<{ id: string; status: string }>('POST', `/api/v1/device-groups/${groupID}/script-bindings`, { schedule_id: scheduleID });
+  unbindScriptFromGroup = (groupID: string, bindingID: string) =>
+    this.request<{ status: string }>('DELETE', `/api/v1/device-groups/${groupID}/script-bindings/${bindingID}`);
 }
 
 export const api = new ApiClient();

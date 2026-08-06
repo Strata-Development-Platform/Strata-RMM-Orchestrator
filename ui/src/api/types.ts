@@ -298,3 +298,64 @@ export type ManagedDevice = {
   site_name: string;
   last_heartbeat?: string;
 };
+
+export type DeviceGroup = {
+  id: string;
+  name: string;
+  description: string;
+  client_id: string;
+  msp_id: string;
+  is_smart: boolean;
+  filter_expression?: Record<string, unknown>;
+  member_count: number;
+  last_evaluated?: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type DeviceGroupMember = {
+  id: string;
+  hostname: string;
+  os: string;
+  last_seen: string;
+  ip_addresses: string[];
+  tags: string[];
+  client_id: string;
+  site_id: string;
+};
+
+export type DeviceGroupEvaluationStatus = {
+  group_id: string;
+  group_name: string;
+  status: string;
+  member_count: number;
+  started_at: string;
+  completed_at?: string;
+  error?: string;
+};
+
+export type DeviceGroupScriptBinding = {
+  id: string;
+  group_id: string;
+  schedule_id: string;
+  schedule_name: string;
+  binding_type: string;
+  priority: number;
+  enabled: boolean;
+  created_at: string;
+};
+
+export type CreateDeviceGroupRequest = {
+  name: string;
+  description?: string;
+  client_id?: string;
+  device_ids?: string[];
+  filter_expression?: Record<string, unknown>;
+};
+
+export type UpdateDeviceGroupRequest = {
+  name?: string;
+  description?: string;
+  filter_expression?: Record<string, unknown>;
+  device_ids?: string[];
+};

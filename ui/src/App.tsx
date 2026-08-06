@@ -22,6 +22,8 @@ import MSPWorkspacePage from '@/pages/MSPWorkspacePage';
 import LegalPage from '@/pages/LegalPage';
 import ProviderSetupPage from '@/pages/ProviderSetupPage';
 import ActivateAccountPage from '@/pages/ActivateAccountPage';
+import DeviceGroupListPage from '@/components/smart-groups/DeviceGroupListPage';
+import SmartGroupDetailPage from '@/components/smart-groups/SmartGroupDetailPage';
 import { ToastProvider } from '@/components/shared/Toast';
 
 function LoadingScreen() {
@@ -119,6 +121,8 @@ function AppRoutes() {
       <Route path="/reports" element={<CapabilityRoute permissions={['device:read', 'device:manage']}><ReportsPage /></CapabilityRoute>} />
       <Route path="/jobs" element={<CapabilityRoute permissions={['job:read', 'job:manage']}><JobsPage /></CapabilityRoute>} />
       <Route path="/jobs/health" element={<CapabilityRoute permissions={['job:read', 'job:manage', 'platform:manage']}><JobHealthPage /></CapabilityRoute>} />
+      <Route path="/groups" element={<CapabilityRoute permissions={['device:manage', 'job:manage']}><DeviceGroupListPage /></CapabilityRoute>} />
+      <Route path="/groups/:groupId" element={<CapabilityRoute permissions={['device:manage', 'job:manage']}><SmartGroupDetailPage /></CapabilityRoute>} />
       <Route path="/platform/msps" element={<PlatformRoute><MSPListPage /></PlatformRoute>} />
       <Route path="/msp" element={<CapabilityRoute permissions={['msp:manage', 'client:read', 'client:manage']}><MSPWorkspacePage /></CapabilityRoute>} />
       <Route path="/devices/:deviceID" element={<ProtectedRoute><DeviceWorkspacePage /></ProtectedRoute>} />

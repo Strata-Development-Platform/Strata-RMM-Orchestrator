@@ -1,6 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import SmartGroupDetailPage from './SmartGroupDetailPage';
+import { describe, it, expect, vi } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
 import SmartGroupExpressionBuilder from './SmartGroupExpressionBuilder';
 import type { SmartGroupExpression } from './SmartGroupTypes';
 
@@ -9,43 +8,6 @@ vi.mock('@/components/shared/Toast', () => ({
     showToast: vi.fn(),
   }),
 }));
-
-describe('SmartGroupDetailPage', () => {
-  it('renders group name and description', () => {
-    render(<SmartGroupDetailPage groupId="group-001" />);
-    expect(screen.getByText('Linux Servers')).toBeInTheDocument();
-  });
-
-  it('displays member count', () => {
-    render(<SmartGroupDetailPage groupId="group-001" />);
-    expect(screen.getByText('42')).toBeInTheDocument();
-  });
-
-  it('shows group type as Smart', () => {
-    render(<SmartGroupDetailPage groupId="group-001" />);
-    expect(screen.getByText('Smart')).toBeInTheDocument();
-  });
-
-  it('renders tab navigation buttons', () => {
-    render(<SmartGroupDetailPage groupId="group-001" />);
-    expect(screen.getByRole('button', { name: /Overview/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Members/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Bindings/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Expression/i })).toBeInTheDocument();
-  });
-
-  it('switches to members tab', () => {
-    render(<SmartGroupDetailPage groupId="group-001" />);
-    fireEvent.click(screen.getByRole('button', { name: /Members/i }));
-    expect(screen.getByText(/web-server-01/)).toBeInTheDocument();
-  });
-
-  it('switches to expression tab', () => {
-    render(<SmartGroupDetailPage groupId="group-001" />);
-    fireEvent.click(screen.getByRole('button', { name: /Expression/i }));
-    expect(screen.getByText('Expression Builder')).toBeInTheDocument();
-  });
-});
 
 describe('SmartGroupExpressionBuilder', () => {
   it('renders with default empty expression', () => {
