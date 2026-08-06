@@ -363,7 +363,7 @@ func TestAPIGetAlertGroups(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get groups: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
@@ -390,7 +390,7 @@ func TestAPIGetGroupsBySeverity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get groups by severity: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
@@ -420,7 +420,7 @@ func TestAPIGetGroupsByDevice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get groups by device: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
@@ -451,7 +451,7 @@ func TestAPIResolveGroupsByDevice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to resolve groups: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
@@ -482,7 +482,7 @@ func TestAPIResolveAllGroups(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to resolve all: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
@@ -509,7 +509,7 @@ func TestAPICascadeGroups(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get cascade groups: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
@@ -535,7 +535,7 @@ func TestAPITimeWindowGroups(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get time window groups: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
@@ -556,7 +556,7 @@ func TestAPITimeWindowGroupsInvalidDuration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to request invalid duration: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("expected 400 for invalid duration, got %d", resp.StatusCode)
