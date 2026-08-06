@@ -458,7 +458,7 @@ func (s *APIServer) scopedUserRoutes() []Route {
 		{Method: "GET", Path: "/api/v1/integrations/psa/tickets/device/{deviceID}", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/integrations/psa/feedback", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/integrations/psa/webhooks", Access: AccessPublic},
-		// WebRTC Remote Support
+		// WebRTC remote support
 		{Method: "POST", Path: "/api/v1/webrtc/sessions", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/webrtc/sessions/{sessionID}", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/webrtc/sessions", Access: AccessUser},
@@ -467,18 +467,18 @@ func (s *APIServer) scopedUserRoutes() []Route {
 		{Method: "POST", Path: "/api/v1/webrtc/sessions/{sessionID}/ice-candidate", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/webrtc/sessions/{sessionID}/end", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/webrtc/sessions/{sessionID}/relay-config", Access: AccessUser},
+		{Method: "POST", Path: "/api/v1/webrtc/sessions/{sessionID}/record", Access: AccessUser},
+		{Method: "POST", Path: "/api/v1/webrtc/recordings/{recordingID}/stop", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/webrtc/sessions/{sessionID}/recordings", Access: AccessUser},
-		{Method: "POST", Path: "/api/v1/webrtc/sessions/{sessionID}/start-recording", Access: AccessUser},
-		{Method: "POST", Path: "/api/v1/webrtc/sessions/{sessionID}/stop-recording", Access: AccessUser},
+		{Method: "POST", Path: "/api/v1/webrtc/sessions/{sessionID}/transcribe", Access: AccessUser},
+		{Method: "POST", Path: "/api/v1/webrtc/transcriptions/{transcriptionID}/stop", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/webrtc/sessions/{sessionID}/transcriptions", Access: AccessUser},
-		{Method: "POST", Path: "/api/v1/webrtc/sessions/{sessionID}/start-transcription", Access: AccessUser},
-		{Method: "GET", Path: "/api/v1/webrtc/sessions/{sessionID}/transcriptions/{transcriptionID}", Access: AccessUser},
 		// LAN Cache
 		{Method: "POST", Path: "/api/v1/lancache/entries", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/lancache/entries/{entryID}", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/lancache/entries", Access: AccessUser},
+		{Method: "DELETE", Path: "/api/v1/lancache/entries/{entryID}", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/lancache/stats", Access: AccessUser},
-		{Method: "GET", Path: "/api/v1/lancache/packages/{packageID}", Access: AccessUser},
 		// Reports
 		{Method: "GET", Path: "/api/v1/reports/{tenantID}", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/reports/{tenantID}/schedules", Access: AccessUser},
