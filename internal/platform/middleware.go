@@ -473,6 +473,12 @@ func (s *APIServer) scopedUserRoutes() []Route {
 		{Method: "POST", Path: "/api/v1/webrtc/sessions/{sessionID}/transcribe", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/webrtc/transcriptions/{transcriptionID}/stop", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/webrtc/sessions/{sessionID}/transcriptions", Access: AccessUser},
+		// LAN Cache
+		{Method: "POST", Path: "/api/v1/lancache/entries", Access: AccessUser},
+		{Method: "GET", Path: "/api/v1/lancache/entries/{entryID}", Access: AccessUser},
+		{Method: "GET", Path: "/api/v1/lancache/entries", Access: AccessUser},
+		{Method: "DELETE", Path: "/api/v1/lancache/entries/{entryID}", Access: AccessUser},
+		{Method: "GET", Path: "/api/v1/lancache/stats", Access: AccessUser},
 		// Reports
 		{Method: "GET", Path: "/api/v1/reports/{tenantID}", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/reports/{tenantID}/schedules", Access: AccessUser},

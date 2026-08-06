@@ -21,6 +21,7 @@ import (
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/observability"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/patch"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/remote"
+	"github.com/strata-rmm/strata-rmm-orchestrator/internal/lancache"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/webrtc"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/reporting"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/auth"
@@ -45,6 +46,7 @@ type APIServer struct {
 	updateMgr      *UpdateManager
 	releaseServer  *ReleaseServer
 	keyStore       *encrypt.KeyStore
+	lancacheServer *lancache.Server
 	recordingStore *remote.RecordingStore
 	recorder       *remote.Recorder
 	storageBackend storage.Backend
@@ -2607,6 +2609,57 @@ func (s *APIServer) registerIntegrationRoutes(mux *http.ServeMux) {
 	})
 	mux.HandleFunc("GET /api/v1/webrtc/sessions/{sessionID}/transcriptions", func(w http.ResponseWriter, r *http.Request) {
 		verifier.Middleware(http.HandlerFunc(webRTCHandler.HandleListTranscriptions)).ServeHTTP(w, r)
+	})
+	// LAN Cache routes
+	lancacheServer := lancache.NewServer(lancache.DefaultCacheConfig(), s.logger, s.nats)
+	lancacheServer.Start()
+	s.lancacheServer = lancacheServer
+	mux.HandleFunc("POST /api/v1/lancache/entries", func(w http.ResponseWriter, r *http.Request) {
+		var req lancache.CreateCacheRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
+			return
+		}
+		entry, err := lancacheServer.AddCacheEntry(&req)
+		if err != nil {
+			http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(entry)
+	})
+	mux.HandleFunc("GET /api/v1/lancache/entries/{entryID}", func(w http.ResponseWriter, r *http.Request) {
+		entryID := r.PathValue("entryID")
+		entry, err := lancacheServer.GetCacheEntry(entryID)
+		if err != nil {
+			http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(entry)
+	})
+	mux.HandleFunc("GET /api/v1/lancache/entries", func(w http.ResponseWriter, r *http.Request) {
+		tenantID := r.URL.Query().Get("tenant_id")
+		if tenantID == "" {
+			http.Error(w, `{"error":"missing tenant_id"}`, http.StatusBadRequest)
+			return
+		}
+		entries := lancacheServer.ListCacheEntries(tenantID)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"entries": entries, "total": len(entries)})
+	})
+	mux.HandleFunc("DELETE /api/v1/lancache/entries/{entryID}", func(w http.ResponseWriter, r *http.Request) {
+		entryID := r.PathValue("entryID")
+		if err := lancacheServer.EvictCacheEntry(entryID); err != nil {
+			http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "evicted", "entry_id": entryID})
+	})
+	mux.HandleFunc("GET /api/v1/lancache/stats", func(w http.ResponseWriter, r *http.Request) {
+		lancacheServer.HandleCacheStats(w, r)
 	})
 }
 
