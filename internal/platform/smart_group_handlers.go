@@ -69,6 +69,96 @@ func (s *APIServer) handleCreateDeviceGroupV2(w http.ResponseWriter, r *http.Req
 	})
 }
 
+func (s *APIServer) handleUpdateDeviceGroup(w http.ResponseWriter, r *http.Request) {
+	mspID := r.Header.Get("X-MSP-ID")
+	groupID := r.PathValue("groupID")
+	if mspID == "" || groupID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "msp_id and groupID required"})
+		return
+	}
+	if !s.AuthorizeMSPManage(w, r, mspID) {
+		return
+	}
+
+	// Load existing group to get client_id and verify ownership
+	var clientIDStr string
+	var isSmart bool
+	var filterExpressionBytes []byte
+	err := s.requestDB(r).QueryRowContext(r.Context(), `
+		SELECT client_id::text, is_smart, filter_expression FROM device_groups
+		WHERE id = $1 AND msp_id = $2
+	`, groupID, mspID).Scan(&clientIDStr, &isSmart, &filterExpressionBytes)
+	if err == sql.ErrNoRows {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "group not found"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	var req struct {
+		Name             string          `json:"name"`
+		Description      string          `json:"description"`
+		FilterExpression json.RawMessage `json:"filter_expression"`
+		DeviceIDs        []string        `json:"device_ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+		return
+	}
+	if req.Name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name required"})
+		return
+	}
+
+	// Determine if this is a smart group update
+	var newIsSmart bool
+	if req.FilterExpression == nil {
+		// No filter_expression provided — keep current
+		newIsSmart = isSmart
+		req.FilterExpression = json.RawMessage(filterExpressionBytes)
+	} else {
+		newIsSmart = groups.IsSmartGroup(req.FilterExpression)
+	}
+
+	// Update: set new values, recalculate member_count if it's a smart group
+	var memberCount int
+	if newIsSmart {
+		// For smart groups, member_ids is empty; member_count is set by sync loop
+		memberCount = 0
+	} else {
+		// For static groups, update member_ids from device_ids
+		memberCount = len(req.DeviceIDs)
+	}
+
+	result, err := s.requestDB(r).ExecContext(r.Context(), `
+		UPDATE device_groups
+		SET name = $1, description = $2, filter_expression = $3, is_smart = $4,
+		    member_ids = $5, member_count = $6, updated_at = NOW()
+		WHERE id = $7 AND msp_id = $8
+	`, req.Name, req.Description, req.FilterExpression, newIsSmart,
+		pq.StringArray(req.DeviceIDs), memberCount, groupID, mspID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	affected, _ := result.RowsAffected()
+	if affected != 1 {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "group not found"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"id":           groupID,
+		"name":         req.Name,
+		"description":  req.Description,
+		"is_smart":     newIsSmart,
+		"member_count": memberCount,
+		"status":       "updated",
+	})
+}
+
 func (s *APIServer) handleGetDeviceGroup(w http.ResponseWriter, r *http.Request) {
 	mspID := r.Header.Get("X-MSP-ID")
 	groupID := r.PathValue("groupID")
