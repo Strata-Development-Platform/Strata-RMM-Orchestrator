@@ -14,22 +14,22 @@ import (
 
 // Server manages the LAN cache for package distribution.
 type Server struct {
-	mu       sync.RWMutex
-	cache    map[string]*CacheEntry
-	config   CacheConfig
-	logger   *zap.Logger
-	nats     *nats.Conn
-	stopped  chan struct{}
+	mu      sync.RWMutex
+	cache   map[string]*CacheEntry
+	config  CacheConfig
+	logger  *zap.Logger
+	nats    *nats.Conn
+	stopped chan struct{}
 }
 
 // NewServer creates a new LAN cache server.
 func NewServer(config CacheConfig, logger *zap.Logger, nc *nats.Conn) *Server {
 	return &Server{
-		cache:    make(map[string]*CacheEntry),
-		config:   config,
-		logger:   logger,
-		nats:     nc,
-		stopped:  make(chan struct{}),
+		cache:   make(map[string]*CacheEntry),
+		config:  config,
+		logger:  logger,
+		nats:    nc,
+		stopped: make(chan struct{}),
 	}
 }
 

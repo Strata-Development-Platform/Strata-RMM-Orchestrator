@@ -1,8 +1,8 @@
 package lancache
 
 import (
-	"time"
 	"testing"
+	"time"
 )
 
 func TestCreateCacheRequestValidate(t *testing.T) {
@@ -12,8 +12,8 @@ func TestCreateCacheRequestValidate(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name: "valid request",
-			req:  CreateCacheRequest{TenantID: "t1", PackageName: "chrome", PackageType: "chocolatey", Version: "110.0"},
+			name:    "valid request",
+			req:     CreateCacheRequest{TenantID: "t1", PackageName: "chrome", PackageType: "chocolatey", Version: "110.0"},
 			wantErr: false,
 		},
 		{
@@ -54,8 +54,8 @@ func TestStartCacheRequestValidate(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name: "valid request",
-			req:  StartCacheRequest{CacheMode: "standard", ListenAddr: "0.0.0.0", ListenPort: 3128, MaxCacheSize: 50},
+			name:    "valid request",
+			req:     StartCacheRequest{CacheMode: "standard", ListenAddr: "0.0.0.0", ListenPort: 3128, MaxCacheSize: 50},
 			wantErr: false,
 		},
 		{

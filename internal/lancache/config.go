@@ -41,37 +41,37 @@ const (
 
 // CacheConfig holds LAN cache server configuration.
 type CacheConfig struct {
-	Enabled          bool          `json:"enabled"`
-	CacheMode        CacheMode     `json:"cache_mode"`
-	ListenAddr       string        `json:"listen_addr"`
-	ListenPort       int           `json:"listen_port"`
-	MaxCacheSizeGB   int           `json:"max_cache_size_gb"`
-	EntryTTL         time.Duration `json:"entry_ttl"`
-	CleanupInterval  time.Duration `json:"cleanup_interval"`
-	P2PEnabled       bool          `json:"p2p_enabled"`
-	P2PPeerLimit     int           `json:"p2p_peer_limit"`
-	ProxyEnabled     bool          `json:"proxy_enabled"`
-	UpstreamProxy    string        `json:"upstream_proxy"`
-	AllowedNetworks  []string      `json:"allowed_networks"`
+	Enabled         bool          `json:"enabled"`
+	CacheMode       CacheMode     `json:"cache_mode"`
+	ListenAddr      string        `json:"listen_addr"`
+	ListenPort      int           `json:"listen_port"`
+	MaxCacheSizeGB  int           `json:"max_cache_size_gb"`
+	EntryTTL        time.Duration `json:"entry_ttl"`
+	CleanupInterval time.Duration `json:"cleanup_interval"`
+	P2PEnabled      bool          `json:"p2p_enabled"`
+	P2PPeerLimit    int           `json:"p2p_peer_limit"`
+	ProxyEnabled    bool          `json:"proxy_enabled"`
+	UpstreamProxy   string        `json:"upstream_proxy"`
+	AllowedNetworks []string      `json:"allowed_networks"`
 }
 
 // CacheEntry represents a cached package.
 type CacheEntry struct {
-	ID            string       `json:"id"`
-	TenantID      string       `json:"tenant_id"`
-	PackageName   string       `json:"package_name"`
-	PackageType   PackageType  `json:"package_type"`
-	Version       string       `json:"version"`
-	Checksum      string       `json:"checksum"`
-	SizeBytes     int64        `json:"size_bytes"`
-	Status        CacheStatus  `json:"status"`
-	DownloadCount int          `json:"download_count"`
-	CreatedAt     time.Time    `json:"created_at"`
-	LastAccessed  time.Time    `json:"last_accessed"`
-	ExpiresAt     *time.Time   `json:"expires_at,omitempty"`
-	SourceURL     string       `json:"source_url,omitempty"`
-	DownloadURL   string       `json:"download_url,omitempty"`
-	PeerHosts     []string     `json:"peer_hosts,omitempty"`
+	ID            string      `json:"id"`
+	TenantID      string      `json:"tenant_id"`
+	PackageName   string      `json:"package_name"`
+	PackageType   PackageType `json:"package_type"`
+	Version       string      `json:"version"`
+	Checksum      string      `json:"checksum"`
+	SizeBytes     int64       `json:"size_bytes"`
+	Status        CacheStatus `json:"status"`
+	DownloadCount int         `json:"download_count"`
+	CreatedAt     time.Time   `json:"created_at"`
+	LastAccessed  time.Time   `json:"last_accessed"`
+	ExpiresAt     *time.Time  `json:"expires_at,omitempty"`
+	SourceURL     string      `json:"source_url,omitempty"`
+	DownloadURL   string      `json:"download_url,omitempty"`
+	PeerHosts     []string    `json:"peer_hosts,omitempty"`
 }
 
 // CreateCacheRequest is the request body for creating a cache entry.
