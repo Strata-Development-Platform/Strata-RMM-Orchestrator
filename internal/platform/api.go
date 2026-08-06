@@ -2535,6 +2535,25 @@ func (s *APIServer) registerIntegrationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/integrations/psa/webhooks", func(w http.ResponseWriter, r *http.Request) {
 		verifier.Middleware(http.HandlerFunc(webhookHandler.HandlePSAWebhook)).ServeHTTP(w, r)
 	})
+	psaHandler := integrations.NewPSATicketHandler(s.logger, s.nats)
+	mux.HandleFunc("POST /api/v1/integrations/psa/tickets", func(w http.ResponseWriter, r *http.Request) {
+		verifier.Middleware(http.HandlerFunc(psaHandler.HandleCreatePSATicket)).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("GET /api/v1/integrations/psa/tickets/{ticketID}", func(w http.ResponseWriter, r *http.Request) {
+		verifier.Middleware(http.HandlerFunc(psaHandler.HandleGetPSATicket)).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("PUT /api/v1/integrations/psa/tickets/{ticketID}", func(w http.ResponseWriter, r *http.Request) {
+		verifier.Middleware(http.HandlerFunc(psaHandler.HandleUpdatePSATicket)).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("DELETE /api/v1/integrations/psa/tickets/{ticketID}", func(w http.ResponseWriter, r *http.Request) {
+		verifier.Middleware(http.HandlerFunc(psaHandler.HandleDeletePSATicket)).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("GET /api/v1/integrations/psa/tickets/device/{deviceID}", func(w http.ResponseWriter, r *http.Request) {
+		verifier.Middleware(http.HandlerFunc(psaHandler.HandleListPSATicketsByDevice)).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("POST /api/v1/integrations/psa/feedback", func(w http.ResponseWriter, r *http.Request) {
+		verifier.Middleware(http.HandlerFunc(psaHandler.HandlePSAAlertFeedback)).ServeHTTP(w, r)
+	})
 	mux.HandleFunc("POST /api/v1/integrations/isolate", func(w http.ResponseWriter, r *http.Request) {
 		verifier.Middleware(http.HandlerFunc(isolationHandler.HandleIsolation)).ServeHTTP(w, r)
 	})

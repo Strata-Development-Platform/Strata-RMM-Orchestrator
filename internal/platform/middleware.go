@@ -450,6 +450,14 @@ func (s *APIServer) scopedUserRoutes() []Route {
 		{Method: "GET", Path: "/api/v1/thirdparty/vendors", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/thirdparty/vendors/{vendor}/sync", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/thirdparty/vendors/status", Access: AccessUser},
+		// PSA ticket management
+		{Method: "POST", Path: "/api/v1/integrations/psa/tickets", Access: AccessUser},
+		{Method: "GET", Path: "/api/v1/integrations/psa/tickets/{ticketID}", Access: AccessUser},
+		{Method: "PUT", Path: "/api/v1/integrations/psa/tickets/{ticketID}", Access: AccessUser},
+		{Method: "DELETE", Path: "/api/v1/integrations/psa/tickets/{ticketID}", Access: AccessUser},
+		{Method: "GET", Path: "/api/v1/integrations/psa/tickets/device/{deviceID}", Access: AccessUser},
+		{Method: "POST", Path: "/api/v1/integrations/psa/feedback", Access: AccessUser},
+		{Method: "POST", Path: "/api/v1/integrations/psa/webhooks", Access: AccessPublic},
 		// Reports
 		{Method: "GET", Path: "/api/v1/reports/{tenantID}", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/reports/{tenantID}/schedules", Access: AccessUser},
