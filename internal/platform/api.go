@@ -18,10 +18,12 @@ import (
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/alerting"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/integrations"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/inventory"
+	"github.com/strata-rmm/strata-rmm-orchestrator/internal/lancache"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/observability"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/patch"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/remote"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/reporting"
+	"github.com/strata-rmm/strata-rmm-orchestrator/internal/webrtc"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/auth"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/encrypt"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/storage"
@@ -2556,6 +2558,71 @@ func (s *APIServer) registerIntegrationRoutes(mux *http.ServeMux) {
 	})
 	mux.HandleFunc("POST /api/v1/integrations/isolate", func(w http.ResponseWriter, r *http.Request) {
 		verifier.Middleware(http.HandlerFunc(isolationHandler.HandleIsolation)).ServeHTTP(w, r)
+	})
+
+	// WebRTC Remote Support routes
+	webRTCRecorder := remote.NewRecorder(s.storageBackend, s.logger)
+	webRTCHandler := webrtc.NewHandler(s.nats, webRTCRecorder, s.logger)
+	mux.HandleFunc("POST /api/v1/webrtc/sessions", func(w http.ResponseWriter, r *http.Request) {
+		verifier.Middleware(http.HandlerFunc(webRTCHandler.HandleCreateSession)).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("GET /api/v1/webrtc/sessions/{sessionID}", func(w http.ResponseWriter, r *http.Request) {
+		verifier.Middleware(http.HandlerFunc(webRTCHandler.HandleGetSession)).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("POST /api/v1/webrtc/sessions/{sessionID}/offer", func(w http.ResponseWriter, r *http.Request) {
+		verifier.Middleware(http.HandlerFunc(webRTCHandler.HandleCreateOffer)).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("POST /api/v1/webrtc/sessions/{sessionID}/answer", func(w http.ResponseWriter, r *http.Request) {
+		verifier.Middleware(http.HandlerFunc(webRTCHandler.HandleHandleAnswer)).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("POST /api/v1/webrtc/sessions/{sessionID}/ice-candidate", func(w http.ResponseWriter, r *http.Request) {
+		verifier.Middleware(http.HandlerFunc(webRTCHandler.HandleAddICECandidate)).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("POST /api/v1/webrtc/sessions/{sessionID}/end", func(w http.ResponseWriter, r *http.Request) {
+		verifier.Middleware(http.HandlerFunc(webRTCHandler.HandleEndSession)).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("GET /api/v1/webrtc/sessions", func(w http.ResponseWriter, r *http.Request) {
+		verifier.Middleware(http.HandlerFunc(webRTCHandler.HandleListSessions)).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("GET /api/v1/webrtc/sessions/{sessionID}/relay-config", func(w http.ResponseWriter, r *http.Request) {
+		verifier.Middleware(http.HandlerFunc(webRTCHandler.HandleGetRelayConfig)).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("GET /api/v1/webrtc/sessions/{sessionID}/recordings", func(w http.ResponseWriter, r *http.Request) {
+		verifier.Middleware(http.HandlerFunc(webRTCHandler.HandleListRecordings)).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("POST /api/v1/webrtc/sessions/{sessionID}/start-recording", func(w http.ResponseWriter, r *http.Request) {
+		verifier.Middleware(http.HandlerFunc(webRTCHandler.HandleStartRecording)).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("POST /api/v1/webrtc/sessions/{sessionID}/stop-recording", func(w http.ResponseWriter, r *http.Request) {
+		verifier.Middleware(http.HandlerFunc(webRTCHandler.HandleStopRecording)).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("GET /api/v1/webrtc/sessions/{sessionID}/transcriptions", func(w http.ResponseWriter, r *http.Request) {
+		verifier.Middleware(http.HandlerFunc(webRTCHandler.HandleListTranscriptions)).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("POST /api/v1/webrtc/sessions/{sessionID}/start-transcription", func(w http.ResponseWriter, r *http.Request) {
+		verifier.Middleware(http.HandlerFunc(webRTCHandler.HandleStartTranscription)).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("POST /api/v1/webrtc/sessions/{sessionID}/stop-transcription", func(w http.ResponseWriter, r *http.Request) {
+		verifier.Middleware(http.HandlerFunc(webRTCHandler.HandleStopTranscription)).ServeHTTP(w, r)
+	})
+
+	// LAN Cache routes
+	lancacheConfig := lancache.CacheConfig{
+		Enabled:         true,
+		CacheMode:       lancache.CacheModeHybrid,
+		ListenAddr:      "0.0.0.0",
+		ListenPort:      3128,
+		MaxCacheSizeGB:  50,
+		P2PEnabled:      true,
+		CleanupInterval: 3600 * time.Second,
+		EntryTTL:        86400 * time.Second,
+	}
+	lancacheServer := lancache.NewServer(lancacheConfig, s.logger, s.nats)
+	mux.HandleFunc("GET /api/v1/lancache/stats", func(w http.ResponseWriter, r *http.Request) {
+		verifier.Middleware(http.HandlerFunc(lancacheServer.HandleCacheStats)).ServeHTTP(w, r)
+	})
+	mux.HandleFunc("GET /api/v1/lancache/packages/{packageID}", func(w http.ResponseWriter, r *http.Request) {
+		verifier.Middleware(http.HandlerFunc(lancacheServer.HandleServeHTTP)).ServeHTTP(w, r)
 	})
 }
 
