@@ -4341,3 +4341,14 @@ PR #82: Entry points → `DeviceGroupListPage.tsx` (list page, 273 lines), `Smar
 - WebRTC: Media data is mock SDP only (no actual P2P streaming); TURN/STUN credentials not configured; STT transcription uses mock data. Production WebRTC requires actual P2P media infrastructure, TURN server deployment, and STT API integration.
 - LAN Cache: Cache files served via HTTP mock (not actual file streaming); P2P sharing logic simulated. Production LAN Cache requires actual file storage, P2P networking stack, and bandwidth throttling.
 - Persistence: Both WebRTC sessions and LAN Cache are in-memory only — data is lost on restart.
+
+## PR #89: Software Deployment - complete package matrix (MSI, EXE, DEB, RPM, AppImage, Script)
+- **Merged**: 17c2fc3 (squash merge)
+- **Branch**: feat/software-deployment
+- **CI Evidence**: All 83 checks pass, 0 fail
+- **Files**: installer.go (+23), installer_test.go (489 new), software_handlers_test.go (108 new)
+- **Tests**: 25 new unit tests (17 installer + 8 handler)
+- **Package types**: MSI, EXE, DEB, RPM, AppImage, Script (complete matrix)
+- **Features**: SHA256 verification, multi-device deployment, timeout handling, context cancellation
+- **Gate 2 audit**: Entry → installer.go, installer_test.go, software_handlers_test.go; Identity → JWT via handler chain; Authorization → AuthorizeMSPManage; Tenant → packages scoped to tenant_id; Persistence → In-memory (no DB changes); Messaging → NATS events (software result); Endpoint execution → Software deployment routes; Metrics → N/A; Alerts → N/A; Runbooks → N/A; Existing tests → 25 unit tests covering package execution, checksum verification, timeout, cancelled context
+- **Limitations**: AppImage requires Linux desktop env; Script deployment requires appropriate shell; No package repository mirroring; No dependency resolution; Representative OS tests limited by CI environment
