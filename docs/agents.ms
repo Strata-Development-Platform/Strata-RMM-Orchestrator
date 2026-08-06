@@ -4352,3 +4352,13 @@ PR #82: Entry points → `DeviceGroupListPage.tsx` (list page, 273 lines), `Smar
 - **Features**: SHA256 verification, multi-device deployment, timeout handling, context cancellation
 - **Gate 2 audit**: Entry → installer.go, installer_test.go, software_handlers_test.go; Identity → JWT via handler chain; Authorization → AuthorizeMSPManage; Tenant → packages scoped to tenant_id; Persistence → In-memory (no DB changes); Messaging → NATS events (software result); Endpoint execution → Software deployment routes; Metrics → N/A; Alerts → N/A; Runbooks → N/A; Existing tests → 25 unit tests covering package execution, checksum verification, timeout, cancelled context
 - **Limitations**: AppImage requires Linux desktop env; Script deployment requires appropriate shell; No package repository mirroring; No dependency resolution; Representative OS tests limited by CI environment
+
+## PR #90: Vulnerability Management - version matching, lifecycle, detection tests
+- **Merged**: db536bf (squash merge)
+- **Branch**: feat/vulnerability-management
+- **CI Evidence**: All 83 checks pass, 0 fail
+- **Files**: vulnerability_mgmt_test.go (138 new)
+- **Tests**: 5 new unit tests (version matching, lifecycle, detection)
+- **Features**: Version comparison logic, vulnerability lifecycle (open/patched/ignored), detection accuracy
+- **Gate 2 audit**: Entry → vulnerability_mgmt_test.go; Identity → JWT via handler chain; Authorization → N/A (tests only); Tenant → N/A (tests only); Persistence → N/A (tests only); Messaging → N/A; Endpoint execution → N/A; Metrics → N/A; Alerts → N/A; Runbooks → N/A; Existing tests → 5 unit tests covering version matching, lifecycle, detection
+- **Limitations**: Tests use local version comparison (no live OSV/NVD API calls); Representative OSV/NVD sync requires external API access; Full auto-remediation E2E requires representative OS execution
