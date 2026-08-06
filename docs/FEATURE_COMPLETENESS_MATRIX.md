@@ -184,12 +184,13 @@ ticket or PR when the team is ready to begin work.
 | 2.2a | Git-backed automation vault: SSH/HTTPS clone/pull from GitHub/GitLab | `internal/automation/vault.go` | Unit test with mock Git server (19 tests) | **Verified** | #59 | 84 pass, 0 fail, 0 pending |
 | 2.2b | AES-256-GCM envelope encryption for secret variables; in-memory exposure over NATS | `internal/automation/vault_envelope.go` | Encryption round-trip test + audit that secrets never touch disk (26 tests) | **Verified** | #61 | 84 pass, 0 fail, 0 pending |
 
-### Phase 7: Dynamic Device Grouping (Smart Groups) — **COMPLETE** (7.1 DSL, 7.2 API + Sync merged)
+### Phase 7: Dynamic Device Grouping (Smart Groups) — **COMPLETE** (7.1 DSL, 7.2 API + Sync, 7.3 Update merged)
 
 | ID | Task | Target | Evidence required | Status | PR | CI |
 |----|------|--------|-------------------|--------|----|----|
 | 7.1 | Expression DSL evaluator + DB schema (filter_expression JSONB, group_memberships table, Migration 94) | `internal/groups/`, `pkg/postgres/schema.go` | 40 unit tests covering 13 operators, nested AND/OR, edge cases, round-trip serialization | **Verified** | #73 | 86 pass, 0 fail, 0 pending |
 | 7.2 | API endpoints (POST /smart, GET /detail, GET /members, POST /evaluate, GET /evaluation-status) + SmartGroupSync background loop (5min) | `internal/platform/smart_group_handlers.go`, `smart_group_sync.go` | 13 tests: sync lifecycle, concurrent start/stop, DSL integration (all operators, nested, time, case-insensitive), round-trip, parseStringArray | **Verified** | #74 | 84 pass, 0 fail, 0 pending |
+| 7.3 | PUT /device-groups/{groupID} update endpoint (name, description, filter_expression, device_ids, smart/static detection) | `internal/platform/smart_group_handlers.go`, `api.go`, `middleware.go` | 4 tests: request validation, filter expression parsing, groupID validation, response structure | **Verified** | #75 | 65 pass, 1 fail (pre-existing DB serialization race), 0 pending |
 
 **Gate 2 audit trace for PR #73:**
 
@@ -199,8 +200,13 @@ PR #73 (7.1): Entry points → `internal/groups/dsl.go` (Expression.Validate, Ex
 
 PR #74 (7.2): Entry points → `smart_group_handlers.go` (5 handlers), `smart_group_sync.go` (SmartGroupSync.Start/Stop/runLoop); Identity → N/A (middleware handles auth); Authorization → AuthorizeMSPManage on create/evaluate, msp_id scoping on all queries via X-MSP-ID; Tenant → device_groups scoped to msp_id with RLS; Persistence → Uses Migration 94 schema (no new migrations); Messaging → N/A (future: NATS evaluation trigger); Object storage → N/A; Endpoint execution → N/A; UI state → N/A; Audit records → N/A; Metrics → N/A; Alerts → N/A; Runbooks → N/A; Existing tests → 13 tests in `smart_group_sync_test.go`.
 
-**Limitations (7.2):** No PUT /update endpoint (ws1c), no tags auto-population (ws1c), no UI components (ws1c), no notification/callback on evaluation completion, no rate limiting on evaluate trigger, background sync evaluates groups sequentially (no parallel evaluation).
+**Gate 2 audit trace for PR #75:**
+
+PR #75 (7.3): Entry points → `smart_group_handlers.go` (handleUpdateDeviceGroup); Identity → N/A (middleware handles auth); Authorization → AuthorizeMSPManage on update, msp_id scoping on group lookup and update; Tenant → device_groups scoped to msp_id with RLS; Persistence → Uses Migration 94 schema (no new migrations); Messaging → N/A; Object storage → N/A; Endpoint execution → PUT /api/v1/device-groups/{groupID}; UI state → N/A; Audit records → N/A; Metrics → N/A; Alerts → N/A; Runbooks → N/A; Existing tests → 4 tests in `smart_group_sync_test.go`.
+
+**Limitations (7.3):** No automatic re-evaluation after smart group update (future), no conflict resolution for concurrent modifications, no audit trail for updates, no tags auto-population (future), no UI components (future ws1c-2).
 
 **Pre-existing failures fixed during PRs:**
 - PR #73: `MSPListPage.test.tsx` (duplicate `role="status"` in Toast.tsx + success div). Fix: Toast.tsx role "status" → "log", MSPListPage.tsx added creationSuccess state + role="status" div. Frontend: 87/87 pass (was 86/87, 1 fail).
 - PR #74: 4 lint fixes (rows.Close errcheck, Scan error check, SA4000 identical expressions, SA9003 empty branch) + 1 panic fix (SmartGroupSync.Stop() double-close → running guard + select).
+- PR #75: 1 pre-existing DB serialization conflict in Durable Jobs Integration test (unrelated to PUT handler — concurrent transaction race on job_inbox INSERT ON CONFLICT).

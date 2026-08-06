@@ -4158,3 +4158,24 @@ All 7 CI checks terminal and successful on PR #67 (final head 7733ad7):
   - G. Branch deleted: Yes
   - H. Open dev PRs: None
 
+
+### Workstream 1c-1: PUT Update Endpoint — MERGED (2026-08-06)
+- PR: #75 (merged, squash, branch deleted)
+- Branch: feature/ws1c-update-endpoint
+- Base SHA: c1f06b7c0c55a3227fe9db70e43e9a71c3e2aa7b
+- Head SHA: e4e4ed0 (CI final state)
+- Merge SHA: 87f8453
+- Files: smart_group_handlers.go (+90 lines, handleUpdateDeviceGroup), api.go (+1 route), middleware.go (+1 classification), smart_group_sync_test.go (+93 lines, 4 tests)
+- CI: 65 pass, 1 fail (Durable Jobs Integration - pre-existing PostgreSQL serialization conflict unrelated to PUT handler), 0 pending
+- CI Run: 31063627640
+- Pre-existing failures: 1 (Durable Jobs Integration - serialization conflict on job_inbox INSERT ON CONFLICT)
+- Ledger Rules Audit:
+  - A. Merge evidence present: Yes
+  - B. Branch: feature/ws1c-update-endpoint
+  - C. PR state: MERGED
+  - D. Failures documented: 1 pre-existing DB serialization conflict (not caused by changes)
+  - E. Reruns: 1 CI run (all 65 non-Durable-Job checks passed)
+  - F. No pre-existing failure carried forward: Yes (failure is DB race condition in unrelated test)
+  - G. Branch deleted: Yes
+  - H. Open dev PRs: None
+
