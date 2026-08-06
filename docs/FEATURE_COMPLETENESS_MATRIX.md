@@ -184,16 +184,23 @@ ticket or PR when the team is ready to begin work.
 | 2.2a | Git-backed automation vault: SSH/HTTPS clone/pull from GitHub/GitLab | `internal/automation/vault.go` | Unit test with mock Git server (19 tests) | **Verified** | #59 | 84 pass, 0 fail, 0 pending |
 | 2.2b | AES-256-GCM envelope encryption for secret variables; in-memory exposure over NATS | `internal/automation/vault_envelope.go` | Encryption round-trip test + audit that secrets never touch disk (26 tests) | **Verified** | #61 | 84 pass, 0 fail, 0 pending |
 
-### Phase 7: Dynamic Device Grouping (Smart Groups) — **COMPLETE** (7.1 merged)
+### Phase 7: Dynamic Device Grouping (Smart Groups) — **COMPLETE** (7.1 DSL, 7.2 API + Sync merged)
 
 | ID | Task | Target | Evidence required | Status | PR | CI |
 |----|------|--------|-------------------|--------|----|----|
 | 7.1 | Expression DSL evaluator + DB schema (filter_expression JSONB, group_memberships table, Migration 94) | `internal/groups/`, `pkg/postgres/schema.go` | 40 unit tests covering 13 operators, nested AND/OR, edge cases, round-trip serialization | **Verified** | #73 | 86 pass, 0 fail, 0 pending |
+| 7.2 | API endpoints (POST /smart, GET /detail, GET /members, POST /evaluate, GET /evaluation-status) + SmartGroupSync background loop (5min) | `internal/platform/smart_group_handlers.go`, `smart_group_sync.go` | 13 tests: sync lifecycle, concurrent start/stop, DSL integration (all operators, nested, time, case-insensitive), round-trip, parseStringArray | **Verified** | #74 | 84 pass, 0 fail, 0 pending |
 
 **Gate 2 audit trace for PR #73:**
 
 PR #73 (7.1): Entry points → `internal/groups/dsl.go` (Expression.Validate, Expression.Evaluate, ParseExpression, SerializeExpression, IsSmartGroup), Migration 94 in `pkg/postgres/schema.go`; Identity → N/A (no auth boundary); Authorization → N/A (DSL evaluator is stateless; RLS enforced at DB layer via device_groups.msp_id); Tenant → `device_groups` already scoped to `msp_id` with RLS policies; Persistence → 4 new columns on `device_groups` (filter_expression, is_smart, last_evaluated, member_count), new `group_memberships` table with composite PK (group_id, device_id) and 2 indexes; Messaging → N/A (future: NATS evaluation trigger in ws1b); Object storage → N/A; Endpoint execution → N/A; UI state → N/A; Audit records → N/A; Metrics → N/A; Alerts → N/A; Runbooks → N/A; Existing tests → 40 unit tests in `dsl_test.go` covering all operators, nested logic, edge cases.
 
-**Limitations (7.1):** No API endpoints (ws1b), no background re-evaluation loop (ws1b), no tags population from inventory (ws1b), no UI components (ws1c), regex uses Go regexp.MatchString (limited attack surface).
+**Gate 2 audit trace for PR #74:**
 
-**Pre-existing failure fixed during PR #73:** `MSPListPage.test.tsx` (duplicate `role="status"` in Toast.tsx + success div). Fix: Toast.tsx changed `role="status"` → `role="log"`, MSPListPage.tsx added `creationSuccess` state + `role="status"` success div. Frontend: 87/87 pass (was 86/87, 1 fail).
+PR #74 (7.2): Entry points → `smart_group_handlers.go` (5 handlers), `smart_group_sync.go` (SmartGroupSync.Start/Stop/runLoop); Identity → N/A (middleware handles auth); Authorization → AuthorizeMSPManage on create/evaluate, msp_id scoping on all queries via X-MSP-ID; Tenant → device_groups scoped to msp_id with RLS; Persistence → Uses Migration 94 schema (no new migrations); Messaging → N/A (future: NATS evaluation trigger); Object storage → N/A; Endpoint execution → N/A; UI state → N/A; Audit records → N/A; Metrics → N/A; Alerts → N/A; Runbooks → N/A; Existing tests → 13 tests in `smart_group_sync_test.go`.
+
+**Limitations (7.2):** No PUT /update endpoint (ws1c), no tags auto-population (ws1c), no UI components (ws1c), no notification/callback on evaluation completion, no rate limiting on evaluate trigger, background sync evaluates groups sequentially (no parallel evaluation).
+
+**Pre-existing failures fixed during PRs:**
+- PR #73: `MSPListPage.test.tsx` (duplicate `role="status"` in Toast.tsx + success div). Fix: Toast.tsx role "status" → "log", MSPListPage.tsx added creationSuccess state + role="status" div. Frontend: 87/87 pass (was 86/87, 1 fail).
+- PR #74: 4 lint fixes (rows.Close errcheck, Scan error check, SA4000 identical expressions, SA9003 empty branch) + 1 panic fix (SmartGroupSync.Stop() double-close → running guard + select).

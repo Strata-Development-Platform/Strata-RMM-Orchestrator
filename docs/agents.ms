@@ -4135,3 +4135,26 @@ All 7 CI checks terminal and successful on PR #67 (final head 7733ad7):
   - G. Branch deleted: Yes — deleted by merge
   - H. Open dev PRs: None
 
+
+### Workstream 1b: Smart Groups API + Sync — MERGED (2026-08-06)
+- PR: #74 (merged, squash, branch deleted)
+- Branch: feature/ws1b-smart-groups-api-sync
+- Base SHA: 1df33306520e1efb9ecf97e4e38151814cd262db
+- Head SHA: 4d0f6df (final CI-passing head)
+- Merge SHA: 910f735
+- Files: smart_group_handlers.go (466 lines, 5 API handlers), smart_group_sync.go (102 lines, sync loop), smart_group_sync_test.go (437 lines, 13 tests), api.go (routes+wiring), middleware.go (classifications)
+- CI: 84 pass, 0 fail, 0 pending (all workflows terminal)
+- CI URLs: Run 31062279809 (full CI, final green run)
+- Lint fixes during CI: rows.Close() errcheck (4 occurrences), Scan() error check, SA4000 identical expressions, SA9003 empty branch
+- Panic fix: SmartGroupSync.Stop() double-close of stopCh → added running guard + select
+- Pre-existing failures: None (lint/test fixes applied during CI)
+- Ledger Rules Audit:
+  - A. Merge evidence present: Yes
+  - B. Branch: feature/ws1b-smart-groups-api-sync
+  - C. PR state: MERGED
+  - D. Failures documented: 4 lint fixes + 1 panic fix
+  - E. Reruns: 3 CI runs (initial → lint fix → SA4000 fix)
+  - F. No pre-existing failure carried forward: Yes
+  - G. Branch deleted: Yes
+  - H. Open dev PRs: None
+
