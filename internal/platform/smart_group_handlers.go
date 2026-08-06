@@ -554,3 +554,174 @@ func (s *APIServer) evaluateAllSmartGroups(ctx context.Context) {
 		}
 	}
 }
+
+func (s *APIServer) handleBindScriptToSmartGroup(w http.ResponseWriter, r *http.Request) {
+	mspID := r.Header.Get("X-MSP-ID")
+	groupID := r.PathValue("groupID")
+	if mspID == "" || groupID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "msp_id and groupID required"})
+		return
+	}
+	if !s.AuthorizeMSPManage(w, r, mspID) {
+		return
+	}
+
+	// Verify group is a smart group
+	var isSmart bool
+	var memberCount int
+	err := s.requestDB(r).QueryRowContext(r.Context(), `
+		SELECT is_smart, member_count FROM device_groups WHERE id = $1 AND msp_id = $2
+	`, groupID, mspID).Scan(&isSmart, &memberCount)
+	if err == sql.ErrNoRows {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "group not found"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if !isSmart {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "script bindings require a smart group"})
+		return
+	}
+	if memberCount == 0 {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "smart group must have at least one member before binding scripts"})
+		return
+	}
+
+	var req struct {
+		ScheduleID string `json:"schedule_id"`
+		BindingType string `json:"binding_type"`
+		Priority   int    `json:"priority"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+		return
+	}
+	if req.ScheduleID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "schedule_id required"})
+		return
+	}
+	if req.BindingType == "" {
+		req.BindingType = "scheduled"
+	}
+	if req.Priority == 0 {
+		req.Priority = 50
+	}
+
+	result, err := s.requestDB(r).ExecContext(r.Context(), `
+		INSERT INTO smart_group_script_bindings (group_id, schedule_id, msp_id, binding_type, priority, enabled)
+		VALUES ($1, $2, $3, $4, $5, true)
+		ON CONFLICT (group_id, schedule_id) DO NOTHING
+		RETURNING id::text, created_at
+	`, groupID, req.ScheduleID, mspID, req.BindingType, req.Priority)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "binding already exists"})
+		return
+	}
+
+	var bindingID string
+	var createdAt time.Time
+	if err := s.requestDB(r).QueryRowContext(r.Context(), `
+		SELECT id::text, created_at FROM smart_group_script_bindings
+		WHERE group_id = $1 AND schedule_id = $2 AND msp_id = $3
+	`, groupID, req.ScheduleID, mspID).Scan(&bindingID, &createdAt); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to retrieve binding"})
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]interface{}{
+		"id":            bindingID,
+		"group_id":      groupID,
+		"schedule_id":   req.ScheduleID,
+		"binding_type":  req.BindingType,
+		"priority":      req.Priority,
+		"enabled":       true,
+		"created_at":    createdAt,
+	})
+}
+
+func (s *APIServer) handleUnbindScriptFromSmartGroup(w http.ResponseWriter, r *http.Request) {
+	mspID := r.Header.Get("X-MSP-ID")
+	groupID := r.PathValue("groupID")
+	bindingID := r.PathValue("bindingID")
+	if mspID == "" || groupID == "" || bindingID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "msp_id, groupID, and bindingID required"})
+		return
+	}
+	if !s.AuthorizeMSPManage(w, r, mspID) {
+		return
+	}
+
+	result, err := s.requestDB(r).ExecContext(r.Context(), `
+		DELETE FROM smart_group_script_bindings
+		WHERE id = $1 AND group_id = $2 AND msp_id = $3
+	`, bindingID, groupID, mspID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	affected, _ := result.RowsAffected()
+	if affected != 1 {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "binding not found"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":  "deleted",
+		"binding": bindingID,
+	})
+}
+
+func (s *APIServer) handleListSmartGroupBindings(w http.ResponseWriter, r *http.Request) {
+	mspID := r.Header.Get("X-MSP-ID")
+	groupID := r.PathValue("groupID")
+	if mspID == "" || groupID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "msp_id and groupID required"})
+		return
+	}
+	if !s.AuthorizeMSPManage(w, r, mspID) {
+		return
+	}
+
+	rows, err := s.requestDB(r).QueryContext(r.Context(), `
+		SELECT id::text, schedule_id::text, binding_type, priority, enabled, created_at::text, updated_at::text
+		FROM smart_group_script_bindings
+		WHERE group_id = $1 AND msp_id = $2
+		ORDER BY priority ASC, created_at ASC
+	`, groupID, mspID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	defer func() { _ = rows.Close() }()
+
+	type binding struct {
+		ID            string    `json:"id"`
+		ScheduleID    string    `json:"schedule_id"`
+		BindingType   string    `json:"binding_type"`
+		Priority      int       `json:"priority"`
+		Enabled       bool      `json:"enabled"`
+		CreatedAt     string    `json:"created_at"`
+		UpdatedAt     string    `json:"updated_at"`
+	}
+
+	var bindings []binding
+	for rows.Next() {
+		var b binding
+		if err := rows.Scan(&b.ID, &b.ScheduleID, &b.BindingType, &b.Priority, &b.Enabled, &b.CreatedAt, &b.UpdatedAt); err != nil {
+			continue
+		}
+		bindings = append(bindings, b)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"bindings": bindings,
+		"count":    len(bindings),
+	})
+}
