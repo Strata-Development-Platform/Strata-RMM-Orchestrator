@@ -4201,3 +4201,25 @@ All 7 CI checks terminal and successful on PR #67 (final head 7733ad7):
   - G. Branch deleted: Yes
   - H. Open dev PRs: None
 
+
+### Workstream 8B: Schedule Runner Smart Group Dispatch — MERGED (2026-08-06)
+- PR: #77 (merged, squash, branch deleted)
+- Branch: feature/ws8b-schedule-runner-smart-groups
+- Base SHA: 884f290ceaaf57890e88547bf8268a92ffc4be20
+- Head SHA: 40b9449 (final CI-passing head after lint fixes)
+- Merge SHA: ef6f269
+- Files: script_schedule_runner.go (+160 lines, binding discovery + dispatch), jobs.go (+88 lines, ExecuteScheduleDevice), smart_group_sync_test.go (+123 lines, 5 tests)
+- CI: 66 pass, 0 fail, 0 pending (all workflows terminal)
+- CI Run: 31065251588 (final green run)
+- Lint fixes during CI: errcheck on so.db.ExecContext (defer func() { _ = rows.Close() }()), nil check removal (len() for nil slices is defined as zero)
+- Pre-existing failures: None
+- Ledger Rules Audit:
+  - A. Merge evidence present: Yes
+  - B. Branch: feature/ws8b-schedule-runner-smart-groups
+  - C. PR state: MERGED
+  - D. Failures documented: 2 lint fixes (errcheck, nil check)
+  - E. Reruns: 2 CI runs (initial lint fail → lint fix → all green)
+  - F. No pre-existing failure carried forward: Yes
+  - G. Branch deleted: Yes
+  - H. Open dev PRs: None
+

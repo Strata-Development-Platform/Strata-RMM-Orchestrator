@@ -212,14 +212,21 @@ PR #75 (7.3): Entry points → `smart_group_handlers.go` (handleUpdateDeviceGrou
 - PR #74: 4 lint fixes (rows.Close errcheck, Scan error check, SA4000 identical expressions, SA9003 empty branch) + 1 panic fix (SmartGroupSync.Stop() double-close → running guard + select).
 - PR #75: 1 pre-existing DB serialization conflict in Durable Jobs Integration test (unrelated to PUT handler — concurrent transaction race on job_inbox INSERT ON CONFLICT).
 
-### Phase 8: Script Vault & Policy Binding
+### Phase 8: Script Vault & Policy Binding — **8A + 8B merged**
 
 | ID | Task | Target | Evidence required | Status | PR | CI |
 |----|------|--------|-------------------|--------|----|----|
 | 8A | Smart group script bindings (Migration 95, 3 endpoints: POST/GET/DELETE /script-bindings) | `smart_group_handlers.go`, `schema.go` (M95) | 6 tests: request validation, defaults, response structure, unbind validation, empty list, binding response | **Verified** | #76 | 66 pass, 0 fail, 0 pending |
+| 8B | Schedule runner smart group dispatch (binding discovery, group_memberships dispatch, ExecuteScheduleDevice) | `script_schedule_runner.go`, `jobs.go` | 5 tests: binding discovery, dispatch, group members, schedule info, smart group dispatch | **Verified** | #77 | 66 pass, 0 fail, 0 pending |
 
 **Gate 2 audit trace for PR #76:**
 
-PR #76 (8A): Entry points → `smart_group_handlers.go` (handleBindScriptToSmartGroup, handleUnbindScriptFromSmartGroup, handleListSmartGroupBindings), Migration 95 in `pkg/postgres/schema.go`; Identity → N/A (middleware handles auth); Authorization → AuthorizeMSPManage on all handlers, msp_id scoping on all queries; Tenant → device_groups scoped to msp_id with RLS; Persistence → New `smart_group_script_bindings` table (unique(group_id, schedule_id), indexed by group_id/schedule_id/msp_id); Messaging → N/A (future: schedule runner integration); Object storage → N/A; Endpoint execution → POST/GET/DELETE /api/v1/device-groups/{groupID}/script-bindings; UI state → N/A; Audit records → N/A; Metrics → N/A; Alerts → N/A; Runbooks → N/A; Existing tests → 6 tests in `smart_group_sync_test.go`.
+PR #76 (8A): Entry points → `smart_group_handlers.go` (handleBindScriptToSmartGroup, handleUnbindScriptFromSmartGroup, handleListSmartGroupBindings), Migration 95 in `pkg/postgres/schema.go`; Identity → N/A (middleware handles auth); Authorization → AuthorizeMSPManage on all handlers, msp_id scoping on all queries; Tenant → device_groups scoped to msp_id with RLS; Persistence → New `smart_group_script_bindings` table (unique(group_id, schedule_id), indexed by group_id/schedule_id/msp_id); Messaging → N/A (schedule runner integration added in 8B); Object storage → N/A; Endpoint execution → POST/GET/DELETE /api/v1/device-groups/{groupID}/script-bindings; UI state → N/A; Audit records → N/A; Metrics → N/A; Alerts → N/A; Runbooks → N/A; Existing tests → 6 tests in `smart_group_sync_test.go`.
 
-**Limitations (8A):** No schedule runner integration to auto-dispatch scripts to smart group members, no script execution history per binding, no binding priority-based dispatch order, no binding TTL/auto-expiry, no webhook notification on binding change.
+**Gate 2 audit trace for PR #77:**
+
+PR #77 (8B): Entry points → `script_schedule_runner.go` (evaluateSchedules, getSmartGroupBindingsForSchedule, dispatchScheduleToSmartGroup), `jobs.go` (ExecuteScheduleDevice); Identity → N/A (schedule runner is background service); Authorization → msp_id scoping enforced via smart_group_script_bindings FK to device_groups (msp_id); Tenant → device_groups scoped to msp_id with RLS; Persistence → Reads smart_group_script_bindings + group_memberships; Messaging → NATS publish to tenant.{id}.cmd.{deviceID} (same pattern as ExecuteSchedule); Object storage → N/A; Endpoint execution → N/A (background runner); UI state → N/A; Audit records → schedule_device_executions tracked per dispatch; Metrics → N/A; Alerts → N/A; Runbooks → N/A; Existing tests → 5 tests in `smart_group_sync_test.go`.
+
+**Limitations (8A):** No schedule runner integration to auto-dispatch scripts to smart group members (now implemented in 8B), no script execution history per binding, no binding priority-based dispatch order, no binding TTL/auto-expiry, no webhook notification on binding change.
+
+**Limitations (8B):** No per-binding execution tracking (future: binding_execution_history table), no dispatch priority ordering across multiple bindings, no dispatch rate limiting per schedule, no notification/callback on smart group dispatch completion, ExecuteScheduleDevice uses context.Background() for some internal queries (minor).
