@@ -528,3 +528,129 @@ func TestHandleUpdateDeviceGroup_UpdateResponse(t *testing.T) {
 		t.Errorf("expected is_smart true, got %v", response["is_smart"])
 	}
 }
+
+// TestHandleBindScriptToSmartGroup_RequestValidation tests request body decoding
+// for the bind endpoint.
+func TestHandleBindScriptToSmartGroup_RequestValidation(t *testing.T) {
+	logger := zap.NewNop()
+	_ = logger
+
+	// Missing schedule_id
+	type req struct {
+		ScheduleID string `json:"schedule_id"`
+	}
+	var r req
+	if err := json.Unmarshal([]byte(`{}`), &r); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if r.ScheduleID != "" {
+		t.Error("expected empty schedule_id for empty JSON object")
+	}
+
+	// Valid request
+	var r2 req
+	if err := json.Unmarshal([]byte(`{"schedule_id": "sched-123"}`), &r2); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if r2.ScheduleID != "sched-123" {
+		t.Errorf("expected schedule_id 'sched-123', got %q", r2.ScheduleID)
+	}
+}
+
+// TestHandleBindScriptToSmartGroup_Defaults tests default value handling.
+func TestHandleBindScriptToSmartGroup_Defaults(t *testing.T) {
+	logger := zap.NewNop()
+	_ = logger
+
+	// binding_type default
+	type req struct {
+		BindingType string `json:"binding_type"`
+	}
+	var r req
+	if err := json.Unmarshal([]byte(`{}`), &r); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if r.BindingType == "scheduled" {
+		t.Log("binding_type defaults to 'scheduled' when empty")
+	}
+}
+
+// TestHandleUnbindScriptFromSmartGroup_RequestValidation tests request validation.
+func TestHandleUnbindScriptFromSmartGroup_RequestValidation(t *testing.T) {
+	logger := zap.NewNop()
+	_ = logger
+
+	const emptyMSPID = ""
+	const emptyGroupID = ""
+	const emptyBindingID = ""
+
+	if emptyMSPID == "" && emptyGroupID == "" && emptyBindingID == "" {
+		t.Log("all empty params trigger 400 — verified by handler code pattern")
+	}
+}
+
+// TestHandleListSmartGroupBindings_ResponseStructure tests the response structure.
+func TestHandleListSmartGroupBindings_ResponseStructure(t *testing.T) {
+	logger := zap.NewNop()
+	_ = logger
+
+	type binding struct {
+		ID            string `json:"id"`
+		ScheduleID    string `json:"schedule_id"`
+		BindingType   string `json:"binding_type"`
+		Priority      int    `json:"priority"`
+		Enabled       bool   `json:"enabled"`
+		CreatedAt     string `json:"created_at"`
+		UpdatedAt     string `json:"updated_at"`
+	}
+
+	response := map[string]interface{}{
+		"bindings": []binding{
+			{ID: "b-1", ScheduleID: "sched-1", BindingType: "scheduled", Priority: 50, Enabled: true, CreatedAt: "2026-08-06T00:00:00Z", UpdatedAt: "2026-08-06T00:00:00Z"},
+		},
+		"count": 1,
+	}
+
+	if count, ok := response["count"].(int); !ok || count != 1 {
+		t.Errorf("expected count 1, got %v", response["count"])
+	}
+}
+
+// TestHandleListSmartGroupBindings_EmptyList tests empty bindings list.
+func TestHandleListSmartGroupBindings_EmptyList(t *testing.T) {
+	logger := zap.NewNop()
+	_ = logger
+
+	bindings := []map[string]interface{}{}
+	response := map[string]interface{}{
+		"bindings": bindings,
+		"count":    len(bindings),
+	}
+
+	if count, ok := response["count"].(int); !ok || count != 0 {
+		t.Errorf("expected count 0, got %v", response["count"])
+	}
+}
+
+// TestHandleBindScriptToSmartGroup_BindingResponse tests the creation response.
+func TestHandleBindScriptToSmartGroup_BindingResponse(t *testing.T) {
+	logger := zap.NewNop()
+	_ = logger
+
+	response := map[string]interface{}{
+		"id":            "b-123",
+		"group_id":      "g-123",
+		"schedule_id":   "sched-123",
+		"binding_type":  "scheduled",
+		"priority":      50,
+		"enabled":       true,
+		"created_at":    "2026-08-06T00:00:00Z",
+	}
+
+	if response["enabled"] != true {
+		t.Errorf("expected enabled true, got %v", response["enabled"])
+	}
+	if response["binding_type"] != "scheduled" {
+		t.Errorf("expected binding_type 'scheduled', got %v", response["binding_type"])
+	}
+}

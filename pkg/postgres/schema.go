@@ -4357,6 +4357,31 @@ DROP POLICY IF EXISTS "platform_admin_topology_edges" ON topology_edges;
 				ALTER TABLE device_groups DROP COLUMN IF EXISTS member_count;
 			`,
 		},
+		{
+			ID:   95,
+			Name: "add_smart_group_script_bindings",
+			Up: `
+				CREATE TABLE IF NOT EXISTS smart_group_script_bindings (
+					id            UUID NOT NULL DEFAULT gen_random_uuid(),
+					group_id      UUID NOT NULL REFERENCES device_groups(id) ON DELETE CASCADE,
+					schedule_id   UUID NOT NULL,
+					msp_id        UUID NOT NULL,
+					binding_type  VARCHAR(50) NOT NULL DEFAULT 'scheduled',
+					priority      INT NOT NULL DEFAULT 50,
+					enabled       BOOLEAN NOT NULL DEFAULT true,
+					created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					PRIMARY KEY (id),
+					UNIQUE (group_id, schedule_id)
+				);
+				CREATE INDEX IF NOT EXISTS idx_sgsb_group ON smart_group_script_bindings(group_id);
+				CREATE INDEX IF NOT EXISTS idx_sgsb_schedule ON smart_group_script_bindings(schedule_id);
+				CREATE INDEX IF NOT EXISTS idx_sgsb_msp ON smart_group_script_bindings(msp_id);
+			`,
+			Down: `
+				DROP TABLE IF EXISTS smart_group_script_bindings;
+			`,
+		},
 	}
 }
 
