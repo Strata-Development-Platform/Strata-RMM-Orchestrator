@@ -407,6 +407,12 @@ func (s *APIServer) scopedUserRoutes() []Route {
 		{Method: "GET", Path: "/api/v1/alerts/{tenantID}/history", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/alerts/{tenantID}/{alertID}/acknowledge", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/alerts/{tenantID}/groups", Access: AccessUser},
+		{Method: "GET", Path: "/api/v1/alerts/{tenantID}/groups/severity/{severity}", Access: AccessUser},
+		{Method: "GET", Path: "/api/v1/alerts/{tenantID}/groups/device/{deviceID}", Access: AccessUser},
+		{Method: "POST", Path: "/api/v1/alerts/{tenantID}/groups/device/{deviceID}/resolve", Access: AccessUser},
+		{Method: "POST", Path: "/api/v1/alerts/{tenantID}/groups/resolve-all", Access: AccessUser},
+		{Method: "GET", Path: "/api/v1/alerts/{tenantID}/groups/cascade", Access: AccessUser},
+		{Method: "GET", Path: "/api/v1/alerts/{tenantID}/groups/time-window/{duration}", Access: AccessUser},
 		// Maintenance windows
 		{Method: "POST", Path: "/api/v1/tenants/{tenantID}/maintenance-windows", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/tenants/{tenantID}/maintenance-windows", Access: AccessUser},

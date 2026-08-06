@@ -291,6 +291,12 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /api/v1/alerts/{tenantID}/history", s.handleAlertHistory)
 	mux.HandleFunc("POST /api/v1/alerts/{tenantID}/{alertID}/acknowledge", s.handleAcknowledgeAlert)
 	mux.HandleFunc("GET /api/v1/alerts/{tenantID}/groups", s.handleListAlertGroups)
+	mux.HandleFunc("GET /api/v1/alerts/{tenantID}/groups/severity/{severity}", s.handleGetGroupsBySeverity)
+	mux.HandleFunc("GET /api/v1/alerts/{tenantID}/groups/device/{deviceID}", s.handleGetGroupsByDevice)
+	mux.HandleFunc("POST /api/v1/alerts/{tenantID}/groups/device/{deviceID}/resolve", s.handleResolveGroupsByDevice)
+	mux.HandleFunc("POST /api/v1/alerts/{tenantID}/groups/resolve-all", s.handleResolveAllGroups)
+	mux.HandleFunc("GET /api/v1/alerts/{tenantID}/groups/cascade", s.handleGetCascadeGroups)
+	mux.HandleFunc("GET /api/v1/alerts/{tenantID}/groups/time-window/{duration}", s.handleGetTimeWindowGroups)
 
 	mux.HandleFunc("POST /api/v1/tenants/{tenantID}/maintenance-windows", s.handleCreateMaintenanceWindow)
 	mux.HandleFunc("GET /api/v1/tenants/{tenantID}/maintenance-windows", s.handleListMaintenanceWindows)
@@ -1134,6 +1140,110 @@ func (s *APIServer) handleListAlertGroups(w http.ResponseWriter, r *http.Request
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"groups": filteredGroups, "count": len(filteredGroups)})
+}
+
+func (s *APIServer) handleGetGroupsBySeverity(w http.ResponseWriter, r *http.Request) {
+	if s.alertEngine == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "alerting not enabled"})
+		return
+	}
+	tenantID := r.PathValue("tenantID")
+	severity := r.PathValue("severity")
+	if _, ok := s.authorizeClientManage(w, r, tenantID); !ok {
+		return
+	}
+	if severity == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "severity required"})
+		return
+	}
+	groups := s.alertEngine.GroupingEngine().GetGroupsBySeverity(alerting.Severity(severity))
+	writeJSON(w, http.StatusOK, map[string]interface{}{"groups": groups, "count": len(groups), "severity": severity})
+}
+
+func (s *APIServer) handleGetGroupsByDevice(w http.ResponseWriter, r *http.Request) {
+	if s.alertEngine == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "alerting not enabled"})
+		return
+	}
+	tenantID := r.PathValue("tenantID")
+	deviceID := r.PathValue("deviceID")
+	if _, ok := s.authorizeClientManage(w, r, tenantID); !ok {
+		return
+	}
+	if deviceID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "device_id required"})
+		return
+	}
+	groups := s.alertEngine.GroupingEngine().GetGroupsByDevice(deviceID)
+	alertCount := s.alertEngine.GroupingEngine().GetDeviceAlertCount(deviceID)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"groups": groups, "count": len(groups), "device_alert_count": alertCount, "device_id": deviceID})
+}
+
+func (s *APIServer) handleResolveGroupsByDevice(w http.ResponseWriter, r *http.Request) {
+	if s.alertEngine == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "alerting not enabled"})
+		return
+	}
+	tenantID := r.PathValue("tenantID")
+	deviceID := r.PathValue("deviceID")
+	if _, ok := s.authorizeClientManage(w, r, tenantID); !ok {
+		return
+	}
+	if deviceID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "device_id required"})
+		return
+	}
+	resolved := s.alertEngine.GroupingEngine().ResolveGroupsByDevice(deviceID)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "resolved", "resolved_count": fmt.Sprintf("%d", resolved), "device_id": deviceID})
+}
+
+func (s *APIServer) handleResolveAllGroups(w http.ResponseWriter, r *http.Request) {
+	if s.alertEngine == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "alerting not enabled"})
+		return
+	}
+	tenantID := r.PathValue("tenantID")
+	if _, ok := s.authorizeClientManage(w, r, tenantID); !ok {
+		return
+	}
+	resolved := s.alertEngine.GroupingEngine().ResolveAll()
+	writeJSON(w, http.StatusOK, map[string]string{"status": "resolved", "resolved_count": fmt.Sprintf("%d", resolved)})
+}
+
+func (s *APIServer) handleGetCascadeGroups(w http.ResponseWriter, r *http.Request) {
+	if s.alertEngine == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "alerting not enabled"})
+		return
+	}
+	tenantID := r.PathValue("tenantID")
+	if !s.AuthorizeClientAccess(w, r, tenantID) {
+		return
+	}
+	cascadeGroups := s.alertEngine.GroupingEngine().GetCascadeGroups(tenantID)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"cascade_groups": cascadeGroups, "count": len(cascadeGroups)})
+}
+
+func (s *APIServer) handleGetTimeWindowGroups(w http.ResponseWriter, r *http.Request) {
+	if s.alertEngine == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "alerting not enabled"})
+		return
+	}
+	tenantID := r.PathValue("tenantID")
+	durationStr := r.PathValue("duration")
+	if !s.AuthorizeClientAccess(w, r, tenantID) {
+		return
+	}
+	if durationStr == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "duration required (e.g., 5m, 1h)"})
+		return
+	}
+	duration, err := time.ParseDuration(durationStr)
+	if err != nil || duration <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid duration"})
+		return
+	}
+	groups := s.alertEngine.GroupingEngine().GetTimeWindowGroups(duration)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"groups": groups, "count": len(groups), "duration": durationStr})
 }
 
 func (s *APIServer) handleCreateRule(w http.ResponseWriter, r *http.Request) {

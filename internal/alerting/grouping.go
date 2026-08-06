@@ -13,6 +13,8 @@ type AlertGroupKey struct {
 
 type AlertGroup struct {
 	Key         AlertGroupKey `json:"key"`
+	TenantID    string        `json:"tenant_id,omitempty"`
+	Severity    Severity      `json:"severity,omitempty"`
 	Status      GroupStatus   `json:"status"`
 	AlertID     string        `json:"alert_id,omitempty"`
 	Count       int           `json:"count"`
@@ -50,6 +52,8 @@ func (g *GroupingEngine) GetOrCreateGroup(ruleID, tenantID, deviceID, metricName
 	if !exists {
 		group = &AlertGroup{
 			Key:         key,
+			TenantID:    tenantID,
+			Severity:    severity,
 			Status:      GroupActive,
 			Count:       0,
 			FiredAt:     firedAt,
@@ -60,6 +64,9 @@ func (g *GroupingEngine) GetOrCreateGroup(ruleID, tenantID, deviceID, metricName
 	}
 	group.Count++
 	group.LastFired = firedAt
+	if severity != "" && group.Severity == "" {
+		group.Severity = severity
+	}
 	if !containsString(group.MetricNames, metricName) {
 		group.MetricNames = append(group.MetricNames, metricName)
 	}
@@ -138,6 +145,148 @@ func (g *GroupingEngine) GroupCount() int {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	return len(g.groups)
+}
+
+func (g *GroupingEngine) GetGroupsBySeverity(severity Severity) []*AlertGroup {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	var result []*AlertGroup
+	for _, grp := range g.groups {
+		if grp.Severity == severity && grp.Status == GroupActive {
+			result = append(result, grp)
+		}
+	}
+	return result
+}
+
+func (g *GroupingEngine) GetActiveGroupsBySeverity(severity Severity) int {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	count := 0
+	for _, grp := range g.groups {
+		if grp.Severity == severity && grp.Status == GroupActive {
+			count++
+		}
+	}
+	return count
+}
+
+func (g *GroupingEngine) ResolveGroupsByDevice(deviceID string) int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	count := 0
+	for key, grp := range g.groups {
+		if grp.Key.DeviceID == deviceID && grp.Status == GroupActive {
+			grp.Status = GroupResolved
+			count++
+		}
+		if grp.Status == GroupResolved {
+			delete(g.groups, key)
+		}
+	}
+	return count
+}
+
+func (g *GroupingEngine) GetGroupsByDevice(deviceID string) []*AlertGroup {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	var result []*AlertGroup
+	for _, grp := range g.groups {
+		if grp.Key.DeviceID == deviceID {
+			result = append(result, grp)
+		}
+	}
+	return result
+}
+
+func (g *GroupingEngine) GetDeviceAlertCount(deviceID string) int {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	count := 0
+	for _, grp := range g.groups {
+		if grp.Key.DeviceID == deviceID && grp.Status == GroupActive {
+			count += grp.Count
+		}
+	}
+	return count
+}
+
+func (g *GroupingEngine) ResolveAll() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	count := 0
+	for _, grp := range g.groups {
+		if grp.Status == GroupActive {
+			grp.Status = GroupResolved
+			count++
+		}
+	}
+	return count
+}
+
+type CascadeGroupKey struct {
+	TenantID string
+	DeviceID string
+}
+
+type CascadeGroup struct {
+	Key         CascadeGroupKey `json:"key"`
+	Groups      []*AlertGroup   `json:"groups"`
+	Status      GroupStatus     `json:"status"`
+	CreatedAt   time.Time       `json:"created_at"`
+	LastUpdated time.Time       `json:"last_updated"`
+}
+
+func (g *GroupingEngine) GetCascadeGroups(tenantID string) []*CascadeGroup {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	deviceGroups := make(map[string][]*AlertGroup)
+	for _, grp := range g.groups {
+		if tenantID == "" || grp.TenantID == tenantID {
+			deviceGroups[grp.Key.DeviceID] = append(deviceGroups[grp.Key.DeviceID], grp)
+		}
+	}
+	var result []*CascadeGroup
+	for deviceID, groups := range deviceGroups {
+		if len(groups) > 0 && groups[0].Status == GroupActive {
+			cg := &CascadeGroup{
+				Key:         CascadeGroupKey{TenantID: groups[0].TenantID, DeviceID: deviceID},
+				Groups:      groups,
+				Status:      GroupActive,
+				CreatedAt:   groups[0].FiredAt,
+				LastUpdated: groups[0].LastFired,
+			}
+			result = append(result, cg)
+		}
+	}
+	return result
+}
+
+func (g *GroupingEngine) GetTimeWindowGroups(window time.Duration) []*AlertGroup {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	now := g.now()
+	var result []*AlertGroup
+	for _, grp := range g.groups {
+		if grp.Status == GroupActive && now.Sub(grp.LastFired) <= window {
+			result = append(result, grp)
+		}
+	}
+	return result
+}
+
+func (g *GroupingEngine) ResolveCascadeGroup(deviceID string) int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	count := 0
+	for key, grp := range g.groups {
+		if grp.Key.DeviceID == deviceID {
+			grp.Status = GroupResolved
+			count++
+			delete(g.groups, key)
+		}
+	}
+	return count
 }
 
 func containsString(slice []string, s string) bool {
