@@ -4297,3 +4297,16 @@ PR #81: Entry points → `grouping.go` (8 new methods: GetGroupsBySeverity, GetG
 **Limitations:** Grouping is in-memory only (no persistence). Groups are lost on restart. No alert group history or audit trail. No UI component for alert grouping (future).
 
 **Pre-existing fixes during PR:** Smart Group UI TypeScript errors from PR #78 fixed (Script→Code icon, showToast 2-arg limit, boolean|undefined fix).
+
+### PR #82 — 2026-08-06 — Smart Group UI Real API Integration
+
+PR: https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/pull/82
+Commit: 6552493
+Files: `ui/src/App.tsx` (+4), `ui/src/api/client.ts` (+26), `ui/src/api/types.ts` (+61), `ui/src/components/smart-groups/DeviceGroupListPage.tsx` (+273 new), `SmartGroupDetailPage.test.tsx` (-168/+42), `SmartGroupDetailPage.tsx` (+385-168)
+CI: all pass, 0 fail, 0 pending
+
+**Gate 2 audit trace:**
+PR #82: Entry points → `DeviceGroupListPage.tsx` (list page, 273 lines), `SmartGroupDetailPage.tsx` (detail page, 385 lines), `client.ts` (12 new API methods); Identity → JWT via api client; Authorization → device group endpoints require device:manage/job:manage capability; Tenant → groups scoped by workspace client_id; Persistence → all data via REST API (12 endpoints); Messaging → N/A; Object storage → N/A; Endpoint execution → 12 new REST API methods; UI state → useState for loading/error/data; Audit records → N/A; Metrics → N/A; Alerts → N/A; Runbooks → N/A; Existing tests → 110 frontend tests (10 files).
+
+**Limitations:** No pagination for large member lists. No inline script binding creation (requires separate modal). No real-time evaluation progress updates. No bulk operations.
+
