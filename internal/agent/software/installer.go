@@ -188,6 +188,10 @@ func (inst *Installer) runInstall(ctx context.Context, cmd SoftwareCommand, loca
 		return inst.runShell(ctx, fmt.Sprintf("dpkg -i %s %s", localPath, cmd.InstallArgs))
 	case "rpm":
 		return inst.runShell(ctx, fmt.Sprintf("rpm -ivh %s %s", localPath, cmd.InstallArgs))
+	case "appimage":
+		return inst.runShell(ctx, fmt.Sprintf("%s --appimage-extract-and-run %s 2>&1 || %s --appimage-extract && squashfs-root/AppRun", localPath, cmd.InstallArgs, localPath))
+	case "script":
+		return inst.runScript(ctx, localPath, cmd.InstallArgs)
 	default:
 		return inst.runExec(ctx, localPath, cmd.InstallArgs)
 	}
@@ -236,6 +240,25 @@ func (inst *Installer) runShell(ctx context.Context, command string) int {
 		flag = "/C"
 	}
 	cmd := exec.CommandContext(ctx, shell, flag, command)
+	cmd.Stdout = &bytes.Buffer{}
+	cmd.Stderr = &bytes.Buffer{}
+	cmd.Run()
+	return cmd.ProcessState.ExitCode()
+}
+
+func (inst *Installer) runScript(ctx context.Context, scriptPath, args string) int {
+	var shell, flag string
+	if runtime.GOOS == "windows" {
+		shell = "powershell.exe"
+		flag = "-File"
+	} else {
+		shell = "/bin/sh"
+		flag = "-c"
+	}
+	cmd := exec.CommandContext(ctx, shell, flag, scriptPath)
+	if args != "" {
+		cmd.Args = append(cmd.Args, args)
+	}
 	cmd.Stdout = &bytes.Buffer{}
 	cmd.Stderr = &bytes.Buffer{}
 	cmd.Run()
