@@ -13,7 +13,7 @@ import {
   AlertCircle,
   Clock,
   Shield,
-  Script,
+  Code,
 } from 'lucide-react';
 import { useToast } from '@/components/shared/Toast';
 import type {
@@ -100,7 +100,7 @@ export default function SmartGroupDetailPage({ groupId }: SmartGroupDetailPagePr
             <Edit2 className="h-4 w-4" />
           </button>
           <button
-            onClick={() => showToast('info', 'Group evaluated', `${groupMembers.length} devices evaluated`)}
+            onClick={() => showToast('info', `Group evaluated: ${groupMembers.length} devices`)}
             className="flex items-center gap-1 px-3 py-1.5 text-sm font-medium text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20 rounded-md hover:bg-green-100 dark:hover:bg-green-900/30"
           >
             <Play className="h-4 w-4" />
