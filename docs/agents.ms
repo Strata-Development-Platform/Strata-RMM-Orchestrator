@@ -4310,3 +4310,14 @@ PR #82: Entry points → `DeviceGroupListPage.tsx` (list page, 273 lines), `Smar
 
 **Limitations:** No pagination for large member lists. No inline script binding creation (requires separate modal). No real-time evaluation progress updates. No bulk operations.
 
+
+## PR #84: PSA Integration - ticket sync, auto-remediation feedback, ticket-device correlation
+- **Merged**: 6f79b90 (squash merge)
+- **Branch**: feat/psa-integration-ticket-sync
+- **CI Evidence**: Backend: all 29 packages pass (integrations: 27 new PSA tests); Frontend: 110 tests pass (10 files)
+- **Files**: psa_handlers.go (474 lines), psa_handlers_test.go (295 lines), api.go (+19), middleware.go (+8)
+- **Methods**: HandleCreatePSATicket, HandleGetPSATicket, HandleUpdatePSATicket, HandleDeletePSATicket, HandleListPSATicketsByDevice, HandlePSAAlertFeedback, AutoRemediatePSATicket, CreatePSATicketFromAlert, extractPathParam
+- **Types**: PSATicket, PSATicketCreateRequest, PSATicketUpdateRequest, PSAResponse, PSATicketListResponse, PSAProvider (5 providers)
+- **Routes**: POST/GET/PUT/DELETE /integrations/psa/tickets, GET /integrations/psa/tickets/device/{deviceID}, POST /integrations/psa/feedback, POST /integrations/psa/webhooks
+- **Gate 2 audit**: Entry → psa_handlers.go; Identity → JWT via handler chain; Authorization → AuthorizeMSPManage; Tenant → PSA tickets scoped to tenant_id; Persistence → In-memory simulation; Messaging → NATS events; Endpoint execution → 6 PSA API routes
+- **Limitations**: PSA API calls simulated (no real API integration); Ticket-device correlation uses in-memory list; Auto-remediation triggers NATS events only

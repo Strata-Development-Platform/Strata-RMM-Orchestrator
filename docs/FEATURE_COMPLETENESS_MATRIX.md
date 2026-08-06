@@ -180,6 +180,18 @@ PR #80 (9.1): Entry points → `device_handlers.go` (handleCreateDeviceRelations
 
 **Limitations (9.1):** No UI component for managing device relationships (future), no automated relationship discovery from inventory data (future), no relationship type validation beyond string (future), no relationship hierarchy visualization (future).
 
+### Phase 10: PSA Integration (Ticket Sync) — **COMPLETE** (10.1 verified)
+
+| ID | Task | Target | Evidence required | Status | PR | CI |
+|----|------|--------|-------------------|--------|----|----|
+| 10.1 | PSA ticket management (Autotask/ConnectWise/Freshservice/Zendesk/Jira): create/update/delete tickets, auto-remediation feedback loop, ticket-device correlation | `psa_handlers.go`, `api.go`, `middleware.go` | 27 tests: request validation, response structure, provider enum, all PSA providers, alert feedback | **Verified** | #84 | all pass |
+
+**Gate 2 audit trace for PR #84:**
+
+PR #84 (10.1): Entry points → `psa_handlers.go` (HandleCreatePSATicket, HandleGetPSATicket, HandleUpdatePSATicket, HandleDeletePSATicket, HandleListPSATicketsByDevice, HandlePSAAlertFeedback, AutoRemediatePSATicket, CreatePSATicketFromAlert), `psa_handlers_test.go` (27 tests); Identity → JWT token via handler chain (AuthorizeMSPManage); Authorization → AuthorizeMSPManage on all handlers, msp_id scoping on all queries; Tenant → PSA tickets scoped to tenant_id with RLS; Persistence → In-memory simulation (DB layer for production PSA API calls); Messaging → NATS events published (psa_ticket_created, psa_ticket_updated, psa_ticket_closed, psa_feedback, alert_to_ticket); Object storage → N/A; Endpoint execution → 6 PSA API routes + webhook handler; UI state → N/A; Audit records → NATS event publishing; Metrics → N/A; Alerts → PSA ticket creation from alerts; Runbooks → N/A; Existing tests → 27 unit tests in `psa_handlers_test.go` covering all handlers, validation, type constants.
+
+**Limitations (10.1):** PSA API calls to Freshservice/Zendesk/Jira/Autotask/ConnectWise are simulated (no real API integration). Production PSA integration requires provider-specific API credentials, webhook configuration, and OAuth/API key setup. Ticket-device correlation uses in-memory list (DB for production). Auto-remediation triggers NATS events but does not call PSA provider APIs directly.
+
 ### Phase 5: UI Configuration Components — **COMPLETE** (5.1, 5.2 verified)
 
 | ID | Task | Target | Evidence required | Status | PR | CI |
