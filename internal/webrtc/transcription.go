@@ -208,6 +208,8 @@ func (tm *TranscriptionManager) AddSegment(transcriptionID string, segment *Tran
 	tr.Segments = append(tr.Segments, *segment)
 	tr.DurationMs += int64((segment.EndTime - segment.StartTime) * 1000)
 
+	tm.mu.Unlock()
+
 	// Publish segment update via NATS
 	if tm.nats != nil {
 		subject := fmt.Sprintf("tenant.*.webrtc.%s.transcription.segment", tr.SessionID)
