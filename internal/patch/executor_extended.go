@@ -251,16 +251,16 @@ func (e *Executor) scanWSUS(ctx context.Context) ([]*Patch, []*Patch, error) {
 
 // CanaryPatchResult represents the result of a canary patch validation.
 type CanaryPatchResult struct {
-	DeploymentID   string    `json:"deployment_id"`
-	PatchID        string    `json:"patch_id"`
-	CanaryGroup    string    `json:"canary_group"`
-	DevicesTested  int       `json:"devices_tested"`
-	DevicesOK      int       `json:"devices_ok"`
-	DevicesFail    int       `json:"devices_fail"`
-	Status         string    `json:"status"`
-	StartedAt      time.Time `json:"started_at"`
-	CompletedAt    *time.Time `json:"completed_at,omitempty"`
-	Error          string    `json:"error,omitempty"`
+	DeploymentID  string     `json:"deployment_id"`
+	PatchID       string     `json:"patch_id"`
+	CanaryGroup   string     `json:"canary_group"`
+	DevicesTested int        `json:"devices_tested"`
+	DevicesOK     int        `json:"devices_ok"`
+	DevicesFail   int        `json:"devices_fail"`
+	Status        string     `json:"status"`
+	StartedAt     time.Time  `json:"started_at"`
+	CompletedAt   *time.Time `json:"completed_at,omitempty"`
+	Error         string     `json:"error,omitempty"`
 }
 
 // CanaryResult represents the overall canary validation result.

@@ -26,12 +26,12 @@ func TestIsUPSRelatedOID(t *testing.T) {
 		{OIDUPSOutputStatus, true},
 		{OIDUPSOutputVoltage, true},
 		{OIDUPSLoad, true},
-		{".1.3.6.1.2.1.33.1.4.1.3", true},  // sub-OID of UPS MIB
-		{".1.3.6.1.2.1.33.99", true},        // another sub-OID
-		{".1.3.6.1.2.1.1.5.0", false},       // SNMP system OID, not UPS
-		{".1.3.6.1.4.1.9.1.2", false},       // Cisco OID
-		{"", false},                          // empty string
-		{".1.3.6.1.2.1.32.1.1.1", false},    // Network device MIB
+		{".1.3.6.1.2.1.33.1.4.1.3", true}, // sub-OID of UPS MIB
+		{".1.3.6.1.2.1.33.99", true},      // another sub-OID
+		{".1.3.6.1.2.1.1.5.0", false},     // SNMP system OID, not UPS
+		{".1.3.6.1.4.1.9.1.2", false},     // Cisco OID
+		{"", false},                       // empty string
+		{".1.3.6.1.2.1.32.1.1.1", false},  // Network device MIB
 	}
 
 	for _, tt := range tests {
@@ -57,8 +57,8 @@ func TestDetermineAlertLevel(t *testing.T) {
 		{"critical runtime", 50, 300, "shutdown"},
 		{"borderline critical runtime", 80, 599, "shutdown"},
 		{"exactly 600s critical", 80, 600, "critical"}, // 600 seconds = 10 min = boundary (>= 600 but < 1800 = critical)
-		{"warning runtime", 70, 1500, "critical"},  // 25 min < 30 min threshold
-		{"exactly 1800s normal", 80, 1800, "normal"}, // exactly 30 min = normal
+		{"warning runtime", 70, 1500, "critical"},      // 25 min < 30 min threshold
+		{"exactly 1800s normal", 80, 1800, "normal"},   // exactly 30 min = normal
 		{"just under 30 min critical", 80, 1799, "critical"},
 	}
 
@@ -222,11 +222,11 @@ func TestHasUPSOIDPrefix(t *testing.T) {
 // TestShutdownTargetStruct verifies ShutdownTarget JSON marshaling
 func TestShutdownTargetStruct(t *testing.T) {
 	target := ShutdownTarget{
-		DeviceID:     "dev-123",
-		DeviceType:   "hypervisor",
+		DeviceID:      "dev-123",
+		DeviceType:    "hypervisor",
 		ShutdownOrder: 0,
-		Command:      "shutdown",
-		Timeout:      120 * time.Second,
+		Command:       "shutdown",
+		Timeout:       120 * time.Second,
 	}
 
 	payload, err := json.Marshal(target)
@@ -324,7 +324,7 @@ func TestUPSStateUpdateSameDevice(t *testing.T) {
 
 	state := pm.GetUPSState("ups-1")
 	require.NotNil(t, state)
-	require.Equal(t, 60, state.BatteryPercent)  // latest value
+	require.Equal(t, 60, state.BatteryPercent)   // latest value
 	require.Equal(t, 5400, state.BatteryRuntime) // persisted value
 	require.Equal(t, "tenant-1", state.TenantID)
 }
@@ -361,7 +361,7 @@ func TestGetAllUPSStatesSnapshot(t *testing.T) {
 	pm.updateUPSState("tenant-1", "ups-1", "probe-1", OIDUPSBatteryPercent, 40.0)
 
 	state := pm.GetUPSState("ups-1")
-	require.Equal(t, 40, state.BatteryPercent) // original updated
+	require.Equal(t, 40, state.BatteryPercent)             // original updated
 	require.Equal(t, 80, snapshot["ups-1"].BatteryPercent) // snapshot preserved
 }
 
@@ -477,11 +477,11 @@ func TestShutdownTargetOrdering(t *testing.T) {
 
 	// Verify ShutdownTarget struct has all required fields
 	target := ShutdownTarget{
-		DeviceID:     "hyp-1",
-		DeviceType:   "hypervisor",
+		DeviceID:      "hyp-1",
+		DeviceType:    "hypervisor",
 		ShutdownOrder: 0,
-		Command:      "shutdown",
-		Timeout:      120 * time.Second,
+		Command:       "shutdown",
+		Timeout:       120 * time.Second,
 	}
 
 	payload, err := json.Marshal(target)
@@ -522,12 +522,12 @@ func TestBoundaryRuntime600Sec(t *testing.T) {
 		runtime     int
 		expectLevel string
 	}{
-		{"exactly 600 critical", 600, "critical"},   // >= 600, < 1800 = critical
-		{"599 seconds", 599, "shutdown"},             // < 600 = shutdown
-		{"601 seconds", 601, "critical"},             // >= 600, < 1800 = critical
-		{"1799 seconds", 1799, "critical"},           // >= 600, < 1800 = critical
-		{"1800 seconds", 1800, "normal"},             // >= 1800, battery=100 > 50 = normal
-		{"1801 seconds", 1801, "normal"},             // >= 1800, battery=100 > 50 = normal
+		{"exactly 600 critical", 600, "critical"}, // >= 600, < 1800 = critical
+		{"599 seconds", 599, "shutdown"},          // < 600 = shutdown
+		{"601 seconds", 601, "critical"},          // >= 600, < 1800 = critical
+		{"1799 seconds", 1799, "critical"},        // >= 600, < 1800 = critical
+		{"1800 seconds", 1800, "normal"},          // >= 1800, battery=100 > 50 = normal
+		{"1801 seconds", 1801, "normal"},          // >= 1800, battery=100 > 50 = normal
 	}
 
 	for _, tt := range tests {
@@ -542,9 +542,9 @@ func TestBoundaryRuntime600Sec(t *testing.T) {
 // TestBoundaryBatteryPercent verifies battery percentage boundaries
 func TestBoundaryBatteryPercent(t *testing.T) {
 	tests := []struct {
-		name          string
-		percent       int
-		expectLevel   string
+		name        string
+		percent     int
+		expectLevel string
 	}{
 		{"100%", 100, "normal"},
 		{"51%", 51, "normal"},

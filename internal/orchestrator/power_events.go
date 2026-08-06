@@ -43,15 +43,15 @@ type UPSStatus struct {
 
 // ShutdownEvent represents a triggered shutdown sequence
 type ShutdownEvent struct {
-	ID          string    `json:"id"`
-	TenantID    string    `json:"tenant_id"`
-	UPSDeviceID string    `json:"ups_device_id"`
-	BatteryMin  int       `json:"battery_minutes_remaining"`
-	InitiatedAt time.Time `json:"initiated_at"`
-	TargetOrder []string  `json:"target_order"` // ordered list of device IDs to shut down
-	Status      string    `json:"status"`       // "initiated", "in_progress", "completed", "aborted"
+	ID          string     `json:"id"`
+	TenantID    string     `json:"tenant_id"`
+	UPSDeviceID string     `json:"ups_device_id"`
+	BatteryMin  int        `json:"battery_minutes_remaining"`
+	InitiatedAt time.Time  `json:"initiated_at"`
+	TargetOrder []string   `json:"target_order"` // ordered list of device IDs to shut down
+	Status      string     `json:"status"`       // "initiated", "in_progress", "completed", "aborted"
 	AbortedAt   *time.Time `json:"aborted_at,omitempty"`
-	AbortedBy   *string   `json:"aborted_by,omitempty"`
+	AbortedBy   *string    `json:"aborted_by,omitempty"`
 }
 
 // PowerEventManager handles UPS alert tracking and graceful shutdown orchestration
@@ -81,11 +81,11 @@ type UPSState struct {
 
 // ShutdownTarget represents a device targeted for graceful shutdown
 type ShutdownTarget struct {
-	DeviceID string    `json:"device_id"`
-	DeviceType string  `json:"device_type"` // "hypervisor", "san", "vm_pool", "nas"
-	ShutdownOrder int `json:"shutdown_order"`
-	Command    string    `json:"command"` // NATS command subject
-	Timeout    time.Duration `json:"timeout"`
+	DeviceID      string        `json:"device_id"`
+	DeviceType    string        `json:"device_type"` // "hypervisor", "san", "vm_pool", "nas"
+	ShutdownOrder int           `json:"shutdown_order"`
+	Command       string        `json:"command"` // NATS command subject
+	Timeout       time.Duration `json:"timeout"`
 }
 
 // ShutdownOrder defines the sequence of shutdown targets
@@ -209,10 +209,10 @@ func (pm *PowerEventManager) updateUPSState(tenantID, deviceID, probeID string, 
 	state, exists := pm.upses[deviceID]
 	if !exists {
 		state = &UPSState{
-			DeviceID:   deviceID,
-			TenantID:   tenantID,
-			ProbeID:    probeID,
-			LastSeen:   time.Now().UTC(),
+			DeviceID: deviceID,
+			TenantID: tenantID,
+			ProbeID:  probeID,
+			LastSeen: time.Now().UTC(),
 		}
 		pm.upses[deviceID] = state
 	}
@@ -414,11 +414,11 @@ func (pm *PowerEventManager) queryShutdownTargets(tenantID, upsDeviceID string, 
 	}
 	for i, id := range hypervisors {
 		targets = append(targets, ShutdownTarget{
-			DeviceID:     id,
-			DeviceType:   "hypervisor",
+			DeviceID:      id,
+			DeviceType:    "hypervisor",
 			ShutdownOrder: i,
-			Command:      "shutdown",
-			Timeout:      120 * time.Second,
+			Command:       "shutdown",
+			Timeout:       120 * time.Second,
 		})
 	}
 
@@ -429,11 +429,11 @@ func (pm *PowerEventManager) queryShutdownTargets(tenantID, upsDeviceID string, 
 	}
 	for i, id := range sans {
 		targets = append(targets, ShutdownTarget{
-			DeviceID:     id,
-			DeviceType:   "san",
+			DeviceID:      id,
+			DeviceType:    "san",
 			ShutdownOrder: len(hypervisors) + i,
-			Command:      "shutdown",
-			Timeout:      180 * time.Second,
+			Command:       "shutdown",
+			Timeout:       180 * time.Second,
 		})
 	}
 
@@ -444,11 +444,11 @@ func (pm *PowerEventManager) queryShutdownTargets(tenantID, upsDeviceID string, 
 	}
 	for i, id := range nas {
 		targets = append(targets, ShutdownTarget{
-			DeviceID:     id,
-			DeviceType:   "nas",
+			DeviceID:      id,
+			DeviceType:    "nas",
 			ShutdownOrder: len(hypervisors) + len(sans) + i,
-			Command:      "shutdown",
-			Timeout:      120 * time.Second,
+			Command:       "shutdown",
+			Timeout:       120 * time.Second,
 		})
 	}
 
@@ -459,11 +459,11 @@ func (pm *PowerEventManager) queryShutdownTargets(tenantID, upsDeviceID string, 
 	}
 	for i, id := range vms {
 		targets = append(targets, ShutdownTarget{
-			DeviceID:     id,
-			DeviceType:   "vm_pool",
+			DeviceID:      id,
+			DeviceType:    "vm_pool",
 			ShutdownOrder: len(hypervisors) + len(sans) + len(nas) + i,
-			Command:      "vm_shutdown",
-			Timeout:      60 * time.Second,
+			Command:       "vm_shutdown",
+			Timeout:       60 * time.Second,
 		})
 	}
 
@@ -520,13 +520,13 @@ func (pm *PowerEventManager) getDevicesByRole(ctx context.Context, tenantID, rol
 func (pm *PowerEventManager) executeShutdownTarget(target ShutdownTarget, eventID string) {
 	subject := fmt.Sprintf("tenant.%s.cmd.shutdown", target.DeviceID)
 	payload, err := json.Marshal(map[string]interface{}{
-		"event_id":      eventID,
-		"device_id":     target.DeviceID,
-		"device_type":   target.DeviceType,
-		"command":       target.Command,
-		"timeout_secs":  int(target.Timeout.Seconds()),
-		"graceful":      true,
-		"initiated_at":  time.Now().UTC().Format(time.RFC3339),
+		"event_id":     eventID,
+		"device_id":    target.DeviceID,
+		"device_type":  target.DeviceType,
+		"command":      target.Command,
+		"timeout_secs": int(target.Timeout.Seconds()),
+		"graceful":     true,
+		"initiated_at": time.Now().UTC().Format(time.RFC3339),
 	})
 	if err != nil {
 		pm.log.Error("marshal shutdown command", zap.Error(err))

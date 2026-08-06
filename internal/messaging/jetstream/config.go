@@ -62,16 +62,16 @@ func (c Config) ConsumerConfigFor(stream, name string) *ConsumerConfig {
 
 // StreamConfig represents a JetStream stream definition.
 type StreamConfig struct {
-	Name        string   `json:"name"`
-	Subjects    []string `json:"subjects"`
+	Name        string        `json:"name"`
+	Subjects    []string      `json:"subjects"`
 	MaxAge      time.Duration `json:"max_age,omitempty"`
-	MaxBytes    int64    `json:"max_bytes,omitempty"`
-	MaxMsgs     int64    `json:"max_msgs,omitempty"`
-	Retention   string   `json:"retention"`
-	Storage     string   `json:"storage"`
-	Replicas    int      `json:"num_replicas"`
-	Discard     string   `json:"discard"`
-	AllowRollup bool     `json:"allow_rollup_hdrs"`
+	MaxBytes    int64         `json:"max_bytes,omitempty"`
+	MaxMsgs     int64         `json:"max_msgs,omitempty"`
+	Retention   string        `json:"retention"`
+	Storage     string        `json:"storage"`
+	Replicas    int           `json:"num_replicas"`
+	Discard     string        `json:"discard"`
+	AllowRollup bool          `json:"allow_rollup_hdrs"`
 }
 
 // ConsumerConfig represents a JetStream consumer definition.
@@ -94,7 +94,7 @@ func parseSize(s string) int64 {
 			if result == 0 {
 				result = int64(c - '0')
 			} else {
-				result = result*10 + int64(c - '0')
+				result = result*10 + int64(c-'0')
 			}
 		} else if i > 0 {
 			multiplier := int64(1)

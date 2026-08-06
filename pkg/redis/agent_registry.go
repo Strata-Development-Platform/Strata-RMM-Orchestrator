@@ -10,28 +10,28 @@ import (
 )
 
 const (
-	agentRegistryKey  = "strata:rmm:agents"
-	agentPrefix       = "rmm:agent:"
-	revokedKey        = "strata:rmm:revocations"
-	revokedPrefix     = "rmm:revoked:"
-	configCacheKey    = "strata:rmm:cfg:cache"
-	configPrefix      = "rmm:cfg:"
+	agentRegistryKey = "strata:rmm:agents"
+	agentPrefix      = "rmm:agent:"
+	revokedKey       = "strata:rmm:revocations"
+	revokedPrefix    = "rmm:revoked:"
+	configCacheKey   = "strata:rmm:cfg:cache"
+	configPrefix     = "rmm:cfg:"
 )
 
 type AgentInfo struct {
-	AgentID    string            `json:"agent_id"`
-	TenantID   string            `json:"tenant_id"`
-	MSPID      string            `json:"msp_id"`
-	ClientID   string            `json:"client_id"`
-	DeviceID   string            `json:"device_id"`
-	Host       string            `json:"host"`
-	Port       int               `json:"port"`
-	LastSeen   time.Time         `json:"last_seen"`
-	Status     string            `json:"status"`
-	OS         string            `json:"os"`
-	OSVersion  string            `json:"os_version"`
-	AgentVer   string            `json:"agent_version"`
-	Metadata   map[string]string `json:"metadata,omitempty"`
+	AgentID   string            `json:"agent_id"`
+	TenantID  string            `json:"tenant_id"`
+	MSPID     string            `json:"msp_id"`
+	ClientID  string            `json:"client_id"`
+	DeviceID  string            `json:"device_id"`
+	Host      string            `json:"host"`
+	Port      int               `json:"port"`
+	LastSeen  time.Time         `json:"last_seen"`
+	Status    string            `json:"status"`
+	OS        string            `json:"os"`
+	OSVersion string            `json:"os_version"`
+	AgentVer  string            `json:"agent_version"`
+	Metadata  map[string]string `json:"metadata,omitempty"`
 }
 
 type TokenBlacklistEntry struct {

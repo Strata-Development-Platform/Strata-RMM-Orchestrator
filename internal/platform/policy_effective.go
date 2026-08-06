@@ -9,12 +9,12 @@ import (
 
 // EffectivePolicy holds the resolved effective configuration for a single category.
 type EffectivePolicy struct {
-	Category            string
-	Config              map[string]interface{}
-	Maintenance         map[string]interface{}
-	Layers              []policyLayer
-	ScopeLevel          string
-	PublishedVersion    int
+	Category         string
+	Config           map[string]interface{}
+	Maintenance      map[string]interface{}
+	Layers           []policyLayer
+	ScopeLevel       string
+	PublishedVersion int
 }
 
 // ComputeEffectivePolicy resolves the effective policy configuration for a device

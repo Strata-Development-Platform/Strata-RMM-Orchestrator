@@ -64,13 +64,13 @@ func TestRedfishClientHTTP(t *testing.T) {
 func TestRedfishClientSystem(t *testing.T) {
 	// Create mock Redfish server
 	mockData := map[string]interface{}{
-		"Id":          "System.1",
-		"HostName":    "server01.example.com",
-		"Model":       "PowerEdge R750",
+		"Id":           "System.1",
+		"HostName":     "server01.example.com",
+		"Model":        "PowerEdge R750",
 		"Manufacturer": "Dell Inc.",
 		"SerialNumber": "ABC123",
-		"PowerState":  "On",
-		"Health":      "OK",
+		"PowerState":   "On",
+		"Health":       "OK",
 		"Processors": []interface{}{
 			map[string]interface{}{
 				"Name": "Intel Xeon Gold 6248R",
@@ -154,13 +154,13 @@ func TestRedfishClientErrorResponse(t *testing.T) {
 // TestParseSystemResponse verifies parsing of system info.
 func TestParseSystemResponse(t *testing.T) {
 	data := map[string]interface{}{
-		"HostName":       "server01.example.com",
-		"Model":          "PowerEdge R750",
-		"Manufacturer":   "Dell Inc.",
-		"SerialNumber":   "ABC123",
-		"SKU":            "SKU-001",
-		"PowerState":     "On",
-		"Health":         "OK",
+		"HostName":     "server01.example.com",
+		"Model":        "PowerEdge R750",
+		"Manufacturer": "Dell Inc.",
+		"SerialNumber": "ABC123",
+		"SKU":          "SKU-001",
+		"PowerState":   "On",
+		"Health":       "OK",
 		"Processors": []interface{}{
 			map[string]interface{}{"Name": "Intel Xeon Gold 6248R"},
 			map[string]interface{}{"Name": "Intel Xeon Gold 6248R"},

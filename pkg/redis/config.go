@@ -9,12 +9,12 @@ import (
 )
 
 type PoolConfig struct {
-	URL         string
-	PoolSize    int
+	URL          string
+	PoolSize     int
 	MinIdleConns int
-	MaxRetries  int
-	DialTimeout time.Duration
-	ReadTimeout time.Duration
+	MaxRetries   int
+	DialTimeout  time.Duration
+	ReadTimeout  time.Duration
 	WriteTimeout time.Duration
 }
 

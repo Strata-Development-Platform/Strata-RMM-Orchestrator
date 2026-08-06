@@ -26,20 +26,20 @@ type RolePolicyBinder struct {
 
 // RolePolicyBinding tracks a device role to monitoring definition binding.
 type RolePolicyBinding struct {
-	ID        string    `json:"id"`
-	DeviceID  string    `json:"device_id"`
-	TenantID  string    `json:"tenant_id"`
-	Role      string    `json:"role"`
-	BoundRules []string `json:"bound_rules"`
-	BoundAt   time.Time `json:"bound_at"`
+	ID         string    `json:"id"`
+	DeviceID   string    `json:"device_id"`
+	TenantID   string    `json:"tenant_id"`
+	Role       string    `json:"role"`
+	BoundRules []string  `json:"bound_rules"`
+	BoundAt    time.Time `json:"bound_at"`
 }
 
 // MonitorEvent represents a role detection event from telemetry.
 type MonitorEvent struct {
-	AgentID  string   `json:"agent_id"`
-	TenantID string   `json:"tenant_id"`
-	DeviceID string   `json:"device_id"`
-	Roles    []string `json:"roles"`
+	AgentID   string    `json:"agent_id"`
+	TenantID  string    `json:"tenant_id"`
+	DeviceID  string    `json:"device_id"`
+	Roles     []string  `json:"roles"`
 	Timestamp time.Time `json:"timestamp"`
 }
 

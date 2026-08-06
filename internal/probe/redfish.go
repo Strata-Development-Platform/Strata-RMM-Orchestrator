@@ -19,20 +19,20 @@ type RedfishResult struct {
 
 // RedfishTarget is a Redfish management controller (iDRAC, iLO, XCC, etc.).
 type RedfishTarget struct {
-	Host      string    `json:"host"`
-	Port      int       `json:"port"`
-	Username  string    `json:"username"`
-	Password  string    `json:"password"`
-	Protocol  string    `json:"protocol"` // https, http
-	Timeout   time.Duration `json:"timeout"`
+	Host     string        `json:"host"`
+	Port     int           `json:"port"`
+	Username string        `json:"username"`
+	Password string        `json:"password"`
+	Protocol string        `json:"protocol"` // https, http
+	Timeout  time.Duration `json:"timeout"`
 }
 
 // RedfishClient communicates with Redfish management controllers.
 type RedfishClient struct {
-	client    *http.Client
-	baseURL   string
-	username  string
-	password  string
+	client   *http.Client
+	baseURL  string
+	username string
+	password string
 }
 
 // NewRedfishClient creates a new Redfish client.
@@ -144,13 +144,13 @@ func (c *RedfishClient) get(ctx context.Context, path string) (*RedfishResult, e
 // ParseSystemResponse extracts key system information from a Redfish System response.
 func ParseSystemResponse(data map[string]interface{}) SystemInfo {
 	info := SystemInfo{
-		Hostname:   getString(data, "HostName"),
-		Model:      getString(data, "Model"),
+		Hostname:     getString(data, "HostName"),
+		Model:        getString(data, "Model"),
 		Manufacturer: getString(data, "Manufacturer"),
-		Serial:     getString(data, "SerialNumber"),
-		SKU:        getString(data, "SKU"),
-		PowerState: getString(data, "PowerState"),
-		Health:     getString(data, "Health"),
+		Serial:       getString(data, "SerialNumber"),
+		SKU:          getString(data, "SKU"),
+		PowerState:   getString(data, "PowerState"),
+		Health:       getString(data, "Health"),
 	}
 
 	// Extract processor info
@@ -184,17 +184,17 @@ func getString(data map[string]interface{}, key string) string {
 
 // SystemInfo represents extracted system information from Redfish.
 type SystemInfo struct {
-	Hostname           string `json:"hostname"`
-	Model              string `json:"model"`
-	Manufacturer       string `json:"manufacturer"`
-	Serial             string `json:"serial"`
-	SKU                string `json:"sku"`
-	PowerState         string `json:"power_state"`
-	Health             string `json:"health"`
-	CPUModel           string `json:"cpu_model"`
-	CPUCount           int    `json:"cpu_count"`
-	MemoryTotalMB      int64  `json:"memory_total_mb"`
-	NetworkInterfaces  int    `json:"network_interfaces"`
+	Hostname          string `json:"hostname"`
+	Model             string `json:"model"`
+	Manufacturer      string `json:"manufacturer"`
+	Serial            string `json:"serial"`
+	SKU               string `json:"sku"`
+	PowerState        string `json:"power_state"`
+	Health            string `json:"health"`
+	CPUModel          string `json:"cpu_model"`
+	CPUCount          int    `json:"cpu_count"`
+	MemoryTotalMB     int64  `json:"memory_total_mb"`
+	NetworkInterfaces int    `json:"network_interfaces"`
 }
 
 // ParseHealthResponse extracts health status from Redfish.

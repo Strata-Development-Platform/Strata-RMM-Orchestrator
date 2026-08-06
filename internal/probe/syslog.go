@@ -11,25 +11,25 @@ import (
 
 // SyslogMessage represents a parsed syslog message.
 type SyslogMessage struct {
-	Priority  int       `json:"priority"`
-	Severity  string    `json:"severity"`
-	Facility  string    `json:"facility"`
-	Hostname  string    `json:"hostname"`
-	AppName   string    `json:"app_name"`
-	ProcID    string    `json:"proc_id"`
-	MessageID string    `json:"message_id"`
-	Content   string    `json:"content"`
-	Timestamp time.Time `json:"timestamp"`
-	SourceIP  string    `json:"source_ip"`
-	DeviceType string   `json:"device_type"`
+	Priority   int       `json:"priority"`
+	Severity   string    `json:"severity"`
+	Facility   string    `json:"facility"`
+	Hostname   string    `json:"hostname"`
+	AppName    string    `json:"app_name"`
+	ProcID     string    `json:"proc_id"`
+	MessageID  string    `json:"message_id"`
+	Content    string    `json:"content"`
+	Timestamp  time.Time `json:"timestamp"`
+	SourceIP   string    `json:"source_ip"`
+	DeviceType string    `json:"device_type"`
 }
 
 // SyslogConfig holds the configuration for the syslog collector.
 type SyslogConfig struct {
-	Port      int           `json:"port"`       // UDP port to listen on (default 514)
-	Protocol  string        `json:"protocol"`   // udp or tcp (default udp)
-	Timeout   time.Duration `json:"timeout"`    // Read timeout (default 30s)
-	Buffer    int           `json:"buffer"`     // Message buffer size (default 1000)
+	Port     int           `json:"port"`     // UDP port to listen on (default 514)
+	Protocol string        `json:"protocol"` // udp or tcp (default udp)
+	Timeout  time.Duration `json:"timeout"`  // Read timeout (default 30s)
+	Buffer   int           `json:"buffer"`   // Message buffer size (default 1000)
 }
 
 // SyslogCollector listens for syslog messages and parses them.
@@ -61,7 +61,7 @@ func NewSyslogCollector(cfg SyslogConfig) *SyslogCollector {
 	}
 
 	return &SyslogCollector{
-		config: cfg,
+		config:   cfg,
 		messages: make([]*SyslogMessage, 0, cfg.Buffer),
 	}
 }

@@ -78,12 +78,12 @@ func TestIsolationFullFlow(t *testing.T) {
 
 	// Build the isolation payload
 	action := IsolationAction{
-		DeviceID:  "device-456",
-		TenantID:  "tenant-123",
-		Reason:    "Malware detected on endpoint",
-		Severity:  "critical",
-		AlertID:   "edr-alert-789",
-		Provider:  "crowdstrike",
+		DeviceID: "device-456",
+		TenantID: "tenant-123",
+		Reason:   "Malware detected on endpoint",
+		Severity: "critical",
+		AlertID:  "edr-alert-789",
+		Provider: "crowdstrike",
 	}
 
 	payload, err := json.Marshal(action)

@@ -93,13 +93,13 @@ func TestGetFacility(t *testing.T) {
 		priority int
 		want     string
 	}{
-		{0, "kern"},    // Facility 0 (0>>3=0)
-		{8, "user"},    // Facility 1 (8>>3=1)
-		{16, "mail"},   // Facility 2 (16>>3=2)
-		{24, "daemon"}, // Facility 3 (24>>3=3)
-		{32, "auth"},   // Facility 4 (32>>3=4)
-		{64, "uucp"},   // Facility 8 (64>>3=8)
-		{128, "ntp"},   // Facility 16 (128>>3=16)
+		{0, "kern"},     // Facility 0 (0>>3=0)
+		{8, "user"},     // Facility 1 (8>>3=1)
+		{16, "mail"},    // Facility 2 (16>>3=2)
+		{24, "daemon"},  // Facility 3 (24>>3=3)
+		{32, "auth"},    // Facility 4 (32>>3=4)
+		{64, "uucp"},    // Facility 8 (64>>3=8)
+		{128, "ntp"},    // Facility 16 (128>>3=16)
 		{160, "local0"}, // Facility 20 (160>>3=20)
 	}
 
@@ -117,16 +117,16 @@ func TestGetSeverity(t *testing.T) {
 		priority int
 		want     string
 	}{
-		{0, "emergency"},   // Severity 0
-		{1, "alert"},       // Severity 0
-		{2, "critical"},    // Severity 0
-		{3, "error"},       // Severity 0
-		{4, "warning"},     // Severity 0
-		{5, "notice"},      // Severity 0
-		{6, "info"},        // Severity 0
-		{7, "debug"},       // Severity 0
-		{8, "emergency"},   // Severity 1
-		{15, "debug"},      // Severity 7
+		{0, "emergency"}, // Severity 0
+		{1, "alert"},     // Severity 0
+		{2, "critical"},  // Severity 0
+		{3, "error"},     // Severity 0
+		{4, "warning"},   // Severity 0
+		{5, "notice"},    // Severity 0
+		{6, "info"},      // Severity 0
+		{7, "debug"},     // Severity 0
+		{8, "emergency"}, // Severity 1
+		{15, "debug"},    // Severity 7
 	}
 
 	for _, tt := range tests {
@@ -173,17 +173,17 @@ func TestClassifyDeviceType(t *testing.T) {
 // TestSyslogMessageJSONRoundTrip verifies SyslogMessage JSON serialization.
 func TestSyslogMessageJSONRoundTrip(t *testing.T) {
 	msg := SyslogMessage{
-		Priority:  165,
-		Severity:  "info",
-		Facility:  "daemon",
-		Hostname:  "server01",
-		AppName:   "sshd",
-		ProcID:    "12345",
-		MessageID: "AUTH",
-		Content:   "Accepted publickey for admin",
-		SourceIP:  "192.168.1.50",
+		Priority:   165,
+		Severity:   "info",
+		Facility:   "daemon",
+		Hostname:   "server01",
+		AppName:    "sshd",
+		ProcID:     "12345",
+		MessageID:  "AUTH",
+		Content:    "Accepted publickey for admin",
+		SourceIP:   "192.168.1.50",
 		DeviceType: "server",
-		Timestamp: time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC),
+		Timestamp:  time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC),
 	}
 
 	data, err := json.Marshal(msg)
@@ -243,7 +243,7 @@ func TestStoreMessagesBufferExceeded(t *testing.T) {
 
 	for i := 0; i < 5; i++ {
 		msg := &SyslogMessage{
-			Content:  "Message " + string(rune('0'+i)),
+			Content: "Message " + string(rune('0'+i)),
 		}
 		collector.storeMessage(msg)
 	}

@@ -28,10 +28,10 @@ type EnvelopeEncryptor struct {
 // EnvelopeCiphertext is the serialized form of an envelope-encrypted secret.
 // Format: nonce (12 bytes) + encrypted_dek (32 bytes + 16 auth tag) + encrypted_secret (N bytes + 16 auth tag)
 type EnvelopeCiphertext struct {
-	Nonce          []byte `json:"nonce"`          // 12-byte nonce for DEK encryption
-	EncryptedDEK   []byte `json:"encrypted_dek"`  // DEK encrypted with CEK (32 bytes + 16 auth tag)
-	DEKNonce       []byte `json:"dek_nonce"`      // 12-byte nonce for secret encryption
-	EncryptedData  []byte `json:"encrypted_data"` // Secret encrypted with DEK (variable length + 16 auth tag)
+	Nonce         []byte `json:"nonce"`          // 12-byte nonce for DEK encryption
+	EncryptedDEK  []byte `json:"encrypted_dek"`  // DEK encrypted with CEK (32 bytes + 16 auth tag)
+	DEKNonce      []byte `json:"dek_nonce"`      // 12-byte nonce for secret encryption
+	EncryptedData []byte `json:"encrypted_data"` // Secret encrypted with DEK (variable length + 16 auth tag)
 }
 
 // NewEnvelopeEncryptor creates a new envelope encryptor with the given CEK.

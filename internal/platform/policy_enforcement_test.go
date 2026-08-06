@@ -28,7 +28,6 @@ func setupTestDB(t *testing.T) *sql.DB {
 	return db
 }
 
-
 func TestPolicyEnforcementEngineFindMatchingDevicesMSP(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
