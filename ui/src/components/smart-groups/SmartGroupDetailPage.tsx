@@ -1,32 +1,13 @@
-import { useState, useCallback } from 'react';
-import {
-  Users,
-  Settings2,
-  Play,
-  Plus,
-  Trash2,
-  Edit2,
-  Eye,
-  EyeOff,
-  Copy,
-  Check,
-  AlertCircle,
-  Clock,
-  Shield,
-  Code,
-} from 'lucide-react';
+import { useState, useCallback, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useWorkspace } from '@/hooks/useWorkspace';
+import { useAuth } from '@/hooks/useAuth';
+import { api } from '@/api/client';
+import type { DeviceGroup, DeviceGroupMember, DeviceGroupScriptBinding, DeviceGroupEvaluationStatus } from '@/api/types';
 import { useToast } from '@/components/shared/Toast';
-import type {
-  SmartGroup,
-  SmartGroupMember,
-  SmartGroupScriptBinding,
-} from './SmartGroupTypes';
-import {
-  createMockSmartGroups,
-  createMockMembers,
-} from './SmartGroupTypes';
+import { Skeleton } from '@/components/shared/Skeleton';
 import SmartGroupExpressionBuilder from './SmartGroupExpressionBuilder';
-import type { SmartGroupExpression } from './SmartGroupTypes';
+import type { SmartGroupExpression, SmartGroupFilter } from './SmartGroupTypes';
 
 type TabId = 'overview' | 'members' | 'bindings' | 'expression';
 
@@ -36,16 +17,55 @@ interface SmartGroupDetailPageProps {
 
 export default function SmartGroupDetailPage({ groupId }: SmartGroupDetailPageProps) {
   const { showToast } = useToast();
+  const navigate = useNavigate();
+  const { workspace } = useWorkspace();
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<TabId>('overview');
-  const [groups] = useState<SmartGroup[]>(createMockSmartGroups);
-  const [members] = useState<SmartGroupMember[]>(createMockMembers);
+  const [group, setGroup] = useState<DeviceGroup | null>(null);
+  const [members, setMembers] = useState<DeviceGroupMember[]>([]);
+  const [bindings, setBindings] = useState<DeviceGroupScriptBinding[]>([]);
+  const [evalStatus, setEvalStatus] = useState<DeviceGroupEvaluationStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [evaluating, setEvaluating] = useState(false);
   const [revealedBindings, setRevealedBindings] = useState<Set<string>>(new Set());
   const [editingName, setEditingName] = useState(false);
-  const [groupName, setGroupName] = useState('Linux Servers');
+  const [groupName, setGroupName] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  const group = groups.find((g) => g.id === groupId || g.id === 'group-001');
-  const groupMembers = members;
+  const mspID = workspace?.msp_id || '';
+  const clientID = workspace?.client_id || '';
+
+  const loadGroup = useCallback(async () => {
+    if (!groupId) {
+      setError('No group ID provided');
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const [detail, membersRes, bindingsRes] = await Promise.all([
+        api.getDeviceGroupDetail(groupId),
+        api.getDeviceGroupMembers(groupId).catch(() => ({ members: [], total: 0 })),
+        api.listDeviceGroupBindings(groupId).catch(() => ({ bindings: [] })),
+      ]);
+      setGroup(detail);
+      setMembers(membersRes.members);
+      setBindings(bindingsRes.bindings);
+      setGroupName(detail.name);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to load group';
+      setError(message);
+      showToast('error', message);
+    } finally {
+      setLoading(false);
+    }
+  }, [groupId, showToast]);
+
+  useEffect(() => {
+    loadGroup();
+  }, [loadGroup]);
 
   const handleCopyId = useCallback((id: string) => {
     navigator.clipboard.writeText(id);
@@ -60,6 +80,103 @@ export default function SmartGroupDetailPage({ groupId }: SmartGroupDetailPagePr
   const handleExpressionChange = useCallback((expr: SmartGroupExpression) => {
     console.log('Expression changed:', expr);
   }, []);
+
+  const handleEvaluate = useCallback(async () => {
+    if (!groupId) return;
+    setEvaluating(true);
+    try {
+      const result = await api.triggerGroupEvaluation(groupId);
+      showToast('success', `Evaluation started: ${result.evaluation_id}`);
+      setTimeout(() => {
+        api.getEvaluationStatus(groupId).then((status) => {
+          setEvalStatus(status);
+          if (status.status === 'completed') {
+            loadGroup();
+          }
+        }).catch(() => {});
+      }, 2000);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to evaluate group';
+      showToast('error', message);
+    } finally {
+      setEvaluating(false);
+    }
+  }, [groupId, showToast, loadGroup]);
+
+  const handleNameSave = useCallback(async () => {
+    if (!groupId || !groupName.trim()) return;
+    try {
+      await api.updateDeviceGroup(groupId, { name: groupName.trim() });
+      showToast('success', 'Group name updated');
+      setEditingName(false);
+      loadGroup();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to update group name';
+      showToast('error', message);
+    }
+  }, [groupId, groupName, showToast, loadGroup]);
+
+  const handleDeleteGroup = useCallback(async () => {
+    if (!groupId || !window.confirm('Delete this group? This action cannot be undone.')) return;
+    try {
+      await api.deleteDeviceGroup(groupId);
+      showToast('success', 'Group deleted');
+      navigate('/groups');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to delete group';
+      showToast('error', message);
+    }
+  }, [groupId, showToast, navigate]);
+
+  const handleUnbindScript = useCallback(async (bindingId: string) => {
+    if (!groupId) return;
+    try {
+      await api.unbindScriptFromGroup(groupId, bindingId);
+      showToast('success', 'Script binding removed');
+      loadGroup();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to remove binding';
+      showToast('error', message);
+    }
+  }, [groupId, showToast, loadGroup]);
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <Skeleton type="text" count={2} />
+        <Skeleton type="card" count={4} />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 p-6 text-center">
+        <p className="text-red-700 dark:text-red-400 font-medium">Failed to load group</p>
+        <p className="text-sm text-red-600 dark:text-red-500 mt-1">{error}</p>
+        <button
+          onClick={loadGroup}
+          className="mt-3 px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-md hover:bg-red-700"
+        >
+          Try again
+        </button>
+      </div>
+    );
+  }
+
+  if (!group) {
+    return (
+      <div className="text-center py-12">
+        <p className="text-slate-500 dark:text-slate-400">Group not found</p>
+        <button
+          onClick={() => navigate('/groups')}
+          className="mt-3 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700"
+        >
+          Back to Groups
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -76,19 +193,25 @@ export default function SmartGroupDetailPage({ groupId }: SmartGroupDetailPagePr
                 autoFocus
               />
               <button
-                onClick={() => setEditingName(false)}
+                onClick={handleNameSave}
                 className="text-green-600 dark:text-green-400"
               >
-                <Check className="h-5 w-5" />
+                Save
+              </button>
+              <button
+                onClick={() => { setEditingName(false); setGroupName(group.name); }}
+                className="text-red-600 dark:text-red-400"
+              >
+                Cancel
               </button>
             </div>
           ) : (
             <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100">
-              {group?.name || 'Smart Group'}
+              {group.name}
             </h1>
           )}
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-            {group?.description || 'Smart group detail'}
+            {group.description || 'Smart group detail'}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -97,14 +220,25 @@ export default function SmartGroupDetailPage({ groupId }: SmartGroupDetailPagePr
             className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
             title="Edit group name"
           >
-            <Edit2 className="h-4 w-4" />
+            <span className="text-xs">Edit</span>
           </button>
           <button
-            onClick={() => showToast('info', `Group evaluated: ${groupMembers.length} devices`)}
-            className="flex items-center gap-1 px-3 py-1.5 text-sm font-medium text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20 rounded-md hover:bg-green-100 dark:hover:bg-green-900/30"
+            onClick={handleDeleteGroup}
+            className="p-2 text-red-400 hover:text-red-600 dark:hover:text-red-300"
+            title="Delete group"
           >
-            <Play className="h-4 w-4" />
-            Evaluate Now
+            <span className="text-xs">Delete</span>
+          </button>
+          <button
+            onClick={handleEvaluate}
+            disabled={evaluating}
+            className={`flex items-center gap-1 px-3 py-1.5 text-sm font-medium rounded-md ${
+              evaluating
+                ? 'text-slate-400 bg-slate-100 dark:bg-slate-700 cursor-not-allowed'
+                : 'text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/20 hover:bg-green-100 dark:hover:bg-green-900/30'
+            }`}
+          >
+            {evaluating ? 'Evaluating...' : 'Evaluate Now'}
           </button>
         </div>
       </div>
@@ -113,36 +247,32 @@ export default function SmartGroupDetailPage({ groupId }: SmartGroupDetailPagePr
       <div className="grid grid-cols-4 gap-4">
         <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
           <div className="flex items-center gap-2">
-            <Users className="h-5 w-5 text-blue-600 dark:text-blue-400" />
             <span className="text-2xl font-bold text-slate-900 dark:text-slate-100">
-              {group?.memberCount || groupMembers.length}
+              {group.member_count}
             </span>
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Members</p>
         </div>
         <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
           <div className="flex items-center gap-2">
-            <Shield className="h-5 w-5 text-purple-600 dark:text-purple-400" />
             <span className="text-2xl font-bold text-slate-900 dark:text-slate-100">
-              {group?.isSmart ? 'Smart' : 'Static'}
+              {group.is_smart ? 'Smart' : 'Static'}
             </span>
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Group Type</p>
         </div>
         <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
           <div className="flex items-center gap-2">
-            <Clock className="h-5 w-5 text-amber-600 dark:text-amber-400" />
             <span className="text-2xl font-bold text-slate-900 dark:text-slate-100">
-              {group?.status}
+              {evalStatus?.status || 'idle'}
             </span>
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Status</p>
         </div>
         <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4">
           <div className="flex items-center gap-2">
-            <Settings2 className="h-5 w-5 text-slate-600 dark:text-slate-400" />
             <span className="text-2xl font-bold text-slate-900 dark:text-slate-100">
-              {group?.bindings?.length || 0}
+              {bindings.length}
             </span>
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Script Bindings</p>
@@ -180,32 +310,32 @@ export default function SmartGroupDetailPage({ groupId }: SmartGroupDetailPagePr
                 <label className="text-xs text-slate-500 dark:text-slate-400">ID</label>
                 <div className="flex items-center gap-2 mt-1">
                   <code className="text-sm bg-slate-100 dark:bg-slate-700 px-2 py-1 rounded">
-                    {group?.id}
+                    {group.id}
                   </code>
                   <button
-                    onClick={() => handleCopyId(group?.id || '')}
+                    onClick={() => handleCopyId(group.id)}
                     className="text-slate-400 hover:text-slate-600"
                   >
-                    {copiedId === group?.id ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
+                    {copiedId === group.id ? '✓' : '📋'}
                   </button>
                 </div>
               </div>
               <div>
                 <label className="text-xs text-slate-500 dark:text-slate-400">Client</label>
                 <p className="text-sm text-slate-900 dark:text-slate-100 mt-1">
-                  {group?.clientId || 'client-001'}
+                  {group.client_id}
                 </p>
               </div>
               <div>
                 <label className="text-xs text-slate-500 dark:text-slate-400">Created</label>
                 <p className="text-sm text-slate-900 dark:text-slate-100 mt-1">
-                  {group?.createdAt || '2026-06-01T10:00:00Z'}
+                  {new Date(group.created_at).toLocaleString()}
                 </p>
               </div>
               <div>
                 <label className="text-xs text-slate-500 dark:text-slate-400">Last Evaluated</label>
                 <p className="text-sm text-slate-900 dark:text-slate-100 mt-1">
-                  {group?.lastEvaluated || 'Never'}
+                  {group.last_evaluated ? new Date(group.last_evaluated).toLocaleString() : 'Never'}
                 </p>
               </div>
             </div>
@@ -218,64 +348,69 @@ export default function SmartGroupDetailPage({ groupId }: SmartGroupDetailPagePr
           <div className="p-4 border-b border-slate-200 dark:border-slate-700">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                Group Members ({groupMembers.length})
+                Group Members ({members.length})
               </h3>
-              <button className="text-xs text-blue-600 dark:text-blue-400 hover:underline">
-                Export CSV
-              </button>
             </div>
           </div>
-          <table className="w-full">
-            <thead className="bg-slate-50 dark:bg-slate-900">
-              <tr>
-                <th className="text-left text-xs font-medium text-slate-500 dark:text-slate-400 px-4 py-2">
-                  Hostname
-                </th>
-                <th className="text-left text-xs font-medium text-slate-500 dark:text-slate-400 px-4 py-2">
-                  OS
-                </th>
-                <th className="text-left text-xs font-medium text-slate-500 dark:text-slate-400 px-4 py-2">
-                  IP
-                </th>
-                <th className="text-left text-xs font-medium text-slate-500 dark:text-slate-400 px-4 py-2">
-                  Last Seen
-                </th>
-                <th className="text-left text-xs font-medium text-slate-500 dark:text-slate-400 px-4 py-2">
-                  Tags
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
-              {groupMembers.map((member) => (
-                <tr key={member.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/50">
-                  <td className="px-4 py-2 text-sm text-slate-900 dark:text-slate-100">
-                    {member.hostname}
-                  </td>
-                  <td className="px-4 py-2 text-sm text-slate-600 dark:text-slate-400">
-                    {member.os}
-                  </td>
-                  <td className="px-4 py-2 text-sm text-slate-600 dark:text-slate-400">
-                    {member.ip}
-                  </td>
-                  <td className="px-4 py-2 text-sm text-slate-600 dark:text-slate-400">
-                    {member.lastSeen}
-                  </td>
-                  <td className="px-4 py-2">
-                    <div className="flex gap-1">
-                      {member.tags.map((tag) => (
-                        <span
-                          key={tag}
-                          className="px-2 py-0.5 text-xs bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded"
-                        >
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
-                  </td>
+          {members.length === 0 ? (
+            <div className="p-8 text-center">
+              <p className="text-sm text-slate-500 dark:text-slate-400">
+                No members yet. Run evaluation to discover members.
+              </p>
+            </div>
+          ) : (
+            <table className="w-full">
+              <thead className="bg-slate-50 dark:bg-slate-900">
+                <tr>
+                  <th className="text-left text-xs font-medium text-slate-500 dark:text-slate-400 px-4 py-2">
+                    Hostname
+                  </th>
+                  <th className="text-left text-xs font-medium text-slate-500 dark:text-slate-400 px-4 py-2">
+                    OS
+                  </th>
+                  <th className="text-left text-xs font-medium text-slate-500 dark:text-slate-400 px-4 py-2">
+                    IP Addresses
+                  </th>
+                  <th className="text-left text-xs font-medium text-slate-500 dark:text-slate-400 px-4 py-2">
+                    Last Seen
+                  </th>
+                  <th className="text-left text-xs font-medium text-slate-500 dark:text-slate-400 px-4 py-2">
+                    Tags
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
+                {members.map((member) => (
+                  <tr key={member.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/50">
+                    <td className="px-4 py-2 text-sm text-slate-900 dark:text-slate-100">
+                      {member.hostname}
+                    </td>
+                    <td className="px-4 py-2 text-sm text-slate-600 dark:text-slate-400">
+                      {member.os}
+                    </td>
+                    <td className="px-4 py-2 text-sm text-slate-600 dark:text-slate-400">
+                      {member.ip_addresses.join(', ')}
+                    </td>
+                    <td className="px-4 py-2 text-sm text-slate-600 dark:text-slate-400">
+                      {new Date(member.last_seen).toLocaleString()}
+                    </td>
+                    <td className="px-4 py-2">
+                      <div className="flex gap-1">
+                        {member.tags.map((tag) => (
+                          <span
+                            key={tag}
+                            className="px-2 py-0.5 text-xs bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded"
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       )}
 
@@ -283,17 +418,12 @@ export default function SmartGroupDetailPage({ groupId }: SmartGroupDetailPagePr
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-              Script Bindings ({group?.bindings?.length || 0})
+              Script Bindings ({bindings.length})
             </h3>
-            <button className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 rounded-md hover:bg-blue-100 dark:hover:bg-blue-900/30">
-              <Plus className="h-3 w-3" />
-              Add Binding
-            </button>
           </div>
 
-          {(group?.bindings || []).length === 0 ? (
+          {bindings.length === 0 ? (
             <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-8 text-center">
-              <AlertCircle className="h-8 w-8 text-slate-400 mx-auto mb-2" />
               <p className="text-sm text-slate-500 dark:text-slate-400">
                 No script bindings configured
               </p>
@@ -324,13 +454,13 @@ export default function SmartGroupDetailPage({ groupId }: SmartGroupDetailPagePr
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
-                  {group!.bindings!.map((binding) => (
+                  {bindings.map((binding) => (
                     <tr key={binding.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/50">
                       <td className="px-4 py-2 text-sm text-slate-900 dark:text-slate-100">
-                        {binding.scheduleName}
+                        {binding.schedule_name}
                       </td>
                       <td className="px-4 py-2 text-sm text-slate-600 dark:text-slate-400">
-                        {binding.bindingType}
+                        {binding.binding_type}
                       </td>
                       <td className="px-4 py-2 text-sm text-slate-600 dark:text-slate-400">
                         {binding.priority}
@@ -347,14 +477,12 @@ export default function SmartGroupDetailPage({ groupId }: SmartGroupDetailPagePr
                         </span>
                       </td>
                       <td className="px-4 py-2">
-                        <div className="flex gap-2">
-                          <button className="text-slate-400 hover:text-slate-600">
-                            <Edit2 className="h-4 w-4" />
-                          </button>
-                          <button className="text-red-400 hover:text-red-600">
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        </div>
+                        <button
+                          onClick={() => handleUnbindScript(binding.id)}
+                          className="text-red-400 hover:text-red-600"
+                        >
+                          Remove
+                        </button>
                       </td>
                     </tr>
                   ))}
@@ -368,8 +496,9 @@ export default function SmartGroupDetailPage({ groupId }: SmartGroupDetailPagePr
       {activeTab === 'expression' && (
         <div>
           <SmartGroupExpressionBuilder
-            initialExpression={group?.filterExpression}
+            initialExpression={group.filter_expression as SmartGroupExpression | undefined}
             onExpressionChange={handleExpressionChange}
+            readOnly={!group.is_smart}
           />
         </div>
       )}
