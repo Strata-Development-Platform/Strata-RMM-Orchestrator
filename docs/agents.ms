@@ -4111,3 +4111,27 @@ All 7 CI checks terminal and successful on PR #67 (final head 7733ad7):
 ### Phase 2/3 status
 - Phase 2: Complete (2.1a PR#57, 2.1b PR#58, 2.2a PR#59, 2.2b PR#61)
 - Phase 3: Complete (3.1a PR#62, 3.1b PR#64, 3.2 PR#65, 3.3 PR#52)
+
+### Workstream 1a: Smart Groups DSL + DB Schema — MERGED (2026-08-06)
+- PR: #73 (merged, squash, branch deleted)
+- Branch: feature/ws1-smart-groups-dsl
+- Base SHA: fefa811afa97960804484550ee6f7c2b3ad110be
+- Head SHA: 6f94b704055da51fc0b11b00b2ceb15367a733f7
+- Merge SHA: a004dd1
+- Files: internal/groups/dsl.go (343 lines, 40 tests), internal/groups/dsl_test.go (626 lines), pkg/postgres/schema.go (Migration 94 +30 lines)
+- CI: 86 pass, 0 fail, 0 pending (all workflows terminal)
+- CI URLs: Run 31059255403 (full CI), Run 31059255403/job/92483355369 (unit tests), Run 31059255403/job/92483355428 (frontend)
+- Pre-existing failure fixed: MSPListPage.test.tsx (duplicate role="status" in Toast.tsx + success div)
+  - Fix: Toast.tsx role "status" → "log", MSPListPage.tsx adds creationSuccess state + role="status" div
+  - Frontend: 87/87 pass (was 86/87, 1 fail)
+- Pre-existing lint warnings: 0 (4 lint warnings in PR #69 remain unresolved but do not block)
+- Ledger Rules Audit:
+  - A. Merge evidence present: Yes — CI results, PR number, branch, merge SHA
+  - B. Exact branch name recorded: Yes — feature/ws1-smart-groups-dsl
+  - C. PR state clear: MERGED
+  - D. Each failure documented with cause: Yes — Frontend duplicate role="status" → fixed via Toast.tsx + MSPListPage.tsx
+  - E. Each rerun documented: N/A — no reruns needed; fixes committed and re-verified
+  - F. No pre-existing failure carried forward: Yes — Frontend failure fixed before final CI
+  - G. Branch deleted: Yes — deleted by merge
+  - H. Open dev PRs: None
+

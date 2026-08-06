@@ -100,6 +100,7 @@ until implementation begins or the scope is formally retired.
 | 4 | Third-Party Public Integration Router | EDR/Backup/PSA webhook ingestion endpoints with HMAC-SHA256 signature verification, automated security isolation (EDR threat → NATS isolation command) | **Complete** — 4.1a/4.1b/4.2 (PRs #66/#67), 6.2 OpenAPI spec (PR #70) | `internal/integrations/`, `docs/integrations/` |
 | 5 | UI Configuration Components | Hierarchical policy dashboard tree-view with inheritance tags and override toggles, integration settings panel (API key management, webhook URL display) | **Complete** — 5.1 (PR #68, 8 pass), 5.2 (PR #69, 36 pass) | `ui/src/components/policies/`, `ui/src/components/settings/` |
 | 6 | Core Technical Documentation | `docs/architecture/policy-engine.md` (override precedence + ASCII diagram), `docs/integrations/public-api.md` (OpenAPI 3.0 spec for EDR/Backup/PSA), `docs/monitoring/best-practice-templates.md` (server/hardware template master tables with OIDs and thresholds) | **Complete** — 6.1 exists, 6.2 (PR #70, 84 pass), 6.3 (PR #71, 84 pass) | `docs/architecture/`, `docs/integrations/`, `docs/monitoring/` |
+| 7 | Dynamic Device Grouping (Smart Groups) — DSL + Schema | Expression DSL evaluator (13 operators: eq, neq, gt, gte, lt, lte, contains, startswith, in, contains_any, is_null, not_null, regex), nested AND/OR expressions, Migration 94 adds filter_expression/is_smart/last_evaluated/member_count to device_groups + creates group_memberships table | **Complete** — 7.1 (PR #73, 86 pass) | `internal/groups/`, `pkg/postgres/schema.go` (M94) |
 
 ## Planned expansion — detailed task traceability
 
@@ -182,3 +183,17 @@ ticket or PR when the team is ready to begin work.
 | 2.1b | Policy lifecycle: validation, preview, publish, rollback | `pkg/postgres/schema.go`, `internal/platform/policy_*` | Integration test for full lifecycle transitions | **Verified** | #58 | 84 pass, 0 fail, 0 pending |
 | 2.2a | Git-backed automation vault: SSH/HTTPS clone/pull from GitHub/GitLab | `internal/automation/vault.go` | Unit test with mock Git server (19 tests) | **Verified** | #59 | 84 pass, 0 fail, 0 pending |
 | 2.2b | AES-256-GCM envelope encryption for secret variables; in-memory exposure over NATS | `internal/automation/vault_envelope.go` | Encryption round-trip test + audit that secrets never touch disk (26 tests) | **Verified** | #61 | 84 pass, 0 fail, 0 pending |
+
+### Phase 7: Dynamic Device Grouping (Smart Groups) — **COMPLETE** (7.1 merged)
+
+| ID | Task | Target | Evidence required | Status | PR | CI |
+|----|------|--------|-------------------|--------|----|----|
+| 7.1 | Expression DSL evaluator + DB schema (filter_expression JSONB, group_memberships table, Migration 94) | `internal/groups/`, `pkg/postgres/schema.go` | 40 unit tests covering 13 operators, nested AND/OR, edge cases, round-trip serialization | **Verified** | #73 | 86 pass, 0 fail, 0 pending |
+
+**Gate 2 audit trace for PR #73:**
+
+PR #73 (7.1): Entry points → `internal/groups/dsl.go` (Expression.Validate, Expression.Evaluate, ParseExpression, SerializeExpression, IsSmartGroup), Migration 94 in `pkg/postgres/schema.go`; Identity → N/A (no auth boundary); Authorization → N/A (DSL evaluator is stateless; RLS enforced at DB layer via device_groups.msp_id); Tenant → `device_groups` already scoped to `msp_id` with RLS policies; Persistence → 4 new columns on `device_groups` (filter_expression, is_smart, last_evaluated, member_count), new `group_memberships` table with composite PK (group_id, device_id) and 2 indexes; Messaging → N/A (future: NATS evaluation trigger in ws1b); Object storage → N/A; Endpoint execution → N/A; UI state → N/A; Audit records → N/A; Metrics → N/A; Alerts → N/A; Runbooks → N/A; Existing tests → 40 unit tests in `dsl_test.go` covering all operators, nested logic, edge cases.
+
+**Limitations (7.1):** No API endpoints (ws1b), no background re-evaluation loop (ws1b), no tags population from inventory (ws1b), no UI components (ws1c), regex uses Go regexp.MatchString (limited attack surface).
+
+**Pre-existing failure fixed during PR #73:** `MSPListPage.test.tsx` (duplicate `role="status"` in Toast.tsx + success div). Fix: Toast.tsx changed `role="status"` → `role="log"`, MSPListPage.tsx added `creationSuccess` state + `role="status"` success div. Frontend: 87/87 pass (was 86/87, 1 fail).
