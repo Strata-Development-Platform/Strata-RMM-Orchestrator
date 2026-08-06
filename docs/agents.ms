@@ -4283,3 +4283,17 @@ All 7 CI checks terminal and successful on PR #67 (final head 7733ad7):
   - G. Branch deleted: Yes
   - H. Open dev PRs: None
 
+
+### PR #81 — 2026-08-06 — Alert Grouping + Maintenance-Window Silence
+
+PR: https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/pull/81
+Commit: e06b961
+Files: `internal/alerting/grouping.go` (+149), `internal/alerting/grouping_test.go` (+588 new), `internal/platform/api.go` (+110), `internal/platform/middleware.go` (+6)
+CI: all pass, 0 fail, 0 pending
+
+**Gate 2 audit trace:**
+PR #81: Entry points → `grouping.go` (8 new methods: GetGroupsBySeverity, GetGroupsByDevice, ResolveGroupsByDevice, GetDeviceAlertCount, GetCascadeGroups, GetTimeWindowGroups, ResolveAll, ResolveCascadeGroup), `api.go` (7 new handlers), `grouping_test.go` (21 tests); Identity → JWT via handler chain; Authorization → AuthorizeClientManage on write endpoints (resolve), AuthorizeClientAccess on read endpoints; Tenant → grouping scoped by tenantID via handler; Persistence → in-memory GroupingEngine (no new DB); Messaging → N/A; Object storage → N/A; Endpoint execution → 7 new REST endpoints for alert group management; UI state → N/A; Audit records → N/A; Metrics → N/A; Alerts → N/A; Runbooks → N/A; Existing tests → 41 alerting tests total (20 existing + 21 new).
+
+**Limitations:** Grouping is in-memory only (no persistence). Groups are lost on restart. No alert group history or audit trail. No UI component for alert grouping (future).
+
+**Pre-existing fixes during PR:** Smart Group UI TypeScript errors from PR #78 fixed (Script→Code icon, showToast 2-arg limit, boolean|undefined fix).
