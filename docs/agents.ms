@@ -4223,3 +4223,23 @@ All 7 CI checks terminal and successful on PR #67 (final head 7733ad7):
   - G. Branch deleted: Yes
   - H. Open dev PRs: None
 
+
+### Workstream 8C: Smart Group UI Components — MERGED (2026-08-06)
+- PR: #78 (merged, squash, branch deleted)
+- Branch: feature/ws8c-smart-group-ui
+- Base SHA: c3404a568dca66bbeb521691c4d9cb69669e7341
+- Head SHA: 4c953ad (CI-passing head)
+- Merge SHA: 801ded5
+- Files: SmartGroupTypes.tsx (211 lines), SmartGroupExpressionBuilder.tsx (322 lines), SmartGroupDetailPage.tsx (378 lines), SmartGroupDetailPage.test.tsx (152 lines)
+- CI: All checks pass (Frontend: 101 tests, 9 test files pass)
+- Pre-existing failures: None
+- Ledger Rules Audit:
+  - A. Merge evidence present: Yes
+  - B. Branch: feature/ws8c-smart-group-ui
+  - C. PR state: MERGED
+  - D. Failures documented: None
+  - E. Reruns: 1 CI run (all pass on first attempt)
+  - F. No pre-existing failure carried forward: Yes
+  - G. Branch deleted: Yes
+  - H. Open dev PRs: None
+

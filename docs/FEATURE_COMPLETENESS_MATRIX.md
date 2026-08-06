@@ -101,7 +101,7 @@ until implementation begins or the scope is formally retired.
 | 5 | UI Configuration Components | Hierarchical policy dashboard tree-view with inheritance tags and override toggles, integration settings panel (API key management, webhook URL display) | **Complete** — 5.1 (PR #68, 8 pass), 5.2 (PR #69, 36 pass) | `ui/src/components/policies/`, `ui/src/components/settings/` |
 | 6 | Core Technical Documentation | `docs/architecture/policy-engine.md` (override precedence + ASCII diagram), `docs/integrations/public-api.md` (OpenAPI 3.0 spec for EDR/Backup/PSA), `docs/monitoring/best-practice-templates.md` (server/hardware template master tables with OIDs and thresholds) | **Complete** — 6.1 exists, 6.2 (PR #70, 84 pass), 6.3 (PR #71, 84 pass) | `docs/architecture/`, `docs/integrations/`, `docs/monitoring/` |
 | 7 | Dynamic Device Grouping (Smart Groups) — DSL + Schema | Expression DSL evaluator (13 operators: eq, neq, gt, gte, lt, lte, contains, startswith, in, contains_any, is_null, not_null, regex), nested AND/OR expressions, Migration 94 adds filter_expression/is_smart/last_evaluated/member_count to device_groups + creates group_memberships table | **Complete** — 7.1 (PR #73, 86 pass), 7.2 (PR #74, 84 pass), 7.3 (PR #75, 65 pass) | `internal/groups/`, `pkg/postgres/schema.go` (M94) |
-| 8 | Script Vault & Policy Binding | Smart group script bindings (Migration 95), 3 endpoints (POST/GET/DELETE /script-bindings), schedule dispatch integration | **In Progress** — 8A (PR #76, 66 pass) | `internal/platform/smart_group_handlers.go`, `pkg/postgres/schema.go` (M95) |
+| 8 | Script Vault & Policy Binding + Smart Group UI | Smart group script bindings (Migration 95, 3 endpoints, schedule dispatch), Smart Group UI components (ExpressionBuilder, DetailPage, Types, 14 tests) | **Complete** — 8A (PR #76, 66 pass), 8B (PR #77, 66 pass), 8C (PR #78, 101 frontend tests pass) | `internal/platform/smart_group_handlers.go`, `script_schedule_runner.go`, `jobs.go`, `ui/src/components/smart-groups/` |
 
 ## Planned expansion — detailed task traceability
 
@@ -218,6 +218,7 @@ PR #75 (7.3): Entry points → `smart_group_handlers.go` (handleUpdateDeviceGrou
 |----|------|--------|-------------------|--------|----|----|
 | 8A | Smart group script bindings (Migration 95, 3 endpoints: POST/GET/DELETE /script-bindings) | `smart_group_handlers.go`, `schema.go` (M95) | 6 tests: request validation, defaults, response structure, unbind validation, empty list, binding response | **Verified** | #76 | 66 pass, 0 fail, 0 pending |
 | 8B | Schedule runner smart group dispatch (binding discovery, group_memberships dispatch, ExecuteScheduleDevice) | `script_schedule_runner.go`, `jobs.go` | 5 tests: binding discovery, dispatch, group members, schedule info, smart group dispatch | **Verified** | #77 | 66 pass, 0 fail, 0 pending |
+| 8C | Smart Group UI components (SmartGroupTypes, ExpressionBuilder, DetailPage with 4 tabs, 14 tests) | `ui/src/components/smart-groups/` | 14 tests: render, tab navigation, expression builder CRUD, JSON view, field/operator selectors, mock data | **Verified** | #78 | 101 frontend tests pass, 9 test files |
 
 **Gate 2 audit trace for PR #76:**
 
@@ -230,3 +231,9 @@ PR #77 (8B): Entry points → `script_schedule_runner.go` (evaluateSchedules, ge
 **Limitations (8A):** No schedule runner integration to auto-dispatch scripts to smart group members (now implemented in 8B), no script execution history per binding, no binding priority-based dispatch order, no binding TTL/auto-expiry, no webhook notification on binding change.
 
 **Limitations (8B):** No per-binding execution tracking (future: binding_execution_history table), no dispatch priority ordering across multiple bindings, no dispatch rate limiting per schedule, no notification/callback on smart group dispatch completion, ExecuteScheduleDevice uses context.Background() for some internal queries (minor).
+
+**Gate 2 audit trace for PR #78:**
+
+PR #78 (8C): Entry points → `ui/src/components/smart-groups/SmartGroupDetailPage.tsx` (SmartGroupDetailPage component, 4 tabs), `SmartGroupExpressionBuilder.tsx` (visual expression builder, 200+ lines); Identity → N/A (UI component); Authorization → N/A (UI component uses mock data); Tenant → N/A (mock data); Persistence → N/A (mock data); Messaging → N/A; Object storage → N/A; Endpoint execution → N/A; UI state → useState for tabs, expressions, editing, revealed bindings; Audit records → N/A; Metrics → N/A; Alerts → N/A; Runbooks → N/A; Existing tests → 14 tests in `SmartGroupDetailPage.test.tsx` covering all components.
+
+**Limitations (8C):** No real API integration (uses mock data), no pagination for members list, no search/filter for members, no real-time evaluation feedback, no dark mode testing in CI, no responsive design tests.
