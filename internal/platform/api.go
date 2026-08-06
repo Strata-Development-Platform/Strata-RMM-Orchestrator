@@ -474,6 +474,7 @@ func (s *APIServer) Start(ctx context.Context) error {
 
 	// Smart Groups API
 	mux.HandleFunc("POST /api/v1/device-groups/smart", s.handleCreateDeviceGroupV2)
+	mux.HandleFunc("PUT /api/v1/device-groups/{groupID}", s.handleUpdateDeviceGroup)
 	mux.HandleFunc("GET /api/v1/device-groups/{groupID}/detail", s.handleGetDeviceGroup)
 	mux.HandleFunc("GET /api/v1/device-groups/{groupID}/members", s.handleListDeviceGroupMembers)
 	mux.HandleFunc("POST /api/v1/device-groups/{groupID}/evaluate", s.handleTriggerGroupEvaluate)
