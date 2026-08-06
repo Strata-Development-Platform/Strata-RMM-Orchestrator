@@ -4243,3 +4243,23 @@ All 7 CI checks terminal and successful on PR #67 (final head 7733ad7):
   - G. Branch deleted: Yes
   - H. Open dev PRs: None
 
+
+### Workstream 4.3: Integration Dashboard Panel — MERGED (2026-08-06)
+- PR: #79 (merged, squash, branch deleted)
+- Branch: feature/ws43-integration-dashboard
+- Base SHA: cb7fc89477beda79855e6ffbe5217cc25c16e127
+- Head SHA: 71ebd78 (CI-passing head)
+- Merge SHA: 068f2b9
+- Files: IntegrationDashboardTypes.tsx (223 lines), IntegrationDashboardPanel.tsx (385 lines), IntegrationDashboardPanel.test.tsx (109 lines)
+- CI: All checks pass (Frontend: 116 tests pass, 10 test files)
+- Pre-existing failures: None
+- Ledger Rules Audit:
+  - A. Merge evidence present: Yes
+  - B. Branch: feature/ws43-integration-dashboard
+  - C. PR state: MERGED
+  - D. Failures documented: None
+  - E. Reruns: 1 CI run (all pass on first attempt)
+  - F. No pre-existing failure carried forward: Yes
+  - G. Branch deleted: Yes
+  - H. Open dev PRs: None
+

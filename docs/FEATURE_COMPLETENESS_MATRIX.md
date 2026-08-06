@@ -97,7 +97,7 @@ until implementation begins or the scope is formally retired.
 | 1 | Core HA Architecture Hardening | JetStream refactoring (persistent consumers, explicit `msg.Ack()`), read/write connection pool routing, RLS context injection, Timescale hypertable compression, stateless scaling (token blacklists → Redis) | **Complete** — All 4 sub-items merged and CI-verified (PRs #53-#56) | `internal/messaging/jetstream/`, `pkg/postgres/`, `pkg/timescale/`, `pkg/redis/`, `pkg/auth/` |
 | 2 | Hierarchical Policy Engine & Secure Script Vault | Recursive `ComputeEffectivePolicy(deviceID)` with 4-level inheritance (Global→Client→Location→DeviceGroup), Git-backed automation vault with SSH/HTTPS pull + AES-256-GCM envelope encryption | **Complete** — 2.1a (PR #57), 2.1b (PR #58), 2.2a (PR #59), 2.2b (PR #61) | `internal/policy/`, `internal/automation/`, `pkg/encrypt/` |
 | 3 | Server & Hardware Template Infrastructure | Server role detection (WMI/CIM/systemd → `Roles []string` in telemetry), infrastructure probe engine (SNMP v3, Redfish, IPMI, Syslog for SAN/NAS/firewall/switch/hypervisor/UPS), power-shutdown orchestration handler | **Complete** — 3.1a (PR #62), 3.1b (PR #64), 3.2 (PR #65), 3.3 (PR #52) | `internal/inventory/`, `internal/agent/`, `internal/probe/`, `internal/orchestrator/power_events.go` |
-| 4 | Third-Party Public Integration Router | EDR/Backup/PSA webhook ingestion endpoints with HMAC-SHA256 signature verification, automated security isolation (EDR threat → NATS isolation command) | **Complete** — 4.1a/4.1b/4.2 (PRs #66/#67), 6.2 OpenAPI spec (PR #70) | `internal/integrations/`, `docs/integrations/` |
+| 4 | Third-Party Public Integration Router | EDR/Backup/PSA webhook ingestion endpoints with HMAC-SHA256 signature verification, automated security isolation (EDR threat → NATS isolation command), Integration Dashboard Panel (provider health, events feed, severity filter) | **Complete** — 4.1a/4.1b/4.2 (PRs #66/#67), 4.3 (PR #79, 116 frontend tests pass), 6.2 OpenAPI spec (PR #70) | `internal/integrations/`, `ui/src/components/settings/IntegrationDashboardPanel.tsx` |
 | 5 | UI Configuration Components | Hierarchical policy dashboard tree-view with inheritance tags and override toggles, integration settings panel (API key management, webhook URL display) | **Complete** — 5.1 (PR #68, 8 pass), 5.2 (PR #69, 36 pass) | `ui/src/components/policies/`, `ui/src/components/settings/` |
 | 6 | Core Technical Documentation | `docs/architecture/policy-engine.md` (override precedence + ASCII diagram), `docs/integrations/public-api.md` (OpenAPI 3.0 spec for EDR/Backup/PSA), `docs/monitoring/best-practice-templates.md` (server/hardware template master tables with OIDs and thresholds) | **Complete** — 6.1 exists, 6.2 (PR #70, 84 pass), 6.3 (PR #71, 84 pass) | `docs/architecture/`, `docs/integrations/`, `docs/monitoring/` |
 | 7 | Dynamic Device Grouping (Smart Groups) — DSL + Schema | Expression DSL evaluator (13 operators: eq, neq, gt, gte, lt, lte, contains, startswith, in, contains_any, is_null, not_null, regex), nested AND/OR expressions, Migration 94 adds filter_expression/is_smart/last_evaluated/member_count to device_groups + creates group_memberships table | **Complete** — 7.1 (PR #73, 86 pass), 7.2 (PR #74, 84 pass), 7.3 (PR #75, 65 pass) | `internal/groups/`, `pkg/postgres/schema.go` (M94) |
@@ -153,13 +153,20 @@ ticket or PR when the team is ready to begin work.
 | 3.2 | Infrastructure probe engine: SNMP v3, Redfish, IPMI, Syslog collectors for SAN/NAS/firewall/switch/hypervisor/UPS | `internal/probe/` | Protocol-specific unit tests (49 tests: Redfish 13 + IPMI 18 + Syslog 18) | **Verified** | #65 | 83 pass, 0 fail, 0 pending |
 | 3.3 | UPS power-shutdown handler: runtime tracking, dependency tree evaluation, ordered graceful shutdown via NATS | `internal/orchestrator/power_events.go` | Unit test with mocked UPS telemetry and shutdown sequence verification (32 tests) | **Verified** | #52 | 84 pass, 0 fail, 0 pending |
 
-### Phase 4: Third-Party Public Integration Router — **IN PROGRESS** (4.1a, 4.1b, 4.2 verified)
+### Phase 4: Third-Party Public Integration Router — **COMPLETE** (4.1a, 4.1b, 4.2, 4.3 verified)
 
-| ID | Task | Target | Evidence required |
-|----|------|--------|-------------------|
+| ID | Task | Target | Evidence required | Status | PR | CI |
+|----|------|--------|-------------------|--------|----|----|
 | 4.1a | Webhook ingestion routes: `/api/v1/integrations/edr/alerts`, `/backup/sync`, `/psa/webhooks` | `internal/integrations/webhooks.go` | HTTP handler tests with mock payloads (3 tests: valid/invalid JSON/missing fields) | **Verified** | #66 | 7 pass, 0 fail, 0 pending |
 | 4.1b | HMAC-SHA256 signature verification middleware | `internal/integrations/middleware.go` | Auth test verifying valid/invalid/expired signatures (15 tests) | **Verified** | #66 | 7 pass, 0 fail, 0 pending |
 | 4.2 | Automated security isolation: EDR high-severity alert → NATS isolation command to target agent | `internal/integrations/actions.go`, `internal/integrations/isolation_integration_test.go` | Integration test tracing alert receipt → isolation command dispatch (2 integration tests with real NATS) | **Verified** | #67 | 7 pass, 0 fail, 0 pending |
+| 4.3 | Integration Dashboard Panel (provider health cards, events feed, severity filter, acknowledge) | `ui/src/components/settings/IntegrationDashboardPanel.tsx` | 15 tests: render, summary cards, provider cards, events feed, filters, toggle | **Verified** | #79 | 116 pass, 0 fail, 0 pending |
+
+**Gate 2 audit trace for PR #79:**
+
+PR #79 (4.3): Entry points → `IntegrationDashboardPanel.tsx` (IntegrationDashboardPanel component); Identity → N/A (UI component); Authorization → N/A (UI component uses mock data); Tenant → N/A (mock data); Persistence → N/A (mock data); Messaging → N/A; Object storage → N/A; Endpoint execution → N/A; UI state → useState for dashboard data, active filter, expanded event, unacknowledged toggle; Audit records → N/A; Metrics → N/A; Alerts → N/A; Runbooks → N/A; Existing tests → 15 tests in `IntegrationDashboardPanel.test.tsx` covering render, summary cards, provider cards, events feed, filters, toggle, latency, uptime.
+
+**Limitations (4.3):** No real API integration (uses mock data), no live data refresh (manual refresh only), no provider configuration from dashboard, no event deduplication or alert routing, no provider-specific dashboard views.
 
 ### Phase 5: UI Configuration Components — **COMPLETE** (5.1, 5.2 verified)
 
