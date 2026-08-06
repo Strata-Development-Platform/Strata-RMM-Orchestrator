@@ -166,12 +166,12 @@ func (c *RelayConfig) Validate() error {
 		return fmt.Errorf("at least one STUN or TURN server required when relay is enabled")
 	}
 	for _, stun := range c.STUNServers {
-		if _, err := url.Parse(stun); err != nil {
+		if parsed, err := url.Parse(stun); err != nil || (parsed.Scheme != "stun" && parsed.Scheme != "turn" && parsed.Scheme != "stuns" && parsed.Scheme != "turns") {
 			return fmt.Errorf("invalid STUN server URL: %s", stun)
 		}
 	}
 	for _, turn := range c.TURNServers {
-		if _, err := url.Parse(turn.URL); err != nil {
+		if parsed, err := url.Parse(turn.URL); err != nil || (parsed.Scheme != "stun" && parsed.Scheme != "turn" && parsed.Scheme != "stuns" && parsed.Scheme != "turns") {
 			return fmt.Errorf("invalid TURN server URL: %s", turn.URL)
 		}
 	}

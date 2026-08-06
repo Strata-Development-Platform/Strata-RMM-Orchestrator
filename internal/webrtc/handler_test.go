@@ -180,9 +180,17 @@ func TestHandleHandleAnswer(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, "/api/v1/webrtc/sessions/"+tt.sessionID+"/answer", strings.NewReader(tt.body))
+			url := "/api/v1/webrtc/sessions/" + tt.sessionID + "/answer"
+			req := httptest.NewRequest(http.MethodPost, url, strings.NewReader(tt.body))
 			w := httptest.NewRecorder()
-			h.HandleHandleAnswer(w, req)
+
+			if tt.sessionID == "" {
+				h.HandleHandleAnswer(w, req)
+			} else {
+				mux := http.NewServeMux()
+				mux.HandleFunc("POST /api/v1/webrtc/sessions/{sessionID}/answer", h.HandleHandleAnswer)
+				mux.ServeHTTP(w, req)
+			}
 
 			if w.Code != tt.wantStatus {
 				t.Fatalf("expected status %d, got %d: %s", tt.wantStatus, w.Code, w.Body.String())
