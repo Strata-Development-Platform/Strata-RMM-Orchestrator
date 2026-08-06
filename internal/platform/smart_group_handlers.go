@@ -699,7 +699,7 @@ func (s *APIServer) handleListSmartGroupBindings(w http.ResponseWriter, r *http.
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	type binding struct {
 		ID            string    `json:"id"`
