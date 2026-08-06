@@ -623,6 +623,94 @@ func (so *ScheduleOrchestrator) ExecuteSchedule(scheduleID string) error {
 	return nil
 }
 
+func (so *ScheduleOrchestrator) ExecuteScheduleDevice(ctx context.Context, scheduleID, deviceID string) error {
+	var schedule struct {
+		ID             string          `json:"id"`
+		TenantID       string          `json:"tenant_id"`
+		ScriptID       string          `json:"script_id"`
+		ScheduleType   string          `json:"schedule_type"`
+		ScheduleParams json.RawMessage `json:"schedule_params"`
+		MaxRetries     int             `json:"max_retries"`
+		RetryInterval  int             `json:"retry_interval"`
+		NextRunAt      time.Time       `json:"next_run_at"`
+	}
+
+	var params []byte
+	err := so.db.QueryRowContext(ctx, `
+		SELECT id, tenant_id, script_id, schedule_type, schedule_params,
+		       max_retries, retry_interval, next_run_at
+		FROM schedules WHERE id = $1 AND status = 'active'
+	`, scheduleID).Scan(&schedule.ID, &schedule.TenantID, &schedule.ScriptID,
+		&schedule.ScheduleType, &params, &schedule.MaxRetries,
+		&schedule.RetryInterval, &schedule.NextRunAt)
+	if err != nil {
+		return fmt.Errorf("schedule not found or not active: %w", err)
+	}
+
+	if params != nil && len(params) > 0 {
+		schedule.ScheduleParams = params
+	}
+
+	var script struct {
+		Name     string `json:"name"`
+		Language string `json:"language"`
+		Content  string `json:"content"`
+		Timeout  int    `json:"timeout_sec"`
+	}
+
+	err = so.db.QueryRowContext(ctx, `
+		SELECT name, language, content, timeout_sec FROM scripts WHERE id = $1
+	`, schedule.ScriptID).Scan(&script.Name, &script.Language, &script.Content, &script.Timeout)
+	if err != nil {
+		return fmt.Errorf("script not found: %w", err)
+	}
+
+	execID := uuid.New().String()
+
+	_, err = so.db.ExecContext(ctx, `
+		INSERT INTO schedule_device_executions (id, schedule_id, device_id, status)
+		VALUES ($1, $2, $3, 'pending')
+		ON CONFLICT (schedule_id, device_id) DO UPDATE SET status = 'pending',
+		           retry_count = 0, started_at = NULL, completed_at = NULL
+	`, execID, schedule.ID, deviceID)
+	if err != nil {
+		so.logger.Warn("create schedule execution", zap.Error(err))
+		return fmt.Errorf("failed to create execution: %w", err)
+	}
+
+	cmdPayload, _ := json.Marshal(map[string]interface{}{
+		"type":         "script_exec",
+		"execution_id": execID,
+		"schedule_id":  schedule.ID,
+		"device_id":    deviceID,
+		"language":     script.Language,
+		"content":      script.Content,
+		"parameters":   schedule.ScheduleParams,
+		"timeout":      script.Timeout,
+		"max_retries":  schedule.MaxRetries,
+		"retry_count":  0,
+	})
+
+	subject := fmt.Sprintf("tenant.%s.cmd.%s", schedule.TenantID, deviceID)
+	if err := so.nc.Publish(subject, cmdPayload); err != nil {
+		so.logger.Warn("publish schedule command", zap.Error(err))
+		so.db.ExecContext(ctx, `
+			UPDATE schedule_device_executions SET status = 'failed', stderr = 'NATS publish failed'
+			WHERE id = $1
+		`, execID)
+	}
+
+	_, err = so.db.ExecContext(ctx, `
+		UPDATE schedules SET last_run_at = NOW(), status = 'running'
+		WHERE id = $1
+	`, schedule.ID)
+	if err != nil {
+		so.logger.Warn("update schedule status", zap.Error(err))
+	}
+
+	return nil
+}
+
 func (so *ScheduleOrchestrator) ProcessScheduleDeviceResult(result map[string]interface{}) error {
 	execID, ok := result["execution_id"].(string)
 	if !ok || execID == "" {

@@ -2,6 +2,9 @@ package platform
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
 	"sync"
 	"time"
 
@@ -105,10 +108,28 @@ func (r *ScriptScheduleRunner) evaluateSchedules(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		default:
-			if err := r.so.ExecuteSchedule(scheduleID); err != nil {
-				r.logger.Error("executing schedule",
+			bindingIDs, err := r.getSmartGroupBindingsForSchedule(ctx, scheduleID)
+			if err != nil {
+				r.logger.Error("querying smart group bindings",
 					zap.String("schedule_id", scheduleID),
 					zap.Error(err))
+			}
+
+			if len(bindingIDs) > 0 {
+				for _, bindingID := range bindingIDs {
+					if err := r.dispatchScheduleToSmartGroup(ctx, scheduleID, bindingID); err != nil {
+						r.logger.Error("dispatching schedule to smart group",
+							zap.String("schedule_id", scheduleID),
+							zap.String("binding_id", bindingID),
+							zap.Error(err))
+					}
+				}
+			} else {
+				if err := r.so.ExecuteSchedule(scheduleID); err != nil {
+					r.logger.Error("executing schedule",
+						zap.String("schedule_id", scheduleID),
+						zap.Error(err))
+				}
 			}
 		}
 	}
@@ -145,4 +166,139 @@ func (r *ScriptScheduleRunner) getDueSchedules(ctx context.Context) ([]string, e
 		return nil, err
 	}
 	return ids, nil
+}
+
+func (r *ScriptScheduleRunner) getSmartGroupBindingsForSchedule(ctx context.Context, scheduleID string) ([]string, error) {
+	rows, err := r.so.db.QueryContext(ctx, `
+		SELECT id::text FROM smart_group_script_bindings
+		WHERE schedule_id = $1 AND enabled = true
+		ORDER BY priority ASC
+	`, scheduleID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var bindingIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		bindingIDs = append(bindingIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return bindingIDs, nil
+}
+
+type ScheduleOrchestratorDispatch struct {
+	TargetDevice string
+	TargetGroup  string
+	ScriptID     string
+	Payload      json.RawMessage
+}
+
+func (r *ScriptScheduleRunner) dispatchScheduleToSmartGroup(ctx context.Context, scheduleID, bindingID string) error {
+	var groupID string
+	var bindingType string
+	var mspID string
+	err := r.so.db.QueryRowContext(ctx, `
+		SELECT group_id::text, binding_type, msp_id::text
+		FROM smart_group_script_bindings
+		WHERE id = $1
+	`, bindingID).Scan(&groupID, &bindingType, &mspID)
+	if err == sql.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	deviceIDs, err := r.getSmartGroupMembers(ctx, groupID)
+	if err != nil {
+		return err
+	}
+
+	if len(deviceIDs) == 0 {
+		r.logger.Info("smart group has no members for schedule dispatch",
+			zap.String("schedule_id", scheduleID),
+			zap.String("group_id", groupID))
+		return nil
+	}
+
+	scheduleInfo, err := r.getScheduleInfo(ctx, scheduleID)
+	if err != nil {
+		return err
+	}
+
+	for _, deviceID := range deviceIDs {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			if err := r.dispatchToDevice(ctx, scheduleInfo, deviceID, bindingID); err != nil {
+				r.logger.Error("dispatching to device",
+					zap.String("device_id", deviceID),
+					zap.String("schedule_id", scheduleID),
+					zap.String("binding_id", bindingID),
+					zap.Error(err))
+			}
+		}
+	}
+
+	r.logger.Info("smart group schedule dispatch complete",
+		zap.String("schedule_id", scheduleID),
+		zap.String("binding_id", bindingID),
+		zap.String("group_id", groupID),
+		zap.Int("member_count", len(deviceIDs)))
+	return nil
+}
+
+func (r *ScriptScheduleRunner) getSmartGroupMembers(ctx context.Context, groupID string) ([]string, error) {
+	rows, err := r.so.db.QueryContext(ctx, `
+		SELECT device_id::text FROM group_memberships
+		WHERE group_id = $1
+	`, groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var deviceIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		deviceIDs = append(deviceIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return deviceIDs, nil
+}
+
+type scheduleInfo struct {
+	ID       string
+	ScriptID string
+}
+
+func (r *ScriptScheduleRunner) getScheduleInfo(ctx context.Context, scheduleID string) (*scheduleInfo, error) {
+	var info scheduleInfo
+	err := r.so.db.QueryRowContext(ctx, `
+		SELECT id::text, script_id::text FROM schedules WHERE id = $1
+	`, scheduleID).Scan(&info.ID, &info.ScriptID)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("schedule %s not found", scheduleID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &info, nil
+}
+
+func (r *ScriptScheduleRunner) dispatchToDevice(ctx context.Context, info *scheduleInfo, deviceID, bindingID string) error {
+	return r.so.ExecuteScheduleDevice(ctx, info.ID, deviceID)
 }
