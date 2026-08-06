@@ -547,6 +547,12 @@ func (s *APIServer) scopedUserRoutes() []Route {
 		{Method: "POST", Path: "/api/v1/device-groups", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/device-groups", Access: AccessUser},
 		{Method: "DELETE", Path: "/api/v1/device-groups/{groupID}", Access: AccessUser},
+		// Smart Groups
+		{Method: "POST", Path: "/api/v1/device-groups/smart", Access: AccessUser},
+		{Method: "GET", Path: "/api/v1/device-groups/{groupID}/detail", Access: AccessUser},
+		{Method: "GET", Path: "/api/v1/device-groups/{groupID}/members", Access: AccessUser},
+		{Method: "POST", Path: "/api/v1/device-groups/{groupID}/evaluate", Access: AccessUser},
+		{Method: "GET", Path: "/api/v1/device-groups/{groupID}/evaluation-status", Access: AccessUser},
 		// Policies
 		{Method: "POST", Path: "/api/v1/policies", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/policies", Access: AccessUser},

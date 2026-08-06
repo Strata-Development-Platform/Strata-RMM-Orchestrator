@@ -9,6 +9,9 @@ import (
 	"github.com/lib/pq"
 )
 
+// handleCreateDeviceGroupV2 is the replacement for handleCreateDeviceGroup that supports Smart Groups.
+// The old handleCreateDeviceGroup remains for backward compatibility but is deprecated.
+
 func (s *APIServer) handleCreateMaintenanceWindow(w http.ResponseWriter, r *http.Request) {
 	tenantID := r.PathValue("tenantID")
 	if tenantID == "" {
