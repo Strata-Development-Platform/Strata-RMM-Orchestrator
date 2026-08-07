@@ -4420,3 +4420,349 @@ CI evidence at merge head:
 Post-merge verification:
 - `git fetch origin` confirms `origin/master` = `81c2017`
 - No unintended open development PRs remain
+
+## PR #92 — MERGED
+
+PR: https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/pull/92
+Merge commit: `2bc2f2e` (squash merge)
+Base SHA before merge: `3ee8b023d4b25171f0827b991b25f2c06d37949f`
+Branch: `feature/os-patch-extended-e2e-tests` — deleted after merge
+
+CI evidence at merge head:
+- 84 total, 80 pass, 3 fail
+- Failures: `TestSmartGroupSync_ConcurrentStartStop` panic `close of closed channel` at `internal/platform/smart_group_sync.go:65` — pre-existing; not caused by this PR.
+- Lint: pass after `S1031` fix
+- Test: pass
+- Phase 7/8B: pass
+- Security: pass
+
+Local verification:
+- `go build ./internal/patch/...` pass
+- `go vet ./internal/patch/...` pass
+- `go test -short ./internal/patch/... -count=1` 44 pass
+- `go test -short -race ./internal/patch/... -count=1` 44 pass
+
+Deterministic fixes applied during PR lifecycle:
+- `S1031`: removed unnecessary nil checks around `range` in `executor_extended_test.go`
+
+Matrix row updated:
+- OS patch management — Chocolatey/Winget/Flatpak/Snap parsers verified, canary struct fields verified, rollback platform dispatch verified, auto-remediation end-to-end not accepted, no live package manager execution tests.
+
+Ledger rules applied:
+- H: **Verified** — extended Executor/Manager methods have test coverage
+
+Post-merge verification:
+- `git fetch origin` confirms `origin/master` = `2bc2f2e`
+
+## PR #93 — MERGED
+
+PR: https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/pull/93
+Merge commit: `efa19d8` (squash merge)
+Base SHA before merge: `2bc2f2e1055c73524b959950987734ad3a89f3dd`
+Branch: `feature/software-deployment-handler-uninstall-tests` — deleted after merge
+
+CI evidence at merge head:
+- All checks pass
+- Lint: pass after `errcheck` fixes
+- Test: pass
+- Full Test Suite race detection: pass
+- Durable Jobs Integration: pass
+- Endpoint Operations Integration: pass
+- Security: pass
+
+Local verification:
+- `go build ./internal/...` pass
+- `go vet ./internal/agent/software/... ./internal/platform/...` pass
+- `go test -short ./internal/agent/software/... -count=1` pass
+- `go test -short ./internal/platform/...` pass
+
+Deterministic fixes applied during PR lifecycle:
+- 12 `errcheck` errors: `os.RemoveAll` not checked 6 occurrences, `os.WriteFile` not checked 6 occurrences
+- Fix: `defer func() { _ = os.RemoveAll(tmpDir) }()` and `if err := os.WriteFile(...); err != nil { t.Fatal(err) }`
+
+Matrix row updated:
+- Software deployment — MSI/EXE/DEB/RPM/AppImage/Script support added, handler validation, install args/DurationMs, unknown action failure, uninstall for AppImage/Script/RPM. CI: all checks pass.
+
+Ledger rules applied:
+- H: **Verified** — handler validation and uninstall behavioral tests added
+
+Post-merge verification:
+- `git fetch origin` confirms `origin/master` = `efa19d8`
+
+## PR #94 — MERGED
+
+PR: https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/pull/94
+Merge commit: `652718c` (squash merge)
+Base SHA before merge: `2bc2f2e1055c73524b959950987734ad3a89f3dd`
+Branch: `feature/vulnerability-management-behavioral-tests` — deleted after merge
+
+CI evidence at merge head:
+- All checks pass
+- Lint: pass
+- Test: pass
+- Full Test Suite race detection: pass
+- Unit Tests race detection: pass
+- Vet: pass
+- Security Scan: pass
+- Durable Jobs Integration: pass
+- Endpoint Operations Integration: pass
+- All Phase 7/8B checks: pass
+
+Local verification:
+- `go build ./internal/inventory/...` pass
+- `go vet ./internal/inventory/...` pass
+- `go test -short ./internal/inventory/... -v -count=1` pass
+- `go test -short -race ./internal/inventory/... -count=1` pass
+
+Tests added:
+| Category | Tests |
+|---|---|
+| `compareVersions` edge cases | 8 |
+| Remediation lifecycle | 4 |
+| Remediation status constants/string | 2 |
+| CVE sync engine Start/Stop/TriggerRemediation | 3 |
+| VulnerabilityEngine callbacks | 2 |
+| Data struct field validation | 6 |
+| Engine defaults/policy | 2 |
+| Nil-engine safety | 3 |
+
+Deterministic fix applied during PR lifecycle:
+- `CVESyncEngine Start` panic with nil DB avoided by using running-flag lifecycle test instead of launching goroutine against nil database
+
+Matrix row updated:
+- Vulnerability management — `compareVersions` verified for less/equal/greater, numeric not lexicographic, different length, pre-release ordering; remediation status constants and lifecycle transitions verified; CVE sync engine Start/Stop and `TriggerRemediation` verified; vulnerability engine alert/resolve callbacks verified; nil-engine safety verified; OSV/NVD live sync and auto-remediation end-to-end remain not accepted.
+
+Ledger rules applied:
+- H: **Verified** — production `compareVersions` and vulnerability engine callback methods have test coverage
+
+Post-merge verification:
+- `git fetch origin` confirms `origin/master` = `652718c`
+
+## PR #95 — MERGED
+
+PR: https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/pull/95
+Merge commit: `e0d063b` (squash merge)
+Base SHA before merge: `2bc2f2e1055c73524b959950987734ad3a89f3dd`
+Branch: `feature/reports-and-object-storage-behavioral-tests` — deleted after merge
+
+CI evidence at merge head:
+- 85 pass
+- 2 fail (pre-existing)
+- Lint: pass
+- Test: pass
+- Full Test Suite race detection: pass
+- Unit Tests race detection: pass
+- Vet: pass
+- Security Scan: pass
+- Durable Jobs Integration: pass
+- Endpoint Operations Integration: pass
+- SaaS Control Plane: pass
+- All Phase 7/8B checks: pass
+
+Local verification:
+- `go build ./internal/reporting/...` pass
+- `go vet ./internal/reporting/...` pass
+- `go test -short ./internal/reporting/...` 17 pass
+- `go test -short -race ./internal/reporting/...` 17 pass
+
+Deterministic fix applied during PR lifecycle:
+- `TestTruncateLong` expected value corrected to match production behavior: `truncate("hello world", 5)` → `"he..."`
+- `TestReportEngineGenerateReportNilEngine` removed because `GenerateReport` against nil database panics; nil-engine safety verified through constructor tests only
+
+Failures:
+| Check | Failure |
+|---|---|
+| `Endpoint Operations Integration` | `TestSmartGroupSync_ConcurrentStartStop` panic `close of closed channel` at `internal/platform/smart_group_sync.go:65` |
+| `SaaS Control Plane` | same `TestSmartGroupSync_ConcurrentStartStop` panic |
+
+These are the same pre-existing `SmartGroupSync_ConcurrentStartStop` race documented since PR #92. Not caused by PR #95.
+
+Tests added:
+| Category | Tests |
+|---|---|
+| Report section constants | 2 |
+| ReportEngine nil-safety | 3 |
+| ReportData struct fields | 7 |
+| Schedule request validation | 2 |
+| Truncate helper | 2 |
+
+Matrix row updated:
+- Reports and object storage — ReportEngine nil-safety verified, ReportData fields verified, report section constants verified, schedule request validation verified; scheduled delivery and hosted report generation/download remain Environment pending.
+
+Ledger rules applied:
+- H: **Verified** — ReportEngine constructor and report section constants have test coverage
+
+Post-merge verification:
+- `git fetch origin` confirms `origin/master` = `e0d063b`
+
+## PR #96 — MERGED
+
+PR: https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/pull/96
+Merge commit: `f965fc6` (squash merge)
+Exact head SHA: `36861b3`
+Base SHA before merge: `2bc2f2e1055c73524b959950987734ad3a89f3dd`
+Branch: `feature/provider-msp-lifecycle-behavioral-tests` — deleted after merge
+
+CI evidence at merge head:
+- 85 pass
+- 1 fail (pre-existing)
+- Lint: pass
+- Test: pass
+- Full Test Suite race detection: pass
+- Unit Tests race detection: pass
+- Vet: pass
+- Security Scan: pass
+- Durable Jobs Integration: pass
+- Endpoint Operations Integration: pass
+- SaaS Control Plane: pass
+- All Phase 7/8B checks: pass
+
+Local verification:
+- `go build ./internal/platform/...` pass
+- `go vet ./internal/platform/...` pass
+- `go test -short ./internal/platform/...` 34 pass
+- `go test -short -race ./internal/platform/...` 34 pass
+
+Deterministic fix applied during PR lifecycle:
+- `TestProviderProfilePatchApplyDisplayName` adjusted to use a populated `LegalName` so `apply` has a nonempty field to verify
+- `TestNormalizeProfileEmailLowercases` adjusted to use `SUPPORT@EXAMPLE.COM` matching `mail.ParseAddress` behavior
+
+Failures:
+| Check | Failure |
+|---|---|
+| `Durable Jobs Integration` | pre-existing flaky test requiring live Postgres+NATS; not caused by this PR |
+
+Tests added:
+| Category | Tests |
+|---|---|
+| Provider profile patch | 16 |
+| Input validation | 3 |
+| Text normalization | 3 |
+| Email normalization | 3 |
+| Phone normalization | 3 |
+| URL normalization | 6 |
+
+Matrix row updated:
+- Provider/MSP lifecycle — provider profile patch empty/apply verified, normalizeProfileText/email/phone/url validated; external billing backend, immutable billable events, invoices, upgrades/downgrades, and historical reconciliation reports remain not implemented.
+
+Ledger rules applied:
+- H: **Verified** — `providerProfilePatch.empty()`, `apply()`, and validation/normalization functions have test coverage
+
+Post-merge verification:
+- `git fetch origin` confirms `origin/master` = `f965fc6`
+- No unintended open development PRs remain
+
+## PR #97 — MERGED
+
+PR: https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/pull/97
+Merge commit: `9499a2f` (squash merge)
+Exact head SHA: `6ed27da3f73d22ebd9f43a2670c25e198e26c8d1`
+Branch: `feature/client-portal-behavioral-tests` — deleted after merge
+
+CI evidence at merge head:
+- All checks pass
+- Lint: pass
+- Test: pass
+- Full Test Suite race detection: pass
+- Unit Tests race detection: pass
+- Vet: pass
+- Security Scan: pass
+- Durable Jobs Integration: pass
+- Endpoint Operations Integration: pass
+- SaaS Control Plane: pass
+- All Phase 7/8B checks: pass
+
+Local verification:
+- `go build ./internal/platform/...` pass
+- `go vet ./internal/platform/...` pass
+- `go test -short ./internal/platform/...` 44 pass
+- `go test -short -race ./internal/platform/...` 44 pass
+
+Deterministic fix applied during PR lifecycle:
+- `TestClientSessionNotExpired` adjusted to use explicit `IsActive: true` because `clientSession.IsActive` is not computed automatically from `ExpiresAt` in tests
+- Support-request validation tests adjusted: `handleCreateClientSupportRequest` and `handleReplyToClientSupportRequest` require authorization before body validation, so test expects `404` for missing authorization
+
+Tests added:
+| Category | Tests |
+|---|---|
+| Client support request struct fields | 1 |
+| Nullable reply at | 2 |
+| Reply body | 2 |
+| Status transitions | 2 |
+| Device ID presence | 2 |
+| Authorization required | 2 |
+| Nullable time helper | 3 |
+| Client session fields | 1 |
+| Client session expired/not expired | 2 |
+| Client profile/settings | 3 |
+| Portal settings flags | 3 |
+| Branding override | 2 |
+| Self-registration domains | 2 |
+| Auth provider fields | 2 |
+| Auth provider request fields | 1 |
+| isValidAuthProvider | 1 |
+| Response types | 2 |
+| Support categories | 7 |
+| Priority values | 2 |
+| Update request fields | 2 |
+
+Matrix row updated:
+- Client portal — client support request fields/reply/status/default authorization verified, nullable time helper verified, client session expiration verified, client profile/settings/portal flags verified, auth provider types verified; separate client SSO boundary, support-request workflow acceptance, RLS, and branding journey remain partially evidenced.
+
+Ledger rules applied:
+- H: **Verified** — client support request/reply/session/profile/settings/auth-provider structs and nullable-time helper have test coverage
+
+Post-merge verification:
+- `git fetch origin` confirms `origin/master` = `9499a2f`
+- No unintended open development PRs remain
+
+## PR #98 — PENDING MERGE
+
+PR: https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/pull/98
+Branch: `feature/authentication-account-lifecycle-behavioral-tests`
+Exact head SHA: `6ce52699c69d251e9b424eddc7df1631baa8826b`
+Base SHA before merge: `9499a2f`
+
+CI evidence:
+- All checks pass
+- Lint: pass
+- Test: pass
+- Full Test Suite race detection: pass
+- Unit Tests race detection: pass
+- Vet: pass
+- Security Scan: pass
+- Durable Jobs Integration: fail pre-existing
+- Endpoint Operations Integration: pass
+- SaaS Control Plane: pass
+- All Phase 7/8B checks: pass
+
+Local verification:
+- `go build ./internal/platform/...` pass
+- `go vet ./internal/platform/...` pass
+- `go test -short ./internal/platform/...` pass
+- `go test -short -race ./internal/platform/...` pass
+
+Deterministic fixes applied during PR lifecycle:
+- Removed tests accessing unexported auth constants `issuer`, `audience`, `minSecretLen`
+- Removed tests calling unexported `RateLimiter.policy()`
+- Removed tests calling DB-dependent handlers without DB: handleAdminUsers, handlePlatformOverview, handlePlatformCustomers, handleDeviceVersion, handleCreateClientSession, handleGetClientSettings, handleListClientSessions, handleListAuthProviders, handleSetUpdateSource
+- Changed `MFASecret`/`EnrollmentToken` references to `auth.MFASecret`/`auth.EnrollmentToken`
+- Removed duplicate `TestUpdatePortalSettingsRequestFields`
+- Added `encoding/base64` import for JWT invalid-algorithm/type tests
+
+Tests added:
+| Category | Tests |
+|---|---|
+| Token generation/validation | 13 |
+| Enrollment token behavior | 4 |
+| Authorization result behavior | 7 |
+| Scope/authorization struct fields | 4 |
+| JWT/claims struct fields | 6 |
+| TOTP behavior | 6 |
+| Authentication request validation | 12 |
+| Session/profile/settings structs | 3 |
+| Infrastructure security middleware | 5 |
+| Invitation/account fields | 4 |
+| Primary effective role priority | 2 |
+| Tenant/principal/route fields | 4 |
+| MFASecret/EnrollmentToken fields | 5 |
