@@ -4362,3 +4362,40 @@ PR #82: Entry points → `DeviceGroupListPage.tsx` (list page, 273 lines), `Smar
 - **Features**: Version comparison logic, vulnerability lifecycle (open/patched/ignored), detection accuracy
 - **Gate 2 audit**: Entry → vulnerability_mgmt_test.go; Identity → JWT via handler chain; Authorization → N/A (tests only); Tenant → N/A (tests only); Persistence → N/A (tests only); Messaging → N/A; Endpoint execution → N/A; Metrics → N/A; Alerts → N/A; Runbooks → N/A; Existing tests → 5 unit tests covering version matching, lifecycle, detection
 - **Limitations**: Tests use local version comparison (no live OSV/NVD API calls); Representative OSV/NVD sync requires external API access; Full auto-remediation E2E requires representative OS execution
+
+## PR #91: Third-party patch catalog - end-to-end deployment tests + nil DB guards
+- **Branch**: feat/thirdparty-patch-e2e-deployment
+- **PR**: https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/pull/91
+- **Commit**: 4d803e9
+- **CI Evidence**: 83 pass, 1 fail (pre-existing flaky test: Durable Jobs Integration, `TestDurableJobRoundTripWithRealPostgresAndNATS` — requires live Postgres+NATS, was failing on PR #90 head run 31137318553 as well; not caused by this PR)
+- **Files**:
+  - `internal/inventory/thirdparty_e2e_test.go` (682 new lines, 27 new tests)
+  - `internal/platform/thirdparty_handlers_test.go` (594 new lines, 22 new tests)
+  - `internal/inventory/thirdparty.go` (+12 lines: nil DB guards)
+- **Tests added**: 49 new unit tests
+  - Inventory: engine creation, ListApps, DiscoverVendors, SetTenantID, buildDownloadURL version substitution (4 variants), fetchLatestVersion Chrome/GitHub/Zoom/HTML/Mozilla patterns, HTTP error, context timeout, empty body, vendor-specific sync, vendor status, app catalog completeness, deployment workflow stages, concurrent sync, response size limit, non-matching regex, scheduler startup
+  - Platform handlers: apps endpoint, sync endpoint, vendors endpoint, vendor-status endpoint, nil-engine error paths, response structure validation, content-type header, concurrent access, JSON validity, handler timeout
+- **Tests covering**: version discovery (6 real-world patterns), error handling (HTTP 404, context timeout, empty body), handler validation (7 endpoints), nil engine behavior, deployment lifecycle state transitions, concurrent access safety
+- **Production fix**: Added nil DB guards to `SyncAll`, `GetPackages`, `SyncApp`, `SyncVendor` in `internal/inventory/thirdparty.go`. These functions call `e.db.QueryRowContext`/`e.db.QueryContext` without checking for nil DB, causing panic when `handleThirdPartySync` invokes `SyncAll` in a goroutine with nil DB during CI.
+
+### Gate 2 audit trace
+
+PR #91: Entry points → `internal/inventory/thirdparty_e2e_test.go` (27 tests), `internal/platform/thirdparty_handlers_test.go` (22 tests); Identity → JWT via handler chain for REST endpoints, tests exercise nil engine; Authorization → N/A for unit tests; Tenant → third-party apps/packages scoped to tenant_id via `SetTenantID`; Persistence → `thirdparty.go` nil DB guards added to prevent panic when DB is not configured; Messaging → N/A (tests only); Object storage → N/A; Endpoint execution → 7 existing third-party REST endpoints validated by handler tests: `GET /api/v1/thirdparty/apps`, `GET /api/v1/thirdparty/packages`, `POST /api/v1/thirdparty/sync`, `POST /api/v1/thirdparty/sync/{app}`, `GET /api/v1/thirdparty/vendors`, `POST /api/v1/thirdparty/vendors/{vendor}/sync`, `GET /api/v1/thirdparty/vendors/status`; UI state → N/A; Audit records → N/A; Metrics → N/A; Alerts → N/A; Runbooks → N/A; Existing tests → 49 new unit tests added across `internal/inventory` and `internal/platform`; 3 existing third-party tests in `internal/inventory/thirdparty_test.go` remain unchanged (buildDownloadURL, fetchLatestVersion mock HTTP, version regex matching).
+
+### Gate 9 final pre-merge report
+
+- Base SHA: `afd391ea4da14de707a941dcf356c1690b33d7f1` (current `origin/master`)
+- Head SHA: `4d803e9`
+- Branch: `feat/thirdparty-patch-e2e-deployment`
+- PR: #91 — draft, unmerged
+- CI workflows: 84 total — 83 pass, 1 fail
+- Failures: `Durable Jobs Integration` failed on `TestDurableJobRoundTripWithRealPostgresAndNATS` — pre-existing flaky test requiring live Postgres+NATS; not caused by this PR.
+- Deterministic fixes applied during PR lifecycle:
+  - Panic in `SyncAll`/`SyncVendor`/`SyncApp`/`GetPackages` when `e.db == nil` — fixed by adding nil DB guards returning `fmt.Errorf("database not configured")`
+  - staticcheck `QF1012` lint failure: `Write([]byte(fmt.Sprintf(...)))` → `fmt.Fprintf(w, ...)`
+  - errcheck lint failure: added `_, _ =` for `fmt.Fprintf` return value in test code
+- Positive paths verified: version discovery with Chrome/GitHub/Zoom/7-Zip/LibreOffice/Mozilla mock servers, error responses (HTTP 404, timeout, empty body), handler nil-engine returns 500, sync returns 202, vendor listing returns valid JSON with count, concurrent handler access safe, response Content-Type is application/json.
+- Negative paths verified: nil engine → 500, malformed paths handled, non-matching regex → error, sync without body → 202.
+- Non-goals: no live vendor API calls; no OS deployment execution; no UI components.
+- Rollback: `git revert 4d803e9`
+- Limitations: version discovery uses mock HTTP servers; deployment lifecycle verified but not executed on representative OS; 24-hour sync scheduler tested for startup only (not full 24-hour cycle).
