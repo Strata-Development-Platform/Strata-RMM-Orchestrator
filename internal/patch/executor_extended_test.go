@@ -592,11 +592,9 @@ func TestScanChocolatey_ReturnsMissingOnly(t *testing.T) {
 	if installed != nil {
 		t.Error("scanChocolatey should return installed=nil")
 	}
-	if missing != nil {
-		for i, p := range missing {
-			if p.Platform != PlatformWindows {
-				t.Errorf("missing[%d].Platform = %s, want %s", i, p.Platform, PlatformWindows)
-			}
+	for i, p := range missing {
+		if p.Platform != PlatformWindows {
+			t.Errorf("missing[%d].Platform = %s, want %s", i, p.Platform, PlatformWindows)
 		}
 	}
 }
@@ -611,11 +609,9 @@ func TestScanWinget_ReturnsMissingOnly(t *testing.T) {
 	if installed != nil {
 		t.Error("scanWinget should return installed=nil")
 	}
-	if missing != nil {
-		for i, p := range missing {
-			if p.Platform != PlatformWindows {
-				t.Errorf("missing[%d].Platform = %s, want %s", i, p.Platform, PlatformWindows)
-			}
+	for i, p := range missing {
+		if p.Platform != PlatformWindows {
+			t.Errorf("missing[%d].Platform = %s, want %s", i, p.Platform, PlatformWindows)
 		}
 	}
 }
@@ -630,11 +626,9 @@ func TestScanFlatpak_ReturnsMissingOnly(t *testing.T) {
 	if installed != nil {
 		t.Error("scanFlatpak should return installed=nil")
 	}
-	if missing != nil {
-		for i, p := range missing {
-			if p.Platform != PlatformLinux {
-				t.Errorf("missing[%d].Platform = %s, want %s", i, p.Platform, PlatformLinux)
-			}
+	for i, p := range missing {
+		if p.Platform != PlatformLinux {
+			t.Errorf("missing[%d].Platform = %s, want %s", i, p.Platform, PlatformLinux)
 		}
 	}
 }
@@ -649,11 +643,9 @@ func TestScanSnap_ReturnsMissingOnly(t *testing.T) {
 	if installed != nil {
 		t.Error("scanSnap should return installed=nil")
 	}
-	if missing != nil {
-		for i, p := range missing {
-			if p.Platform != PlatformLinux {
-				t.Errorf("missing[%d].Platform = %s, want %s", i, p.Platform, PlatformLinux)
-			}
+	for i, p := range missing {
+		if p.Platform != PlatformLinux {
+			t.Errorf("missing[%d].Platform = %s, want %s", i, p.Platform, PlatformLinux)
 		}
 	}
 }
