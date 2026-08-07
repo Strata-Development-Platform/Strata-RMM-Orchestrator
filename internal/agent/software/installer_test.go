@@ -496,10 +496,12 @@ func TestInstallerExecute_Uninstall_AppImage(t *testing.T) {
 	inst := NewInstaller(nc, logger, "tenant-1", "agent-1")
 
 	tmpDir, _ := os.MkdirTemp("", "installer-test-*")
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	appimagePath := filepath.Join(tmpDir, "test.AppImage")
-	os.WriteFile(appimagePath, []byte("mock appimage"), 0755)
+	if err := os.WriteFile(appimagePath, []byte("mock appimage"), 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	cmd := SoftwareCommand{
 		Type:         "software_uninstall",
@@ -525,10 +527,12 @@ func TestInstallerExecute_Uninstall_Script(t *testing.T) {
 	inst := NewInstaller(nc, logger, "tenant-1", "agent-1")
 
 	tmpDir, _ := os.MkdirTemp("", "installer-test-*")
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	scriptPath := filepath.Join(tmpDir, "uninstall.sh")
-	os.WriteFile(scriptPath, []byte("#!/bin/sh\nexit 0"), 0755)
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\nexit 0"), 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	cmd := SoftwareCommand{
 		Type:         "software_uninstall",
@@ -554,10 +558,12 @@ func TestInstallerExecute_Uninstall_RPM(t *testing.T) {
 	inst := NewInstaller(nc, logger, "tenant-1", "agent-1")
 
 	tmpDir, _ := os.MkdirTemp("", "installer-test-*")
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	rpmPath := filepath.Join(tmpDir, "test.rpm")
-	os.WriteFile(rpmPath, []byte("mock rpm"), 0644)
+	if err := os.WriteFile(rpmPath, []byte("mock rpm"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	cmd := SoftwareCommand{
 		Type:         "software_uninstall",
