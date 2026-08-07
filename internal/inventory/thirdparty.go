@@ -117,6 +117,9 @@ func NewThirdPartyEngine(db *sql.DB, logger *zap.Logger) *ThirdPartyEngine {
 }
 
 func (e *ThirdPartyEngine) SyncAll(ctx context.Context) ([]string, error) {
+	if e.db == nil {
+		return nil, fmt.Errorf("database not configured")
+	}
 	var created []string
 	for _, app := range ThirdPartyApps {
 		version, err := e.fetchLatestVersion(ctx, app)
@@ -271,6 +274,9 @@ func (e *ThirdPartyEngine) ListApps() []ThirdPartyApp {
 }
 
 func (e *ThirdPartyEngine) GetPackages(ctx context.Context) ([]map[string]interface{}, error) {
+	if e.db == nil {
+		return nil, fmt.Errorf("database not configured")
+	}
 	rows, err := e.db.QueryContext(ctx, `
 		SELECT id, name, version, description, platform, package_type, source_url, created_at
 		FROM software_packages WHERE is_third_party = true
@@ -300,6 +306,9 @@ func (e *ThirdPartyEngine) GetPackages(ctx context.Context) ([]map[string]interf
 }
 
 func (e *ThirdPartyEngine) SyncApp(ctx context.Context, appName string) (string, error) {
+	if e.db == nil {
+		return "", fmt.Errorf("database not configured")
+	}
 	for _, app := range ThirdPartyApps {
 		if strings.EqualFold(app.Name, appName) {
 			version, err := e.fetchLatestVersion(ctx, app)
@@ -351,6 +360,9 @@ func (e *ThirdPartyEngine) DiscoverVendors() []Vendor {
 
 // SyncVendor syncs all apps from a specific vendor
 func (e *ThirdPartyEngine) SyncVendor(ctx context.Context, vendorName string) ([]string, error) {
+	if e.db == nil {
+		return nil, fmt.Errorf("database not configured")
+	}
 	var created []string
 
 	for _, app := range ThirdPartyApps {
