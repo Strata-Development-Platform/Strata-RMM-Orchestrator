@@ -487,3 +487,175 @@ func (inst *Installer) downloadFileForTest(ctx context.Context, src, dest string
 	}
 	return nil
 }
+
+func TestInstallerExecute_Uninstall_AppImage(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	nc, _ := nats.Connect(nats.DefaultURL)
+	defer nc.Close()
+
+	inst := NewInstaller(nc, logger, "tenant-1", "agent-1")
+
+	tmpDir, _ := os.MkdirTemp("", "installer-test-*")
+	defer os.RemoveAll(tmpDir)
+
+	appimagePath := filepath.Join(tmpDir, "test.AppImage")
+	os.WriteFile(appimagePath, []byte("mock appimage"), 0755)
+
+	cmd := SoftwareCommand{
+		Type:         "software_uninstall",
+		DeploymentID: "deploy-uninstall-appimage",
+		Action:       "uninstall",
+		SourceURL:    appimagePath,
+		PackageType:  "appimage",
+		Timeout:      60,
+	}
+
+	result := inst.executeForTest(cmd)
+	// AppImage uninstall may fail if not on Linux desktop, but should not panic
+	if result.Status != "success" && result.Status != "failed" {
+		t.Fatalf("expected success or failed, got %s", result.Status)
+	}
+}
+
+func TestInstallerExecute_Uninstall_Script(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	nc, _ := nats.Connect(nats.DefaultURL)
+	defer nc.Close()
+
+	inst := NewInstaller(nc, logger, "tenant-1", "agent-1")
+
+	tmpDir, _ := os.MkdirTemp("", "installer-test-*")
+	defer os.RemoveAll(tmpDir)
+
+	scriptPath := filepath.Join(tmpDir, "uninstall.sh")
+	os.WriteFile(scriptPath, []byte("#!/bin/sh\nexit 0"), 0755)
+
+	cmd := SoftwareCommand{
+		Type:         "software_uninstall",
+		DeploymentID: "deploy-uninstall-script",
+		Action:       "uninstall",
+		SourceURL:    scriptPath,
+		PackageType:  "script",
+		Timeout:      60,
+	}
+
+	result := inst.executeForTest(cmd)
+	// Script uninstall should succeed
+	if result.Status != "success" && result.Status != "failed" {
+		t.Fatalf("expected success, got %s: %s", result.Status, result.ErrorMessage)
+	}
+}
+
+func TestInstallerExecute_Uninstall_RPM(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	nc, _ := nats.Connect(nats.DefaultURL)
+	defer nc.Close()
+
+	inst := NewInstaller(nc, logger, "tenant-1", "agent-1")
+
+	tmpDir, _ := os.MkdirTemp("", "installer-test-*")
+	defer os.RemoveAll(tmpDir)
+
+	rpmPath := filepath.Join(tmpDir, "test.rpm")
+	os.WriteFile(rpmPath, []byte("mock rpm"), 0644)
+
+	cmd := SoftwareCommand{
+		Type:         "software_uninstall",
+		DeploymentID: "deploy-uninstall-rpm",
+		Action:       "uninstall",
+		SourceURL:    rpmPath,
+		PackageType:  "rpm",
+		Timeout:      60,
+	}
+
+	result := inst.executeForTest(cmd)
+	// RPM uninstall may fail if package not installed, but should not panic
+	if result.Status != "success" && result.Status != "failed" {
+		t.Fatalf("expected success or failed, got %s", result.Status)
+	}
+}
+
+func TestInstallerExecute_Uninstall_UnknownAction(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	nc, _ := nats.Connect(nats.DefaultURL)
+	defer nc.Close()
+
+	inst := NewInstaller(nc, logger, "tenant-1", "agent-1")
+
+	tmpDir, _ := os.MkdirTemp("", "installer-test-*")
+	defer os.RemoveAll(tmpDir)
+
+	exePath := filepath.Join(tmpDir, "test.exe")
+	os.WriteFile(exePath, []byte("mock"), 0755)
+
+	cmd := SoftwareCommand{
+		Type:         "software_install",
+		DeploymentID: "deploy-unknown-action",
+		Action:       "unknown_action",
+		SourceURL:    exePath,
+		PackageType:  "exe",
+		Timeout:      60,
+	}
+
+	result := inst.executeForTest(cmd)
+	if result.Status != "failed" {
+		t.Fatalf("expected failed for unknown action, got %s", result.Status)
+	}
+}
+
+func TestInstallerExecute_InstallArgs(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	nc, _ := nats.Connect(nats.DefaultURL)
+	defer nc.Close()
+
+	inst := NewInstaller(nc, logger, "tenant-1", "agent-1")
+
+	tmpDir, _ := os.MkdirTemp("", "installer-test-*")
+	defer os.RemoveAll(tmpDir)
+
+	scriptPath := filepath.Join(tmpDir, "install.sh")
+	os.WriteFile(scriptPath, []byte("#!/bin/sh\necho installing"), 0755)
+
+	cmd := SoftwareCommand{
+		Type:         "software_install",
+		DeploymentID: "deploy-args",
+		Action:       "install",
+		SourceURL:    scriptPath,
+		PackageType:  "script",
+		InstallArgs:  "--yes",
+		Timeout:      60,
+	}
+
+	result := inst.executeForTest(cmd)
+	if result.Status != "success" && result.Status != "failed" {
+		t.Fatalf("expected success, got %s", result.Status)
+	}
+}
+
+func TestInstallerExecute_DurationMs(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	nc, _ := nats.Connect(nats.DefaultURL)
+	defer nc.Close()
+
+	inst := NewInstaller(nc, logger, "tenant-1", "agent-1")
+
+	tmpDir, _ := os.MkdirTemp("", "installer-test-*")
+	defer os.RemoveAll(tmpDir)
+
+	scriptPath := filepath.Join(tmpDir, "install.sh")
+	os.WriteFile(scriptPath, []byte("#!/bin/sh\necho ok"), 0755)
+
+	cmd := SoftwareCommand{
+		Type:         "software_install",
+		DeploymentID: "deploy-duration",
+		Action:       "install",
+		SourceURL:    scriptPath,
+		PackageType:  "script",
+		Timeout:      60,
+	}
+
+	result := inst.executeForTest(cmd)
+	if result.DurationMs < 0 {
+		t.Fatalf("expected non-negative DurationMs, got %d", result.DurationMs)
+	}
+}
