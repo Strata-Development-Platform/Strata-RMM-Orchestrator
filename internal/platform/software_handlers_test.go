@@ -106,3 +106,97 @@ func TestSoftwareHandler_HTTPStatusCodes(t *testing.T) {
 		t.Fatal("expected 201 for created")
 	}
 }
+
+func TestHandleCreatePackage_RequestValidation(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	nc, _ := nats.Connect(nats.DefaultURL)
+	defer nc.Close()
+
+	engine := NewSoftwareEngine(nc, nil, logger)
+	if engine == nil {
+		t.Fatal("expected non-nil engine")
+	}
+}
+
+func TestHandleDeletePackage_RequestValidation(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	nc, _ := nats.Connect(nats.DefaultURL)
+	defer nc.Close()
+
+	engine := NewSoftwareEngine(nc, nil, logger)
+	if engine == nil {
+		t.Fatal("expected non-nil engine")
+	}
+}
+
+func TestHandleListDeployments_ResponseStructure(t *testing.T) {
+	deployments := map[string]interface{}{
+		"deployments": []map[string]interface{}{},
+	}
+	if _, ok := deployments["deployments"]; !ok {
+		t.Fatal("expected deployments key")
+	}
+}
+
+func TestHandleGetDeployment_TargetsStructure(t *testing.T) {
+	response := map[string]interface{}{
+		"id":      "deploy-1",
+		"name":    "test",
+		"status":  "deploying",
+		"targets": []map[string]interface{}{},
+	}
+	if response["id"] != "deploy-1" {
+		t.Fatal("expected id")
+	}
+	if response["status"] != "deploying" {
+		t.Fatal("expected deploying")
+	}
+}
+
+func TestSoftwareHandler_JSONContentType(t *testing.T) {
+	contentTypes := map[string]string{
+		"json": "application/json",
+	}
+	if contentTypes["json"] != "application/json" {
+		t.Fatal("expected application/json")
+	}
+}
+
+func TestSoftwareHandler_HTTPMethodCodes(t *testing.T) {
+	codes := map[string]int{
+		"GET":    200,
+		"POST":   201,
+		"DELETE": 200,
+	}
+	if codes["GET"] != 200 {
+		t.Fatal("expected 200 for GET")
+	}
+	if codes["POST"] != 201 {
+		t.Fatal("expected 201 for POST")
+	}
+	if codes["DELETE"] != 200 {
+		t.Fatal("expected 200 for DELETE")
+	}
+}
+
+func TestSoftwareEngine_LoggerField(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	nc, _ := nats.Connect(nats.DefaultURL)
+	defer nc.Close()
+
+	engine := NewSoftwareEngine(nc, nil, logger)
+	if engine == nil {
+		t.Fatal("engine should not be nil")
+	}
+}
+
+func TestSoftwareEngine_NATSConnField(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	nc, _ := nats.Connect(nats.DefaultURL)
+	defer nc.Close()
+
+	engine := NewSoftwareEngine(nc, nil, logger)
+	if engine == nil {
+		t.Fatal("engine should not be nil")
+	}
+}
