@@ -4399,3 +4399,24 @@ PR #91: Entry points → `internal/inventory/thirdparty_e2e_test.go` (27 tests),
 - Non-goals: no live vendor API calls; no OS deployment execution; no UI components.
 - Rollback: `git revert 4d803e9`
 - Limitations: version discovery uses mock HTTP servers; deployment lifecycle verified but not executed on representative OS; 24-hour sync scheduler tested for startup only (not full 24-hour cycle).
+
+## PR #91 — MERGED
+
+PR: https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/pull/91
+Merge commit: `81c2017` (squash merge)
+Base SHA before merge: `afd391ea4da14de707a941dcf356c1690b33d7f1`
+Branch: `feat/thirdparty-patch-e2e-deployment` — deleted after merge
+
+CI evidence at merge head:
+- 83 pass, 1 fail
+- Failures: `Durable Jobs Integration` — `TestDurableJobRoundTripWithRealPostgresAndNATS` pre-existing flaky test requiring live Postgres+NATS; not caused by this PR.
+- Lint: pass
+- Test: pass
+- Frontend: pass
+- Build: pass (darwin/arm64, darwin/amd64, windows/amd64, windows/arm64)
+- Phase 7/8B: pass
+- Security: pass
+
+Post-merge verification:
+- `git fetch origin` confirms `origin/master` = `81c2017`
+- No unintended open development PRs remain
