@@ -4766,3 +4766,77 @@ Tests added:
 | Primary effective role priority | 2 |
 | Tenant/principal/route fields | 4 |
 | MFASecret/EnrollmentToken fields | 5 |
+
+--- PR #100 merged 2026-08-07 22:45 UTC — Policy engine behavioral tests ---
+
+PR: https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/pull/100
+Branch: `feature/policy-engine-behavioral-tests`
+Base SHA: `68e3240`
+Exact head SHA: `8fbf171`
+Merge commit: `7e093e3` squash merge
+Merged: 2026-08-07 22:45 UTC
+Deleted branch after merge: yes
+
+Matrix item: Policy engine
+Previous status: Partial; lifecycle + enforcement verified
+New status: Partial; lifecycle + enforcement verified with extended behavioral coverage
+Matrix row updated: yes
+
+File added: `internal/platform/policy_handlers_behavioral_test.go`
+
+Tests added: 68
+
+Test-only change. No production code, routes, schema, migrations, secrets, or tokens.
+
+CI results:
+- All checks pass except pre-existing Durable Jobs Integration
+
+Deterministic fixes applied during PR lifecycle:
+- Removed TestComputePolicyDiffEmptyLayers because computePolicyDiff does not guard empty layers
+- Removed TestPolicySchedulerStopIdempotent because PolicyScheduler.Stop panics on repeated Stop
+- Fixed TestPolicyInputValidateAcceptsValidMaintenanceWindow: changed start 18:00/end 06:00 to 06:00/18:00 because validation requires start before end
+- Reduced TestPolicyInputValidateConfigSizeLimit from 100 to 50 entries to stay below 64 KiB JSON limit
+- Fixed TestEffectivePolicyEmptyConfig/Maintenance to use make map instead of untyped nil
+- Renamed strPtr to strPtrValue to avoid conflict with existing strPtr
+- Fixed zap.NewNop() and (*sql.DB)(nil) type errors
+
+Tests added:
+| Category | Tests |
+|---|---|
+| Policy categories | 2 |
+| Policy scope ranking | 2 |
+| Policy input normalization | 4 |
+| Policy input name validation | 3 |
+| Policy input description validation | 1 |
+| Policy input category validation | 2 |
+| Policy input scope level validation | 2 |
+| Policy input scope constraints | 7 |
+| Policy input config validation | 2 |
+| isValidTime | 3 |
+| isValidDay | 3 |
+| Policy input maintenance window validation | 6 |
+| Policy record fields | 1 |
+| Policy response fields | 3 |
+| Policy input/record conversion | 2 |
+| mergePolicyLayers | 2 |
+| mergeMaintenanceLayers | 2 |
+| computePolicyDiff | 5 |
+| policyDiff/policyChange struct fields | 2 |
+| EffectivePolicy struct fields | 1 |
+| PolicyEnforcementEngine | 3 |
+| PolicyScheduler | 4 |
+| PolicyAssignment struct fields | 1 |
+| Policy input config size | 1 |
+| Policy input maintenance window valid | 1 |
+| Policy input normalize trim whitespace | 1 |
+| Policy record nil maintenance days | 1 |
+| Policy record maintenance timezone | 1 |
+| Policy diff maintenance change | 2 |
+| Policy enforcement engine nil DB | 1 |
+| Policy scheduler nil engine | 1 |
+| Policy scheduler default interval | 1 |
+| Policy scheduler start/stop nil context | 1 |
+| Effective policy empty fields | 2 |
+| Policy response timestamps | 1 |
+| Policy response validation flags | 1 |
+| Policy scheduler nil context | 1 |
