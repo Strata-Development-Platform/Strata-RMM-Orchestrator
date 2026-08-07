@@ -589,10 +589,12 @@ func TestInstallerExecute_Uninstall_UnknownAction(t *testing.T) {
 	inst := NewInstaller(nc, logger, "tenant-1", "agent-1")
 
 	tmpDir, _ := os.MkdirTemp("", "installer-test-*")
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	exePath := filepath.Join(tmpDir, "test.exe")
-	os.WriteFile(exePath, []byte("mock"), 0755)
+	if err := os.WriteFile(exePath, []byte("mock"), 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	cmd := SoftwareCommand{
 		Type:         "software_install",
@@ -617,10 +619,12 @@ func TestInstallerExecute_InstallArgs(t *testing.T) {
 	inst := NewInstaller(nc, logger, "tenant-1", "agent-1")
 
 	tmpDir, _ := os.MkdirTemp("", "installer-test-*")
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	scriptPath := filepath.Join(tmpDir, "install.sh")
-	os.WriteFile(scriptPath, []byte("#!/bin/sh\necho installing"), 0755)
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\necho installing"), 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	cmd := SoftwareCommand{
 		Type:         "software_install",
@@ -646,10 +650,12 @@ func TestInstallerExecute_DurationMs(t *testing.T) {
 	inst := NewInstaller(nc, logger, "tenant-1", "agent-1")
 
 	tmpDir, _ := os.MkdirTemp("", "installer-test-*")
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	scriptPath := filepath.Join(tmpDir, "install.sh")
-	os.WriteFile(scriptPath, []byte("#!/bin/sh\necho ok"), 0755)
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\necho ok"), 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	cmd := SoftwareCommand{
 		Type:         "software_install",
