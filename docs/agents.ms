@@ -4920,3 +4920,49 @@ Tests added:
 | JSON round-trips | 14 |
 | Capturer interface | 0 |
 | InputInjector interface | 0 |
+
+--- PR #104 merged 2026-08-08 — Network discovery and flow monitoring behavioral tests ---
+
+PR: https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/pull/104
+Branch: `feature/network-discovery-behavioral-tests`
+Base SHA: `6a57eb9`
+Exact head SHA: `9540999`
+Merge commit: `c39e4c3` squash merge
+Merged: 2026-08-08
+Deleted branch after merge: yes
+
+Matrix item: Network discovery and flow monitoring
+Previous status: Partial
+New status: Partial — 87 behavioral tests
+Matrix row updated: yes
+
+File added: `internal/probe/probe_behavioral_test.go`
+
+Tests added: 87
+
+Test-only change. No production code, routes, schema, migrations, secrets, or tokens.
+
+CI results:
+- All checks pass except pre-existing: SaaS Control Plane, Phase 7 — Approval Workflow, Phase 7 — Maintenance & Offline Lifecycle, Phase 7 — Immutable Audit, Phase 7 — Inventory Ingestion
+
+Tests added:
+| Category | Tests |
+|---|---|
+| DiscoveryResult struct fields | 10 |
+| FlowRecord struct fields | 13 |
+| PortScanResult struct fields | 11 |
+| ServiceInfo struct fields | 4 |
+| HostInfo struct fields | 6 |
+| TopologyInfo struct fields | 4 |
+| InterfaceInfo struct fields | 4 |
+| AddressInfo struct fields | 4 |
+| GatewayInfo struct fields | 4 |
+| Config struct fields | 7 |
+| SNMPV3Config struct fields | 4 |
+| SNMPTarget struct fields | 5 |
+| normalizeMAC | 4 |
+| normalizeWindowsMAC | 3 |
+| getBroadcastIP | 2 |
+| protocolName | 3 |
+| JSON round-trips | 12 |
+| Edge cases | 5 |
