@@ -104,3 +104,23 @@ func TestSuspendedMSPScenario(t *testing.T) {
 		t.Log("Token valid - MSP active check happens in handler")
 	}
 }
+
+func TestOwnMSPSucceeds(t *testing.T) {
+	os.Setenv("JWT_SECRET", "test-secret-that-is-long-enough-for-testing")
+	defer os.Unsetenv("JWT_SECRET")
+
+	gen := auth.NewTokenGenerator("test-secret-that-is-long-enough-for-testing")
+	token, _ := gen.GenerateUserToken("test-user-id", "tenant-a", "msp-a", "client-a", "", []string{"platform_admin"}, time.Hour)
+
+	// MSP A queries its own MSP via query param
+	req := httptest.NewRequest("GET", "/api/v2/platform/msps?msp_id=msp-a", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	s := &APIServer{tokenGen: gen, allowClaimPrincipal: true}
+	s.withAccessControl(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})).ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 for own-MSP query, got %d", w.Code)
+	}
+}
