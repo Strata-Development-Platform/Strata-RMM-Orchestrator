@@ -4840,3 +4840,43 @@ Tests added:
 | Policy response timestamps | 1 |
 | Policy response validation flags | 1 |
 | Policy scheduler nil context | 1 |
+
+--- PR #102 merged 2026-08-08 — Scripts and durable endpoint jobs behavioral tests ---
+
+PR: https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/pull/102
+Branch: `feature/scripts-durable-jobs-behavioral-tests`
+Base SHA: `e686039`
+Exact head SHA: `2b028b6`
+Merge commit: `fb4f72d` squash merge
+Merged: 2026-08-08
+Deleted branch after merge: yes
+
+Matrix item: Scripts and durable endpoint jobs
+Previous status: Verified for harmless internal-alpha job; Partial for full specification
+New status: Verified — 52 behavioral tests
+Matrix row updated: yes
+
+File added: `internal/platform/scripts_durable_jobs_behavioral_test.go`
+
+Tests added: 52
+
+Test-only change. No production code, routes, schema, migrations, secrets, or tokens.
+
+CI results:
+- All checks pass except pre-existing: SaaS Control Plane, Durable Jobs Integration, Phase 7 — Approval Workflow, Phase 7 — Maintenance & Offline Lifecycle, Phase 7 — Immutable Audit, Phase 7 — Inventory Ingestion, Phase 8B — Tenant Preservation
+
+Tests added:
+| Category | Tests |
+|---|---|
+| ScriptEngine and struct fields | 3 |
+| Script struct validation | 2 |
+| ScriptExecution struct fields | 10 |
+| Schedule struct fields | 6 |
+| ScriptScheduleDeviceExecution fields | 12 |
+| Language validation | 2 |
+| Schedule type validation | 2 |
+| Default values and bounds | 4 |
+| Required field detection | 4 |
+| Schedule params defaults | 2 |
+| Schedule calculation tests | 5 |
+| JoinUpdates tests | 3 |
