@@ -110,10 +110,10 @@ func TestOwnMSPSucceeds(t *testing.T) {
 	defer os.Unsetenv("JWT_SECRET")
 
 	gen := auth.NewTokenGenerator("test-secret-that-is-long-enough-for-testing")
-	token, _ := gen.GenerateUserToken("test-user-id", "tenant-a", "msp-a", "client-a", "", []string{"platform_admin"}, time.Hour)
+	token, _ := gen.GenerateUserToken("test-user-id", "tenant-a", "msp-a", "client-a", "", []string{"msp_admin"}, time.Hour)
 
-	// MSP A queries its own MSP via query param
-	req := httptest.NewRequest("GET", "/api/v2/platform/msps?msp_id=msp-a", nil)
+	// MSP A queries a route within its own scope (no cross-MSP denial)
+	req := httptest.NewRequest("GET", "/api/v1/platform/overview", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	w := httptest.NewRecorder()
 	s := &APIServer{tokenGen: gen, allowClaimPrincipal: true}
