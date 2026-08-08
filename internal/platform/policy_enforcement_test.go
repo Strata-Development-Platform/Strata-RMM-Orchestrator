@@ -158,7 +158,7 @@ func TestPolicyEnforcementEngineFindMatchingDevicesClient(t *testing.T) {
 	}
 }
 
-func TestPolicySchedulerStartStop(t *testing.T) {
+func TestPolicySchedulerStartStopWithDB(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
 	applyMigrations(t, db)
