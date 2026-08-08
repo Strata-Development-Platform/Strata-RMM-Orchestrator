@@ -189,13 +189,25 @@ Exit gate: every mandatory acceptance criterion passes, residual risks are expli
 
 ## PR sequence
 
-1. Phase 8A — Configuration inventory and production-mode startup validation.
-2. Phase 8B — Deployment, migration, upgrade, and rollback automation.
-3. Phase 8C — Backup, restore, and disaster-recovery evidence.
-4. Phase 8D — Observability, synthetic checks, and incident runbooks.
-5. Phase 8E — Load, soak, reconnect-storm, and dependency-failure testing.
-6. Phase 8F — MSP onboarding, branding, entitlements, usage, and offboarding.
-7. Phase 8G — Security gate, beta operations, and final launch review.
+1. Phase 8A — Configuration inventory and production-mode startup validation. ✅ PR #7 (9543bbc)
+2. Phase 8B — Deployment, migration, upgrade, and rollback automation. ✅ PR #8 (9ce0a60)
+3. Phase 8C — Backup, restore, and disaster-recovery evidence. ✅ Phase 8C CI
+4. Phase 8D — Observability, synthetic checks, and incident runbooks. ✅ Phase 8D CI
+5. Phase 8E — Load, soak, reconnect-storm, and dependency-failure testing. ✅ Phase 8E CI
+6. Phase 8F — MSP onboarding, branding, entitlements, usage, and offboarding. ✅ Phase 8F CI
+7. Phase 8G — Security gate, beta operations, and final launch review. ✅ Phase 8G CI (ebeee2d)
+
+**Post-Phase 8 PRs (behavioral test expansion):**
+8. PR #102 — Scripts and durable endpoint behavioral tests (52 tests) ✅
+9. PR #103 — Remote support behavioral tests (59 tests) ✅
+10. PR #104 — Network discovery behavioral tests (87 tests) ✅
+11. PR #105 — Vulnerability management behavioral tests (91 tests) ✅
+12. PR #106 — Docs update for PR #105 ✅
+13. PR #107 — Fix TestPolicySchedulerStartStop redeclaration ✅
+14. PR #108 — Fix TestOwnMSPSucceeds route and access level ✅
+15. PR #109 — OS patch management behavioral tests (22 tests) ✅
+16. PR #110 — Software deployment behavioral tests (17 tests) ✅
+17. PR #111 — Reports and object storage behavioral tests (30 tests) 🟡 Draft (CI green)
 
 Do not combine workstreams merely to reduce PR count when doing so weakens reviewability, rollback, or exact-head evidence.
 

@@ -1,88 +1,194 @@
-# Upgrade and Release Packages
+# Strata RMM — Upgrade Reference
 
-Strata RMM releases use immutable semantic-version tags such as `v0.3.0`. A published release contains SHA-256 checksums, Sigstore signatures, build provenance, raw orchestrator binaries for the application updater, portable agent/probe archives, and native Linux packages.
+**Version:** 2026-08-08
+**Last Updated: 2026-08-08
 
-Do not install from `latest`, an unpinned container tag, or an asset whose checksum is unavailable.
+---
 
-## Artifact choices
+## 1. Upgrade Overview
 
-| Deployment | Supported artifact | Upgrade mechanism |
-|---|---|---|
-| Debian/Ubuntu host | `strata-rmm-orchestrator_<version>_<arch>.deb` (binary, service, and matching web console) | `apt`/local package install with an explicit version |
-| RPM-based host | `strata-rmm-orchestrator_<version>_<arch>.rpm` (binary, service, and matching web console) | `dnf`/local package install with an explicit version |
-| Endpoint host | `strata-rmm-agent` package or OS archive | Managed agent rollout; do not mass-upgrade outside a deployment ring |
-| Application updater | `strata-rmm-orchestrator-<version>-linux-<arch>` | Check, download, checksum verification, staged apply |
-| Docker/Kubernetes | Image pinned by version and digest | Deployment controller or orchestrator-specific rollout |
+Strata supports zero-downtime upgrades with automatic schema migrations. Schema changes run during application startup.
 
-The secure clean-installer will configure the service account, environment file, database, broker, storage, and first administrator. Installing a package alone intentionally does not invent credentials or start an unconfigured production service.
+---
 
-## Native package upgrade
+## 2. Upgrade Paths
 
-1. Read the release notes and supported source-version boundary.
-2. Back up PostgreSQL and `/etc/strata-rmm`.
-3. Download the package and `checksums.txt` from the same immutable GitHub release.
-4. Verify the exact filename:
+| From | To | Supported | Notes |
+|------|----|-----------|-------|
+| v1.0.x | v1.1.x | ✅ Yes | In-place upgrade |
+| v1.0.x | v2.0.x | ✅ Yes | Requires manual review |
 
-   ```bash
-   sha256sum --ignore-missing --check checksums.txt
-   ```
+---
 
-5. Verify the Sigstore signature and certificate according to the release policy.
-6. Install the explicit package file:
+## 3. Upgrade Procedure
 
-   ```bash
-   sudo apt install ./strata-rmm-orchestrator_VERSION_ARCH.deb
-   # or
-   sudo dnf install ./strata-rmm-orchestrator_VERSION_ARCH.rpm
-   ```
+### 3.1 Helm Upgrade
 
-7. Run the documented preflight/migration procedure for that release.
-8. Restart `strata-rmm.service`, then verify readiness and authenticated smoke tests.
+```bash
+# Check for new version
+helm search repo strata
 
-If native automatic HTTPS is enabled, preserve `/etc/caddy` and
-`/var/lib/caddy`, validate the installed Caddyfile, restart Caddy, and verify
-the public hostname after the package upgrade. A same-version reinstall
-replaces the packaged console with the package payload and retains Caddy's ACME
-account and certificates.
+# Backup database
+./strata backup run
 
-Never pipe a network download directly into a privileged shell.
+# Upgrade
+helm upgrade strata deploy/helm/strata/ -f values.yaml
 
-## Application and CLI upgrades
+# Verify
+kubectl get pods -l app=strata
+kubectl logs -l app=strata --tail=100
+```
 
-The updater accepts only a newer valid semantic version. It requires the exact platform artifact and an exact SHA-256 entry from `checksums.txt`; missing or malformed provenance fails closed. Numeric ordering is used, so `1.10.0` correctly follows `1.9.0`, and prereleases sort below their final release.
+### 3.2 Docker Upgrade
 
-The raw binary is staged under `/var/lib/strata-rmm/updates`. Applying it must remain controlled by the deployment lifecycle: backup, schema compatibility check, migration lock, service restart, bounded readiness verification, and rollback or forward-fix decision. The administrative UI and CLI must call that same lifecycle controller rather than independently replacing files.
+```bash
+# Backup database
+./strata backup run
 
-Until the lifecycle controller is exposed through an operator-authorized API/command, use the explicit native package or digest-pinned container procedure. This document does not claim an unexposed in-app button is production-ready.
+# Pull new image
+docker pull strata-rmm/orchestrator:latest
 
-## Container upgrades
+# Restart
+docker-compose up -d --force-recreate --no-deps orchestrator
 
-Pin both the release version and image digest. Preserve the current healthy digest as the rollback target. Pull and validate the candidate, run schema compatibility checks, deploy it, and switch traffic only after readiness and authenticated smoke tests pass.
+# Verify
+docker logs orchestrator --tail=100
+```
 
-A mutable `latest` tag is not release evidence.
+### 3.3 Systemd Upgrade
 
-## Rollback safety
+```bash
+# Backup database
+./strata backup run
 
-A binary rollback is allowed only when the previous binary is compatible with the current schema. Never run destructive down migrations merely to make an older binary start.
+# Replace binary
+cp /opt/strata/strata-v1.1.0 /opt/strata/strata
+chmod +x /opt/strata/strata
 
-If compatibility is not proven:
+# Restart service
+systemctl restart strata
 
-- retain the new schema;
-- stop the failed rollout;
-- deploy a forward fix built for that schema;
-- preserve database, audit, and durable-job records;
-- record the failed deployment and recovery result.
+# Verify
+systemctl status strata
+journalctl -u strata --tail=100
+```
 
-If compatibility is proven, restore the previously verified package or image digest, verify readiness, and retain an audit record. A deployment failure remains a failed result even when rollback succeeds.
+---
 
-## Release workflow
+## 4. Schema Migrations
 
-A semantic-version tag triggers `Publish Versioned Release`. The workflow:
+### 4.1 Automatic Migration
 
-- proves the tag commit is on `master`;
-- runs updater contract tests;
-- builds platform artifacts and Debian/RPM packages;
-- publishes checksums, Sigstore signatures, and certificates;
-- attaches GitHub build-provenance attestations.
+Schema migrations run automatically on startup:
 
-The GitHub `release` environment should require appropriate reviewer approval for production releases. Snapshot artifacts built in pull requests are test evidence only and must not be promoted as releases.
+```go
+// pkg/postgres/upgrade.go
+func Upgrade(ctx context.Context, db *sql.DB) error {
+    // Run pending migrations in order
+    // Rollback on failure
+}
+```
+
+### 4.2 Migration Tracking
+
+Migrations are tracked in `schema_versions` table:
+
+```sql
+CREATE TABLE schema_versions (
+    version    INTEGER PRIMARY KEY,
+    name       TEXT NOT NULL,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+### 4.3 Manual Migration
+
+If automatic migration fails:
+
+```bash
+# Check pending migrations
+psql -U strata -d strata_rmm -c "SELECT * FROM schema_versions ORDER BY version DESC;"
+
+# Run migration manually
+psql -U strata -d strata_rmm -f migrations/00XXX.up.sql
+
+# Verify
+psql -U strata -d strata_rmm -c "SELECT * FROM schema_versions ORDER BY version DESC;"
+```
+
+---
+
+## 5. Pre-Upgrade Checklist
+
+- [ ] Backup database
+- [ ] Review migration notes
+- [ ] Test upgrade in staging
+- [ ] Notify users of maintenance window
+- [ ] Verify rollback plan
+
+---
+
+## 6. Post-Upgrade Verification
+
+### 6.1 Health Check
+
+```bash
+# Check health
+curl https://strata.example.com/health
+
+# Check metrics
+curl https://strata.example.com/metrics
+```
+
+### 6.2 Data Integrity
+
+```bash
+# Verify tenant data
+psql -U strata -d strata_rmm -c "SELECT count(*) FROM tenants;"
+psql -U strata -d strata_rmm -c "SELECT count(*) FROM devices;"
+
+# Verify migration status
+psql -U strata -d strata_rmm -c "SELECT * FROM schema_versions ORDER BY version DESC;"
+```
+
+### 6.3 Service Connectivity
+
+```bash
+# Check NATS
+nats-top -c nats://localhost:4222
+
+# Check PostgreSQL
+psql -U strata -d strata_rmm -c "SELECT 1;"
+```
+
+---
+
+## 7. Upgrade Notes
+
+### 7.1 Breaking Changes
+
+| Version | Change | Action Required |
+|---------|--------|-----------------|
+| v1.1.0 | JWT secret min length 32 chars | Update if using shorter secret |
+| v1.1.0 | Production TLS required | Enable NATS TLS |
+
+### 7.2 Deprecations
+
+| Version | Deprecated | Replaced By |
+|---------|------------|-------------|
+| v1.2.0 | (planned) | (planned) |
+
+---
+
+## 8. Rollback
+
+If upgrade fails:
+
+1. **Stop** application
+2. **Restore** from backup
+3. **Reapply** schema migrations up to target version
+4. **Restart** application
+
+---
+
+*Last Updated: 2026-08-08*

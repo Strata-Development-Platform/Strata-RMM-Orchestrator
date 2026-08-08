@@ -1,187 +1,299 @@
-# Information Architecture
+# Strata RMM — Information Architecture
 
-## MSP Navigation
-
-The MSP-facing UI is organized into functional groups accessible from the left sidebar.
-
-### Overview
-
-| Route | Page | Description |
-|-------|------|-------------|
-| `/` | Dashboard | Platform-wide overview with stat cards (customers, devices, online, alerts, CVEs), priority issues panel, customer table with device/alert/CVE counts |
-
-### Operations
-
-| Route | Page | Description |
-|-------|------|-------------|
-| `/remote/:tid/:did` | Remote Control | Live screen view with quality/FPS controls for remote desktop sessions |
-| `/scripts` | Scripts | Script library with editor, run dispatch, execution history viewer |
-| `/software` | Software | Package library, deployment creation, deployment tracking |
-| `/thirdparty` | Patch Mgmt | Third-party application list, sync controls, patch policy management |
-
-### Assets
-
-| Route | Page | Description |
-|-------|------|-------------|
-| `/customers` | Customers | Customer list with deployment IDs, device/alert/CVE counts, plan tier |
-| `/customers/:id` | Customer Detail | Tabbed drill-down: Devices, Alerts, Vulnerabilities, Recordings, Settings |
-
-### Management
-
-| Route | Page | Description |
-|-------|------|-------------|
-| `/admin/users` | Users | User management with create, tenant scoping, role assignment |
-| `/admin/settings` | Settings | Platform status, CVE sync management, API reference, system configuration |
-
-### Customers (Drill-down tabs on `/customers/:id`)
-
-| Tab | Content |
-|-----|---------|
-| **Devices** | Device list with status, last heartbeat, OS, hardware info |
-| **Alerts** | Active and historical alerts with severity, acknowledgment, resolution |
-| **Vulnerabilities** | Open CVEs with severity, package, device, remediation actions |
-| **Recordings** | Session recording list with date, duration, playback (MFA-gated) |
-| **Settings** | Customer configuration, deployment ID, plan, maintenance windows |
-
-### Library (Planned)
-
-- Script templates
-- Software package repository
-- Policy templates
-- Report templates
-
-### Administration (Planned)
-
-- Billing and subscription management
-- Audit log viewer
-- API key management
-- System health and monitoring
-- Branding configuration
+**Version:** 2026-08-08
+**Last Updated:** 2026-08-08
 
 ---
 
-## Platform Navigation
+## 1. Navigation Structure
 
-The operator platform provides a higher-level view across all MSP tenants.
+### 1.1 Sidebar Navigation
 
-### Navigation Groups
+The sidebar shows menu items filtered by:
+- User permissions
+- Workspace scope (platform/MSP)
+- Feature availability
 
-| Group | Sections | Description |
-|-------|----------|-------------|
-| **MSP Tenants** | List, Detail, Billing | Manage MSP organizations, plans, usage |
-| **Subscriptions** | Plans, Invoices, Usage | Subscription tier management and billing |
-| **Infrastructure** | Services, Nodes, Status | Platform infrastructure health monitoring |
-| **Agent Releases** | Channels, Rollouts, Manifests | Agent update management across tenants |
-| **Usage** | Platform Stats, Tenant Stats | Aggregate platform utilization metrics |
-| **Security Events** | Audit Log, Access Review | Cross-tenant security event monitoring |
-| **Settings** | System Config, SSO, Integrations | Global platform configuration |
+### 1.2 Menu Items
+
+| Menu Item | Route | Page | Permission |
+|-----------|-------|------|------------|
+| Dashboard | `/` | DashboardPage | device:read |
+| Devices | `/devices/:deviceID` | DeviceWorkspacePage | protected |
+| Remote | `/remote/:tid/:did` | DeviceRemotePage | protected |
+| Scripts | `/scripts` | ScriptsPage | device:manage, job:manage |
+| Software | `/software` | SoftwarePage | device:read, device:manage |
+| Groups | `/groups` | DeviceGroupListPage | device:manage, job:manage |
+| Policies | (via groups) | SmartGroupDetailPage | device:manage, job:manage |
+| Jobs | `/jobs` | JobsPage | job:read, job:manage |
+| Reports | `/reports` | ReportsPage | device:read, device:manage |
+| Jobs Health | `/jobs/health` | JobHealthPage | job:read, job:manage, platform:manage |
+| Third-Party | `/thirdparty` | ThirdPartyPage | device:manage, job:manage |
+| Customers | `/customers` | CustomersPage | client:read, client:manage, msp:manage |
+| Admin | `/admin/users` | UserManagementPage | platform:admin |
+| Admin Settings | `/admin/settings` | AdminSettingsPage | msp:manage, platform:manage |
+| Settings | `/settings` | SettingsPage | protected |
+| Platform | `/platform/msps` | MSPListPage | platform:admin only |
+| Provider Setup | `/provider/setup` | ProviderSetupPage | platform:admin, incomplete setup |
 
 ---
 
-## Application Shell
+## 2. Workspace Scopes
 
-### Layout Structure
+Three workspace scopes with different views:
 
+### 2.1 Platform Scope
+- Access to all MSPs
+- User management
+- Provider setup
+- Platform settings
+
+### 2.2 MSP Scope
+- Access to MSP clients
+- Device management
+- Script execution
+- Software deployment
+- Reports
+- Settings
+
+### 2.3 Client Scope (via workspace switcher)
+- Access to client devices
+- Client support requests
+- Client settings
+
+---
+
+## 3. Page Hierarchy
+
+### 3.1 Dashboard (Root)
 ```
-┌─────────────────────────────────────────────────────────┐
-│ ┌──────────┐  ┌────────────────────────────────────────┐ │
-│ │          │  │  Main Content (max-w-7xl mx-auto)       │ │
-│ │ Sidebar  │  │  ┌──────────────────────────────────┐  │ │
-│ │ (w-56,   │  │  │  Children (page content)          │  │ │
-│ │ collaps- │  │  │                                    │  │ │
-│ │ ible to   │  │  │                                    │  │ │
-│ │ w-16)    │  │  │                                    │  │ │
-│ │          │  │  └──────────────────────────────────┘  │ │
-│ │ nav items│  │                                        │ │
-│ │          │  │                                        │ │
-│ │ user     │  │                                        │ │
-│ │ profile  │  │                                        │ │
-│ └──────────┘  └────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────┘
+Dashboard
+├── Overview panels (devices, alerts, patches)
+├── Telemetry charts
+└── Quick actions
 ```
 
-### Sidebar States
+### 3.2 Device Workspace
+```
+Devices → :deviceID
+├── Device details (OS, hardware, status)
+├── Telemetry (CPU, RAM, disk, net)
+├── Alerts
+├── Vulnerabilities
+├── Packages
+├── Jobs history
+└── Remote access
+```
 
-| State | Width | Behavior |
-|-------|-------|----------|
-| Expanded | 224px (w-56) | Full labels and icons, user profile visible |
-| Collapsed | 64px (w-16) | Icons only, labels shown as title tooltips |
+### 3.3 Remote Access
+```
+Remote → :tid/:did
+├── WebRTC session controls
+├── Screen capture view
+├── Input controls
+├── Recording controls
+└── Transcription status
+```
 
-### Navigation Items
+### 3.4 Scripts
+```
+Scripts
+├── Script list
+├── Create script
+├── Script detail
+│   ├── Script content
+│   ├── Execution history
+│   └── Schedule management
+├── Schedule list
+├── Create schedule
+└── Schedule detail
+    ├── Schedule config
+    ├── Device targets
+    └── Execution results
+```
 
-**Primary Nav**: Overview, Customers, Users, Scripts, Software, Patch Mgmt, Reports, Settings
+### 3.5 Software
+```
+Software
+├── Package list
+├── Create package
+├── Package detail
+├── Deployments
+├── Create deployment
+└── Deployment detail
+```
 
-**Bottom Nav**: My Settings
+### 3.6 Groups
+```
+Groups
+├── Device group list
+├── Create group (standard/smart)
+├── Smart group detail
+│   ├── Expression builder
+│   ├── Evaluation status
+│   ├── Members list
+│   └── Script bindings
+└── Standard group detail
+    ├── Members list
+    └── Script bindings
+```
 
-**User Section**: Avatar (first letter of email), email, role, sign out, theme toggle
+### 3.7 Jobs
+```
+Jobs
+├── Job list (filter by status)
+├── Job detail
+│   ├── Job info
+│   ├── Events timeline
+│   └── Actions (cancel, retry)
+└── Job health dashboard
+    ├── Success rate
+    ├── Failure analysis
+    └── Performance metrics
+```
 
-### Theme Support
+### 3.8 Reports
+```
+Reports
+├── Report list
+├── Generate report
+├── Schedule list
+├── Create schedule
+├── Schedule detail
+│   ├── Schedule config
+│   └── Actions (trigger, enable/disable)
+├── Report download
+└── Compliance reports
+    ├── List
+    ├── Detail
+    └── Export (CSV/JSON)
+```
 
-- Dark/light mode via `ThemeToggle` component
-- localStorage persistence via `useTheme` hook
-- Tailwind CSS dark mode (`dark:` prefix)
+### 3.9 Third-Party
+```
+Third-Party
+├── Apps list
+├── Packages list
+├── Vendors list
+├── Sync controls
+│   ├── Sync all
+│   └── Sync by app/vendor
+└── Sync status
+```
 
-### Application States
+### 3.10 Customers
+```
+Customers
+├── Customer list
+├── Customer detail
+│   ├── Client info
+│   ├── Site list
+│   ├── Device list
+│   ├── Support requests
+│   └── Settings
+└── Create customer
+```
 
-| State | Component | Behavior |
-|-------|-----------|----------|
-| Loading | Inline text "Loading..." | Shown during auth check or data fetch |
-| Empty | `EmptyState` component | Icon + title + description + CTA |
-| Error | `Toast` (error variant) | 4s auto-dismiss notification |
-| Success | `Toast` (success variant) | 4s auto-dismiss notification |
-| Confirm | `ConfirmDialog` modal | Destructive action confirmation |
+### 3.11 Admin
+```
+Admin
+├── User management
+│   ├── User list
+│   ├── Create user
+│   ├── Edit user
+│   └── Tenant/membership management
+├── Settings
+│   ├── Branding
+│   ├── Domains
+│   ├── Enrollment tokens
+│   ├── API keys
+│   ├── Maintenance windows
+│   └── Retention policies
+├── Platform overview
+├── Provider profile
+├── MSP management
+│   ├── MSP list
+│   ├── MSP detail
+│   ├── Billing
+│   ├── Entitlements
+│   └── Offboarding
+└── System health
+```
 
-### UI Components
+### 3.12 MSP Workspace
+```
+MSP
+├── Overview
+├── Clients
+├── Devices
+├── Billing
+│   ├── Account
+│   ├── Subscriptions
+│   ├── Payment methods
+│   ├── Invoices
+│   └── Usage
+├── Memberships
+├── Entitlements
+└── Audit log
+```
 
-| Component | Purpose |
-|-----------|---------|
-| `Toast` | Success/error/info notifications, 4s auto-dismiss |
-| `Skeleton` | Pulsing table/card/text loading placeholders |
-| `ConfirmDialog` | Modal confirmation for destructive actions |
-| `EmptyState` | Empty table/grid state with icon, message, CTA |
-| `StatusBadge` | Colored pill with dot indicator for any status |
-| `ThemeToggle` | Dark/light mode with localStorage persistence |
-| `DataTable` | Sortable, filterable tables with row actions |
+### 3.13 Settings
+```
+Settings
+├── Profile
+├── MFA/OTP
+├── API keys
+├── Branding (if MSP admin)
+├── Domains (if MSP admin)
+└── Notifications (future)
+```
 
 ---
 
-## Design Token Approach
+## 4. Authentication Flow
 
-### Color System
+```
+Login Page → Auth API → JWT Token → localStorage
+    │
+    ├── Success → Dashboard (redirected from /login)
+    ├── 401 → Stay on login page
+    └── Error → Error message
 
-| Token | Light | Dark | Usage |
-|-------|-------|------|-------|
-| `bg-primary` | `slate-50` | `slate-950` | Page background |
-| `bg-card` | `white` | `slate-900` | Card/panel backgrounds |
-| `bg-sidebar` | `slate-900` | `slate-900` | Sidebar background |
-| `text-primary` | `slate-900` | `white` | Primary text |
-| `text-muted` | `slate-500` | `slate-400` | Secondary/muted text |
-| `accent` | `blue-600` | `blue-600` | Active nav, links, CTAs |
-| `danger` | `red-600` | `red-400` | Errors, critical alerts |
-| `warning` | `amber-600` | `amber-400` | Warnings |
-| `success` | `green-600` | `green-400` | Online, healthy states |
-| `border` | `slate-200` | `slate-700` | Borders and dividers |
+Token Refresh:
+    ├── On API 401 → Redirect to login
+    └── Token stored in localStorage (strata_auth_token)
+```
 
-### Typography
+---
 
-| Token | Size | Weight | Usage |
-|-------|------|--------|-------|
-| `text-xs` | 12px | 400 | Labels, timestamps |
-| `text-sm` | 14px | 400/500 | Body text, table cells |
-| `text-base` | 16px | 500 | Default text |
-| `text-lg` | 18px | 600 | Section headings |
-| `text-2xl` | 24px | 700 | Page titles |
+## 5. Data Flow
 
-### Spacing
+```
+Page Component
+    ├── useWorkspace() → Workspace context (scope, permissions)
+    └── ApiClient.get/post() → Orchestrator API
+            │
+            ├── Success → Page state update
+            ├── 401 → Redirect to login
+            └── Error → Error toast
+```
 
-- Uses Tailwind spacing scale (4px base unit)
-- Page padding: `p-6`
-- Card padding: `p-4`
-- Between sections: `space-y-6`
-- Between cards: `gap-4`
+---
 
-### Shadow / Elevation
+## 6. Permission Model
 
-- Cards: `border` (no shadow, flat design)
-- Active nav item: `bg-blue-600`
-- Hover state: `hover:bg-slate-50` (light) / `hover:bg-slate-800` (dark)
+| Permission | Pages Accessed |
+|------------|----------------|
+| `device:read` | Dashboard, Devices, Reports, Software |
+| `device:manage` | Scripts, Software, Groups, Third-Party, Reports |
+| `job:read` | Jobs, Jobs Health |
+| `job:manage` | Scripts, Jobs, Groups, Third-Party |
+| `client:read` | Customers, MSP Workspace |
+| `client:manage` | Customers, MSP Workspace |
+| `msp:manage` | Admin Settings, MSP Workspace |
+| `platform:manage` | User Management, MSP List, Job Health |
+| `platform:admin` | User Management, MSP List, Provider Setup |
+
+---
+
+*Last Updated: 2026-08-08*

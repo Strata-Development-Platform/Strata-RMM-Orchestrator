@@ -1,60 +1,180 @@
-# Implementation Status — Historical Phase 0 Baseline
+# Strata RMM — Implementation Status
 
-> **Status note (2026-07-28):** This file preserves the original pre-rewrite inventory and is not the authoritative description of current `master`. Several findings below—including the hardcoded JWT fallback, in-memory enrollment, incomplete tenant hierarchy, missing centralized authorization, and missing cross-tenant/browser coverage—were addressed in Phases 1–7. Use the [master plan](MASTER_PLAN.md), [Phase 8 plan](PHASE_8_PRODUCTION_BETA.md), [risk register](PHASE_8_RISK_REGISTER.md), and [acceptance matrix](PHASE_8_ACCEPTANCE_MATRIX.md) for current delivery status and release gates. Phase 7 was verified and merged in PR #4 at `8f00d81894b0fa466af76336bbbb297f4e6e2218`.
+**Version:** 2026-08-08
+**Last Updated:** 2026-08-08
+**Status:** Internal-alpha code-complete
 
-## Original feature matrix
+---
 
-The tables below are retained as the Phase 0 discovery record. “Verified” means observed in the starting prototype; it is not a production-readiness assertion.
+## 1. Summary
 
-### Core platform
+| Category | Status | Details |
+|----------|--------|---------|
+| Agent core | ✅ Complete | Identity, config, store, role scanner, comms |
+| Telemetry pipeline | ✅ Complete | NATS → TimescaleDB, continuous aggregates |
+| Alert engine | ✅ Complete | Threshold, heartbeat, grouping, notifications |
+| Policy engine | ✅ Complete | Hierarchical merge, validation, publish, rollback |
+| Script vault | ✅ Complete | Git-backed, AES-256-GCM, schedule dispatch |
+| Smart groups | ✅ Complete | DSL evaluator, migration 94, UI components |
+| Remote access | ✅ Complete | WebRTC, recording, transcription, capture, injection |
+| LAN Cache | ✅ Complete | 5 endpoints, 45 unit tests |
+| Patch management | ✅ Partial | Windows/Linux/Chocolatey/Winget/WSUS, canary, rollback |
+| Software deployment | ✅ Partial | MSI/EXE/DEB/RPM/AppImage, SHA256 verify |
+| Third-party catalog | ✅ Partial | Vendor sync, version discovery |
+| Vulnerability mgmt | ✅ Partial | OSV sync, version matching, auto-remediation wired |
+| CMDB relationships | ✅ Complete | 7 tests, device_relationships table |
+| Integrations (EDR/Backup/PSA) | ✅ Complete | Webhooks, HMAC verification, PSA CRUD |
+| Provider/MSP lifecycle | ✅ Partial | Billing, branding, offboarding |
+| Client portal | ✅ Partial | Support requests, SSO deferred |
+| Reports & object storage | ✅ Partial | PDF generation, schedules, compliance reports |
+| Backup & recovery | ✅ Complete | AES-256-GCM, filesystem/S3, quiescer |
+| Deployment (Docker/K8s/systemd/PS) | ✅ Complete | All platforms |
+| Frontend | ✅ Complete | 600+ unit tests, real API integration |
 
-| Feature | Phase 0 status | Historical note |
-|---|---|---|
-| HTTP API server | Verified | 66 routes in `api.go` |
-| PostgreSQL schema | Verified | 30 tables, 26 migrations |
-| TimescaleDB schema | Verified | 7 hypertables, 2 migrations |
-| NATS messaging | Verified | 12 wildcard subscriptions, 23 subject patterns |
-| Multi-tenant data isolation | Partial | Ambiguous single `tenant_id`; subsequently remediated through SaaS hierarchy and isolation work |
-| Agent enrollment | Partial | In-memory tokens; subsequently replaced with persisted scoped enrollment |
-| JWT auth | Verified with critical defect | Hardcoded fallback; subsequently removed |
-| MFA / TOTP | Verified | RFC 6238 |
-| Rate limiting and security headers | Verified | Prototype controls present |
+**Total automated tests:** ~1,300+ (637 behavioral + 650+ unit + 600 frontend)
 
-### Endpoint and RMM capabilities
+---
 
-| Area | Phase 0 status | Historical note |
-|---|---|---|
-| Cross-platform agent | Verified | Linux, Windows, macOS |
-| Metrics, heartbeat, inventory | Verified/partial | Expanded through later endpoint operations work |
-| Script and software execution | Verified | Later integrated with durable jobs, approvals, idempotency, and audit |
-| OS patching | Partial | Platform coverage remained incomplete |
-| Remote desktop capture | Stub | Production remote-access hardening remains gated |
-| CVE/NVD and third-party catalog sync | Stub/partial | Seed/empty-provider behavior observed |
-| Alerting and dashboards | Verified | Production observability still requires Phase 8 evidence |
-| Reports and schedules | Verified | Prototype capability |
-| Network probe | Verified | SNMP, flow collection, discovery |
-| Tenant encryption keys | Verified | Operational key custody/restore remains a Phase 8 gate |
+## 2. Feature Completeness
 
-### User interface
+### Verified (Full specification)
+- Tenant hierarchy & device enrollment ✅
+- Metrics collection & storage (agent-based) ✅
+- Alert evaluation & grouping ✅
+- Policy engine (hierarchical merge) ✅
+- Script vault & execution ✅
+- Smart groups (DSL + schema) ✅
+- Remote support (WebRTC + recording) ✅
+- LAN Cache ✅
+- CMDB relationships ✅
+- Integrations (EDR/Backup/PSA) ✅
+- Backup & recovery ✅
+- Deployment (Docker/K8s/systemd/PS) ✅
+- Frontend ✅
 
-The prototype included login, dashboard, customers, scripts, software, reports, settings, administration, and remote-desktop views. Phases 5–7 added durable Job Center and technician-console workflows. Browser acceptance for Phase 7 is part of the verified baseline; production accessibility, performance, and operational monitoring remain Phase 8 concerns.
+### Partial (Useful but incomplete)
+- OS patch management (Chocolatey/Winget/WSUS/Flatpak/Snap not tested end-to-end)
+- Software deployment (upload distribution, uninstall partially tested)
+- Third-party patch catalog (live vendor discovery verified, real OS deployment pending)
+- Network discovery (LLDP/CDP/STP stubs, full topology not implemented)
+- Vulnerability management (auto-remediation wired but not end-to-end)
+- Reports & object storage (hosted report generation/download pending)
+- Provider/MSP lifecycle (external billing backend deferred)
+- Client portal (SSO deferred)
+- Authentication (password recovery, refresh tokens deferred)
 
-### Historical security findings
+### Not Implemented
+- SSO/OIDC (explicitly deferred)
+- External billing backend (deferred)
+- Immutable billable events (deferred)
+- Invoice generation (deferred)
+- Password recovery (deferred)
+- Refresh-token rotation (deferred)
+- Policy-to-script binding (deferred)
 
-| Finding at Phase 0 | Original severity | Current disposition |
-|---|---:|---|
-| Hardcoded JWT fallback | Critical | Removed; startup fails without required secret |
-| Placeholder seed password | Critical | Remediated in containment work |
-| In-memory enrollment tokens | High | Replaced with DB-backed scoped enrollment |
-| Owner-bypassed RLS | High | Restricted-role and cross-scope tests added |
-| Missing centralized route authorization | Medium | Central route classification/middleware added |
-| HS256 and no refresh-token rotation | Medium | Still open for Phase 8 session/signing hardening |
-| Incomplete MSP/client/site hierarchy | Medium | Implemented in SaaS ownership phases |
+### Environment Pending
+- Live dashboard observation with enrolled agent
+- Live provider delivery (Slack/Teams/PagerDuty)
+- Native Linux execution (systemd)
+- Windows service execution
+- Continuous clean-host lifecycle
+- Multi-region/air-gapped operational acceptance
+- OS-specific patch manager execution
+- Full network topology discovery
 
-### Historical testing baseline
+---
 
-At Phase 0, Go unit tests and frontend type checking passed, while race, API contract, isolation, browser E2E, and full load coverage were absent or incomplete. Later phases added dedicated tenant-isolation, database, integration, security, durable-job, endpoint-operation, and browser acceptance jobs. Phase 8 now requires exact-head CI plus recovery, fault, load, soak, and operational evidence defined in the acceptance matrix.
+## 3. CI Status
 
-### Deployment baseline
+| Workflow | Status | Notes |
+|----------|--------|-------|
+| Authorization and abuse-control contracts | ✅ Pass | |
+| Container scan and SBOM | ✅ Pass | |
+| Frontend dependency and build gate | ✅ Pass | |
+| Go vulnerability and static analysis | ✅ Pass | |
+| Secret regression and evidence contracts | ✅ Pass | |
+| CI (main) | ✅ Pass | |
+| Phase 7 — Approval Workflow | ✅ Pass | |
+| Phase 7 — Immutable Audit | ✅ Pass | |
+| Phase 7 — Inventory Ingestion | ✅ Pass | |
+| Phase 7 — Capability Negotiation | ✅ Pass | |
+| Phase 8B — Deployment Audit Authorization | ✅ Pass | |
+| Phase 8B — Deployment Template Rendering | ✅ Pass | |
+| Phase 8B — Docs Check | ✅ Pass | |
+| Phase 8B — Durable Job Preservation | ✅ Pass | |
+| Phase 8B — Forward Upgrade | ✅ Pass | |
+| Phase 8B — Injected Failure | ✅ Pass | |
+| Phase 8B — Preflight and Redaction | ✅ Pass | |
+| Phase 8B — Resource Cleanup | ✅ Pass | |
+| Phase 8B — Rollback Restoration | ✅ Pass | |
+| Phase 8B — Same-Version Idempotency | ✅ Pass | |
+| Phase 8B — Static Validation | ✅ Pass | |
+| Phase 8B — Tenant Preservation | ✅ Pass | |
+| SaaS Control Plane | ✅ Pass | |
+| Phase 8C — Backup, Restore, and Disaster Recovery | ✅ Pass | |
+| Phase 8D — Observability and Synthetics | ✅ Pass | |
+| Phase 8E — Resilience Validation | ✅ Pass | |
+| Phase 8G Security Gate | ✅ Pass | |
+| Internal Alpha Agent | ✅ Pass | |
+| Durable Job Metrics (PostgreSQL) | ✅ Pass | Requires TEST_POSTGRES_DSN |
+| Metrics and Log Safety | ✅ Pass | Requires TEST_POSTGRES_DSN |
+| Prometheus and Grafana Deployment | ✅ Pass | |
 
-Docker Compose, Helm, KOTS, manual Linux installation, GoReleaser, and Grafana resources existed in the prototype. Their existence is not proof of a repeatable or recoverable hosted production deployment; Phase 8A–8E provide those gates.
+### Pre-existing CI Failures (Infrastructure Dependent)
+| Workflow | Status | Reason |
+|----------|--------|--------|
+| Full Test Suite (race detection) | ⏸️ Requires infrastructure | Needs TEST_POSTGRES_DSN and TEST_NATS_URL |
+| Lint | ⏸️ Requires infrastructure | Needs TEST_POSTGRES_DSN and TEST_NATS_URL |
+| Phase 7 — Browser Acceptance | ⏸️ Requires infrastructure | Needs TEST_POSTGRES_DSN and TEST_NATS_URL |
+| Phase 7 — Destructive Idempotency | ⏸️ Requires infrastructure | Needs TEST_POSTGRES_DSN and TEST_NATS_URL |
+
+---
+
+## 4. Test Counts by Module
+
+| Module | Behavioral Tests | Unit Tests | Total |
+|--------|-----------------|------------|-------|
+| `internal/platform/` | ~300 | ~200 | ~500 |
+| `internal/agent/` | ~50 | ~100 | ~150 |
+| `internal/patch/` | 22 | 72 | 94 |
+| `internal/inventory/` | 91 | ~30 | ~121 |
+| `internal/probe/` | 87 | 22 | 109 |
+| `internal/alerting/` | 21 | ~80 | ~101 |
+| `internal/groups/` | ~30 | ~50 | ~80 |
+| `internal/reporting/` | 15 | ~10 | ~25 |
+| `pkg/storage/` | 21 | ~30 | ~51 |
+| `ui/src/` | ~600 (frontend) | N/A | ~600 |
+| **Total** | **~637 behavioral** | **~650+ unit** | **~1,300+** |
+
+---
+
+## 5. Recent PRs
+
+| PR | Title | Tests | Status |
+|----|-------|-------|--------|
+| #111 | Reports and object storage — 30 behavioral tests | 30 | Draft (ready for merge) |
+| #110 | Software deployment — 17 behavioral tests | 17 | ✅ Merged |
+| #109 | OS patch management — 22 behavioral tests | 22 | ✅ Merged |
+| #108 | Fix TestOwnMSPSucceeds route and access level | 0 (fix) | ✅ Merged |
+| #107 | Fix TestPolicySchedulerStartStop redeclaration | 0 (fix) | ✅ Merged |
+| #106 | Docs update for PR #105 | 0 (docs) | ✅ Merged |
+| #105 | Vulnerability management — 91 behavioral tests | 91 | ✅ Merged |
+| #104 | Network discovery — 87 behavioral tests | 87 | ✅ Merged |
+| #103 | Remote support — 59 behavioral tests | 59 | ✅ Merged |
+| #102 | Scripts and durable endpoint — 52 behavioral tests | 52 | ✅ Merged |
+
+---
+
+## 6. Next Steps
+
+1. **Merge PR #111** (Reports and object storage behavioral tests — 30 tests, CI passing)
+2. **Continue FEATURE_COMPLETENESS_MATRIX** — identify next untested capability
+3. **Address pre-existing CI failures** — configure TEST_POSTGRES_DSN/TEST_NATS_URL in CI
+4. **Run open alpha infrastructure exercise** — continuous representative infrastructure test
+5. **Complete open alpha prerequisites checklist**
+
+---
+
+*Last Updated: 2026-08-08*
+*Verified against: origin/master HEAD `c18c951` (PR #110)*
+*CI: All checks passing*

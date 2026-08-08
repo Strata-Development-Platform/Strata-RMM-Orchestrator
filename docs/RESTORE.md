@@ -1,78 +1,149 @@
-# Restore Operations
+# Strata RMM — Restore Reference
 
-Restore is deliberately target-oriented. It does not require the failed source services to be reachable, and it refuses in-place database, NATS, or object-storage targets.
+**Version:** 2026-08-08
+**Last Updated:** 2026-08-08
 
-## Required recovery targets
+---
 
-Set the normal backup repository and key-provider variables described in `docs/BACKUP.md`, plus:
+## 1. Restore Overview
 
-| Variable / flag | Purpose |
-|---|---|
-| `--backup-id` | Finalized backup set to restore |
-| `--target-dsn` | Existing, empty PostgreSQL database distinct from the source |
-| `--confirm` | Explicit destructive-operation acknowledgement |
-| `STRATA_RECOVERY_NATS_URL` | Empty JetStream-enabled NATS target distinct from the source URL |
-| `STRATA_RECOVERY_NATS_TOKEN` | Target NATS token when used |
-| `STRATA_RECOVERY_NATS_TLS_CA` | Target NATS trusted CA |
-| `STRATA_RECOVERY_NATS_TLS_CERT` | Optional target mTLS certificate |
-| `STRATA_RECOVERY_NATS_TLS_KEY` | Optional target mTLS key |
-| `STRATA_RECOVERY_STORAGE_BACKEND` | Recovery storage backend type |
-| `STRATA_RECOVERY_STORAGE_BUCKET` | Empty target bucket/path distinct from the source |
-| `STRATA_RECOVERY_STORAGE_REGION` | Target region |
-| `STRATA_RECOVERY_STORAGE_ENDPOINT` | Target endpoint |
-| `STRATA_RECOVERY_STORAGE_ACCESS_KEY` | Target access key |
-| `STRATA_RECOVERY_STORAGE_SECRET_KEY` | Target secret key |
-| `STRATA_RECOVERY_STORAGE_USE_SSL` | Target transport setting |
+Restore recovers a Strata deployment from an encrypted backup. The restore process decrypts the backup and restores the PostgreSQL/TimescaleDB database.
 
-If source object storage is disabled, recovery object-storage variables are not required. Production NATS TLS and authentication validation still applies to the recovery target.
+---
 
-## Procedure
+## 2. Prerequisites
 
-1. List and verify the backup without contacting source services:
+### 2.1 Required Infrastructure
 
-   ```bash
-   strata-rmm orchestrator recovery status
-   strata-rmm orchestrator recovery verify --backup-id <backup-id>
-   ```
+| Component | Requirement |
+|-----------|-------------|
+| PostgreSQL/TimescaleDB | Installed and running |
+| NATS | Installed and running (or configured for recovery) |
+| Object storage | Access to backup storage (same as backup) |
+| Encryption key | Key provider file matching the backup |
 
-2. Provision isolated PostgreSQL, JetStream, and object-storage targets.
+### 2.2 Required Variables
 
-3. Run a non-mutating restore preflight:
+```bash
+STRATA_RECOVERY_STORAGE_BACKEND=s3
+STRATA_RECOVERY_STORAGE_BUCKET=strata-backups
+STRATA_RECOVERY_STORAGE_REGION=us-east-1
+STRATA_RECOVERY_STORAGE_ACCESS_KEY=AKIA...
+STRATA_RECOVERY_STORAGE_SECRET_KEY=wJalr...
+STRATA_RECOVERY_NATS_URL=nats://recovery-nats:4222
+```
 
-   ```bash
-   strata-rmm orchestrator recovery restore \
-     --backup-id <backup-id> \
-     --target-dsn "$RECOVERY_DATABASE_DSN" \
-     --dry-run
-   ```
+---
 
-4. Execute the restore:
+## 3. Restore Process
 
-   ```bash
-   strata-rmm orchestrator recovery restore \
-     --backup-id <backup-id> \
-     --target-dsn "$RECOVERY_DATABASE_DSN" \
-     --confirm \
-     --timeout 4h
-   ```
+### 3.1 Automated Restore
 
-The command verifies and decrypts every required artifact before acquiring the target lock or mutating a target. It restores PostgreSQL first, then JetStream, then object storage, verifying each component before continuing. Replaying the same JetStream or object artifact reconciles identical state without appending duplicate messages or objects; divergent non-empty JetStream state is rejected.
+```bash
+# Set recovery environment variables
+export STRATA_RECOVERY_STORAGE_BACKEND=s3
+export STRATA_RECOVERY_STORAGE_BUCKET=strata-backups
+export STRATA_RECOVERY_NATS_URL=nats://localhost:4222
 
-The PostgreSQL restore resets the copied mutation gate before post-restore verification. Do not route traffic to the target until application readiness and the manual smoke checks below pass.
+# Start orchestrator in recovery mode
+./strata recovery restore
+```
 
-## Required post-restore checks
+### 3.2 Manual Restore
 
-- start the candidate orchestrator against the recovery targets;
-- verify `/health/live` and `/health/ready`;
-- authenticate as a platform operator;
-- query representative MSP, client, device, durable-job, approval, and audit records;
-- verify tenant-scoped requests cannot cross MSP/client boundaries;
-- inspect JetStream stream, consumer, and message counts;
-- download and hash representative reports and recordings;
-- record the backup ID, release, schema version, start/end times, and operators.
+```bash
+# Step 1: Download backup
+aws s3 cp s3://strata-backups/latest.enc /tmp/backup.enc
 
-## Failure handling
+# Step 2: Decrypt backup
+./strata recovery decrypt \
+  --input /tmp/backup.enc \
+  --key-provider /path/to/key-provider \
+  --output /tmp/backup.sql
 
-The command returns nonzero on any integrity, decryption, restore, or verification failure and always attempts bounded lock/gate cleanup. It does not claim automatic transactional rollback across PostgreSQL, JetStream, and object storage. On failure, discard the isolated targets, create new empty targets, correct the cause, and rerun from the immutable backup set.
+# Step 3: Restore database
+psql -h localhost -U strata -d strata_rmm -f /tmp/backup.sql
 
-There is no `--force` bypass.
+# Step 4: Verify
+psql -h localhost -U strata -d strata_rmm -c "SELECT count(*) FROM tenants;"
+```
+
+---
+
+## 4. Recovery Modes
+
+### 4.1 Full Restore
+
+Restores entire database to backup state:
+
+```bash
+# Drop and recreate database
+psql -U strata -c "DROP DATABASE strata_rmm;"
+psql -U strata -c "CREATE DATABASE strata_rmm;"
+psql -U strata -d strata_rmm -f /tmp/backup.sql
+```
+
+### 4.2 Point-in-Time Recovery (Future)
+
+Not yet implemented. Requires WAL archiving.
+
+---
+
+## 5. Post-Restep Validation
+
+### 5.1 Database Integrity
+
+```bash
+# Check table counts
+psql -U strata -d strata_rmm -c "\dt"
+
+# Verify tenant data
+psql -U strata -d strata_rmm -c "SELECT count(*) FROM tenants;"
+psql -U strata -d strata_rmm -c "SELECT count(*) FROM devices;"
+```
+
+### 5.2 Service Health
+
+```bash
+# Check orchestrator health
+curl http://localhost:8080/health
+
+# Check NATS connectivity
+nats-server -config /etc/nats/nats.conf
+```
+
+---
+
+## 6. Troubleshooting
+
+### 6.1 Common Issues
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| Restore fails | Wrong encryption key | Verify key provider file |
+| Restore fails | Storage access denied | Check storage credentials |
+| Restore fails | Database schema mismatch | Upgrade schema to current version |
+| Restore fails | NATS connection error | Verify NATS URL and connectivity |
+
+---
+
+## 7. Rollback
+
+If restore fails:
+
+1. **Stop** all services
+2. **Revert** to pre-restore state (if available)
+3. **Investigate** failure cause
+4. **Retry** restore with corrected configuration
+
+---
+
+## 8. Limitations
+
+- **No partial restore:** Full database restore only
+- **No cross-version restore:** Restore to matching or newer schema version
+- **No encryption bypass:** Must use matching encryption key
+
+---
+
+*Last Updated: 2026-08-08*

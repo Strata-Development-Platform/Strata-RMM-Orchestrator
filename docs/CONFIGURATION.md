@@ -1,374 +1,306 @@
-# Production Configuration Reference
+# Strata RMM — Configuration Reference
 
-## Runtime Mode
+**Version:** 2026-08-08
+**Last Updated:** 2026-08-08
 
-`STRATA_RUNTIME_MODE` — Sets the runtime mode.
+---
 
-| Value | Behavior |
-|-------|----------|
-| `development` or `dev` (default) | Relaxed validation, development defaults |
-| `test` | Isolated test mode |
-| `production` or `prod` | Strict validation, fail-closed |
+## 1. Configuration Overview
 
-Production mode rejects:
-- Placeholder or short JWT secrets
-- `sslmode=disable` (unless explicitly overridden by policy)
-- Default database passwords
-- Wildcard CORS origins when credentials are supported
-- Public URLs without HTTPS
-- SeedDev enabled
+Configuration is loaded from environment variables at startup. The orchestrator validates all configuration and refuses to start if required values are missing or invalid.
 
-## Provider business profile
+**Loading:** `pkg/config/config.go` → `LoadOrchestratorConfig()`
+**Validation:** `OrchestratorConfig.Validate()` + `ProductionValidate()`
 
-The provider business profile is account data stored in the singleton
-`platforms` row by migration 67; it is not environment configuration and does
-not require a process restart. On first sign-in, a top-level `platform_owner` or
-`platform_admin` completes it at `/provider/setup`. After completion, the same
-roles edit it under **Settings → Platform Settings → Provider business
-profile** (`/admin/settings`). The API routes are
-`POST /api/v2/platform/provider/setup`,
-`GET /api/v2/platform/provider/profile`, and
-`PATCH /api/v2/platform/provider/profile`.
+---
 
-This is enforced by the server, not only by the browser redirect. Until setup
-is complete, an authenticated session with an effective singleton-platform
-`platform_owner` or `platform_admin` grant may call only `/api/v1/auth/me`,
-`/api/v1/auth/logout`, `/api/v2/context`, `/api/v2/context/switch`, and the
-three provider-profile routes above, with the exact methods listed in
-`docs/SECURITY_MODEL.md`. Other authenticated routes return HTTP `428` with
-code `provider_setup_required` and `setup_url: /provider/setup`. Public health
-routes remain available. The server checks `platforms.setup_completed_at` on
-each affected request, so no environment setting or restart disables or clears
-the gate.
+## 2. Environment Variables
 
-| Field | Required | Server validation |
-|---|---|---|
-| Legal business name | yes | 200 Unicode characters or fewer |
-| Display name | yes | 100 Unicode characters or fewer |
-| Primary contact name | yes | 150 Unicode characters or fewer |
-| Support email | yes | valid bare email address, 254 characters or fewer |
-| Billing email | yes | valid bare email address, 254 characters or fewer |
-| Business phone | yes | 32 characters or fewer; starts with `+` or a digit, uses supported telephone punctuation, and contains at least 7 digits |
-| Website URL | no | absolute HTTP(S) URL without embedded credentials, 2048 characters or fewer; HTTPS is required in production |
-| Address line 1 | yes | 200 Unicode characters or fewer |
-| Address line 2 | no | 200 Unicode characters or fewer |
-| City | yes | 100 Unicode characters or fewer |
-| State or province | no | 100 Unicode characters or fewer |
-| Postal code | yes | 32 Unicode characters or fewer |
-| Country | yes | supported ISO 3166-1 alpha-2 code |
-| Default timezone | yes | valid IANA timezone other than `Local`, 64 characters or fewer |
-| Default locale | yes | two- or three-letter language, optionally followed by a two-letter region or three-digit region |
-| Default currency | yes | supported ISO 4217 code |
-| Tax identifier | no | 100 Unicode characters or fewer |
+### 2.1 Core Configuration
 
-The server trims every value, requires valid UTF-8, and rejects control
-characters. It lowercases email addresses, uppercases country and currency
-codes, and normalizes locale casing. It also rejects control characters hidden
-in URL path or query escapes. Browser validation is guidance only; the Go API
-repeats the complete validation before every setup or update write. PATCH input
-may contain only editable fields, and the server validates the merged complete
-profile. Platform ID, slug, setup status, completion time/actor, and update time
-are server-owned.
+| Variable | Default | Required | Type | Description |
+|----------|---------|----------|------|-------------|
+| `STRATA_RUNTIME_MODE` | `development` | No | enum | `development`, `test`, `production` |
+| `TIMESCALE_DSN` | `postgres://localhost:5432/strata_rmm` | Yes | string | PostgreSQL/TimescaleDB connection string. Also accepts `STRATA_DB_DSN` or `DATABASE_URL` as fallback |
+| `DB_REPLICA_DSN` | — | No | string | Read replica connection string. Also accepts `TIMESCALE_REPLICA_DSN` as fallback |
+| `NATS_URL` | `nats://localhost:4222` | Yes | URL | NATS connection URL. Schemes: `nats`, `nats+tls`, `tls` |
+| `NATS_ADVERTISE_URLS` | — | No | comma-separated | Agent-reachable NATS URLs. Comma-separated list of absolute URLs |
+| `NATS_TOKEN` | — | No | secret | NATS authentication token. Also accepts `NATS_TOKEN_FILE` for file-based secret |
+| `NATS_TLS_ENABLED` | `false` | No | bool | Enable NATS TLS. Values: `true`, `false`, `yes`, `no`, `1`, `0` |
+| `NATS_TLS_CERT` | — | No | path | NATS client certificate path |
+| `NATS_TLS_KEY` | — | No | path | NATS client key path |
+| `NATS_TLS_CA` | — | No | path | NATS CA certificate path |
+| `NATS_RECONNECT_WAIT` | `5s` | No | duration | Reconnect wait interval |
+| `NATS_MAX_RECONNECTS` | `-1` | No | int | Max reconnect attempts (-1 = unlimited) |
+| `REDIS_URL` | — | No | URL | Redis connection URL. Schemes: `redis`, `rediss`, `tcp`, `tls`. Optional — only needed for token blacklisting |
+| `REDIS_POOL_SIZE` | `10` | No | int | Redis connection pool size |
+| `REDIS_MIN_IDLE_CONNS` | `2` | No | int | Redis minimum idle connections |
+| `REDIS_MAX_RETRIES` | `3` | No | int | Redis max retries |
+| `JWT_SECRET` | — | Yes | secret | JWT signing secret (HS256, min 32 characters). Also accepts `JWT_SECRET_FILE` |
+| `STRATA_METRICS_TOKEN` | — | No | secret | Prometheus metrics authentication token (min 32 characters) |
+| `STRATA_API_ADDR` | `:8080` | No | addr | HTTP API listen address |
+| `STRATA_TUNNEL_ADDR` | — | No | addr | Raw tunnel gateway address (not production-safe) |
+| `STRATA_PUBLIC_URL` | — | No | URL | Public-facing base URL (HTTPS in production). Used for SMTP links |
+| `CORS_ORIGINS` | — | No | comma-separated | CORS allowed origins. Wildcard (`*`) rejected in production |
 
-The display name is exposed in authenticated workspace context for navigation
-and headings. The full profile, including the tax identifier and contact
-details, is returned only by the provider-profile API to an authorized
-top-level platform owner or administrator. Audit records contain the setup
-schema version or changed field names, not profile values.
+### 2.2 Database Configuration
 
-## SMTP account mailer and owner lifecycle
+| Variable | Default | Required | Type | Description |
+|----------|---------|----------|------|-------------|
+| `DB_MAX_OPEN_CONNS` | `25` | No | int | Max open PostgreSQL connections |
+| `DB_MAX_IDLE_CONNS` | `5` | No | int | Min idle PostgreSQL connections (must be ≤ MaxOpenConns) |
+| `DB_CONN_MAX_LIFETIME` | `5m` | No | duration | Connection max lifetime |
 
-SMTP is optional, but it is the only implemented delivery path for MSP owner
-activation links. If any `STRATA_SMTP_*` setting is present, host, port, and
-sender must form a complete configuration; username and password must either
-both be present or both be absent. The orchestrator validates this at startup.
+### 2.3 Object Storage
 
-| Setting | Purpose |
-|---|---|
-| `STRATA_SMTP_HOST` | SMTP server host name or address. It is also used for TLS certificate verification. |
-| `STRATA_SMTP_PORT` | SMTP TCP port, from 1 through 65535. |
-| `STRATA_SMTP_FROM` | Valid envelope and message sender email address. |
-| `STRATA_SMTP_USERNAME` / `STRATA_SMTP_USERNAME_FILE` | Optional SMTP username, supplied directly or from a protected file, never both. |
-| `STRATA_SMTP_PASSWORD` / `STRATA_SMTP_PASSWORD_FILE` | Password paired with the username. Prefer a protected file. |
-| `STRATA_SMTP_IMPLICIT_TLS` | `false` (default) connects and requires STARTTLS before authentication; `true` performs implicit TLS immediately. |
-| `STRATA_PUBLIC_URL` | Absolute public web-console origin used to construct `https://host/activate-account#<token>`. SMTP requires it in every mode; production also requires HTTPS. Paths, credentials, query strings, and fragments are rejected. |
+| Variable | Default | Required | Type | Description |
+|----------|---------|----------|------|-------------|
+| `STORAGE_BACKEND` | `local` | No | string | Storage backend: `local`, `minio`, `s3`. `none` disables storage |
+| `STORAGE_BUCKET` | `strata-recordings` | No | string | Object storage bucket name |
+| `STORAGE_REGION` | — | No | string | Storage region |
+| `STORAGE_ENDPOINT` | — | No | string | Custom endpoint URL |
+| `STORAGE_ACCESS_KEY` | — | No | secret | Storage access key. Also accepts `STORAGE_ACCESS_KEY_FILE` |
+| `STORAGE_SECRET_KEY` | — | No | secret | Storage secret key. Also accepts `STORAGE_SECRET_KEY_FILE` |
+| `STORAGE_USE_SSL` | — | No | bool | Use SSL for storage connections |
+| `STORAGE_KMS_KEY_ID` | — | No | string | KMS key ID for SSE-KMS encryption |
 
-Both SMTP modes require TLS 1.2 or newer. STARTTLS mode fails closed if the
-server does not advertise STARTTLS, and implicit mode completes the TLS
-handshake before sending SMTP commands or credentials. Plaintext SMTP is not
-supported. `_FILE` values must name an absolute canonical regular file no
-larger than 16 KiB; one trailing newline is removed. Do not set both the direct
-variable and its `_FILE` variant.
+### 2.4 JetStream Configuration
 
-### Alert notification delivery
+| Variable | Default | Required | Type | Description |
+|----------|---------|----------|------|-------------|
+| `JS_MAX_MEMORY_STORE` | `2GB` | No | size | JetStream max memory store |
+| `JS_MAX_FILE_STORE` | `50GB` | No | size | JetStream max file store |
+| `JS_STORAGE_PATH` | `/var/lib/strata/jetstream` | No | path | JetStream file storage path |
+| `JS_NUM_REPLICAS` | `1` | No | int | JetStream stream replicas |
 
-Alert rules may select `slack`, `webhook`, `email`, `teams`, and `pagerduty`.
-Only configured channels are enabled. Webhook destinations must use HTTPS and
-delivery rejects non-2xx responses. Email reuses the TLS-only SMTP transport
-above and requires at least one configured recipient.
+### 2.5 SMTP / Email
 
-| Setting | Purpose |
-|---|---|
-| `STRATA_ALERT_SLACK_URL` / `STRATA_ALERT_SLACK_URL_FILE` | Slack incoming-webhook URL. |
-| `STRATA_ALERT_TEAMS_URL` / `STRATA_ALERT_TEAMS_URL_FILE` | Microsoft Teams workflow/webhook URL. |
-| `STRATA_ALERT_WEBHOOK_URL` / `STRATA_ALERT_WEBHOOK_URL_FILE` | Generic JSON webhook URL. |
-| `STRATA_ALERT_PAGERDUTY_KEY` / `STRATA_ALERT_PAGERDUTY_KEY_FILE` | PagerDuty Events API v2 routing key. |
-| `STRATA_ALERT_EMAIL_RECIPIENTS` | Comma-separated SMTP recipients. Requires the complete `STRATA_SMTP_*` configuration. |
+| Variable | Default | Required | Type | Description |
+|----------|---------|----------|------|-------------|
+| `STRATA_SMTP_HOST` | — | No | string | SMTP host |
+| `STRATA_SMTP_PORT` | `0` | No | int | SMTP port (1-65535) |
+| `STRATA_SMTP_USERNAME` | — | No | secret | SMTP username. Must be paired with password |
+| `STRATA_SMTP_PASSWORD` | — | No | secret | SMTP password. Must be paired with username |
+| `STRATA_SMTP_FROM` | — | No | string | SMTP from address (RFC 5322) |
+| `STRATA_SMTP_IMPLICIT_TLS` | `false` | No | bool | Use implicit TLS (SMTPS) |
 
-Secrets should use the `_FILE` forms. If a rule selects a channel that is not
-configured, the alert remains persisted and published, and the orchestrator
-records a delivery error rather than reporting false success.
+### 2.6 Alert Delivery
 
-Example using protected credentials:
+| Variable | Default | Required | Type | Description |
+|----------|---------|----------|------|-------------|
+| `STRATA_ALERT_SLACK_URL` | — | No | secret | Slack webhook URL (HTTPS, no credentials) |
+| `STRATA_ALERT_TEAMS_URL` | — | No | secret | Teams webhook URL (HTTPS, no credentials) |
+| `STRATA_ALERT_WEBHOOK_URL` | — | No | secret | Generic webhook URL (HTTPS, no credentials) |
+| `STRATA_ALERT_PAGERDUTY_KEY` | — | No | secret | PagerDuty integration key |
+| `STRATA_ALERT_EMAIL_RECIPIENTS` | — | No | comma-separated | Comma-separated email recipients. Requires SMTP configured |
 
+### 2.7 Seeding
+
+| Variable | Default | Required | Type | Description |
+|----------|---------|----------|------|-------------|
+| `STRATA_SEED_DEV` | `false` | No | bool | Seed dev tenant on startup (rejected in production) |
+| `STRATA_DEV_ADMIN_EMAIL` | — | No | string | Dev admin email address |
+| `STRATA_DEV_ADMIN_PASSWORD_HASH` | — | No | string | Dev admin password hash |
+
+### 2.8 Backup Configuration
+
+| Variable | Default | Required | Type | Description |
+|----------|---------|----------|------|-------------|
+| `STRATA_BACKUP_ENABLED` | `false` | No | bool | Enable backup engine |
+| `STRATA_BACKUP_ENVIRONMENT_ID` | — | No | string | Environment identifier (required if enabled) |
+| `STRATA_BACKUP_DATABASE_TYPE` | `timescaledb` | No | string | Database type: `postgresql`, `timescaledb` |
+| `STRATA_BACKUP_DIRECTORY` | — | No | path | Backup directory (for filesystem repository) |
+| `STRATA_BACKUP_ENCRYPTION_SCHEME` | `aes-256-gcm` | No | string | Encryption scheme: only `aes-256-gcm` allowed |
+| `STRATA_BACKUP_REPOSITORY_TYPE` | `filesystem` | No | string | Backup repository: `filesystem`, `s3` |
+| `STRATA_BACKUP_EXTERNAL_BUCKET` | — | No | string | S3 backup bucket |
+| `STRATA_BACKUP_EXTERNAL_REGION` | — | No | string | S3 backup region |
+| `STRATA_BACKUP_EXTERNAL_ENDPOINT` | — | No | string | S3 backup endpoint |
+| `STRATA_BACKUP_EXTERNAL_ACCESS_KEY` | — | No | secret | S3 backup access key |
+| `STRATA_BACKUP_EXTERNAL_SECRET_KEY` | — | No | secret | S3 backup secret key |
+| `STRATA_BACKUP_KEY_PROVIDER_PATH` | — | No | path | Key provider path (required if enabled) |
+| `STRATA_RECOVERY_STORAGE_BACKEND` | — | No | string | Recovery storage backend: `local`, `minio`, `s3` |
+| `STRATA_RECOVERY_STORAGE_BUCKET` | — | No | string | Recovery storage bucket |
+| `STRATA_RECOVERY_STORAGE_REGION` | — | No | string | Recovery storage region |
+| `STRATA_RECOVERY_STORAGE_ENDPOINT` | — | No | string | Recovery storage endpoint |
+| `STRATA_RECOVERY_STORAGE_ACCESS_KEY` | — | No | secret | Recovery storage access key |
+| `STRATA_RECOVERY_STORAGE_SECRET_KEY` | — | No | secret | Recovery storage secret key |
+| `STRATA_RECOVERY_STORAGE_USE_SSL` | `false` | No | bool | Use SSL for recovery storage |
+| `STRATA_RECOVERY_NATS_URL` | — | No | URL | Recovery NATS URL |
+| `STRATA_RECOVERY_NATS_TOKEN` | — | No | secret | Recovery NATS token |
+| `STRATA_RECOVERY_NATS_TLS_CA` | — | No | path | Recovery NATS CA certificate |
+| `STRATA_RECOVERY_NATS_TLS_CERT` | — | No | path | Recovery NATS client certificate |
+| `STRATA_RECOVERY_NATS_TLS_KEY` | — | No | path | Recovery NATS client key |
+
+---
+
+## 3. Secret File Support
+
+Many secret variables support file-based secrets via `{VARIABLE}_FILE`. This enables K8s Secret mounts, Docker secrets, etc.
+
+**Example:**
 ```bash
-STRATA_PUBLIC_URL=https://rmm.example.com
-STRATA_SMTP_HOST=smtp.example.com
-STRATA_SMTP_PORT=587
-STRATA_SMTP_FROM=accounts@example.com
-STRATA_SMTP_USERNAME_FILE=/run/secrets/smtp_username
-STRATA_SMTP_PASSWORD_FILE=/run/secrets/smtp_password
-STRATA_SMTP_IMPLICIT_TLS=false
+# Direct secret
+JWT_SECRET=your-32-char-secret-here
+
+# File-based secret (K8s Secret mount)
+JWT_SECRET_FILE=/run/secrets/jwt-secret
 ```
 
-A top-level platform owner or administrator creates an MSP with an owner email.
-Creation commits an inactive `pending_owner` MSP, a suspended entitlement, and
-a 72-hour invitation before attempting delivery. Delivery is reported as
-`delivered`, `failed`, `unconfigured`, or, when delivery-state persistence
-cannot be confirmed, `pending`; SMTP acceptance does not prove inbox receipt.
-The raw invitation token is delivered only by email and is never returned by
-the API.
+**Validation:**
+- File path must be absolute and canonical (no relative paths, no traversal)
+- File must be a regular file
+- File size must not exceed 16 KiB
+- File must not be empty
+- Direct and file modes are mutually exclusive
 
-Acceptance verifies possession of the invited mailbox, creates the first
-`msp_owner`, and changes both the MSP onboarding state and entitlement to
-active in one transaction. It does not sign the owner in. Pending MSPs cannot
-resolve by host or be selected as a workspace. Resend is available for a
-failed, unconfigured, pending, or expired invitation; it revokes the previous
-row and creates a new token. A valid invitation already marked delivered
-returns a conflict instead of rotating.
+**Supported variables with `_FILE` suffix:**
+- `NATS_TOKEN_FILE`
+- `JWT_SECRET_FILE`
+- `STORAGE_ACCESS_KEY_FILE`
+- `STORAGE_SECRET_KEY_FILE`
+- `STRATA_SMTP_USERNAME_FILE`
+- `STRATA_SMTP_PASSWORD_FILE`
+- `STRATA_ALERT_SLACK_URL_FILE`
+- `STRATA_ALERT_TEAMS_URL_FILE`
+- `STRATA_ALERT_WEBHOOK_URL_FILE`
+- `STRATA_ALERT_PAGERDUTY_KEY_FILE`
+- `STRATA_BACKUP_EXTERNAL_ACCESS_KEY_FILE`
+- `STRATA_BACKUP_EXTERNAL_SECRET_KEY_FILE`
 
-Migration 68 also makes normalized email uniqueness global, permits
-tenant-neutral identities by making legacy `users.tenant_id` nullable, and
-requires `email_verified_at` for login. Existing active users are backfilled as
-verified during the migration; newly invited MSP owners become verified only
-on successful acceptance. This flow is provider-approved onboarding, not open
-sign-up, MFA, password recovery, billing, or a refresh-token redesign.
+---
 
-## Scoped user provisioning
+## 4. Validation Rules
 
-User provisioning is account data and requires no new environment setting.
-Top-level platform administrators select explicit membership scope(s) and roles
-in the User Management console. The backend also permits an authorized
-selected-scope manager to use the scoped API directly; the current console
-route itself remains platform-only. The API no longer treats legacy
-`tenant_ids` plus `users.role` as an authorization grant:
+### 4.1 General Validation
 
-- `POST /api/v1/admin/users` accepts either one complete
-  `scope_type`/`scope_id`/`role` tuple or a `memberships` array;
-- `PUT /api/v1/admin/users/{userID}/memberships` replaces the memberships the
-  current selected-scope manager is authorized to manage; and
-- `PUT /api/v1/admin/users/{userID}/tenants` remains a compatibility route name
-  but accepts the same explicit `memberships` body and has the same behavior.
+| Rule | Details |
+|------|---------|
+| `DB.MaxIdleConns ≤ DB.MaxOpenConns` | Must not exceed open connections |
+| `DB.MaxIdleConns ≥ 0` | Must be non-negative |
+| `JWT.Secret ≥ 32 chars` | Min 32 characters for HS256 |
+| `STRATA_METRICS_TOKEN ≥ 32 chars` | Min 32 characters when set |
+| `SMTP.Port 1-65535` | Valid port range |
+| `SMTP.FromAddress` | RFC 5322 valid email |
+| `SMTP.Username + Password` | Must be configured together |
+| `SMTP configured → Email recipients` | Requires SMTP |
+| `SMTP configured → PublicURL` | Required for SMTP links |
+| `Alert URL` | Must be absolute HTTPS without credentials |
 
-Each request must contain 1–100 memberships, with no duplicate scope. Scope IDs
-must be UUIDs for active hierarchy rows, roles must be legal at that scope, and
-the actor cannot assign outside the selected scope or escalate above its
-authority. Creation passwords are 12–72 bytes. User, memberships, compatibility
-mirrors, and audit evidence commit together. `memberships` is authoritative;
-`users.role`, `users.tenant_id`, and `user_tenant_access` are compatibility
-mirrors only. Membership replacement locks the target user and changes only
-memberships the actor may manage in the selected scope; concurrent requests are
-serialized and unrelated memberships are preserved.
+### 4.2 Production Validation (`ProductionValidate()`)
 
-## Exhaustive Configuration Inventory
+Additional rules when `STRATA_RUNTIME_MODE=production`:
 
-### Orchestrator Settings (Environment / CLI)
+| Rule | Details |
+|------|---------|
+| `HTTP.PublicURL` | Required, must be HTTPS |
+| `CORS origins` | No wildcard (`*`) |
+| `NATS.TLS` | TLS required |
+| `NATS.TLSCA` | CA file required |
+| `NATS auth` | Token or mTLS certificate required |
+| `NATS.AdvertiseURLs` | At least one URL required |
+| `NATS.AdvertiseURLs` | Must be absolute `tls://` or `nats+tls://` URLs |
+| `NATS.AdvertiseURLs` | No localhost, no loopback, no container-local hosts |
+| `DB.DSN` | No `sslmode=disable` |
+| `DB.DSN` | No default passwords (password, postgres, strata) |
+| `JWT.Secret` | No `dev-` or `test-` prefix |
+| `TunnelAddr` | Not allowed in production |
+| `STRATA_SEED_DEV` | Rejected in production |
 
-| Canonical Name | Aliases | CLI Flag | Type | Default | Dev Req | Prod Req | Sensitive | Validation | Consumer | Precedence | Reload | Deprecation |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| `STRATA_RUNTIME_MODE` | — | — | string | `development` | no | yes | no | must be dev/test/prod | startup | env > default | no | — |
-| `NATS_URL` | — | `--nats-url` | string | `nats://localhost:4222` | no | yes | no | URL scheme nats/nats+tls/tls | nats connection | flag > env > default | no | — |
-| `NATS_ADVERTISE_URLS` | — | — | comma-separated URLs | — | no | yes | no | production requires agent-reachable `tls://` or `nats+tls://` URLs | agent registration response | env | no | — |
-| `NATS_TOKEN` | — | — | string | — | no | conditional | yes | — | nats auth | env | no | — |
-| `NATS_TLS_ENABLED` | — | — | bool | `false` | no | no | no | strict boolean | nats tls | env > default | no | — |
-| `NATS_TLS_CERT` | — | — | string | — | no | conditional | no | required if TLS enabled | nats tls | env | no | — |
-| `NATS_TLS_KEY` | — | — | string | — | no | conditional | yes | required if TLS enabled | nats tls | env | no | — |
-| `NATS_TLS_CA` | — | — | string | — | no | no | no | — | nats tls | env | no | — |
-| `NATS_RECONNECT_WAIT` | — | — | duration | `5s` | no | no | no | must be positive | nats reconnect | env > default | no | — |
-| `NATS_MAX_RECONNECTS` | — | — | int | `-1` | no | no | no | valid integer | nats reconnect | env > default | no | — |
-| `TIMESCALE_DSN` | `STRATA_DB_DSN`, `DATABASE_URL` | `--timescale-dsn` | string | `postgres://localhost:5432/strata_rmm?sslmode=disable` | no | yes | yes | valid URL with host + db name; prod rejects sslmode=disable and default passwords | database pool | flag > env (TIMESCALE_DSN > STRATA_DB_DSN > DATABASE_URL) > default | no | `STRATA_DB_DSN` and `DATABASE_URL` are legacy aliases |
-| `DB_MAX_OPEN_CONNS` | — | — | int | `25` | no | no | no | must be positive | database pool | env > default | no | — |
-| `DB_MAX_IDLE_CONNS` | — | — | int | `5` | no | no | no | must be non-negative and ≤ MaxOpenConns | database pool | env > default | no | — |
-| `DB_CONN_MAX_LIFETIME` | — | — | duration | `5m` | no | no | no | must be positive | database pool | env > default | no | — |
-| `STORAGE_BACKEND` | — | `--storage-backend` | string | `local` | no | no | no | bucket required if backend ≠ local/none | storage backend | flag > env > default | no | — |
-| `STORAGE_BUCKET` | — | `--storage-bucket` | string | `strata-recordings` | no | conditional | no | required if backend set | storage backend | flag > env > default | no | — |
-| `STORAGE_REGION` | — | `--storage-region` | string | — | no | conditional | no | — | storage backend | flag > env | no | — |
-| `STORAGE_ENDPOINT` | — | `--storage-endpoint` | string | — | no | conditional | no | — | storage backend | flag > env | no | — |
-| `STORAGE_ACCESS_KEY` | `STORAGE_ACCESS_KEY_FILE` | — | string | — | no | conditional | yes | — | storage backend | env/file | no | — |
-| `STORAGE_SECRET_KEY` | `STORAGE_SECRET_KEY_FILE` | — | string | — | no | conditional | yes | — | storage backend | env/file | no | — |
-| `STORAGE_USE_SSL` | — | — | bool | `false` | no | no | no | strict boolean | storage backend | env > default | no | — |
-| `STORAGE_KMS_KEY_ID` | — | — | string | — | no | no | yes | — | encryption | env | no | — |
-| `JWT_SECRET` | — | — | string | — | yes | yes | yes | min 32 chars; prod rejects dev-/test- prefix | JWT auth | env | no (SIGUSR1 planned) | — |
-| `JWT_SECRET_PREVIOUS` | — | — | string | — | no | rotation only | yes | empty or min 32 chars; must differ from current secret | JWT verification during a bounded rotation overlap | env | process restart | remove after the maximum token lifetime |
-| `STRATA_API_ADDR` | `API_ADDR` | `--api-addr` | string | `:8080` | no | no | no | — | API server | flag > env (STRATA_API_ADDR > API_ADDR) > default | no | `API_ADDR` is legacy |
-| `STRATA_TUNNEL_ADDR` | `TUNNEL_ADDR` | `--tunnel-addr` | string | — | no | **prohibited** | no | production rejects the unauthenticated raw TCP gateway | development-only tunnel server | flag > env (STRATA_TUNNEL_ADDR > TUNNEL_ADDR) | no | `TUNNEL_ADDR` is legacy; authenticated TLS replacement required |
-| `STRATA_PUBLIC_URL` | — | — | string | — | no | yes | no | production requires HTTPS; SMTP requires an absolute HTTP(S) origin with no credentials, path, query, or fragment | CORS / public access / owner activation links | env | process restart | — |
-| `CORS_ORIGINS` | — | — | comma-separated | — | no | yes | no | prod rejects wildcard `*` | CORS middleware | env | no | — |
-| `HTTP_READ_TIMEOUT` | — | — | duration | `10s` | no | no | no | must be positive | HTTP server | env > default | no | — |
-| `HTTP_WRITE_TIMEOUT` | — | — | duration | `10s` | no | no | no | must be positive | HTTP server | env > default | no | — |
-| `HTTP_IDLE_TIMEOUT` | — | — | duration | `60s` | no | no | no | must be positive | HTTP server | env > default | no | — |
-| `HTTP_MAX_BODY_SIZE` | — | — | int64 | `10485760` (10 MB) | no | no | no | must be positive | HTTP server | env > default | no | — |
-| `STRATA_METRICS_TOKEN` | — | — | string | — | no | yes | yes | minimum 32 characters; endpoint disabled when absent | `/metrics` bearer authentication | env | no | — |
-| `STRATA_METRICS_TOKEN_FILE` | — | — | path | — | compose | compose | sensitive location | readable file containing the same token | Prometheus scrape authentication | compose interpolation | container restart | — |
-| `STRATA_SMTP_HOST` | — | — | string | — | no | conditional | no | required when any SMTP setting is present | account invitation mail | env | process restart | TLS is always required |
-| `STRATA_SMTP_PORT` | — | — | int | — | no | conditional | no | 1-65535 | account invitation mail | env | process restart | — |
-| `STRATA_SMTP_FROM` | — | — | email | — | no | conditional | no | valid sender address | account invitation mail | env | process restart | — |
-| `STRATA_SMTP_USERNAME` | — | — | string | — | no | conditional | yes | must be paired with password; alternatively use `STRATA_SMTP_USERNAME_FILE` | SMTP authentication | env / protected file | process restart | — |
-| `STRATA_SMTP_PASSWORD` | — | — | string | — | no | conditional | yes | must be paired with username; alternatively use `STRATA_SMTP_PASSWORD_FILE` | SMTP authentication | env / protected file | process restart | prefer `STRATA_SMTP_PASSWORD_FILE` |
-| `STRATA_SMTP_IMPLICIT_TLS` | — | — | bool | `false` | no | no | no | strict boolean; false requires STARTTLS | SMTP transport | env > default | process restart | plaintext delivery is never allowed |
-| `STRATA_SEED_DEV` | — | — | bool | `false` | no | no (must be false) | no | must be false in production | dev seeding | env > default | no | — |
-| `STRATA_DEV_ADMIN_EMAIL` | — | — | string | — | no | no | no | — | dev seeding | env | no | — |
-| `STRATA_DEV_ADMIN_PASSWORD_HASH` | — | — | string | — | no | no | yes | — | dev seeding | env | no | — |
+### 4.3 Storage Validation
 
-### Orchestrator — Hardcoded JWT (Deferred to Phase 8G)
+| Rule | Details |
+|------|---------|
+| `STORAGE_BACKEND` | Required if not `none` or empty |
+| `STORAGE_BUCKET` | Required when backend is set |
+| `STORAGE_REPOSITORY_TYPE` | Must be `filesystem` or `s3` |
+| `STRATA_BACKUP_ENCRYPTION_SCHEME` | Only `aes-256-gcm` allowed |
 
-These values are compiled-in constants. They will become configurable in Phase 8G.
+---
 
-| Canonical Name | Aliases | CLI Flag | Type | Default | Dev Req | Prod Req | Sensitive | Validation | Consumer | Precedence | Reload | Deprecation |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| `JWT_ISSUER` | — | — | string | `strata-rmm` | no | no | no | — | JWT auth | hardcoded | no | deferred to 8G |
-| `JWT_AUDIENCE` | — | — | string | `strata-rmm-api` | no | no | no | — | JWT auth | hardcoded | no | deferred to 8G |
-| `JWT_TOKEN_DURATION` | — | — | duration | `24h` | no | no | no | must be positive | JWT auth | hardcoded | no | deferred to 8G |
+## 5. Configuration Summary (Redacted)
 
-### Backup and isolated recovery
+`OrchestratorConfig.RedactedSummary()` returns a redacted view for logging:
 
-All values are loaded at process start and are not reloadable. Restore target settings are consumed only by `orchestrator recovery restore`.
+```go
+map[string]interface{}{
+    "runtime_mode":             "production",
+    "nats_url":                 "tls://nats.example.com:4222",
+    "nats_tls":                 true,
+    "db_dsn":                   "postgres://user:***@db.example.com:5432/strata_rmm",
+    "db_pool_max":              25,
+    "db_pool_idle":             5,
+    "redis_url":                "rediss://redis.example.com:6380",
+    "redis_pool_size":          10,
+    "js_memory_store":          "2GB",
+    "js_file_store":            "50GB",
+    "js_storage_path":          "/var/lib/strata/jetstream",
+    "js_replicas":              1,
+    "storage_type":             "s3",
+    "storage_bucket":           "strata-recordings",
+    "api_addr":                 ":8080",
+    "tunnel_addr":              "",
+    "public_url":               "https://strata.example.com",
+    "cors_origins":             ["https://app.strata.example.com"],
+    "jwt_configured":           true,
+    "metrics_token_configured": true,
+    "smtp_configured":          true,
+    "alert_delivery_channels":  4,
+    "seed_dev":                 false,
+}
+```
 
-| Canonical Name | Aliases | CLI Flag | Type | Default | Dev Req | Prod Req | Sensitive | Validation | Consumer | Precedence | Reload | Deprecation |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| `STRATA_BACKUP_ENABLED` | — | — | bool | `false` | no | conditional | no | strict bool; enables required-field validation | startup config | env > default | no | — |
-| `STRATA_BACKUP_ENVIRONMENT_ID` | — | — | string | — | conditional | conditional | no | required when enabled and by backup/recovery CLI | manifest identity | env | no | — |
-| `STRATA_BACKUP_KEY_PROVIDER_PATH` | — | — | path | — | conditional | yes | sensitive location | active key required except `key-init` | file key provider | env | no | — |
-| `STRATA_BACKUP_REPOSITORY_TYPE` | — | — | enum | `filesystem` | no | yes | no | `filesystem` or `s3` | repository factory | env > default | no | — |
-| `STRATA_BACKUP_DIRECTORY` | — | — | path | — | no | conditional | no | writable, independently mounted for DR | filesystem repository | environment only | no | — |
-| `STRATA_BACKUP_EXTERNAL_BUCKET` | — | — | string | — | no | conditional | no | required for S3 repository | S3 repository | env | no | — |
-| `STRATA_BACKUP_EXTERNAL_REGION` | — | — | string | — | no | conditional | no | required for S3 repository | S3 repository | env | no | — |
-| `STRATA_BACKUP_EXTERNAL_ENDPOINT` | — | — | URL | AWS default | no | no | no | valid S3-compatible endpoint | S3 repository | env | no | — |
-| `STRATA_BACKUP_EXTERNAL_ACCESS_KEY` | — | — | string | — | no | conditional | yes | required for S3 repository | S3 credentials | env | no | — |
-| `STRATA_BACKUP_EXTERNAL_SECRET_KEY` | — | — | string | — | no | conditional | yes | required for S3 repository | S3 credentials | env | no | — |
-| `STRATA_BACKUP_DATABASE_TYPE` | — | `--database-type` | enum | `timescaledb` | no | no | no | `postgresql` or `timescaledb` | backup CLI | flag > env > default | no | — |
-| `STRATA_BACKUP_ENCRYPTION_SCHEME` | — | — | enum | `aes-256-gcm` | no | yes | no | only `aes-256-gcm` | recovery envelope | env > default | no | — |
-| `STRATA_RECOVERY_NATS_URL` | — | — | URL | — | no | restore | no | required and distinct from source | recovery NATS client | env | no | — |
-| `STRATA_RECOVERY_NATS_TOKEN` | — | — | string | — | no | conditional | yes | production auth policy | recovery NATS client | env | no | — |
-| `STRATA_RECOVERY_NATS_TLS_CA` | — | — | path | — | no | restore | no | valid CA material | recovery NATS TLS | env | no | — |
-| `STRATA_RECOVERY_NATS_TLS_CERT` | — | — | path | — | no | conditional | no | cert/key pair | recovery NATS mTLS | env | no | — |
-| `STRATA_RECOVERY_NATS_TLS_KEY` | — | — | path | — | no | conditional | yes | cert/key pair | recovery NATS mTLS | env | no | — |
-| `STRATA_RECOVERY_STORAGE_BACKEND` | — | — | enum | — | no | conditional | no | required when source storage is enabled | recovery storage factory | env | no | — |
-| `STRATA_RECOVERY_STORAGE_BUCKET` | — | — | string/path | — | no | conditional | no | required and distinct from source | recovery storage target | env | no | — |
-| `STRATA_RECOVERY_STORAGE_REGION` | — | — | string | — | no | conditional | no | backend-specific | recovery storage target | env | no | — |
-| `STRATA_RECOVERY_STORAGE_ENDPOINT` | — | — | string | — | no | conditional | no | backend-specific; distinct target | recovery storage target | env | no | — |
-| `STRATA_RECOVERY_STORAGE_ACCESS_KEY` | — | — | string | — | no | conditional | yes | backend-specific | recovery storage credentials | env | no | — |
-| `STRATA_RECOVERY_STORAGE_SECRET_KEY` | — | — | string | — | no | conditional | yes | backend-specific | recovery storage credentials | env | no | — |
-| `STRATA_RECOVERY_STORAGE_USE_SSL` | — | — | bool | `false` | no | conditional | no | strict bool | recovery storage transport | env > default | no | — |
+---
 
-See `docs/BACKUP.md`, `docs/RESTORE.md`, and `docs/DISASTER_RECOVERY.md`.
+## 6. Quick Start Configuration
 
-### Agent Settings (YAML Config File)
+### 6.1 Development
 
-The agent reads `agent.yaml` (default path: `~/.strata-rmm/agent.yaml` or `STRATA_RMM_DATA_DIR/agent.yaml`).
+```bash
+export STRATA_RUNTIME_MODE=development
+export JWT_SECRET=dev-secret-that-is-at-least-32-chars-long
+# Default DSN: postgres://localhost:5432/strata_rmm
+# Default NATS: nats://localhost:4222
+```
 
-| Canonical Name | Aliases | CLI Flag | Type | Default | Dev Req | Prod Req | Sensitive | Validation | Consumer | Precedence | Reload | Deprecation |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| `agent.tenant_id` | — | `--tenant-id` | string | — | yes | yes | no | required | agent identity | flag > config-file | no | — |
-| `agent.agent_id` | — | — | string | auto-generated | no | no | no | — | agent identity | config-file | no | — |
-| `agent.deployment_id` | — | `--deployment-id` | string | — | conditional | conditional | no | — | agent enrollment | flag > config-file | no | — |
-| `agent.enrollment_token` | — | `--enrollment-token` | string | — | conditional | conditional | yes | — | agent enrollment | flag > config-file | no | — |
-| `agent.register_url` | — | — | string | — | no | no | no | — | agent registration | config-file | no | — |
-| `agent.log_level` | — | `-v` / `--verbose` | string | `info` | no | no | no | debug/info/warn/error | agent logging | flag > config-file > default | no (SIGUSR1 planned) | — |
-| `agent.data_dir` | — | `--data-dir` | string | `~/.strata-rmm` | no | no | no | writable path | agent storage | flag > env > config-file > default | no | — |
-| `agent.tags` | — | — | map | — | no | no | no | — | agent metadata | config-file | no | — |
-| `nats.urls` | — | `--nats-url` | []string | `[nats://localhost:4222]` | no | yes | no | required | agent nats | flag > config-file > default | no | — |
-| `nats.token` | — | — | string | — | no | conditional | yes | — | agent nats auth | config-file | no | — |
-| `nats.cert_file` | — | — | string | — | no | conditional | no | — | agent nats tls | config-file | no | — |
-| `nats.key_file` | — | — | string | — | no | conditional | yes | — | agent nats tls | config-file | no | — |
-| `nats.ca_file` | — | — | string | — | no | no | no | — | agent nats tls | config-file | no | — |
-| `nats.reconnect_wait` | — | — | duration | `5s` | no | no | no | — | agent nats reconnect | config-file > default | no | — |
-| `nats.max_reconnects` | — | — | int | `-1` | no | no | no | — | agent nats reconnect | config-file > default | no | — |
-| `collect.interval` | — | — | duration | `60s` | no | no | no | must be ≥ 1s | agent collector | config-file > default | no | — |
-| `collect.enable_system` | — | — | bool | `true` | no | no | no | — | agent collector | config-file > default | no | — |
-| `collect.enable_hardware` | — | — | bool | `true` | no | no | no | — | agent collector | config-file > default | no | — |
-| `collect.enable_software` | — | — | bool | `true` | no | no | no | — | agent collector | config-file > default | no | — |
-| `collect.enable_network` | — | — | bool | `true` | no | no | no | — | agent collector | config-file > default | no | — |
-| `collect.enable_services` | — | — | bool | `true` | no | no | no | — | agent collector | config-file > default | no | — |
-| `store.type` | — | — | string | `bbolt` | no | no | no | — | agent local store | config-file > default | no | — |
-| `store.path` | — | — | string | `~/.strata-rmm/agent.db` | no | no | no | writable path | agent local store | config-file > default | no | — |
-| `store.queue_max_items` | — | — | integer | `10000` | no | no | no | greater than zero | combined offline metric/event queue limit | config-file > default | no | new samples are rejected when full |
-| `update.enabled` | — | — | bool | `true` | no | no | no | — | agent auto-update | config-file > default | no | — |
-| `update.check_interval` | — | — | duration | `24h` | no | no | no | — | agent auto-update | config-file > default | no | — |
-| `update.channel` | — | — | string | `stable` | no | no | no | — | agent auto-update | config-file > default | no | — |
-| `update.manifest_url` | `STRATA_MANIFEST_URL` | — | string | `https://releases.example.com` | no | no | no | valid URL | agent auto-update | env > config-file > default | no | — |
-| `update.verify_key` | — | — | string | — | no | no | yes | — | agent auto-update | config-file | no | — |
+### 6.2 Docker Compose (Development)
 
-### Agent — Environment Variable Override
+```yaml
+services:
+  orchestrator:
+    image: strata-rmm/orchestrator:latest
+    environment:
+      STRATA_RUNTIME_MODE: development
+      JWT_SECRET: dev-secret-that-is-at-least-32-chars-long
+      STRATA_SEED_DEV: "true"
+      STRATA_DEV_ADMIN_EMAIL: admin@localhost
+      STRATA_DEV_ADMIN_PASSWORD_HASH: hash
+    ports:
+      - "8080:8080"
+    depends_on:
+      - nats
+      - postgres
+```
 
-| Canonical Name | Aliases | CLI Flag | Type | Default | Dev Req | Prod Req | Sensitive | Validation | Consumer | Precedence | Reload | Deprecation |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| `STRATA_RMM_DATA_DIR` | — | `--data-dir` | string | `~/.strata-rmm` | no | no | no | writable path | agent data dir | flag > env > default | no | — |
+### 6.3 Production
 
-### Probe Settings (CLI + Hardcoded Config)
+```bash
+export STRATA_RUNTIME_MODE=production
+export STRATA_PUBLIC_URL=https://strata.example.com
+export JWT_SECRET=production-secret-at-least-32-characters
+export NATS_URL=nats+tls://nats.example.com:443
+export NATS_TLS_ENABLED=true
+export NATS_TLS_CA=/run/secrets/nats-ca.crt
+export NATS_TOKEN_FILE=/run/secrets/nats-token
+export NATS_ADVERTISE_URLS=tls://nats1.example.com:4222,tls://nats2.example.com:4222
+export TIMESCALE_DSN=postgres://user:***@db.example.com:5432/strata_rmm?sslmode=require
+export STORAGE_BACKEND=s3
+export STORAGE_BUCKET=strata-recordings
+export STORAGE_ENDPOINT=https://s3.amazonaws.com
+export STORAGE_ACCESS_KEY_FILE=/run/secrets/s3-access-key
+export STORAGE_SECRET_KEY_FILE=/run/secrets/s3-secret-key
+export STRATA_METRICS_TOKEN=metrics-token-at-least-32-chars
+```
 
-| Canonical Name | Aliases | CLI Flag | Type | Default | Dev Req | Prod Req | Sensitive | Validation | Consumer | Precedence | Reload | Deprecation |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| `probe.tenant_id` | — | `--tenant-id` | string | — | yes | yes | no | required | probe identity | flag | no | — |
-| `probe.nats_url` | — | `--nats-url` | string | `nats://localhost:4222` | no | yes | no | valid URL | probe nats | flag > default | no | — |
-| `probe.config` | — | `--config` | string | — | no | no | no | path to config file | probe config | flag | no | not yet implemented |
-| `probe.discovery_enabled` | — | — | bool | `true` | no | no | no | — | probe discovery | config-file > default | no | — |
-| `probe.discovery_subnets` | — | — | []string | `[]` | no | no | no | — | probe discovery | config-file > default | no | — |
-| `probe.flow_enabled` | — | — | bool | `true` | no | no | no | — | probe flow | config-file > default | no | — |
-| `probe.flow_port` | — | — | int | `2055` | no | no | no | valid port | probe flow | config-file > default | no | — |
-| `probe.flow_protocols` | — | — | []string | `[netflow9, ipfix]` | no | no | no | — | probe flow | config-file > default | no | — |
-| `probe.poll_interval` | — | — | duration | `5m` | no | no | no | must be positive | probe snmp | config-file > default | no | — |
-| `probe.discovery_interval` | — | — | duration | `1h` | no | no | no | must be positive | probe discovery | config-file > default | no | — |
+---
 
-## Startup Sequence
-
-1. Load raw configuration from environment
-2. Validate mode-independent requirements
-3. Validate production policy when applicable
-4. Log redacted configuration summary
-5. Initialize JWT
-6. Connect NATS (with authentication and TLS if configured)
-7. Connect database and apply migrations
-8. Start ingestion pipeline
-9. Start alerting engine
-10. Start vulnerability engines
-11. Initialize storage backend
-12. Start job dispatcher
-13. Start API server and mark ready
-
-## Health Endpoints
-
-| Endpoint | Type | Returns |
-|----------|------|---------|
-| `GET /health` | Readiness | `200 OK` with `{"status":"ok","ready":"true"}` when initialized; `"status":"starting"` during startup |
-| `GET /health?liveness=1` | Liveness | `200 OK` with `{"status":"alive"}` — never checks dependencies |
-| `GET /health?mode=full` | Diagnostic | Includes runtime mode information |
-
-## Migration
-
-Existing installations should set `STRATA_RUNTIME_MODE` to the appropriate value.
-The default is `development`, preserving backward compatibility. Production
-deployments must explicitly set it to `production`.
-
-Migration 69 (`enforce_scope_bound_authorization`) requires no configuration
-key. It preserves existing rows, records ambiguous or invalid authorization
-state in `authorization_migration_issues`, constrains new/changed memberships to
-legal role/scope combinations, and makes `memberships` the only authorization
-source. Review the issue table after upgrade before provisioning additional
-users. Its down migration intentionally retains the hardening and evidence;
-binary rollback therefore keeps schema 69 and requires the compatibility checks
-in `docs/RUNBOOK.md`.
-
-For full deployment and rollback procedures, see `docs/DEPLOYMENT.md`, `docs/UPGRADE.md`, and `docs/ROLLBACK.md`.
-
-Use `strata-rmm orchestrator preflight` to validate configuration, database connectivity, and NATS connectivity before deployment.
+*Last Updated: 2026-08-08*

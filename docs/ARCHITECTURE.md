@@ -1,461 +1,579 @@
-# RMM Platform Architecture Plan
+# Strata RMM Platform — Architecture
 
-## Executive Summary
-
-A horizontally-scalable, multi-tenant Remote Monitoring & Management platform with cross-platform agents (Go), supporting both SaaS and self-hosted deployments. Built on polyglot microservices with NATS JetStream for messaging, TimescaleDB for metrics, and PostgreSQL for relational data.
-
----
-
-## 1. High-Level Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              PLATFORM LAYER                                 │
-├─────────────────────────────────────────────────────────────────────────────┤
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐   │
-│  │   API GW     │  │   AuthZ      │  │   Tenant     │  │   Billing/   │   │
-│  │  (Kong/      │  │   (OAuth2/   │  │   Manager    │  │   Usage      │   │
-│  │   Traefik)   │  │   OIDC)      │  │              │  │              │   │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘   │
-│         │                 │                 │                 │           │
-│  ┌──────▼─────────────────▼─────────────────▼─────────────────▼───────┐   │
-│  │                    NATS JetStream Cluster                            │   │
-│  │  (Subjects: tenant.{id}.agent.>, tenant.{id}.cmd.>, platform.>)    │   │
-│  └──────┬────────────────────────────────────────────────────────────┘   │
-│         │                                                                │
-│  ┌──────▼──────┐ ┌──────▼──────┐ ┌──────▼──────┐ ┌──────▼──────┐       │
-│  │  Inventory  │ │  Monitoring │ │  Alerting   │ │  Remote     │       │
-│  │  Service    │ │  Service    │ │  Service    │ │  Access     │       │
-│  │  (Go)       │ │  (Go/Rust)  │ │  (Go)       │ │  (Go)       │       │
-│  └──────┬──────┘ └──────┬──────┘ └──────┬──────┘ └──────┬──────┘       │
-│         │               │               │               │               │
-│  ┌──────▼───────────────▼───────────────▼───────────────▼───────┐       │
-│  │                    DATA LAYER                                  │       │
-│  │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────┐ │       │
-│  │  │ PostgreSQL  │ │ TimescaleDB │ │   Redis     │ │ Object  │ │       │
-│  │  │ (Relational │ │ (Metrics)   │ │ (Cache/     │ │ Store   │ │       │
-│  │  │  + Tenant   │ │             │ │  Sessions)  │ │ (S3/    │ │       │
-│  │  │  隔离)      │ │             │ │             │ │  MinIO) │ │       │
-│  │  └─────────────┘ └─────────────┘ └─────────────┘ └─────────┘ │       │
-│  └────────────────────────────────────────────────────────────────┘       │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                    │
-                    ┌───────────────┼───────────────┐
-                    ▼               ▼               ▼
-            ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-            │   Agent      │ │   Agent      │ │  Network     │
-            │  (Windows)   │ │  (Linux)     │ │  Probe       │
-            │  (Go)        │ │  (Go)        │ │  (Go)        │
-            └──────────────┘ └──────────────┘ └──────────────┘
-```
+**Version:** 2026-08-08 (after PR #110)
+**Last Updated:** 2026-08-08
+**Status:** Internal-alpha code-complete
 
 ---
 
-## 2. Core Services
+## 1. Platform Overview
 
-### 2.1 API Gateway (Kong/Traefik)
-- TLS termination, rate limiting, request routing
-- Tenant resolution from subdomain/header/JWT
-- WebSocket upgrade for remote access tunnels
+Strata is a single-process orchestrator (Go 1.22+) with a cross-platform agent (Go). The orchestrator is a monolithic HTTP API server backed by PostgreSQL/TimescaleDB, NATS JetStream for messaging, and optional Redis for token blacklisting. All platform services run in the same process — no microservice decomposition.
 
-### 2.2 Auth & Tenancy Service
-- **OIDC Provider**: Keycloak or custom (Go)
-- **Multi-tenancy**: 
-  - Shared schema with `tenant_id` column + RLS policies (default)
-  - Optional dedicated schema/database per tenant (premium)
-- **RBAC**: Role-based (Admin, Technician, Viewer) + resource-level permissions
-- **API Keys**: For agent bootstrap and integrations
-
-### 2.3 Inventory Service (Go)
-- Asset CRUD: devices, network gear, software, services
-- Discovery: SNMP, ARP, NDP, mDNS, WS-Discovery
-- Hardware/Software inventory collection via agent
-- CMDB relationships (dependency mapping)
-- **API**: REST + GraphQL for flexible queries
-
-### 2.4 Monitoring Service (Go/Rust)
-- **Metrics Ingestion**: NATS → TimescaleDB (batch writes)
-- **Check Types**:
-  - System: CPU, RAM, Disk, Net, Processes, Services
-  - Network: ICMP, SNMP (v2c/v3), NetFlow/sFlow, IPMI/Redfish
-  - Application: HTTP, TCP, DNS, Custom scripts
-  - IP Phones: SIP registration, RTP quality, vendor APIs (Cisco, Yealink, Poly)
-- **Collection Modes**:
-  - Agent-based (high-fidelity, high-frequency)
-  - Agentless (SNMP/ICMP/API) for network gear, printers, IP phones
-- **Retention**: Hot (7d, 1s resolution) → Warm (90d, 1m) → Cold (7y, 1h)
-
-### 2.5 Alerting Engine (Go)
-- **Rule Types**: Threshold, Anomaly (ML-based), Composite, Heartbeat
-- **Notification Channels**: Email, SMS, Slack, Teams, PagerDuty, Opsgenie, Webhook
-- **Escalation Policies**: Time-based, on-call rotations
-- **Alert Deduplication**: Correlation, grouping, auto-resolution
-- **Silencing/Inhibitions**: Maintenance windows, dependency-aware
-
-### 2.6 Remote Access Service (Go)
-- **Tunnel Architecture**: 
-  - Agent registers reverse tunnel (WebSocket over NATS)
-  - Gateway proxies RDP/SSH/VNC through authenticated tunnel
-  - No inbound ports required on agent side
-- **Protocols**: 
-  - RDP (Windows) via FreeRDP/WebRDP
-  - SSH (Linux) via native Go SSH server
-  - VNC via websockify proxy
-  - Custom TCP port forwarding
-- **Session Recording**: Optional audit logs, video recording
-- **MFA**: Required for interactive sessions
-
-### 2.7 Patch/Software Management (Go + Python)
-- **Windows**: WSUS/Windows Update API, Chocolatey, Winget
-- **Linux**: apt/dnf/zypper/pacman, Flatpak, Snap
-- **Third-party**: Custom repositories, vulnerability scanning (CVE)
-- **Deployment**: Staged rollouts, maintenance windows, rollback
-
-### 2.8 Network Probe (Go)
-- Lightweight agentless collector for network segments
-- SNMP polling (bulk walks, parallel)
-- Flow collection (NetFlow v5/v9, IPFIX, sFlow)
-- Synthetic monitoring (HTTP, DNS, TCP, ICMP from multiple vantage points)
-- Network topology discovery (LLDP, CDP, STP, ARP)
+**Architecture:** Monolith with modular internal packages
+**Language:** Go (stdlib net/http, no framework)
+**Deployment:** Docker container, Kubernetes (Helm), bare metal (systemd)
+**Agent:** Cross-platform binary (Windows, Linux, macOS)
 
 ---
 
-## 3. Agent Architecture (Go)
+## 2. Process Architecture
 
-### 3.1 Design Principles
-- Single static binary (~15-25MB)
-- Zero dependencies, runs as SYSTEM/root or unprivileged
-- Self-update with signature verification
-- Modular: core + pluggable collectors
-
-### 3.2 Communication
 ```
-Agent ←→ NATS JetStream (tenant.{id}.agent.{agent_id})
-  ├── Metrics:   Periodic batch publish (configurable interval, default 60s)
-  ├── Events:    Real-time (heartbeat, alerts, inventory changes)
-  ├── Commands:  Subscribe to tenant.{id}.cmd.{agent_id} (request/response)
-  └── Bulk:      File transfer, scripts, patches via object store presigned URLs
+┌─────────────────────────────────────────────────────────────────┐
+│                     ORCHESTRATOR (Go)                           │
+│                                                                 │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐         │
+│  │  HTTP Server │  │  NATS Client │  │  Postgres    │         │
+│  │  (std lib)   │  │  (JetStream) │  │  + Timescale │         │
+│  │              │  │              │  │              │         │
+│  │  Routes:     │  │  Streams:    │  │  Tables:     │         │
+│  │  - /health   │  │  - agent     │  │  - tenants   │         │
+│  │  - /api/v1   │  │  - metrics   │  │  - devices   │         │
+│  │  - /api/v2   │  │  - events    │  │  - alerts    │         │
+│  │  - /releases │  │  - cmds      │  │  - users     │         │
+│  │              │  │  - platform  │  │  - policies  │         │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘         │
+│         │                 │                 │                 │
+│  ┌──────▼─────────────────▼─────────────────▼─────────────────▼──┐│
+│  │                    PACKAGES (internal/)                       ││
+│  │                                                                 ││
+│  │  platform/     - HTTP handlers, middleware, route registration ││
+│  │  alerting/     - Rule engine, grouping, notification           ││
+│  │  automation/   - Git-backed vault, AES-256-GCM encryption     ││
+│  │  collectors/   - System metrics (CPU, mem, disk, net)          ││
+│  │  groups/       - Smart groups DSL evaluator                    ││
+│  │  integrations/ - Webhooks (EDR, Backup, PSA)                   ││
+│  │  inventory/    - CMDB, third-party catalog, CVE/vulnerability  ││
+│  │  messaging/    - JetStream consumer/manager, NATS subjects     ││
+│  │  monitoring/   - Telemetry ingestion pipeline                  ││
+│  │  observability/- HTTP health/synthetics                        ││
+│  │  orchestrator/ - Power events, role-based policy binding       ││
+│  │  patch/        - OS patch management (Chocolatey, apt, etc.)   ││
+│  │  probe/        - Network discovery (SNMP, ARP, ping, scan)     ││
+│  │  remote/       - Session management, capture, input injection  ││
+│  │  reporting/    - PDF report generation (gofpdf)                ││
+│  │  resilience/   - Circuit breakers, retry logic                 ││
+│  │  synthetic/    - Synthetic monitoring checks                   ││
+│  │  webrtc/       - WebRTC session management, recording, transcr ││
+│  │  lancache/     - Local package distribution cache              ││
+│  │                                                                 ││
+│  │  agent/      - Agent-side modules (core, scripts, software)    ││
+│  │                                                                 ││
+│  │  pkg/auth/     - JWT, TOTP/MFA, API keys, token blacklisting   ││
+│  │  pkg/backup/   - Backup engine, quiescer, coordinator          ││
+│  │  pkg/config/   - Configuration loading/validation              ││
+│  │  pkg/encrypt/  - AES-256-GCM envelope encryption               ││
+│  │  pkg/postgres/ - Connection pool, schema migration, upgrade    ││
+│  │  pkg/recovery/ - Disaster recovery key management              ││
+│  │  pkg/redis/    - Redis client, agent registry                  ││
+│  │  pkg/storage/  - S3/MinIO/Local backend interface              ││
+│  │  pkg/timescale/ - Hypertable management, batch writer          ││
+│  │  pkg/repository/ - Filesystem/S3 repository abstraction        ││
+│  └─────────────────────────────────────────────────────────────────┘│
+└─────────────────────────────────────────────────────────────────────┘
 ```
-- **Reliability**: 
-  - Local persistence (BBolt/SQLite) during disconnect
-  - Automatic replay on reconnect
-  - QoS: at-least-once for metrics, exactly-once for commands
-- **NAT Traversal**: Outbound-only, works behind CGNAT/firewalls
 
-### 3.3 Module System
+---
+
+## 3. Data Flow
+
+### 3.1 Agent → Platform (Heartbeat + Telemetry)
+
 ```
-core/
-  ├── config       # TOML/JSON, remote config via NATS KV
-  ├── identity     # Cert-based (mTLS) or token-based auth
-  ├── comms        # NATS client, reconnection, backoff
-  ├── update       # Self-update, rollback, staging
-  └── health       # Self-monitoring, watchdog
-
-collectors/
-  ├── system       # CPU, mem, disk, net, processes (gopsutil)
-  ├── hardware     # SMART, IPMI, BIOS, chassis (via WMI/Linux sysfs)
-  ├── software     # Installed packages, vulnerabilities
-  ├── services     # systemd, Windows Services, Docker, Podman
-  ├── network      # Interfaces, connections, listening ports
-  └── custom       # Plugin interface (WASM or native .so/.dll)
-
-executors/
-  ├── shell        # PowerShell, Bash, CMD
-  ├── script       # Python, custom interpreters
-  ├── patch        # OS/third-party update orchestration
-  └── remote       # Tunnel endpoint for remote access
+Agent → NATS JetStream → Platform Consumer → TimescaleDB/PostgreSQL
+  │
+  ├── heartbeat.{tenant}.{agent}   (every 60s)
+  ├── metrics.{tenant}.{agent}     (every 60s, batch)
+  ├── events.{tenant}.{agent}      (on occurrence)
+  └── script_result.{tenant}.{agent}  (after script execution)
 ```
 
-### 3.4 Platform Support
-| Platform | Arch | Notes |
-|----------|------|-------|
-| Windows 10/11 | amd64, arm64 | MSI, EXE, Winget |
+### 3.2 Platform → Agent (Commands)
+
+```
+Platform → NATS JetStream → Agent Subscribe
+  │
+  └── cmd.{tenant}.{agent}  (request/response pattern)
+```
+
+### 3.3 Remote Access Flow
+
+```
+Platform ↔ NATS WebRTC signaling ↔ Agent (WebRTC peer)
+  │                                    │
+  ├── Session creation (POST /webrtc/sessions)
+  ├── ICE candidate exchange
+  ├── P2P media (or TURN relay if P2P fails)
+  └── Recording/transcription (optional)
+```
+
+### 3.4 Snapshot/Video Capture
+
+```
+Agent → NATS (capture frames) → Platform (relay to browser)
+  │
+  ├── Capture (scrot/magicavoxel/screencapture depending on OS)
+  ├── Input injection (xdotool/CGEvent/SendInput depending on OS)
+  └── Session recording (WebM/MKV, stored in object storage)
+```
+
+---
+
+## 4. Services & Modules
+
+### 4.1 Platform API (`internal/platform/`)
+
+HTTP API with 310+ routes organized by domain:
+
+| Domain | Routes | Description |
+|--------|--------|-------------|
+| Auth | `/api/v1/auth/*` | Login, logout, JWT tokens, TOTP/MFA, invitations |
+| Enrollment | `/api/v1/enroll`, `/api/v1/agent/*` | Agent registration, config, tokens |
+| Devices | `/api/v1/devices/*`, `/api/v2/devices/*` | Device CRUD, inventory, packages, dependencies |
+| Tenants | `/api/v1/tenants/*`, `/api/v2/clients/*` | Tenant management, client support |
+| MSP | `/api/v2/msps/*`, `/api/v2/platform/msps/*` | MSP lifecycle, billing, memberships, offboarding |
+| Platform | `/api/v1/platform/*`, `/api/v2/platform/*` | Overview, customers, provider profile, domains |
+| Alerts | `/api/v1/alerts/*` | Rule CRUD, alert list/history/grouping/resolve |
+| Policies | `/api/v1/policies/*` | Policy CRUD, validation, preview, publish, effective, diff |
+| Smart Groups | `/api/v1/device-groups/*` | Group CRUD, evaluation, members, script bindings |
+| Scripts | `/api/v1/scripts/*`, `/api/v1/tenants/*/scripts/*` | Script CRUD, execution, schedules |
+| Patch | `/api/v1/patch-*` | Patch policy CRUD, deployments, inventory |
+| Vulnerability | `/api/v1/vulnerabilities/*`, `/api/v1/cve/*` | CVE sync, package management, vulnerability listing |
+| Remote | `/api/v1/remote/*`, `/api/v1/webrtc/*` | Interactive sessions, recording, WebRTC sessions |
+| Third-party | `/api/v1/thirdparty/*` | App/package/vendor sync, version discovery |
+| Maintenance | `/api/v1/maintenance-windows/*` | Window CRUD |
+| Retention | `/api/v1/retention/*`, `/api/v1/tenants/*/retention` | Retention policy CRUD |
+| Reports | `/api/v1/reports/*` | PDF generation, schedules, compliance |
+| Remediation | `/api/v1/remediation/*` | Remediation history, summary, policy |
+| Jobs | `/api/v1/jobs/*` | Durable job CRUD, events, cancel, retry |
+| Integrations | `/api/v1/integrations/*` | Webhook endpoints (EDR, Backup, PSA) |
+| Software | `/api/v1/software/*` | Package CRUD, deployments |
+| Admin | `/api/v1/admin/*` | User CRUD, customer CRUD, update management |
+| Health | `/health`, `/health/live`, `/health/ready`, `/metrics` | Health checks, Prometheus metrics |
+
+### 4.2 Alerting Engine (`internal/alerting/`)
+
+- **Rule Types**: Threshold, Composite, Heartbeat
+- **Grouping**: Severity, Device, Cascade, Time-window (PR #81)
+- **Notifications**: Email (SMTP), Slack, Teams, PagerDuty, Webhook
+- **Maintenance Windows**: Device/tenant-level silence periods
+- **Storage**: PostgreSQL (rules, alerts, groups)
+
+### 4.3 Policy Engine (`internal/policy/`, `internal/platform/policy_*`)
+
+- **Hierarchical**: Global → MSP → Client → Device scope (PR #57)
+- **Lifecycle**: Create → Validate → Preview → Publish → Rollback (PR #58)
+- **Effective Policy**: Recursive merge with most-specific-wins (PR #57)
+- **Scheduler**: Automated enforcement on intervals (PR #50)
+- **DSL**: Expression evaluator for smart groups (PR #73, 13 operators)
+
+### 4.4 Script Vault & Automation (`internal/automation/`)
+
+- **Git-backed**: SSH/HTTPS clone/pull from GitHub/GitLab (PR #59)
+- **Encryption**: AES-256-GCM envelope for secret variables (PR #61)
+- **Script Engine**: PS/Bash/Python/Batch execution via NATS (PR #102)
+- **Scheduling**: Recurring schedules (hourly/daily/weekly/monthly)
+
+### 4.5 Smart Groups (`internal/groups/`)
+
+- **DSL Evaluator**: 13 operators (eq, neq, gt, gte, lt, lte, contains, startswith, in, contains_any, is_null, not_null, regex)
+- **Nested Expressions**: AND/OR combinations
+- **Evaluation**: On-demand and scheduled
+- **Memberships**: Cached in `group_memberships` table (PR #74)
+
+### 4.6 Network Probe (`internal/probe/`)
+
+- **Discovery**: ARP, ping scan, port scan (TCP SYN/UDP), service detection
+- **Protocols**: SNMP v3, NetFlow v5/v9/IPFIX, Redfish, IPMI, Syslog
+- **Topology**: LLDP/CDP/STP stubs
+- **Device Detection**: Vendor/model/OS fingerprinting
+
+### 4.7 Vulnerability Management (`internal/inventory/`)
+
+- **CVE Sync**: OSV.dev (primary), NVD API (optional) (PR #105)
+- **Version Matching**: Semantic version comparison
+- **Remediation Engine**: Auto-remediation via patch executor
+- **Compliance Reports**: CSV/JSON export (PR #111)
+
+### 4.8 Remote Support (`internal/remote/`, `internal/webrtc/`)
+
+- **WebRTC**: P2P video sessions with TURN/STUN relay (PR #88)
+- **Session Recording**: WebM/MKV, stored in object storage
+- **Live Transcription**: OpenAI Whisper, Azure Speech, Google Speech
+- **Screen Capture**: Windows (BitBlt), macOS (screencapture), Linux (scrot/import/gnome-screenshot)
+- **Input Injection**: Windows (SendInput), macOS (CGEvent), Linux (xdotool)
+- **API**: 15 REST endpoints, 80+ unit tests
+
+### 4.9 LAN Cache (`internal/lancache/`)
+
+- **Package Distribution**: Chocolatey, Winget, Flatpak, Snap, MSI, DEB, RPM
+- **Local Cache**: Reduces bandwidth for multi-device deployments
+- **5 REST endpoints**, 45 unit tests
+
+### 4.10 Patch Management (`internal/patch/`)
+
+- **Platforms**: Windows (PowerShell/WSUS/Chocolatey/Winget), Linux (apt/dnf/yum/zypper)
+- **Canary Deployment**: Small subset first, validate, then full rollout
+- **Rollback**: Automatic on canary failure
+- **Policy Binding**: Severity-based, maintenance windows
+
+### 4.11 Software Deployment (`internal/agent/software/`)
+
+- **Package Types**: MSI, EXE, DEB, RPM, AppImage, Script (PR #89)
+- **Checksum Verification**: SHA256
+- **Multi-device Deployment**: Lifecycle with timeout handling
+
+### 4.12 CMDB (`internal/inventory/`)
+
+- **Device Relationships**: Parent/child dependency mapping (PR #80)
+- **Third-party Catalog**: Vendor discovery, version sync (PR #91)
+- **Software Inventory**: Package tracking per device
+
+### 4.13 Billing & MSP Lifecycle (`internal/platform/`)
+
+- **Provider Profile**: MSP registration, branding
+- **Billing**: Accounts, subscriptions, payment methods, invoices, usage meters
+- **Entitlements**: Feature flags, plan tiers
+- **Offboarding**: Client/MSP archival, data preservation
+- **Client Portal**: Support requests, SSO providers (future)
+
+### 4.14 Backup & Disaster Recovery (`pkg/backup/`)
+
+- **Engine**: PostgreSQL backup with AES-256-GCM encryption
+- **Repository**: Filesystem or S3-compatible (MinIO, AWS S3)
+- **Recovery**: Full restore with NATS reconnection
+- **Quiescer**: Graceful service shutdown during backup
+
+---
+
+## 5. Agent Architecture
+
+### 5.1 Design
+
+- **Single static binary**: Cross-compiled for Windows/Linux/macOS
+- **Zero external dependencies**: Standalone execution
+- **Self-update**: Manifest-based with cosign keyless signing
+- **Modular**: Core + pluggable collectors
+
+### 5.2 Communication
+
+```
+Agent ↔ NATS JetStream (outbound-only)
+  ├── heartbeat.{tenant}.{agent}     (60s interval)
+  ├── metrics.{tenant}.{agent}       (60s interval, batch)
+  ├── events.{tenant}.{agent}        (on occurrence)
+  ├── cmd.{tenant}.{agent}           (subscribe, receive commands)
+  └── software_result.{tenant}.{agent} (after execution)
+```
+
+### 5.3 Agent Modules
+
+| Module | Path | Description |
+|--------|------|-------------|
+| Core | `internal/agent/core/` | Identity, config, store, role scanner |
+| Comms | `internal/agent/comms/` | NATS client, reconnect, backoff |
+| Scripts | `internal/agent/scripts/` | Script execution (PS/Bash/Python) |
+| Software | `internal/agent/software/` | MSI/EXE/DEB/RPM/AppImage install |
+| Jobs | `internal/agent/jobs/` | Durable job handler, ledger |
+| Update | `internal/agent/update/` | Self-update, manifest, rollout |
+| Remote | `internal/agent/remotecontrol/` | Capture, input injection per platform |
+
+### 5.4 Collectors
+
+| Collector | Path | Description |
+|-----------|------|-------------|
+| System | `internal/agent/collectors/system.go` | CPU, RAM, disk, net (gopsutil) |
+| Software | `internal/collectors/software.go` | Installed packages, versions |
+| Helpers | `internal/collectors/helpers.go` | Shared utility functions |
+
+### 5.5 Platform Support
+
+| Platform | Arch | Package |
+|----------|------|---------|
+| Windows 10/11 | amd64, arm64 | EXE, MSI |
 | Windows Server 2016+ | amd64, arm64 | Service install |
 | Ubuntu 20.04+ | amd64, arm64 | DEB, systemd |
 | Debian 11+ | amd64, arm64 | DEB |
 | RHEL/Rocky/Alma 8+ | amd64, arm64 | RPM |
 | Fedora 38+ | amd64, arm64 | RPM |
 | Alpine 3.18+ | amd64, arm64 | APK, OpenRC |
-| macOS 12+ | amd64, arm64 | PKG, LaunchDaemon (optional) |
+| macOS 12+ | amd64, arm64 | PKG, LaunchDaemon |
 
 ---
 
-## 4. Data Layer
+## 6. Data Layer
 
-### 4.1 PostgreSQL (Relational + Tenant Isolation)
-```sql
--- Core tables with tenant_id + RLS
-CREATE TABLE tenants (...);
-CREATE TABLE devices (...);
-CREATE TABLE alerts (...);
-CREATE TABLE users (...);
-CREATE TABLE roles_permissions (...);
+### 6.1 PostgreSQL/TimescaleDB
 
--- Row Level Security
-ALTER TABLE devices ENABLE ROW LEVEL SECURITY;
-CREATE POLICY tenant_isolation ON devices USING (tenant_id = current_tenant_id());
+| Table Category | Tables | Description |
+|---------------|--------|-------------|
+| Tenancy | `tenants`, `msp_tenants`, `clients`, `users`, `memberships` | Multi-tenant hierarchy |
+| Devices | `devices`, `device_groups`, `group_memberships`, `device_packages` | Device inventory, smart groups |
+| Auth | `auth_tokens`, `enrollment_tokens`, `invitations`, `mfa_secrets` | Authentication, enrollment |
+| Alerts | `rules`, `alerts`, `alert_groups`, `alert_group_members` | Alert rules and instances |
+| Policies | `policies`, `policy_revisions`, `patch_policies`, `patch_deployments` | Policy management |
+| Scripts | `scripts`, `script_schedules`, `script_schedule_devices`, `script_executions` | Script vault and execution |
+| Jobs | `jobs`, `job_events`, `job_device_results` | Durable job system |
+| Maintenance | `maintenance_windows` | Maintenance windows |
+| CMDB | `device_relationships`, `device_packages` | CMDB dependency relationships |
+| Billing | `billing_accounts`, `subscriptions`, `invoices`, `payment_methods`, `usage_events` | Billing and subscription management |
+| Remote | `remote_sessions`, `remote_recording`, `webrtc_sessions` | Remote access sessions |
+| Reports | `report_schedules`, `generated_reports`, `compliance_reports` | Report scheduling and generation |
+| Integrations | `integration_events`, `psa_tickets` | Third-party integrations |
+| Audit | `audit_log` | Immutable audit trail |
+| Versions | `schema_versions`, `deployment_ids` | Schema versioning, deployment tracking |
+
+**Row-Level Security (RLS)**: Enabled on all tenant-scoped tables with policies for `tenant_id`, `msp_id` scoping.
+
+### 6.2 NATS JetStream
+
+| Stream | Subjects | Description |
+|--------|----------|-------------|
+| Agent | `tenant.{id}.agent.{agent_id}.heartbeat` | Agent heartbeats |
+| Agent | `tenant.{id}.agent.{agent_id}.metrics` | Telemetry metrics |
+| Agent | `tenant.{id}.agent.{agent_id}.events` | Agent events |
+| Agent | `tenant.{id}.agent.{agent_id}.software.result` | Software install results |
+| Agent | `tenant.{id}.agent.{agent_id}.patch.result` | Patch results |
+| Commands | `tenant.{id}.cmd.{agent_id}` | Command dispatch to agents |
+| Platform | `platform.alerts` | Alert events |
+| Platform | `platform.recovery` | Recovery events |
+
+### 6.3 Redis (Optional)
+
+| Use | Description |
+|-----|-------------|
+| Token Blacklist | JWT jti blacklisting (24h TTL) |
+| Rate Limiting | Per-IP, per-endpoint token bucket |
+| Agent Registry | Active agent tracking (ephemeral) |
+
+### 6.4 Object Storage (Optional)
+
+| Backend | Description |
+|---------|-------------|
+| Local | Filesystem-based (for self-hosted) |
+| MinIO | Self-hosted S3-compatible |
+| AWS S3 | Cloud object storage |
+
+| Content | Description |
+|---------|-------------|
+| Recordings | WebM/MKV remote session recordings |
+| Reports | Generated PDF reports |
+| Agent Binaries | Release artifacts |
+| Backups | Encrypted database backups |
+
+---
+
+## 7. Authentication & Authorization
+
+### 7.1 Token Types
+
+| Type | Scope | Lifetime | Usage |
+|------|-------|----------|-------|
+| JWT (user) | User + MSP/Client | Configurable | API access |
+| JWT (agent) | Agent + Tenant | Enrollment token | Agent registration |
+| Enrollment Token | Agent | Time-bound, single-use | One-time agent enrollment |
+| API Key | User | Persistent | Programmatic access |
+
+### 7.2 Access Levels
+
+| Level | Description | Routes |
+|-------|-------------|--------|
+| `msp_owner` | MSP owner, full control | `/api/v2/msps/*` |
+| `msp_admin` | MSP admin | `/api/v1/platform/*`, `/api/v2/msps/*` |
+| `client_admin` | Client admin | `/api/v2/clients/*` |
+| `agent` | Agent identity | `/api/v1/enroll`, `/api/v1/agent/*` |
+
+### 7.3 Multi-Tenancy
+
+- **Shared schema**: Single PostgreSQL database with `tenant_id` column
+- **RLS policies**: Database-enforced tenant isolation
+- **Subject isolation**: NATS subjects prefixed with tenant ID
+- **Admin view**: Platform-level operators can see all tenants
+
+---
+
+## 8. Configuration
+
+### 8.1 Environment Variables
+
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `STRATA_RUNTIME_MODE` | `development` | No | `development`, `test`, `production` |
+| `TIMESCALE_DSN` / `STRATA_DB_DSN` / `DATABASE_URL` | `postgres://localhost:5432/strata_rmm` | Yes | PostgreSQL connection string |
+| `DB_REPLICA_DSN` / `TIMESCALE_REPLICA_DSN` | — | No | Read replica connection string |
+| `NATS_URL` | `nats://localhost:4222` | Yes | NATS connection URL |
+| `NATS_ADVERTISE_URLS` | — | No | Agent-reachable NATS URLs (production) |
+| `NATS_TOKEN` | — | No | NATS authentication token |
+| `NATS_TLS_ENABLED` | `false` | No | Enable NATS TLS |
+| `NATS_TLS_CERT` | — | No | NATS client certificate |
+| `NATS_TLS_KEY` | — | No | NATS client key |
+| `NATS_TLS_CA` | — | No | NATS CA certificate |
+| `REDIS_URL` | — | No | Redis connection URL (optional) |
+| `STORAGE_BACKEND` | `local` | No | `local`, `minio`, `s3` |
+| `STORAGE_BUCKET` | `strata-recordings` | No | Object storage bucket |
+| `JWT_SECRET` | — | Yes | JWT signing secret (min 32 chars) |
+| `STRATA_METRICS_TOKEN` | — | No | Prometheus metrics token |
+| `STRATA_SMTP_HOST` | — | No | SMTP host for email alerts |
+| `STRATA_SMTP_PORT` | — | No | SMTP port |
+| `STRATA_SMTP_USERNAME` | — | No | SMTP username |
+| `STRATA_SMTP_PASSWORD` | — | No | SMTP password |
+| `STRATA_SMTP_FROM` | — | No | SMTP from address |
+| `STRATA_ALERT_SLACK_URL` | — | No | Slack webhook URL |
+| `STRATA_ALERT_TEAMS_URL` | — | No | Teams webhook URL |
+| `STRATA_ALERT_WEBHOOK_URL` | — | No | Generic webhook URL |
+| `STRATA_ALERT_PAGERDUTY_KEY` | — | No | PagerDuty integration key |
+| `STRATA_ALERT_EMAIL_RECIPIENTS` | — | No | Comma-separated email recipients |
+| `STRATA_API_ADDR` | `:8080` | No | HTTP API listen address |
+| `STRATA_TUNNEL_ADDR` | — | No | Raw tunnel gateway (not production-safe) |
+| `STRATA_PUBLIC_URL` | — | No | Public-facing URL (required in production) |
+| `CORS_ORIGINS` | — | No | Comma-separated CORS origins |
+| `STRATA_SEED_DEV` | `false` | No | Seed dev tenant on startup |
+| `STRATA_DEV_ADMIN_EMAIL` | — | No | Dev admin email |
+| `STRATA_DEV_ADMIN_PASSWORD_HASH` | — | No | Dev admin password hash |
+
+### 8.2 Production Requirements
+
+When `STRATA_RUNTIME_MODE=production`:
+- `STRATA_PUBLIC_URL` must be HTTPS
+- NATS TLS must be enabled with CA file
+- NATS token or mTLS certificate required
+- `STRATA_METRICS_TOKEN` required
+- No wildcard CORS origins
+- No plaintext NATS scheme
+- No `sslmode=disable` in DB DSN
+- No default passwords in DB DSN
+- JWT secret must not have dev/test prefix
+- NATS advertise URLs must be non-localhost
+
+---
+
+## 9. Security Architecture
+
+### 9.1 Agent ↔ Platform
+- **Enrollment**: Token-based one-time agent registration
+- **NATS**: Outbound-only, no inbound ports on agent
+- **TLS**: Optional mTLS for NATS (production required)
+- **JWT**: HS256 tokens with tenant/role claims
+
+### 9.2 Data Protection
+- **At Rest**: AES-256-GCM for backups, disk encryption optional
+- **In Transit**: TLS 1.3 for API, optional for NATS
+- **Secrets**: Environment variables or secret files (absolute paths)
+- **JWT Secret**: Min 32 chars, no default/dev prefixes in production
+
+### 9.3 Access Control
+- **RBAC**: MSP owner, MSP admin, client admin, agent roles
+- **RLS**: Database row-level security on all tenant-scoped tables
+- **Audit**: Immutable audit log table, tamper-evident
+- **Rate Limiting**: Per-IP token bucket, 10min stale cleanup
+
+### 9.4 Supply Chain
+- **CI**: GoReleaser, cosign keyless signing, SPDX SBOM
+- **Agent Update**: Manifest-based, staged rollout, automatic rollback
+- **CVE Feed**: OSV.dev (primary), NVD API (optional)
+
+---
+
+## 10. Observability
+
+### 10.1 Internal Monitoring
+
+- **Prometheus Metrics**: `/metrics` endpoint, token-authenticated
+- **Health Checks**: `/health` (ready), `/health/live` (liveness)
+- **Grafana Dashboards**: Deployment templates for metrics visualization
+
+### 10.2 Synthetic Monitoring (`internal/synthetic/`)
+
+- **HTTP Checks**: URL availability, response time, status codes
+- **TCP Checks**: Port reachability
+- **DNS Checks**: Resolution verification
+- **ICMP Checks**: Ping reachability
+- **Multi-vantage**: Multiple check locations for regional coverage
+
+### 10.3 Logging
+
+- **Structured**: zap JSON logging
+- **Levels**: Debug, Info, Warn, Error, Fatal
+- **Context**: Request ID, tenant ID, agent ID in log fields
+
+---
+
+## 11. Deployment Models
+
+### 11.1 Docker (Development/Production)
+
+```bash
+docker-compose up -d  # NATS + TimescaleDB + orchestrator
 ```
 
-**Dedicated Tenant Option**: Separate schema/database per tenant, managed by Tenant Manager service.
+### 11.2 Kubernetes (Helm)
 
-### 4.2 TimescaleDB (Metrics)
-```sql
--- Hypertable for metrics
-CREATE TABLE metrics (
-    time        TIMESTAMPTZ       NOT NULL,
-    tenant_id   UUID              NOT NULL,
-    device_id   UUID              NOT NULL,
-    metric_name TEXT              NOT NULL,
-    value       DOUBLE PRECISION  NOT NULL,
-    tags        JSONB             DEFAULT '{}'
-);
-SELECT create_hypertable('metrics', 'time', chunk_time_interval => INTERVAL '1 day');
-
--- Compression
-ALTER TABLE metrics SET (timescaledb.compress, timescaledb.compress_segmentby = 'device_id, metric_name');
-SELECT add_compression_policy('metrics', INTERVAL '7 days');
-
--- Continuous aggregates for downsampling
-CREATE MATERIALIZED VIEW metrics_1m WITH (timescaledb.continuous) AS
-SELECT time_bucket('1 minute', time) AS bucket, tenant_id, device_id, metric_name,
-       AVG(value) AS avg, MIN(value) AS min, MAX(value) AS max, COUNT(*) AS count
-FROM metrics GROUP BY bucket, tenant_id, device_id, metric_name;
+```bash
+helm install strata deploy/helm/strata/ -f values.yaml
 ```
 
-### 4.3 Redis (Cache/Sessions)
-- Session store, rate limiting, distributed locks
-- NATS JetStream KV for agent config/state (alternative)
+- Deployments with HPA, PDB, network policies
+- Ingress with TLS termination
+- ConfigMaps/Secrets for configuration
+- PVC for persistent storage
 
-### 4.4 Object Store (S3/MinIO)
-- Agent binaries, patches, scripts
-- Session recordings, exported reports
-- Bulk command payloads (>1MB)
+### 11.3 Bare Metal (systemd)
 
----
-
-## 5. Multi-Tenancy Implementation
-
-### 5.1 Shared Infrastructure (Default)
-- Single Kubernetes cluster / VM fleet
-- PostgreSQL: RLS + connection pooling (PgBouncer per tenant)
-- NATS: Subject isolation `tenant.{id}.*`
-- TimescaleDB: `tenant_id` column + compression by tenant
-- Cost-efficient, easier operations
-
-### 5.2 Dedicated Tenant (Optional)
-- Namespace/cluster per tenant
-- Separate PostgreSQL, TimescaleDB, NATS streams
-- Data residency compliance
-- Premium tier, higher cost
-
-### 5.3 Tenant Onboarding Flow
-```
-1. Create tenant record → 2. Provision DB schema/RLS → 3. Create NATS streams/KV
-   → 4. Generate agent enrollment token → 5. Optional: dedicated resources
+```bash
+./install.sh install  # Deploy binary, configure systemd
+systemctl start strata
 ```
 
----
+- Systemd unit with restart policy
+- Log journal integration
+- Uninstall support
 
-## 6. Deployment Models
+### 11.4 Windows Service
 
-### 6.1 SaaS (Primary)
-- **Platform**: Kubernetes (EKS/GKE/AKS or self-managed)
-- **Regions**: Multi-region for latency/data residency
-- **Scaling**: HPA/VPA on all services, NATS cluster scaling
-- **Operations**: GitOps (ArgoCD/Flux), observability stack
-
-### 6.2 Self-Hosted (Customer-Managed)
-- **Distribution**: Helm charts + KOTS (Replicated) or Docker Compose
-- **Requirements**: K8s 1.27+ or Docker Swarm, PostgreSQL 15+, TimescaleDB, NATS, Redis, S3-compatible
-- **Air-gapped**: Full offline install bundle
-- **Updates**: Semantic versioning, automated migration jobs
-- **License**: License key validation (phone-home optional)
-
-### 6.3 Hybrid
-- Control plane (SaaS) + Data plane (customer-hosted agents/probes)
-- Customer data never leaves their network
+- PowerShell installer script
+- Service management (start/stop/status)
 
 ---
 
-## 7. Security Architecture
+## 12. Test Coverage
 
-### 7.1 Agent ↔ Platform
-- **mTLS**: Platform CA → Agent certificates (auto-rotated)
-- **Alternative**: JWT enrollment token → short-lived certs
-- **NAT Traversal**: Outbound-only, no port forwarding
-
-### 7.2 Data Protection
-- **At Rest**: AES-256 (disk encryption + DB TDE)
-- **In Transit**: TLS 1.3 everywhere
-- **Secrets**: HashiCorp Vault or Sealed Secrets (K8s)
-
-### 7.3 Access Control
-- **Zero Trust**: Every request authenticated + authorized
-- **Audit Log**: Immutable, tamper-evident (append-only + WORM storage)
-- **Pen Testing**: Annual third-party, bug bounty program
-
----
-
-## 8. Observability (Platform Self-Monitoring)
-
-- **Metrics**: Prometheus + Grafana (internal tenant)
-- **Logs**: Loki/Elasticsearch
-- **Traces**: Tempo/Jaeger
-- **SLOs**: Defined per service, alerting on burn rate
-- **Chaos Engineering**: Regular GameDays
+| Module | Behavioral Tests | Unit Tests | Total |
+|--------|-----------------|------------|-------|
+| `internal/platform/` | ~300 | ~200 | ~500 |
+| `internal/agent/` | ~50 | ~100 | ~150 |
+| `internal/patch/` | 22 | 33 + 39 | 94 |
+| `internal/inventory/` | 91 | ~30 | ~121 |
+| `internal/probe/` | 87 | 22 | 109 |
+| `internal/alerting/` | 21 | ~80 | ~101 |
+| `internal/groups/` | ~30 | ~50 | ~80 |
+| `internal/reporting/` | 15 | ~10 | ~25 |
+| `pkg/storage/` | 21 | ~30 | ~51 |
+| `ui/src/` | ~600 (frontend) | N/A | ~600 |
+| **Total** | **~637 behavioral** | **~650+ unit** | **~1,300+** |
 
 ---
 
-## 9. Development Phases
+## 13. Open Items / Technical Debt
 
-### Phase 1: Foundation (Months 1-3)
-
-#### 1.1 Agent Core (Months 1-1.5) ✅
-- [x] Config management (YAML/TOML, remote config via NATS KV)
-- [x] Identity management (self-generated ECDSA P256 certs, UUID agent IDs)
-- [x] Local persistence (BBolt store with metrics/events/state/queue buckets)
-- [x] Agent lifecycle (start/stop, health API, state machine)
-- [x] Logger abstraction (zap-backed, structured logging)
-- [x] System collector: CPU, RAM, disk, net, load, host info via gopsutil v3
-
-#### 1.2 NATS JetStream Communication (Months 1.5-2) ✅
-- [x] NATS connection manager (TLS/mTLS, reconnect with backoff, error handling)
-- [x] Tenant subject isolation: `tenant.{id}.agent.{id}.{metrics,events,heartbeat,cmd}`
-- [x] Metrics batch publish with BBolt-queued replay on reconnect
-- [x] Heartbeat loop (30s interval) with status reporting
-- [x] Event publishing with store-and-forward
-- [x] Command subscription helpers (Subscribe, QueueSubscribe, Request)
-
-#### 1.3 Metrics Ingestion Pipeline (Months 2-2.5) ✅
-- [x] NATS subscription service (platform-side consumer with wildcard subjects)
-- [x] TimescaleDB hypertable schema + migrations (metrics, events, heartbeats, commands)
-- [x] Batch writer with prepared statements + transaction support
-- [x] Continuous aggregate views (metrics_1m, metrics_1h with avg/min/max/last/count)
-- [x] Compression policy (7-day segment-by tenant/device/metric)
-- [x] Retention policy (365-day auto-expiry)
-- [x] Event and heartbeat ingestion
-
-#### 1.4 Auth, Tenancy & API Gateway (Months 2.5-3) ✅
-- [x] JWT token generation/validation (HS256, agent + user tokens with tenant/role claims)
-- [x] Enrollment token system (time-bound, single-use agent provisioning)
-- [x] REST API server (Go 1.22 stdlib net/http with method-based routing)
-- [x] Health check endpoint (GET /health)
-- [x] Agent enrollment endpoint (POST /api/v1/enroll)
-- [x] Metrics query API (GET /api/v1/metrics, GET /api/v1/devices/{id}/metrics/{name})
-- [x] Heartbeat query API (GET /api/v1/heartbeat/{tenantID}/{deviceID})
-- [x] Aggregated metrics via continuous aggregate views (1m, 1h buckets)
-- [x] Request logging middleware
-
-#### 1.5 Deployment Configs (Months 3-3.2) ✅
-- [x] Multi-stage Dockerfile (golang:1.22-alpine → alpine:3.20, 16MB binary)
-- [x] docker-compose.yml for local dev (NATS 2.10, TimescaleDB 2.15 PG16, orchestrator)
-- [x] Makefile with build/test/lint/dev/docker targets
-- [x] Cross-compilation targets (linux amd64/arm64, windows amd64)
-
-#### 1.6 Agent Installer (Months 3.2-3.5) ✅
-- [x] Systemd service unit (hardened, restart policy, journal logging)
-- [x] Install script (binary deploy, dir setup, service enable)
-- [x] Uninstall support (service stop/remove, data cleanup)
-- [x] Multi-platform detection (linux amd64/arm64)
-
-#### 1.7 PostgreSQL Relational Schema (Months 3.5-4) ✅
-- [x] Schema migration system with version tracking
-- [x] Tenants table (shared schema with dedicated tenant option)
-- [x] Devices table (agent linking, status tracking, hardware info)
-- [x] Users table (tenant-scoped, role-based: admin/technician/viewer)
-- [x] Permissions table (role-resource-action grants)
-- [x] Enrollment tokens table (time-bound, single-use)
-- [x] Audit log table (immutable, tenant-scoped)
-- [x] Row-Level Security policies on all tenant-scoped tables
-- [x] Inventory store: CRUD for tenants, devices, agent linking
-- [x] Dev tenant seed (UUID-based, enterprise plan)
-- [x] Wire relational schema migration into orchestrator startup
-
-#### 1.8 Next Phase Foundation
-- [ ] Alerting engine (threshold rules, notification channels)
-- [ ] Agentless SNMP/ICMP Network Probe (Go)
-- [ ] Dashboard/visualization layer
-
-### Phase 2: Monitoring Core (Months 3-5) ✅
-- [x] Metrics ingestion pipeline (NATS → TimescaleDB) — *completed in Phase 1.3*
-- [x] Alerting engine (threshold, heartbeat)
-- [x] SNMP/ICMP collector (agentless)
-- [x] Network Probe (SNMP, discovery, flow, topology)
-- [x] Patch Management (Windows + Linux MVP)
-- [x] Remote Access Tunnels (RDP, SSH, VNC via WebSocket/NATS)
-- [ ] Dashboard/visualization (Grafana or custom)
-
-### Phase 3: Remote Access & Automation (Months 5-7) ✅
-- [x] Tunnel infrastructure (WebSocket/NATS) — *completed in Phase 2.4*
-- [x] RDP/SSH/VNC proxy — *completed in Phase 2.4*
-- [x] Script execution framework — *completed in Phase 2.3 (patch executor)*
-- [x] Patch management (Windows + Linux) — *completed in Phase 2.3*
-- [ ] Software inventory + vulnerability correlation
-
-### Phase 4: Advanced Features (Months 7-10)
-- [ ] Anomaly detection (ML-based)
-- [ ] NetFlow/sFlow ingestion
-- [ ] IP Phone monitoring (SIP, vendor APIs)
-- [ ] Synthetic monitoring
-- [ ] Reporting engine
-
-### Phase 5: Platform Hardening (Months 10-12) ✅
-- [x] Self-hosted distribution (Helm chart: deployments, HPA, PDB, network policies, ingress)
-- [x] Air-gapped install (Helm values with private registry, pre-pulled images)
-- [x] Multi-region SaaS (region-scoped values, NATS supercluster, regional backup)
-- [x] Performance/load testing (vegeta-based API + NATS agent simulation)
-- [ ] Security audit + penetration test
-- [ ] Documentation + runbooks
-
----
-
-## 10. Technical Decisions Summary
-
-| Component | Choice | Rationale |
-|-----------|--------|-----------|
-| Agent Language | Go | Cross-compile, single binary, performance, NATS client |
-| Platform Services | Go (stdlib) | Minimal deps, Go 1.22 net/http with method-based routing |
-| Message Bus | NATS Core | Lightweight, pub/sub, reconnect, multi-tenant subjects |
-| Time-Series DB | TimescaleDB (lib/pq) | PostgreSQL-compatible, hypertables, compression, continuous aggregates |
-| Relational DB | PostgreSQL (via TimescaleDB) | Hypertables, JSONB, mature, multi-tenant patterns |
-| Local Agent Store | BBolt | Embedded, zero-dependency, offline queue persistence |
-| Auth | Custom JWT + Enrollment Tokens | Lightweight, no external IdP dependency for MVP |
-| MFA | TOTP (RFC 6238, stdlib only) | No external dependency, standard QR enrollment |
-| API Transport | JSON over HTTP | Simple, universal, Go 1.22 stdlib mux |
-| Metrics Encoding | JSON (inline) | Simple for MVP; future: Protocol Buffers/MessagePack |
-| Object Storage | MinIO (self-hosted) / S3 (SaaS) | Abstracted via `Backend` interface, SSE-KMS optional |
-| Session Recording | Raw byte capture + MinIO/S3 | SHA256 verification, presigned URL playback, retention policies |
-| Agent Update | Manifest-based + cosign | Sigstore keyless signing, staged rollout, automatic rollback |
-| CVE Feed | OSV.dev batch API (primary) + NVD API (optional) | Free, no auth, broad OSS coverage. NVD for enterprise |
-| Vulnerability scan | 6h interval per device | Matches installed packages against CVE DB, auto-remediates on patch |
-| Encryption Keys | Per-tenant AES-256-GCM | Local key material or cloud KMS (AWS/GCP/Azure), key rotation |
-| Access Review | PostgreSQL audit_log queries | Immutable audit table, user/permission review endpoints |
-| Rate Limiting | In-memory token bucket (per-IP) | Per-endpoint limits, 10min stale cleanup |
-| Remote Control | Agent-side JPEG capture + NATS | Platform-agnostic, 5-10 FPS, MFA-gated sessions |
-| Scripting | Agent execution (PS/Bash/Python/Batch) | NATS dispatch, timeout, output capture |
-| Software Deployment | Agent download + install | MSI/EXE/DEB/RPM, SHA256 verify, silent install |
-| Third-Party Patching | Vendor API version discovery | 10 apps, auto-package creation, 24h sync |
-| Reporting | gofpdf v2 PDF generation | Scheduled delivery, MinIO/S3 storage |
-| Orchestrator Update | GitHub releases API + atomic swap | Bare metal: auto-update, Docker/K8s: instructions |
-| CI/CD | GoReleaser + cosign + Docker Buildx | Keyless signing, SPDX SBOM, multi-arch images |
-
----
-
-## 11. Open Questions / Risks
-
-1. **Agent Auto-Update Security**: Supply chain attack surface → Sigstore/cosign verification, staged rollouts
+1. **Agent Auto-Update Security**: Supply chain attack surface → Cosign verification, staged rollouts
 2. **TimescaleDB Scaling**: At 1M+ endpoints, consider distributed hypertables or VictoriaMetrics
 3. **NATS JetStream at Scale**: Cluster sizing, subject partitioning strategy
 4. **Remote Access Compliance**: SOC2, HIPAA requirements for session recording
 5. **Self-Hosted Support Burden**: Version skew, customer environment variability
-6. **IP Phone Vendor APIs**: Proprietary, may need reverse engineering or partnerships
+6. **SSO/OIDC**: Explicitly deferred (future work)
+7. **External Billing Backend**: Immutable billable events, invoices, upgrades/downgrades
 
 ---
 
-## 12. Next Steps
-
-1. **Validate**: Review this plan with stakeholders
-2. **Prototype**: Build agent core + NATS comms + TimescaleDB ingest (2 weeks)
-3. **Decide**: Finalize self-hosted distribution method (KOTS vs custom)
-4. **Staff**: Define team structure (Platform, Agent, UI, DevOps, Security)
-5. **Budget**: Infrastructure costs at scale (SaaS multi-region)
+*Last Updated: 2026-08-08*
+*PR #111: Reports and object storage behavioral tests (30 tests)*
+*PR #110: Software deployment behavioral tests (17 tests)*
+*PR #109: OS patch management behavioral tests (22 tests)*
+*PR #108: Fix TestOwnMSPSucceeds route and access level*
+*PR #107: Fix TestPolicySchedulerStartStop redeclaration*
+*PR #106: Docs update for PR #105*
+*PR #105: Vulnerability management behavioral tests (91 tests)*
+*PR #104: Network discovery behavioral tests (87 tests)*
+*PR #103: Remote support behavioral tests (59 tests)*
+*PR #102: Scripts and durable endpoint behavioral tests (52 tests)*
