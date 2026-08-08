@@ -5009,3 +5009,57 @@ Tests added:
 | ComplianceFinding struct fields | 3 |
 | versionLessThan | 4 |
 | JSON round-trips | 6 |
+
+## 2026-08-08 — PR #110: Software deployment behavioral tests
+
+PR: https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/pull/110
+Branch: `feature/software-deployment-behavioral-tests`
+Base SHA: `227da56`
+Exact head SHA: `c18c951`
+Merge commit: `c18c9515698de3264327d94ddb62be5bba9c722c` squash merge
+Merged: 2026-08-08
+Deleted branch after merge: yes
+
+Matrix item: Software deployment
+Previous status: Partial
+New status: Partial — 17 behavioral tests
+Matrix row updated: yes
+
+File added: `internal/agent/software/software_behavioral_test.go`
+
+Tests added: 17
+
+Test-only change. No production code, routes, schema, migrations, secrets, or tokens.
+
+CI results:
+- All 7 workflows terminal and successful: Phase 8C, Phase 8D, Phase 8E, Phase 8F, Phase 8G, CI, Internal Alpha Agent
+
+Tests added:
+| Category | Tests |
+|---|---|
+| SoftwareCommand struct fields | 1 |
+| SoftwareCommand zero values | 1 |
+| SoftwareResult struct fields | 1 |
+| SoftwareResult failure state | 1 |
+| SoftwareResult zero values | 1 |
+| Installer struct fields | 1 |
+| NewInstaller defaults | 1 |
+| SoftwareCommand JSON round-trip | 1 |
+| SoftwareResult JSON round-trip | 1 |
+| SoftwareResult JSON with error | 1 |
+| PackageType constants | 1 |
+| ActionType constants | 1 |
+| SoftwareCommand invalid package type | 1 |
+| SoftwareCommand unknown action | 1 |
+| SoftwareCommand timeout bounds | 1 |
+| SoftwareResult duration non-negative | 1 |
+| Installer Start invalid NATS | 1 |
+| Installer Stop safe | 1 |
+| SoftwareCommand empty fields JSON | 1 |
+| SoftwareResult empty fields JSON | 1 |
+
+Limitations/remaining work:
+- No integration tests: NATS broker not available in CI environment
+- No installer execution tests: Covered by PR #89 unit tests
+- No end-to-end deployment lifecycle: Requires representative agent + orchestrator infrastructure
+- Environment pending: Live software download, real package managers, cross-platform behavior

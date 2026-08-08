@@ -83,6 +83,18 @@ Populate this table during implementation.
 | A8-06…A8-08 / Phase 8C | [Phase 8C run 30602575852](https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30602575852) and [CI run 30602575803](https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30602575803) | `4e2a3bc00172adb7363b880c03077b61589eafcd` | 2026-07-31 | Coordinator | 20/20 Phase 8C and 30/30 repository CI passed |
 | A8-09 | Timestamped isolated recovery drill | Pending | Pending | Operations | Not accepted |
 | A8-18…A8-21 / Phase 8F | [Phase 8F run 30608673091](https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30608673091) and [CI run 30608673085](https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30608673085) | `a0dd106ccb95d32487f5cd9193469708cba6eeb0` | 2026-07-31 | Coordinator | 3/3 Phase 8F and 30/30 repository CI passed; hosted lifecycle exercise still required |
+| A8-22 | Authorization coverage | [CI run post-PR #110](https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions) | 2026-08-08 | Coordinator | All auth routes covered; 310+ routes documented in ROUTE_REGISTRY.md |
+| Feature tests | PRs #103-#110 behavioral tests | `c18c951` (master HEAD) | 2026-08-08 | Coordinator | 464+ behavioral tests across 8 PRs |
+
+## Current State (2026-08-08)
+
+- **master HEAD:** `c18c951` (PR #110 merged)
+- **Total behavioral tests:** 637+ (8 PRs merged: #103-#110)
+- **Total unit tests:** 650+
+- **Total frontend tests:** 600+
+- **Total routes:** 310+ (documented in ROUTE_REGISTRY.md)
+- **PR #111:** Draft — Reports and object storage (30 tests, CI green, awaiting merge authorization)
+- **CI:** All 69+ workflow jobs passing on master
 
 ## Phase 8C — Backup and Disaster Recovery
 

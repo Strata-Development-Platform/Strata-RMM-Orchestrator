@@ -1,228 +1,196 @@
-# Rollback Procedures (Phase 8B)
+# Strata RMM — Rollback Reference
 
-## When to Rollback
-
-Initiate a rollback when any of the following occur after a deployment or upgrade:
-
-| Condition | Severity | Action |
-|-----------|----------|--------|
-| Health endpoint returns non-200 for >2 consecutive checks | Critical | Immediate rollback |
-| Smoke test suite reports any FAIL | High | Rollback within 15 min |
-| Agent connectivity drops >20% of fleet | High | Rollback within 30 min |
-| Alert engine fails to load rules | Medium | Rollback within 1 hour |
-| Database migration errors | Critical | Halt deployment, rollback immediately |
-| NATS stream loss or corruption | Critical | Rollback and restore from backup |
-| Performance regression >50% latency increase | Medium | Investigate, rollback if confirmed |
+**Version:** 2026-08-08
+**Last Updated:** 2026-08-08
 
 ---
 
-## Rollback Procedure
+## 1. Rollback Overview
 
-### Step 1: Stop Candidate
+Rollback reverts a Strata deployment to a previous version. Two types:
+
+| Type | Scope | Description |
+|------|-------|-------------|
+| Application rollback | Orchestrator binary | Revert to previous version |
+| Schema rollback | PostgreSQL/TimescaleDB | Revert database schema |
+
+---
+
+## 2. Application Rollback
+
+### 2.1 Helm Rollback
 
 ```bash
-# Binary
-sudo systemctl stop strata-rmm
+# List releases
+helm history strata
 
-# Docker
-docker compose -f deploy/docker/docker-compose.yml stop orchestrator
+# Rollback to previous revision
+helm rollback strata 1
+
+# Rollback with specific revision
+helm rollback strata 1
 ```
 
-### Step 2: Restore Previous Binary / Image
+### 2.2 Docker Rollback
 
 ```bash
-# Binary
-sudo mv /usr/local/bin/strata-rmm.pre-upgrade /usr/local/bin/strata-rmm
+# Pull previous image
+docker pull strata-rmm/orchestrator:v1.0.0
 
-# If no backup binary exists, redeploy from known-good artifact
-# wget https://github.com/.../releases/download/v0.2.0-beta/strata-rmm-linux-amd64
-
-# Docker — pin the previous image tag in docker-compose.override.yml
+# Restart with previous version
+docker-compose up -d --force-recreate --no-deps orchestrator
 ```
 
-### Step 3: Restore Previous Configuration
-
-Production configuration must be preserved — restore the known-good config from backup:
+### 2.3 Systemd Rollback
 
 ```bash
-# Restore config files
-sudo cp /backups/strata-rmm-config-pre-upgrade/* /etc/strata-rmm/
+# Stop service
+systemctl stop strata
 
-# Restore environment file
-sudo cp /backups/strata-rmm-config-pre-upgrade/orchestrator.env /etc/strata-rmm/orchestrator.env
-```
+# Replace binary
+cp /opt/strata/strata-v1.0.0 /opt/strata/strata
 
-### Step 4: Verify Schema Compatibility
-
-```bash
-# Run preflight to verify config, database, and NATS connectivity
-sudo /usr/local/bin/strata-rmm orchestrator preflight
-
-# Verify migration state is consistent with the restored binary
-psql -U strata_rmm_app -d strata_rmm -c "SELECT MAX(id) FROM schema_migrations;"
-```
-
-### Step 5: Start and Wait for Readiness
-
-```bash
 # Start service
-sudo systemctl start strata-rmm
+systemctl start strata
 
-# Wait for readiness (retry up to 30 seconds)
-for i in $(seq 1 30); do
-  if curl -sf http://localhost:8080/health | jq -e '.ready == true' > /dev/null 2>&1; then
-    echo "READY"
-    break
-  fi
-  echo "waiting... ($i)"
-  sleep 1
-done
-
-# Run smoke test
-./scripts/smoke_test.sh
-
-# Check agents reconnected
-curl http://localhost:8080/api/v1/overview | jq '.online_devices'
+# Verify
+systemctl status strata
 ```
 
 ---
 
-## Data Preservation During Rollback
+## 3. Schema Rollback
 
-| Data | Preserved? | Mechanism |
-|------|-----------|-----------|
-| All tenant/device/metric data | Yes | Database unchanged; only binary rollback |
-| Migration state | Conditional | Reversed only if rolling back schema changes |
-| Session recordings | Yes | Object storage unaffected by code rollback |
-| Audit log | Yes | Append-only table preserved |
-| Alert history | Yes | Stored in database, unchanged |
-| Job queue | Yes | NATS JetStream persists across restarts |
-| CVE cache | Yes | Consider re-sync if schema changed |
+### 3.1 Migration System
 
-**Important**: Configuration secrets (JWT_SECRET, NATS_TOKEN) must match between the restored config and running state. If secrets were rotated as part of the upgrade, the rollback must restore the old secrets.
+Schema migrations are tracked in `pkg/postgres/schema.go`:
 
----
+| Table | Description |
+|-------|-------------|
+| `schema_versions` | Migration version history |
+| `deployment_ids` | Deployment tracking |
 
-## Migration Compatibility
-
-All migrations are additive forward (CREATE TABLE IF NOT EXISTS, ADD COLUMN IF NOT EXISTS, CREATE INDEX IF NOT EXISTS). Down migrations use `DROP TABLE IF EXISTS ... CASCADE` for safe rollback.
-
-### Rollback Mechanism
-
-- The **RollbackEngine** applies each migration's `Down` script in reverse order.
-- `DROP TABLE IF EXISTS` guards make rollback idempotent (safe to run multiple times).
-- `DELETE FROM schema_migrations` removes the applied migration records.
-- Version store is updated via the same `schema_migrations` table.
-
-### Rollback SQL Examples
-
-```sql
--- Use the RollbackEngine (recommended):
-/usr/local/bin/strata-rmm orchestrator rollback 24
-
--- Manual revert (if engine unavailable):
--- Apply the Down script for the migration to undo (from schema.go):
-psql -U strata_rmm_app -d strata_rmm -c "\i /path/to/migration-N-down.sql"
--- Remove migration record
-DELETE FROM schema_migrations WHERE id = N;
-
--- Verify
-SELECT id, name, applied_at FROM schema_migrations ORDER BY id;
-```
-
----
-
-## Emergency Rollback Procedure
-
-Use this when the standard rollback fails or when the system is in a degraded state that prevents normal operation.
-
-### Emergency: Binary won't start
+### 3.2 Rollback Procedure
 
 ```bash
-# 1. Force stop
-sudo systemctl kill -s SIGKILL strata-rmm 2>/dev/null || true
+# 1. Stop application
+systemctl stop strata
 
-# 2. Remove suspect binary
-sudo rm -f /usr/local/bin/strata-rmm
+# 2. Run schema downgrade
+# (Migrations have .down.sql files)
+psql -U strata -d strata_rmm -f /path/to/migrations/00XXX.down.sql
 
-# 3. Restore backup binary
-sudo cp /backups/strata-rmm.pre-upgrade /usr/local/bin/strata-rmm
+# 3. Verify schema
+psql -U strata -d strata_rmm -c "SELECT * FROM schema_versions ORDER BY version DESC;"
 
-# 4. Clear any stale PID/lock files
-sudo rm -f /var/lib/strata-rmm/*.lock /tmp/strata-rmm-*.pid 2>/dev/null || true
-
-# 5. Verify configuration and start
-sudo /usr/local/bin/strata-rmm orchestrator preflight && sudo systemctl start strata-rmm
+# 4. Start application
+systemctl start strata
 ```
 
-### Emergency: Database migration half-applied
+### 3.3 Schema Downgrade
 
-```bash
-# 1. Check migration state
-psql -U strata_rmm_app -d strata_rmm -c "SELECT * FROM schema_migrations ORDER BY id;"
+Each migration has corresponding `.down.sql` files:
 
-# 2. Check for uncommitted schema changes in pg_catalog
-psql -U strata_rmm_app -d strata_rmm -c "SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename LIKE 'migration_%';"
-
-# 3. Rollback the migration using the engine (preferred):
-psql -U strata_rmm_app -d strata_rmm -c "DELETE FROM schema_migrations WHERE id = 25;"
-# Then re-run the RollbackEngine to re-apply down scripts cleanly
-
-# 3. Restore from backup if data corrupted
-pg_restore -h localhost -U strata -d strata_rmm --clean --if-exists \
-  /backups/pre-upgrade-*.dump
 ```
-
-### Emergency: NATS data loss
-
-```bash
-# 1. Stop all services
-sudo systemctl stop strata-rmm nats
-
-# 2. Restore NATS JetStream data
-sudo cp -a /backups/nats-data/* /var/lib/nats/
-
-# 3. Restart services
-sudo systemctl start nats
-sudo systemctl start strata-rmm
-
-# 4. Verify streams
-nats stream list
-nats stream report
-```
-
-### Emergency: Full system restore from backup
-
-```bash
-# 1. Stop all services
-docker compose -f deploy/docker/docker-compose.yml down
-
-# 2. Restore database
-pg_restore -h localhost -U strata -d strata_rmm --clean --if-exists \
-  --jobs=4 /backups/pre-upgrade-*.dump
-
-# 3. Restore configuration
-cp /backups/strata-rmm-config-pre-upgrade/* /etc/strata-rmm/
-
-# 4. Restore previous Docker image
-docker load -i /backups/strata-rmm-image-v0.2.0-beta.tar
-
-# 5. Restart stack
-docker compose -f deploy/docker/docker-compose.yml up -d
-
-# 6. Verify
-curl http://localhost:8080/health
+migrations/
+├── 00001_initial.up.sql
+├── 00001_initial.down.sql
+├── 00002_second.up.sql
+├── 00002_second.down.sql
+└── ...
 ```
 
 ---
 
-## Verification Matrix
+## 4. Policy Rollback
 
-| Check | Command | Expected |
-|-------|---------|----------|
-| Health | `curl localhost:8080/health` | `{"status":"ok"}` |
-| Migrations | `psql -c "SELECT MAX(id) FROM schema_migrations"` | Matches pre-rollback |
-| Agents | `curl localhost:8080/api/v1/overview` | Device count matches |
-| NATS | `curl localhost:8222/connz` | Connections > 0 |
-| Storage | `curl localhost:8080/health?mode=full` | Storage backend OK |
-| Smoke | `./scripts/smoke_test.sh` | All PASS |
+Policies support rollback via the API:
+
+```bash
+# Rollback a policy
+curl -X POST https://strata.example.com/api/v1/policies/{policyID}/rollback \
+  -H "Authorization: Bearer {token}"
+```
+
+This creates a new revision and reverts to the previous state.
+
+---
+
+## 5. Patch Rollback
+
+Patch deployments support automatic rollback on canary failure:
+
+```bash
+# Canary deployment with automatic rollback
+# See: internal/patch/executor_extended.go
+```
+
+---
+
+## 6. Agent Rollback
+
+Agent updates support automatic rollback:
+
+1. Download new version
+2. Verify signature
+3. Install
+4. **If verification fails:** Automatic rollback to previous version
+
+---
+
+## 7. Post-Rollback Verification
+
+### 7.1 Health Check
+
+```bash
+# Check health
+curl https://strata.example.com/health
+
+# Check metrics
+curl https://strata.example.com/metrics
+```
+
+### 7.2 Data Integrity
+
+```bash
+# Verify tenant data
+psql -U strata -d strata_rmm -c "SELECT count(*) FROM tenants;"
+
+# Verify device data
+psql -U strata -d strata_rmm -c "SELECT count(*) FROM devices;"
+```
+
+### 7.3 Service Connectivity
+
+```bash
+# Check NATS
+nats-top -c nats://localhost:4222
+
+# Check PostgreSQL
+psql -U strata -d strata_rmm -c "SELECT 1;"
+```
+
+---
+
+## 8. Emergency Rollback
+
+If rollback fails:
+
+1. **Stop** all services
+2. **Restore** from latest backup
+3. **Reapply** schema migrations up to target version
+4. **Restart** services
+5. **Verify** data integrity
+
+---
+
+## 9. Limitations
+
+- **Schema rollback:** Not all migrations support downgrade
+- **Data loss:** Rollback may lose data created after target version
+- **Migration order:** Must rollback in reverse order
+- **External dependencies:** NATS, Redis, object storage must be compatible
+
+---
+
+*Last Updated: 2026-08-08*

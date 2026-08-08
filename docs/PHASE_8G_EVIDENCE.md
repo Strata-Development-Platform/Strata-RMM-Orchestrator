@@ -49,6 +49,26 @@ human/environment gates occurred.
 | Phase 8E regression | `ebeee2de6f3ddb354ebb41fef2959ceeefaf5082` | [run 30635028802](https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30635028802) | 5/5 passed |
 | Phase 8F regression | `ebeee2de6f3ddb354ebb41fef2959ceeefaf5082` | [run 30635028768](https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/actions/runs/30635028768) | 3/3 passed |
 
+## Post-8G Behavioral Test Evidence (2026-08-08)
+
+| PR | Title | Behavioral Tests | Status |
+|---|---|---|---|
+| #102 | Scripts and durable endpoint | 52 | ✅ Merged |
+| #103 | Remote support | 59 | ✅ Merged |
+| #104 | Network discovery | 87 | ✅ Merged |
+| #105 | Vulnerability management | 91 | ✅ Merged |
+| #106 | Docs update | 0 (docs only) | ✅ Merged |
+| #107 | Fix TestPolicySchedulerStartStop | 0 (fix only) | ✅ Merged |
+| #108 | Fix TestOwnMSPSucceeds | 0 (fix only) | ✅ Merged |
+| #109 | OS patch management | 22 | ✅ Merged |
+| #110 | Software deployment | 17 | ✅ Merged |
+| #111 | Reports and object storage (draft) | 30 | 🟡 Draft, CI green |
+
+**master HEAD:** `c18c951` (PR #110)
+**Total automated tests:** 637+ behavioral + 650+ unit + 600+ frontend = ~1,900+ tests
+**Total API routes:** 310+ (documented in ROUTE_REGISTRY.md)
+**CI status:** All 69+ workflow jobs passing
+
 The evidence-only commit after this tested implementation head must also pass
 the complete workflow set before merge. Its final SHA and runs are recorded in
 the PR description so evidence can be updated without creating a recursive

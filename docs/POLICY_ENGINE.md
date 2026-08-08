@@ -1,167 +1,326 @@
-# Policy Engine
+# Strata RMM — Policy Engine Reference
 
-## Overview
-
-The policy engine provides a centralized, hierarchical configuration system for managing how devices are monitored, patched, and maintained. Policies are defined at higher levels of the deployment hierarchy and inherited downward, with more specific levels overriding less specific ones.
-
----
-
-## Policy Categories
-
-| Category | Description | Key Fields |
-|----------|-------------|------------|
-| **Patch Management** | Define patch approval mode, severity filters, platforms, maintenance windows | `approval_mode`, `severity`, `platforms`, `device_filter`, `max_retries` |
-| **Alerting Rules** | Threshold and heartbeat alert definitions with severity, cooldown, notification channels | `metric_name`, `condition`, `threshold`, `timeout`, `severity`, `cooldown` |
-| **Monitoring Thresholds** | Default metric collection intervals, retention policies per device/site | `collection_interval`, `retention_days`, `enabled_metrics` |
-| **Software Deployment** | Approval policies for software installs, allowed package types, source restrictions | `approval_mode`, `allowed_types`, `allowed_sources` |
-| **Script Execution** | Execution policies, allowed languages, timeout limits, parameter constraints | `timeout_max`, `allowed_languages`, `requires_approval` |
-| **Maintenance Windows** | Scheduled time blocks for patch deployment, script execution, reboot | `start_time`, `end_time`, `days_of_week`, `timezone` |
+**Version:** 2026-08-08
+**Last Updated: 2026-08-08
 
 ---
 
-## Inheritance Model
+## 1. Policy Engine Overview
 
-### Hierarchy
-
-```
-Platform Level  (operator-defined defaults)
-  |
-  └─ MSP Level  (MSP-specific overrides)
-       |
-       └─ Client Level  (client-specific overrides)
-            |
-            └─ Site Level  (site/location-specific overrides)
-                 |
-                 └─ Device Level  (device-specific overrides)
-```
-
-### Resolution Rules
-
-1. A policy defined at any level applies to all descendants automatically.
-2. If the same policy field is defined at multiple levels, the most specific (lowest) level wins.
-3. Fields not overridden at a lower level inherit from the nearest ancestor that defines them.
-4. A policy can be explicitly "blocked" at any level to prevent inheritance of unwanted rules.
-
-### Example: Patch Policy Resolution
-
-```
-Platform:  approval_mode=auto, severity=critical, retries=3
-MSP:       severity=important (overrides), retries=5 (overrides)
-Client:    approval_mode=manual (overrides)
-Site:      (no overrides -> inherits from Client)
-Device:    (no overrides -> inherits from Site)
-
-Effective for Device:
-  approval_mode=manual   (from Client)
-  severity=important     (from MSP)
-  retries=5              (from MSP)
-```
+Strata's hierarchical policy engine supports recursive policy merging with most-specific-wins precedence.
 
 ---
 
-## Policy Lifecycle
-
-### States
+## 2. Policy Hierarchy
 
 ```
-Draft ──> Validation ──> Preview ──> Published
-  ^                        │
-  └────────────────────────┘  (back to draft for edits)
+Global Policy (level 0)
+└── MSP Policy (level 1)
+    └── Client Policy (level 2)
+        └── Device Group Policy (level 3)
+            └── Device Policy (level 4)
 ```
 
-### Stage Details
+### 2.1 Scope Ranking
 
-#### Draft
-- Policy is created and editable.
-- Not applied to any devices.
-- Only visible to administrators.
-- Changes saved as new revisions.
+| Level | Scope | Precedence |
+|-------|-------|------------|
+| 0 | Global | Lowest |
+| 1 | MSP | ↑ |
+| 2 | Client | ↑ |
+| 3 | Device Group | ↑ |
+| 4 | Device | Highest |
 
-#### Validation
-- System validates policy configuration:
-  - Required fields present
-  - Value ranges are valid
-  - Referenced resources exist (e.g., notification channels)
-  - No circular dependencies
-- Validation errors returned to user.
-- On success, policy advances to preview.
-
-#### Preview
-- Computed effective configuration is calculated without applying it.
-- Admins can see which devices would be affected.
-- Impact summary: number of devices, configuration diffs.
-- Provides confidence check before production rollout.
-
-#### Published
-- Policy is active and enforced.
-- Agents receive updated configuration on next poll.
-- Evaluation engine applies new rules immediately.
-- Previous published state is archived in revision history.
-
-### Lifecycle Diagram
-
-```
-┌───────┐   validate   ┌──────────┐   preview   ┌────────┐   publish   ┌───────────┐
-│ Draft │ ───────────> │Validation│ ───────────> │Preview │ ──────────> │ Published │
-└───────┘              └──────────┘              └────────┘              └───────────┘
-    ^                                                                         │
-    │                              edit                                       │
-    └─────────────────────────────────────────────────────────────────────────┘
-```
+**Most-specific-wins:** Lower levels (higher scope) override higher levels.
 
 ---
 
-## Effective Configuration Display
+## 3. Policy Structure
 
-### Purpose
-Show the computed, merged policy configuration at any level of the hierarchy so administrators can understand exactly what policies apply to a given device, site, or client.
+### 3.1 Policy Fields
 
-### Display Format
+```go
+type PatchPolicy struct {
+    ID             string            `json:"id"`
+    TenantID       string            `json:"tenant_id"`
+    Name           string            `json:"name"`
+    Enabled        bool              `json:"enabled"`
+    Platforms      []Platform        `json:"platforms"`
+    ApprovalMode   string            `json:"approval_mode"`
+    Severity       PatchSeverity     `json:"severity"`
+    MaintenanceWin string            `json:"maintenance_window"`
+    DeviceFilter   map[string]string `json:"device_filter"`
+    MaxRetries     int               `json:"max_retries"`
+    CreatedAt      time.Time         `json:"created_at"`
+    UpdatedAt      time.Time         `json:"updated_at"`
+}
+```
 
-| Level | Policy | Value | Source |
-|-------|--------|-------|--------|
-| Platform | approval_mode | auto | Platform default |
-| MSP | approval_mode | auto | (inherited) |
-| Client | approval_mode | manual | Client override |
-| Site | approval_mode | manual | (inherited) |
-| Device | approval_mode | manual | (inherited) |
+### 3.2 Policy States
 
-### Visual Indicators
-- **Inherited** values are shown in muted text with a reference to the source level.
-- **Overridden** values are shown in bold with the overriding level.
-- **Conflicts** (e.g., two policies at the same level defining the same field) are highlighted for resolution.
-
----
-
-## Revision History
-
-### Purpose
-Maintain a complete, auditable trail of all policy changes.
-
-### Captured Data
-
-| Field | Description |
+| State | Description |
 |-------|-------------|
-| `revision_id` | Unique revision identifier |
-| `policy_id` | The policy that was modified |
-| `previous_payload` | Full JSON snapshot of the policy before change |
-| `new_payload` | Full JSON snapshot of the policy after change |
-| `changed_by` | User who made the change |
-| `changed_at` | Timestamp of the change |
-| `change_type` | created, updated, published, draft_saved |
+| Draft | Created but not published |
+| Published | Active and enforced |
+| Archived | Deprecated, preserved for history |
 
-### Features
+---
 
-- Full diff between any two revisions
-- Rollback to any previous revision (creates a new revision)
-- Audit integration: all changes logged to `audit_log` table
-- Retention: last 100 revisions per policy (configurable)
+## 4. Policy Lifecycle
 
-### API
+### 4.1 Create
 
+```bash
+curl -X POST https://strata.example.com/api/v1/policies \
+  -H "Authorization: Bearer {token}" \
+  -d '{"name": "Critical Security Policy", "severity": "critical", "enabled": true}'
 ```
-GET    /api/v1/policies/:id/revisions          — List revisions
-GET    /api/v1/policies/:id/revisions/:rev     — Get revision detail
-POST   /api/v1/policies/:id/rollback/:rev      — Rollback to revision
-GET    /api/v1/policies/:id/diff?from=a&to=b   — Diff two revisions
+
+### 4.2 Validate
+
+```bash
+curl -X POST https://strata.example.com/api/v1/policies/{policyID}/validate \
+  -H "Authorization: Bearer {token}"
 ```
+
+### 4.3 Preview
+
+```bash
+curl -X POST https://strata.example.com/api/v1/policies/{policyID}/preview \
+  -H "Authorization: Bearer {token}"
+```
+
+### 4.4 Publish
+
+```bash
+curl -X POST https://strata.example.com/api/v1/policies/{policyID}/publish \
+  -H "Authorization: Bearer {token}"
+```
+
+### 4.5 Rollback
+
+```bash
+curl -X POST https://strata.example.com/api/v1/policies/{policyID}/rollback \
+  -H "Authorization: Bearer {token}"
+```
+
+---
+
+## 5. Effective Policy Computation
+
+### 5.1 Recursive Merge
+
+```go
+// Compute effective policy for device
+func ComputeEffectivePolicy(deviceID string) (*Policy, error) {
+    // Fetch policies at all levels
+    policies := fetchPolicies(deviceID)
+
+    // Merge with most-specific-wins
+    merged := mergePolicies(policies)
+    return merged, nil
+}
+```
+
+### 5.2 Merge Rules
+
+| Field | Merge Strategy |
+|-------|---------------|
+| `enabled` | Most-specific wins |
+| `severity` | Most-specific wins |
+| `platforms` | Union (all applicable) |
+| `approval_mode` | Most-specific wins |
+| `maintenance_window` | Most-specific wins |
+
+---
+
+## 6. Policy Diff
+
+### 6.1 Compare Policies
+
+```bash
+curl -X POST https://strata.example.com/api/v1/policies/{policyID}/diff \
+  -H "Authorization: Bearer {token}" \
+  -d '{"basePolicyID": "policy-123"}'
+```
+
+### 6.2 Diff Output
+
+```json
+{
+  "fields_changed": ["severity", "enabled"],
+  "old_values": {"severity": "moderate", "enabled": true},
+  "new_values": {"severity": "critical", "enabled": true}
+}
+```
+
+---
+
+## 7. Policy Revisions
+
+### 7.1 Revision History
+
+Each publish creates a revision:
+
+```sql
+CREATE TABLE policy_revisions (
+    id          UUID PRIMARY KEY,
+    policy_id   UUID NOT NULL,
+    version     INTEGER NOT NULL,
+    data        JSONB NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL
+);
+```
+
+### 7.2 List Revisions
+
+```bash
+curl -X GET https://strata.example.com/api/v1/policies/{policyID}/revisions \
+  -H "Authorization: Bearer {token}"
+```
+
+---
+
+## 8. Policy Enforcement
+
+### 8.1 Scheduler
+
+Policies are enforced on intervals:
+
+```go
+// policy_scheduler.go
+func (s *PolicyScheduler) Run() {
+    ticker := time.NewTicker(1 * time.Hour)
+    for {
+        select {
+        case <-ticker.C:
+            s.enforceAll()
+        case <-ctx.Done():
+            return
+        }
+    }
+}
+```
+
+### 8.2 Enforcement Actions
+
+| Action | Description |
+|--------|-------------|
+| Auto-remediate | Apply patches automatically |
+| Alert | Create alert for non-compliance |
+| Schedule | Queue remediation for maintenance window |
+
+---
+
+## 9. Maintenance Windows
+
+### 9.1 Create Window
+
+```bash
+curl -X POST https://strata.example.com/api/v1/maintenance-windows \
+  -H "Authorization: Bearer {token}" \
+  -d '{"name": "Sunday Maintenance", "start": "02:00", "end": "06:00", "days": ["Sunday"]}'
+```
+
+### 9.2 Query Windows
+
+```bash
+curl -X GET https://strata.example.com/api/v1/maintenance-windows \
+  -H "Authorization: Bearer {token}"
+```
+
+---
+
+## 10. Script Vault Binding
+
+### 10.1 Bind Script to Policy
+
+```bash
+curl -X POST https://strata.example.com/api/v1/device-groups/{groupID}/script-bindings \
+  -H "Authorization: Bearer {token}" \
+  -d '{"scriptID": "script-123", "action": "execute"}'
+```
+
+### 10.2 Script Schedule
+
+```bash
+curl -X POST https://strata.example.com/api/v1/tenants/{tenantID}/scripts/schedule \
+  -H "Authorization: Bearer {token}" \
+  -d '{"scriptID": "script-123", "schedule": "0 2 * * *"}'
+```
+
+---
+
+## 11. Policy Validation
+
+### 11.1 Validation Rules
+
+| Rule | Description |
+|------|-------------|
+| Name required | Policy name must be non-empty |
+| Description required | Policy description must be non-empty |
+| Category required | Policy category must be set |
+| Scope required | Policy scope must be set |
+| Config depth limit | Nested config max 10 levels |
+| Config size limit | Max 1MB config payload |
+| Time format | Time must be valid HH:MM |
+| Day validation | Days must be valid weekday names |
+
+### 11.2 Validation Response
+
+```json
+{
+  "valid": true,
+  "errors": [],
+  "warnings": []
+}
+```
+
+---
+
+## 12. Smart Group Integration
+
+### 12.1 Smart Group Evaluation
+
+```bash
+curl -X POST https://strata.example.com/api/v1/device-groups/{groupID}/evaluate \
+  -H "Authorization: Bearer {token}"
+```
+
+### 12.2 Evaluation Result
+
+```json
+{
+  "groupID": "group-123",
+  "members": ["device-1", "device-2"],
+  "evaluatedAt": "2024-01-01T00:00:00Z"
+}
+```
+
+---
+
+## 13. Testing
+
+### 13.1 Unit Tests
+
+| Test | Coverage |
+|------|----------|
+| `TestPatchStructFields` | Patch struct fields |
+| `TestPatchPolicy_StructFields` | PatchPolicy struct fields |
+| `TestPatchStatusConstants` | PatchStatus constants |
+| `TestPatchSeverityConstants` | PatchSeverity constants |
+| `TestPlatformConstants` | Platform constants |
+| `TestPolicyDiff` | Policy diff computation |
+| `TestEffectivePolicy` | Recursive merge |
+
+### 13.2 Behavioral Tests
+
+| Test | Coverage |
+|------|----------|
+| 68 behavioral tests | Policy categories, scope, validation |
+| JSON round-trips | Policy serialization |
+| Zero-value handling | Default values |
+
+---
+
+*Last Updated: 2026-08-08*

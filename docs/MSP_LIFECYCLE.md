@@ -1,111 +1,307 @@
-# MSP lifecycle
+# Strata RMM — MSP Lifecycle Reference
 
-Phase 8F provides platform-operated controls for onboarding, entitlement changes,
-suspension, reactivation, and retention-safe offboarding. Platform routes require
-`platform_owner` or `platform_admin`; MSP-scoped roles cannot invoke them.
+**Version:** 2026-08-08
+**Last Updated: 2026-08-08
 
-## Owner activation
+---
 
-`POST /api/v2/platform/msps` requires `name`, `slug`, `plan`, and
-`owner_email`. It creates an inactive `pending_owner` MSP with a suspended
-entitlement and attempts to email a 72-hour link of the form
-`/activate-account#<token>`. The browser reads the fragment, inspects the
-invitation through `POST /api/v1/auth/invitations/inspect`, and submits the
-token with a 14–72-byte password in the JSON body of
-`POST /api/v1/auth/invitations/accept`. Acceptance returns `204` and never
-creates a session. Failed, unconfigured, or pending delivery remains visible
-through the MSP response and can be rotated with
-`POST /api/v2/platform/msps/{mspID}/owner-invitation`.
+## 1. MSP Lifecycle Overview
 
-Only a top-level platform owner or administrator session can create or rotate
-owner invitations. Pending MSPs do not resolve by host and cannot be entered as
-a workspace. A valid invitation already marked delivered cannot be rotated;
-after a failed/unconfigured/pending delivery or expiry, resend revokes the old
-row and makes every earlier link unusable.
+Strata supports MSP (Managed Service Provider) lifecycle with provider registration, client management, billing, and offboarding.
 
-Successful acceptance creates a globally unique, email-verified identity and
-the first active `msp_owner` membership, then activates the MSP and entitlement
-and consumes the invitation in one transaction. The owner must then sign in;
-there is no implicit session and no public sign-up path.
+---
 
-The onboarding status and operational status are separate controls:
+## 2. MSP Registration
 
-| Console state | `onboarding_status` | `is_active` | Meaning and allowed recovery |
-|---|---|---|---|
-| Pending owner activation | `pending_owner` | `false` | No verified first owner yet. Initial entitlement is suspended; use invitation recovery/resend only. Host and workspace access are denied. |
-| Active | `active` | `true` | Owner acceptance completed and the initial entitlement was activated. Normal MSP workspace and host routing are eligible, subject to membership and entitlement checks. |
-| Suspended | `active` | `false` | Owner onboarding already completed, but platform lifecycle controls disabled the MSP. Preserve the owner identity and use the ordinary platform reactivation path; no owner invitation is involved. |
+### 2.1 Provider Setup
 
-The ordinary MSP activate endpoint requires `onboarding_status = 'active'`, so
-it cannot turn a pending-owner tenant into an active tenant or bypass mailbox
-verification.
-
-## Entitlement grace periods
-
-`PATCH /api/v2/platform/msps/{mspID}/entitlement` accepts:
-
-```json
-{
-  "plan_slug": "professional",
-  "status": "past_due",
-  "grace_period_days": 14
-}
+```bash
+# Provider setup
+curl -X POST https://strata.example.com/api/v2/platform/provider/setup \
+  -H "Authorization: Bearer {token}" \
+  -d '{"name": "My MSP", "domain": "mymsp.com"}'
 ```
 
-`grace_period_days` is required for `past_due`, must be between 1 and 90, and is
-rejected for other states. Returning an entitlement to `active`, `suspended`, or
-`cancelled` clears the grace deadline.
+### 2.2 Owner Invitation
 
-## Offboarding
-
-`POST /api/v2/platform/msps/{mspID}/offboarding` requires a reason and accepts a
-retention period from 30 to 3650 days (default 90). The request runs inside the
-API request transaction and:
-
-- deactivates the MSP;
-- cancels its entitlement and clears grace;
-- revokes MSP, client, and site memberships;
-- revokes active support grants and enrollment tokens;
-- disables registered agents and managed devices;
-- suspends custom domains;
-- records the retention deadline and an immutable control-plane audit event.
-
-Repeating the request is safe before deletion approval. It can extend, but cannot
-shorten, the existing retention deadline.
-
-`GET /api/v2/platform/msps/{mspID}/offboarding` returns the current state and
-retention deadline.
-
-Deletion approval is a separate guarded action:
-
-`POST /api/v2/platform/msps/{mspID}/offboarding/approve-deletion`
-
-```json
-{
-  "confirm_slug": "example-msp"
-}
+```bash
+# Invite MSP owner
+curl -X POST https://strata.example.com/api/v2/msps/{mspID}/owner-invitation \
+  -H "Authorization: Bearer {token}" \
+  -d '{"email": "owner@mymsp.com"}'
 ```
 
-Approval requires the exact MSP slug, revoked access, and an expired retention
-period. It records the approving operator and timestamp. It does not physically
-delete tenant data.
+### 2.3 MSP Activation
 
-## Current limits
+```bash
+# Activate MSP
+curl -X POST https://strata.example.com/api/v2/platform/msps/{mspID}/activate \
+  -H "Authorization: Bearer {token}"
+```
 
-- Account activation depends on configured SMTP delivery and a correct public
-  origin. The API never reveals the raw token, so an unconfigured or failed
-  delivery must be corrected and resent. Live-provider SMTP acceptance and an
-  activation-specific browser test remain outside the current slice evidence.
-- Owner invitation resend does not change the intended email address and is
-  refused while the latest delivered invitation remains valid.
+---
 
-- `GET /api/v2/platform/msps/{mspID}/export` produces a platform-authorized,
-  audited JSON export. The response excludes settings, tokens, credentials,
-  public keys, IP addresses, and customer payloads. A single total record limit
-  defaults to 1000 and cannot exceed 5000; `truncated` and `total_records`
-  identify when another bounded request or a future asynchronous export is
-  required. `sha256` covers the serialized `data` object.
-- Physical deletion requires a separately reviewed executor and recovery
-  procedure; approval alone never deletes data.
-- Environment acceptance must demonstrate credential rejection, retained-data
-  integrity, audit evidence, and cross-scope authorization before A8-21 can pass.
+## 3. Client Management
+
+### 3.1 Create Client
+
+```bash
+curl -X POST https://strata.example.com/api/v2/msps/{mspID}/clients \
+  -H "Authorization: Bearer {token}" \
+  -d '{"name": "My Client", "domain": "myclient.com"}'
+```
+
+### 3.2 Client Profile
+
+```bash
+# Update client profile
+curl -X PATCH https://strata.example.com/api/v2/clients/{clientID}/profile \
+  -H "Authorization: Bearer {token}" \
+  -d '{"name": "Updated Client", "plan": "enterprise"}'
+```
+
+### 3.3 Client Sites
+
+```bash
+# Create site
+curl -X POST https://strata.example.com/api/v2/clients/{clientID}/sites \
+  -H "Authorization: Bearer {token}" \
+  -d '{"name": "Main Office", "address": "123 Main St"}'
+```
+
+### 3.4 Client Archive
+
+```bash
+# Archive client
+curl -X POST https://strata.example.com/api/v2/msps/{mspID}/clients/{clientID}/archive \
+  -H "Authorization: Bearer {token}"
+```
+
+---
+
+## 4. Billing
+
+### 4.1 Billing Account
+
+```bash
+# Create billing account
+curl -X POST https://strata.example.com/api/v2/msps/{mspID}/billing/account \
+  -H "Authorization: Bearer {token}"
+
+# Get billing account
+curl -X GET https://strata.example.com/api/v2/msps/{mspID}/billing/account \
+  -H "Authorization: Bearer {token}"
+
+# Delete billing account
+curl -X DELETE https://strata.example.com/api/v2/msps/{mspID}/billing/account \
+  -H "Authorization: Bearer {token}"
+```
+
+### 4.2 Subscriptions
+
+```bash
+# Create subscription
+curl -X POST https://strata.example.com/api/v2/msps/{mspID}/billing/subscriptions \
+  -H "Authorization: Bearer {token}" \
+  -d '{"plan": "enterprise", "quantity": 10}'
+
+# List subscriptions
+curl -X GET https://strata.example.com/api/v2/msps/{mspID}/billing/subscriptions \
+  -H "Authorization: Bearer {token}"
+
+# Delete subscription
+curl -X DELETE https://strata.example.com/api/v2/msps/{mspID}/billing/subscriptions/{subscriptionID} \
+  -H "Authorization: Bearer {token}"
+```
+
+### 4.3 Payment Methods
+
+```bash
+# Create payment method
+curl -X POST https://strata.example.com/api/v2/msps/{mspID}/billing/payment-methods \
+  -H "Authorization: Bearer {token}" \
+  -d '{"type": "credit_card", "last4": "1234"}'
+
+# Update payment method
+curl -X PATCH https://strata.example.com/api/v2/msps/{mspID}/billing/payment-methods/{paymentMethodID} \
+  -H "Authorization: Bearer {token}"
+
+# Delete payment method
+curl -X DELETE https://strata.example.com/api/v2/msps/{mspID}/billing/payment-methods/{paymentMethodID} \
+  -H "Authorization: Bearer {token}"
+```
+
+### 4.4 Usage Meters
+
+```bash
+# Report usage
+curl -X POST https://strata.example.com/api/v2/msps/{mspID}/billing/usage \
+  -H "Authorization: Bearer {token}" \
+  -d '{"meterName": "device_count", "value": 100}'
+
+# Get usage
+curl -X GET https://strata.example.com/api/v2/msps/{mspID}/billing/usage/{meterName} \
+  -H "Authorization: Bearer {token}"
+
+# Get revenue report
+curl -X GET https://strata.example.com/api/v2/msps/{mspID}/billing/reports/revenue \
+  -H "Authorization: Bearer {token}"
+```
+
+### 4.5 Invoices
+
+```bash
+# List invoices
+curl -X GET https://strata.example.com/api/v2/msps/{mspID}/billing/invoices \
+  -H "Authorization: Bearer {token}"
+
+# Get invoice
+curl -X GET https://strata.example.com/api/v2/msps/{mspID}/billing/invoices/{invoiceID} \
+  -H "Authorization: Bearer {token}"
+```
+
+---
+
+## 5. Entitlements
+
+```bash
+# Get entitlement
+curl -X GET https://strata.example.com/api/v2/msps/{mspID}/entitlement \
+  -H "Authorization: Bearer {token}"
+
+# Update entitlement
+curl -X PATCH https://strata.example.com/api/v2/msps/{mspID}/entitlement \
+  -H "Authorization: Bearer {token}" \
+  -d '{"features": ["remote_access", "patch_management"]}'
+```
+
+---
+
+## 6. Offboarding
+
+### 6.1 Initiate Offboarding
+
+```bash
+# Offboard MSP
+curl -X POST https://strata.example.com/api/v2/msps/{mspID}/offboarding \
+  -H "Authorization: Bearer {token}"
+```
+
+### 6.2 Platform Offboarding
+
+```bash
+# Platform-initiated offboarding
+curl -X POST https://strata.example.com/api/v2/platform/msps/{mspID}/offboarding \
+  -H "Authorization: Bearer {token}"
+
+# Approve deletion
+curl -X POST https://strata.example.com/api/v2/platform/msps/{mspID}/offboarding/approve-deletion \
+  -H "Authorization: Bearer {token}"
+```
+
+### 6.3 Client Offboarding
+
+```bash
+# Archive client during offboarding
+curl -X POST https://strata.example.com/api/v2/msps/{mspID}/clients/{clientID}/archive \
+  -H "Authorization: Bearer {token}"
+```
+
+---
+
+## 7. Memberships
+
+```bash
+# List memberships
+curl -X GET https://strata.example.com/api/v2/msps/{mspID}/memberships \
+  -H "Authorization: Bearer {token}"
+
+# Create membership
+curl -X POST https://strata.example.com/api/v2/msps/{mspID}/memberships \
+  -H "Authorization: Bearer {token}" \
+  -d '{"email": "user@mymsp.com", "role": "admin"}'
+
+# Delete membership
+curl -X DELETE https://strata.example.com/api/v2/msps/{mspID}/memberships/{membershipID} \
+  -H "Authorization: Bearer {token}"
+```
+
+---
+
+## 8. Branding
+
+```bash
+# Get branding
+curl -X GET https://strata.example.com/api/v1/branding \
+  -H "Authorization: Bearer {token}"
+
+# Update branding
+curl -X PUT https://strata.example.com/api/v1/branding \
+  -H "Authorization: Bearer {token}" \
+  -d '{"logo": "base64-encoded-logo", "primaryColor": "#000000"}'
+```
+
+---
+
+## 9. Domains
+
+```bash
+# List domains
+curl -X GET https://strata.example.com/api/v1/domains \
+  -H "Authorization: Bearer {token}"
+
+# Create domain
+curl -X POST https://strata.example.com/api/v1/domains \
+  -H "Authorization: Bearer {token}" \
+  -d '{"domain": "mymsp.com"}'
+
+# Verify domain
+curl -X POST https://strata.example.com/api/v1/domains/{domainID}/verify \
+  -H "Authorization: Bearer {token}"
+
+# Update certificate
+curl -X PATCH https://strata.example.com/api/v2/platform/domains/{domainID}/certificate \
+  -H "Authorization: Bearer {token}"
+
+# Delete domain
+curl -X DELETE https://strata.example.com/api/v1/domains/{domainID} \
+  -H "Authorization: Bearer {token}"
+```
+
+---
+
+## 10. Usage Analytics
+
+```bash
+# Get usage
+curl -X GET https://strata.example.com/api/v2/msps/{mspID}/usage \
+  -H "Authorization: Bearer {token}"
+
+# Get billing analytics
+curl -X GET https://strata.example.com/api/v2/platform/billing/analytics \
+  -H "Authorization: Bearer {token}"
+```
+
+---
+
+## 11. Audit
+
+```bash
+# Get MSP audit log
+curl -X GET https://strata.example.com/api/v2/msps/{mspID}/audit \
+  -H "Authorization: Bearer {token}"
+```
+
+---
+
+## 12. Suspension
+
+```bash
+# Suspend MSP
+curl -X POST https://strata.example.com/api/v2/msps/{mspID}/suspend \
+  -H "Authorization: Bearer {token}"
+```
+
+---
+
+*Last Updated: 2026-08-08*
