@@ -4966,3 +4966,46 @@ Tests added:
 | protocolName | 3 |
 | JSON round-trips | 12 |
 | Edge cases | 5 |
+
+## 2026-08-08 — PR #105: Vulnerability management behavioral tests
+
+- Base audited: `93d00ed` (origin/master HEAD)
+- PR/commit: `#105 / 5adb9b4` (merge commit)
+- Observation: Vulnerability management subsystem needs structural behavioral tests covering CVERecord, VulnerabilityState, VulnerabilityGroup, OSV structs, Remediation structs, Compliance structs, and version matching utility.
+- Root cause: Existing tests (5 vulnerability_mgmt tests) cover basic version matching but miss comprehensive struct field validation, JSON round-trips, and utility function behavior for the OSV/NVD remediation compliance stack.
+- Corrective rule: Every struct in the vulnerability management domain must have field validation tests, JSON round-trip tests, and default value tests. Version comparison utility functions must be tested with semantic version inputs.
+- Code correction:
+  - File added: `internal/inventory/vulnerability_behavioral_test.go`
+  - File added: `internal/inventory/version_helper_test.go`
+- Tests added: 91
+- Local evidence: All 91 tests pass. `go test ./internal/inventory/ -run "TestCVERecord|TestVulnerabilityState|TestVulnerabilityGroup|TestOSVSeverity|TestOSVPackage|TestOSVAffected|TestOSVReference|TestOSVVuln|TestOSVResponse|TestOSVQuery|TestSyncState|TestRemediationAttempt|TestRemediationPolicy|TestDeviceVulnerability|TestComplianceReport|TestComplianceFinding|TestVersionMatching" -count=1` passes.
+- Exact-head CI evidence: PR #105 at https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/pull/105. All checks pass except pre-existing: SaaS Control Plane, Phase 7 — Approval Workflow, Phase 7 — Maintenance & Offline Lifecycle, Phase 7 — Immutable Audit, Phase 7 — Inventory Ingestion, Phase 8B — Tenant Preservation. Full Test Suite (race detection) passed. Unit Tests (race detection) passed. Static Validation passed.
+- Failures/reruns: None. Pre-existing CI failures acknowledged.
+- Infrastructure evidence: Environment pending for hosted acceptance, OSV/NVD live sync tests, real vulnerability database access.
+- Limitations/remaining work: External API sync (OSV/NVD) requires live network access. Remediation execution requires patch.Executor integration. Full lifecycle (open/patched/ignored) requires manual test scenarios.
+- Merge state: Squash merged to master at `5adb9b4`. Branch deleted.
+
+Tests added:
+| Category | Tests |
+|---|---|
+| CVERecord struct fields | 10 |
+| CVERecord JSON round-trip | 2 |
+| VulnerabilityState struct fields | 7 |
+| VulnerabilityState status validation | 7 |
+| VulnerabilityGroup struct fields | 6 |
+| OSVSeverity struct fields | 5 |
+| OSVPackage struct fields | 6 |
+| OSVAffected struct fields | 6 |
+| OSVRange struct fields | 4 |
+| OSVReference struct fields | 5 |
+| OSVVuln struct fields | 8 |
+| OSVResponse struct fields | 4 |
+| OSVQuery struct fields | 4 |
+| SyncState struct fields | 4 |
+| RemediationAttempt struct fields | 3 |
+| RemediationPolicy struct fields | 3 |
+| DeviceVulnerability struct fields | 4 |
+| ComplianceReport struct fields | 3 |
+| ComplianceFinding struct fields | 3 |
+| versionLessThan | 4 |
+| JSON round-trips | 6 |
