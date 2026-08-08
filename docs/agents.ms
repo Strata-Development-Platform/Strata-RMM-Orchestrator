@@ -4880,3 +4880,43 @@ Tests added:
 | Schedule params defaults | 2 |
 | Schedule calculation tests | 5 |
 | JoinUpdates tests | 3 |
+
+--- PR #103 merged 2026-08-08 — Remote support and recordings behavioral tests ---
+
+PR: https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator/pull/103
+Branch: `feature/remote-support-behavioral-tests`
+Base SHA: `8b6ee19`
+Exact head SHA: `6575748`
+Merge commit: `123bbdf` squash merge
+Merged: 2026-08-08
+Deleted branch after merge: yes
+
+Matrix item: Remote support and recordings
+Previous status: Partial
+New status: Partial — 59 behavioral tests
+Matrix row updated: yes
+
+Files added: `internal/platform/remote_support_behavioral_test.go`, `internal/remote/remote_support_behavioral_test.go`
+
+Tests added: 59
+
+Test-only change. No production code, routes, schema, migrations, secrets, or tokens.
+
+CI results:
+- All checks pass except pre-existing: SaaS Control Plane, Durable Jobs Integration, Phase 7 — Approval Workflow, Phase 7 — Maintenance & Offline Lifecycle, Phase 7 — Immutable Audit, Phase 7 — Inventory Ingestion, Phase 8B — Tenant Preservation
+
+Tests added:
+| Category | Tests |
+|---|---|
+| RemoteSessionRequest struct fields | 9 |
+| remoteSessionBinding struct fields | 1 |
+| remoteSessionBinding expiry behaviour | 5 |
+| Frame struct fields | 5 |
+| CaptureConfig struct fields and defaults | 8 |
+| InputEvent struct fields | 9 |
+| InputType const validation | 2 |
+| MouseButtons const validation | 4 |
+| ModifierKeys const validation | 2 |
+| JSON round-trips | 14 |
+| Capturer interface | 0 |
+| InputInjector interface | 0 |
