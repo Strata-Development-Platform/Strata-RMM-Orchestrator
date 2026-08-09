@@ -49,6 +49,37 @@ func TestAlphaAcceptanceFaultsFailClosed(t *testing.T) {
 	}
 }
 
+func TestAlphaEvidenceMetadataIsImmutableAcrossFinalize(t *testing.T) {
+	script := repositoryScriptPath(t, "alpha-acceptance.sh")
+	evidenceDir := t.TempDir()
+	run := func() {
+		t.Helper()
+		cmd := exec.Command("bash", script, "finalize")
+		cmd.Env = append(os.Environ(),
+			"STRATA_ALPHA_URL=https://127.0.0.1",
+			"STRATA_ALPHA_EVIDENCE_DIR="+evidenceDir,
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("finalize failed: %v\n%s", err, out)
+		}
+	}
+
+	run()
+	metadataPath := filepath.Join(evidenceDir, "metadata.env")
+	before, err := os.ReadFile(metadataPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run()
+	after, err := os.ReadFile(metadataPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatalf("finalize rewrote immutable candidate metadata\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
 func TestLoadHarnessDoesNotBypassEnrollmentOrTenancy(t *testing.T) {
 	script := repositoryScriptPath(t, "loadtest.sh")
 	body, err := os.ReadFile(script)
