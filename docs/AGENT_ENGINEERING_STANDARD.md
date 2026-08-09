@@ -105,6 +105,7 @@ Capture command, exit status, and meaningful output. “Should pass,” partial 
 - Do not clear an in-memory batch before successful persistence unless a durable replay source still owns the message and acknowledgement is withheld.
 - Do not duplicate simplified production authorization logic in test-only mocks and then claim production authorization coverage.
 - Do not assume FORCE ROW LEVEL SECURITY enables RLS; verify ENABLE and FORCE semantics against the actual migration and PostgreSQL.
+- Do not interpret a nil PostgreSQL DML error as proof that an authorization-sensitive mutation succeeded or failed. Under RLS, UPDATE/DELETE may validly return no error while affecting zero rows. Security tests must inspect rows affected and verify the persisted postcondition; when a trigger is intended as defense in depth beyond RLS, test it separately through an authorized RLS-bypass/migration-owner connection.
 - Do not write RLS policies or migrations from memory. Verify real table/column names and execute migrations in both directions where supported.
 - Do not use route classification as a substitute for handler/resource authorization.
 - Do not fix only the reported symptom when the same defect class can exist elsewhere; search for siblings and add regression coverage.
