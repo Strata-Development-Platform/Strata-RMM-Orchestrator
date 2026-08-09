@@ -1,17 +1,19 @@
 # Strata RMM — Alpha Deployment Guide
 
-This guide is the shortest supported path for real internal Alpha deployment testing. The detailed operational reference remains in `docs/DEPLOYMENT.md`.
+This is the shortest supported path for real internal Alpha deployment testing. The detailed operational reference remains in `docs/DEPLOYMENT.md`.
 
-## Recommended Alpha path: Docker Compose
+## Recommended Alpha path: hardened Docker installer
 
 Use a clean Linux VM or dedicated test host. Do not reuse a development database for acceptance evidence.
 
 ### Prerequisites
 
-- Docker Engine with Compose support
+- Docker Engine with Compose v2
 - Git
-- DNS name for the test deployment when testing HTTPS/public enrollment
-- outbound internet access for images/releases unless testing an intentionally air-gapped path
+- OpenSSL and curl
+- a DNS name that resolves to the Alpha host
+- TCP 80/443 available for automatic HTTPS
+- outbound internet access unless intentionally testing an air-gapped path
 
 ### 1. Clone the exact Alpha candidate
 
@@ -19,55 +21,61 @@ Use a clean Linux VM or dedicated test host. Do not reuse a development database
 git clone https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator.git
 cd Strata-RMM-Orchestrator
 git checkout <alpha-candidate-tag-or-sha>
-```
-
-Record the exact SHA used for every acceptance run:
-
-```bash
 git rev-parse HEAD
 ```
 
-### 2. Prepare secrets and configuration
+Record that exact SHA with every acceptance artifact.
 
-Copy the example environment file and replace every placeholder/default secret before using production mode:
+### 2. Run the supported platform installer
+
+The repository installer generates strong service secrets, configures encrypted PostgreSQL/NATS transport for the Docker installation, securely bootstraps the first administrator, renders/validates Compose, starts dependencies, and verifies public HTTPS readiness.
 
 ```bash
-cp .env.example .env
+sudo ./scripts/install-platform.sh \
+  --mode docker \
+  --domain rmm.example.com \
+  --admin-email owner@example.com \
+  --acme-email owner@example.com
 ```
 
-At minimum verify the public URL, database credentials/DSN, JWT secret, NATS configuration, storage configuration, and initial bootstrap settings. Do not use development seed credentials for Alpha acceptance.
+The administrator password is prompted without echo. For an unattended test, provide a protected password file through `STRATA_BOOTSTRAP_PASSWORD_FILE` as documented by the installer. Do not use development seed credentials for Alpha acceptance.
 
-Generate long random secrets with an operating-system secret generator or password manager. Never paste committed defaults into an Alpha evidence environment.
-
-### 3. Start the stack
-
-Use the Compose definition shipped with the exact candidate being tested:
+To validate generated deployment configuration without starting services:
 
 ```bash
-docker compose up -d --build
+sudo ./scripts/install-platform.sh \
+  --mode docker \
+  --domain rmm.example.com \
+  --admin-email owner@example.com \
+  --acme-email owner@example.com \
+  --prepare-only
 ```
 
-### 4. Verify infrastructure before opening the UI
+Use `--acme-ca staging` for certificate-issuance testing when appropriate; production Alpha evidence should use a normally trusted certificate.
+
+### 3. Verify readiness
+
+After installation, verify the public endpoint using the configured domain:
 
 ```bash
-docker compose ps
-curl --fail http://127.0.0.1:8080/health
-curl --fail http://127.0.0.1:8080/health/live
-curl --fail http://127.0.0.1:8080/health/ready
+curl --fail https://rmm.example.com/health
+curl --fail https://rmm.example.com/health/live
+curl --fail https://rmm.example.com/health/ready
 ```
 
 A container merely being `running` is not sufficient. Readiness must verify the dependencies required by the selected configuration.
 
-### 5. Complete provider bootstrap
+### 4. Complete provider setup
 
-Open the configured Strata URL and complete the initial provider administrator/business-profile workflow. Record evidence that bootstrap succeeded without direct database edits.
+Sign in with the bootstrapped administrator and complete the provider business-profile workflow. Record evidence that setup succeeds without direct database edits.
 
-### 6. Execute the Alpha lifecycle
+### 5. Execute the Alpha lifecycle
 
 For every Alpha candidate, prove this sequence end to end:
 
 ```text
 provider bootstrap
+  -> provider business profile
   -> create MSP
   -> activate MSP owner
   -> create client
@@ -90,13 +98,25 @@ provider bootstrap
 
 Capture exact commit/release, timestamps, environment details, pass/fail result, and links/artifacts for each acceptance row.
 
-## Bare-metal/systemd Alpha path
+## Linux agent installation
 
-Use `docs/DEPLOYMENT.md` for the full systemd installation. The acceptance rules are identical: start from a clean host, use non-default secrets, verify readiness, record the exact build SHA, and execute the complete lifecycle without database edits.
+Use a scoped one-time enrollment token from the Strata console. From a source checkout, the convenience wrapper is:
+
+```bash
+sudo ./scripts/install.sh \
+  --server https://rmm.example.com \
+  --token '<scoped-enrollment-token>'
+```
+
+The wrapper fetches the current installer from the selected Strata server. It does not request direct NATS credentials and does not reboot the endpoint automatically.
+
+## Native/bare-metal Alpha path
+
+`scripts/install-platform.sh --mode native` is the supported native installer path. It requires the packaged release plus protected PostgreSQL/NATS secret files and TLS configuration. Use its built-in help and `docs/DEPLOYMENT.md` for the full native requirements. The acceptance rules are identical: clean host, non-default secrets, exact build identity, readiness verification, and the complete lifecycle without database edits.
 
 ## HTTPS and DNS
 
-Production-mode Alpha testing must use the configured HTTPS public URL. DNS must resolve to the test host before agent enrollment is accepted as hosted evidence. Do not disable TLS validation to make an acceptance run pass.
+Production-mode Alpha testing must use the configured HTTPS public URL. DNS must resolve before hosted enrollment is accepted as evidence. Do not disable TLS validation simply to make an acceptance run pass.
 
 ## Upgrade and rollback
 
@@ -111,7 +131,7 @@ Before an upgrade exercise:
 
 ## Disaster recovery
 
-A backup file existing is not recovery evidence. Restore into an isolated target and verify schema, tenant data, durable work, audit evidence, and required object data. Measure and record RPO/RTO for the drill.
+A backup file existing is not recovery evidence. Restore into an isolated target and verify schema, tenant data, durable work, audit evidence, and required object data. Measure and record RPO/RTO.
 
 ## Alpha failure tests
 
@@ -133,7 +153,7 @@ No silent telemetry loss, cross-tenant data exposure, unauthorized command execu
 
 When the deployment is not ready, check in this order:
 
-1. `docker compose ps` or service status;
+1. platform installer error output and service/container status;
 2. `/health/live` and `/health/ready`;
 3. orchestrator logs;
 4. PostgreSQL/TimescaleDB connectivity and migrations;
@@ -142,7 +162,7 @@ When the deployment is not ready, check in this order:
 7. public URL/TLS/DNS correctness;
 8. agent enrollment identity and NATS subject scope.
 
-Do not bypass a failing dependency simply to get the dashboard to load. Fix the failing readiness dependency or explicitly disable only genuinely optional functionality.
+Do not bypass a failing dependency just to make the dashboard load. Fix the failing readiness dependency or explicitly disable only genuinely optional functionality.
 
 ## Evidence checklist
 
