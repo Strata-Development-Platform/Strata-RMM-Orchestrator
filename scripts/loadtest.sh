@@ -62,7 +62,7 @@ run_attack() {
   local txt="$REPORT_DIR/${name}.txt"
   local json="$REPORT_DIR/${name}.json"
 
-  printf '%s' "$targets" | vegeta attack -duration="$DURATION" -rate="$RATE" > "$bin"
+  printf '%b' "$targets" | vegeta attack -duration="$DURATION" -rate="$RATE" > "$bin"
   vegeta report "$bin" | tee "$txt"
   vegeta report -type=json "$bin" > "$json"
   log "$name report written to $REPORT_DIR"
