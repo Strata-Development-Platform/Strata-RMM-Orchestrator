@@ -2,7 +2,9 @@
 
 ## Alpha scope
 
-Strata's extension boundary is a versioned, least-privilege module contract. Alpha establishes the manifest and compatibility rules first. Runtime sandboxing, signed package distribution, marketplace/catalog services, billing for commercial modules, and publisher accounts are later phases and must not be represented as complete until implemented and tested.
+Strata's extension boundary is a versioned, least-privilege module contract plus a fail-closed lifecycle registry. Alpha currently includes manifest validation, compatibility checking, permission allowlisting, namespaced module routes, install/enable/disable/quarantine/uninstall state, deterministic listing, and permission enforcement.
+
+Runtime sandboxing, signed package distribution, marketplace/catalog services, billing for commercial modules, publisher accounts, and third-party executable loading remain later phases and must not be represented as complete until implemented and tested.
 
 ## Design goals
 
@@ -11,7 +13,7 @@ Strata's extension boundary is a versioned, least-privilege module contract. Alp
 - Require explicit administrator approval for module permissions.
 - Preserve MSP/client/site/tenant authorization and audit semantics.
 - Make incompatible modules fail closed before activation.
-- Allow modules to be disabled or removed without destabilizing core RMM workflows.
+- Allow modules to be disabled, quarantined, or removed without destabilizing core RMM workflows.
 
 ## Manifest contract
 
@@ -43,13 +45,35 @@ routes:
     permission: devices.read
 ```
 
+## Lifecycle registry
+
+`internal/modules/registry.go` provides the current Alpha lifecycle state machine:
+
+```text
+install -> installed -> enabled
+                     -> disabled -> enabled
+                     -> quarantined
+
+enabled -> disabled -> uninstall
+```
+
+The registry is fail closed:
+
+- an installed-but-not-enabled module receives no permission;
+- undeclared permissions are denied;
+- quarantined modules cannot be re-enabled through the normal enable operation;
+- enabled modules must be disabled before uninstall;
+- invalid or duplicate manifests are rejected.
+
+The current registry is in-memory and is a core contract layer, not yet a persistent package manager. Database-backed persistence, audit-event wiring, health probes, signed packages, and executable isolation are still required before the runtime framework is complete.
+
 ## Required runtime architecture
 
 The intended runtime is out-of-process by default:
 
 ```text
 Strata Core
-  -> Module Registry
+  -> Persistent Module Registry
   -> Permission Broker
   -> Event/API Bridge
   -> Lifecycle + Health Manager
@@ -58,20 +82,22 @@ Strata Core
 
 Modules must receive scoped service identities, not database superuser credentials. Direct unrestricted PostgreSQL, RLS bypass, unrestricted NATS wildcards, raw secret-store access, or arbitrary core package imports are prohibited extension patterns.
 
-## Lifecycle requirements
+## Runtime lifecycle requirements
 
-A future runtime implementation must enforce:
+The runtime implementation must enforce:
 
 1. package checksum/signature verification;
 2. manifest schema validation;
 3. module API compatibility validation;
 4. explicit administrator permission review;
-5. installation in disabled state;
+5. installation in a non-enabled state;
 6. health check before activation;
 7. auditable enable/disable/update/uninstall operations;
 8. bounded startup/execution time and resource use;
 9. failed-upgrade rollback;
-10. emergency quarantine/disable.
+10. emergency quarantine/disable;
+11. tenant-aware service identity and API authorization;
+12. persistent state that survives orchestrator restart without implicitly re-enabling quarantined modules.
 
 ## Testing requirements
 
@@ -82,11 +108,14 @@ Module framework work must include:
 - unknown and duplicate permission rejection;
 - route namespace escape rejection;
 - undeclared route permission rejection;
+- lifecycle tests covering install/enable/disable/quarantine/uninstall;
+- permission denial for disabled and quarantined modules;
 - cross-tenant and cross-scope negative authorization tests when runtime identities are added;
-- install/update/rollback/uninstall lifecycle tests when package management is added;
+- install/update/rollback/uninstall tests when package management is added;
 - module crash/timeout/dependency failure tests when execution is added;
-- an end-to-end reference module in the Alpha environment before the runtime framework is called complete.
+- restart/persistence tests when the registry becomes durable;
+- an end-to-end reference module in the Alpha environment before the runtime execution framework is called complete.
 
 ## Alpha acceptance boundary
 
-The current foundation proves the manifest/permission/namespace contract only. It does not yet prove runtime execution isolation or third-party package installation. Those capabilities remain explicitly incomplete until their implementation and environment evidence exist.
+The current foundation proves manifest validation and the in-process lifecycle/permission state machine. It does **not** yet prove runtime execution isolation, persistent module state, signed third-party package installation, audit wiring, or tenant-scoped module service identities. Those capabilities remain explicitly incomplete until their implementation and environment evidence exist.
