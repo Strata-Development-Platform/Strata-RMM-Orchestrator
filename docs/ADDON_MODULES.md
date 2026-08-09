@@ -2,9 +2,9 @@
 
 ## Alpha scope
 
-Strata's extension boundary is a versioned, least-privilege module contract plus a fail-closed lifecycle registry. Alpha currently includes manifest validation, compatibility checking, permission allowlisting, namespaced module routes, install/enable/disable/quarantine/uninstall state, deterministic listing, and permission enforcement.
+Strata's extension boundary is a versioned, least-privilege module contract plus a fail-closed lifecycle registry and runtime supervisor. Alpha currently includes manifest validation, compatibility checking, permission allowlisting, namespaced module routes, install/enable/disable/quarantine/uninstall state, deterministic listing, permission enforcement, declared-route invocation checks, bounded runtime calls, health supervision, and automatic quarantine after repeated execution failures.
 
-Runtime sandboxing, signed package distribution, marketplace/catalog services, billing for commercial modules, publisher accounts, and third-party executable loading remain later phases and must not be represented as complete until implemented and tested.
+Signed package distribution, marketplace/catalog services, billing for commercial modules, publisher accounts, durable registry persistence, tenant-scoped module service identities, and a concrete third-party process/container launcher remain later phases and must not be represented as complete until implemented and tested.
 
 ## Design goals
 
@@ -65,26 +65,43 @@ The registry is fail closed:
 - enabled modules must be disabled before uninstall;
 - invalid or duplicate manifests are rejected.
 
-The current registry is in-memory and is a core contract layer, not yet a persistent package manager. Database-backed persistence, audit-event wiring, health probes, signed packages, and executable isolation are still required before the runtime framework is complete.
+The current registry is in-memory and is a core contract layer, not yet a persistent package manager. Database-backed persistence, audit-event wiring, signed packages, and package installation are still required before the complete distribution lifecycle exists.
+
+## Runtime supervisor
+
+`internal/modules/runtime.go` defines the narrow execution boundary between the Strata control plane and a future out-of-process module runtime.
+
+Before a runtime call is allowed, the supervisor requires all of the following:
+
+1. the module exists;
+2. the module is enabled and not quarantined;
+3. the requested path exactly matches a manifest-declared module route;
+4. the HTTP-style method is declared on that route;
+5. the invocation permission exactly matches the route permission;
+6. the permission is currently granted by the enabled module manifest.
+
+Runtime calls are bounded by a context timeout. Consecutive execution failures are counted per module; once the configured threshold is reached, the registry quarantines the module. A successful invocation resets the consecutive-failure counter. Quarantined modules do not reach the runtime again.
+
+The `Runtime` interface intentionally does not expose database handles, unrestricted NATS clients, secret-store handles, or imports from core internal packages. A future process/container adapter must authenticate the module with a scoped service identity and preserve this brokered boundary.
 
 ## Required runtime architecture
 
-The intended runtime is out-of-process by default:
+The intended runtime remains out-of-process by default:
 
 ```text
 Strata Core
   -> Persistent Module Registry
   -> Permission Broker
   -> Event/API Bridge
-  -> Lifecycle + Health Manager
-       -> isolated module process/container
+  -> Runtime Supervisor
+       -> authenticated isolated module process/container
 ```
 
 Modules must receive scoped service identities, not database superuser credentials. Direct unrestricted PostgreSQL, RLS bypass, unrestricted NATS wildcards, raw secret-store access, or arbitrary core package imports are prohibited extension patterns.
 
 ## Runtime lifecycle requirements
 
-The runtime implementation must enforce:
+The complete runtime implementation must enforce:
 
 1. package checksum/signature verification;
 2. manifest schema validation;
@@ -99,6 +116,8 @@ The runtime implementation must enforce:
 11. tenant-aware service identity and API authorization;
 12. persistent state that survives orchestrator restart without implicitly re-enabling quarantined modules.
 
+Items 2, 3, 5, 8 (execution timeout portion), and 10 now have code-level foundations. The remaining items are not complete merely because the supervisor interface exists.
+
 ## Testing requirements
 
 Module framework work must include:
@@ -110,12 +129,14 @@ Module framework work must include:
 - undeclared route permission rejection;
 - lifecycle tests covering install/enable/disable/quarantine/uninstall;
 - permission denial for disabled and quarantined modules;
+- runtime denial for disabled/quarantined modules before any execution call;
+- runtime route, method, and permission-escalation negative tests;
+- timeout/crash/failure-threshold and quarantine tests;
 - cross-tenant and cross-scope negative authorization tests when runtime identities are added;
 - install/update/rollback/uninstall tests when package management is added;
-- module crash/timeout/dependency failure tests when execution is added;
 - restart/persistence tests when the registry becomes durable;
 - an end-to-end reference module in the Alpha environment before the runtime execution framework is called complete.
 
 ## Alpha acceptance boundary
 
-The current foundation proves manifest validation and the in-process lifecycle/permission state machine. It does **not** yet prove runtime execution isolation, persistent module state, signed third-party package installation, audit wiring, or tenant-scoped module service identities. Those capabilities remain explicitly incomplete until their implementation and environment evidence exist.
+The current foundation proves manifest validation, lifecycle/permission state, and fail-closed invocation supervision. It does **not** yet prove a real third-party executable/process/container, persistent module state, signed package installation, audit wiring, tenant-scoped module service identities, resource sandboxing, or marketplace distribution. Those capabilities remain explicitly incomplete until their implementation and environment evidence exist.
