@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"time"
 )
 
 // DBTX is intentionally satisfied by *sql.Tx and *sql.DB. Production callers
@@ -36,17 +35,19 @@ func (s *SQLStore) Save(ctx context.Context, db DBTX, module InstalledModule, ac
 		return fmt.Errorf("invalid module persistence action %q", action)
 	}
 
+	var previousState sql.NullString
+	err := db.QueryRowContext(ctx, `SELECT state FROM addon_modules WHERE module_id=$1`, module.Manifest.ID).Scan(&previousState)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("read existing module state: %w", err)
+	}
+	if err := validateAuditTransition(previousState, module.State, action); err != nil {
+		return err
+	}
+
 	manifest, err := json.Marshal(module.Manifest)
 	if err != nil {
 		return fmt.Errorf("marshal module manifest: %w", err)
 	}
-
-	var previousState sql.NullString
-	err = db.QueryRowContext(ctx, `SELECT state FROM addon_modules WHERE module_id=$1`, module.Manifest.ID).Scan(&previousState)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("read existing module state: %w", err)
-	}
-
 	_, err = db.ExecContext(ctx, `
 		INSERT INTO addon_modules (module_id, manifest, state, reason, installed_at, updated_at)
 		VALUES ($1, $2::jsonb, $3, $4, $5, $6)
@@ -160,9 +161,7 @@ func validatePersistedModule(module InstalledModule) error {
 	if err := module.Manifest.Validate(); err != nil {
 		return fmt.Errorf("validate persisted manifest: %w", err)
 	}
-	switch module.State {
-	case StateInstalled, StateEnabled, StateDisabled, StateQuarantined:
-	default:
+	if !validState(module.State) {
 		return fmt.Errorf("invalid persisted module state %q", module.State)
 	}
 	if module.InstalledAt.IsZero() || module.UpdatedAt.IsZero() {
@@ -174,6 +173,52 @@ func validatePersistedModule(module InstalledModule) error {
 	return nil
 }
 
+func validateAuditTransition(previous sql.NullString, next State, action string) error {
+	if !previous.Valid {
+		if action != "install" || next != StateInstalled {
+			return fmt.Errorf("new module must be persisted as install -> installed, got %s -> %s", action, next)
+		}
+		return nil
+	}
+	if action == "install" {
+		return errors.New("install audit action is invalid for an existing module")
+	}
+	previousState := State(previous.String)
+	if !validState(previousState) {
+		return fmt.Errorf("invalid previous module state %q", previousState)
+	}
+	switch action {
+	case "enable":
+		if next != StateEnabled || previousState == StateQuarantined {
+			return fmt.Errorf("invalid enable transition %s -> %s", previousState, next)
+		}
+	case "disable":
+		if next != StateDisabled || previousState == StateQuarantined {
+			return fmt.Errorf("invalid disable transition %s -> %s", previousState, next)
+		}
+	case "quarantine":
+		if next != StateQuarantined {
+			return fmt.Errorf("invalid quarantine transition %s -> %s", previousState, next)
+		}
+	case "restore":
+		if next != previousState {
+			return fmt.Errorf("restore action may not change state: %s -> %s", previousState, next)
+		}
+	default:
+		return fmt.Errorf("invalid module persistence action %q", action)
+	}
+	return nil
+}
+
+func validState(state State) bool {
+	switch state {
+	case StateInstalled, StateEnabled, StateDisabled, StateQuarantined:
+		return true
+	default:
+		return false
+	}
+}
+
 func validAuditAction(action string) bool {
 	switch action {
 	case "install", "enable", "disable", "quarantine", "restore", "uninstall":
@@ -182,5 +227,3 @@ func validAuditAction(action string) bool {
 		return false
 	}
 }
-
-var _ = time.Time{}
