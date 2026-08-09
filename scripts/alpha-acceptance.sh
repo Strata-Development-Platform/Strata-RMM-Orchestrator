@@ -69,15 +69,35 @@ init_evidence() {
 
 metadata_file() { printf '%s/metadata.env' "$EVIDENCE_DIR"; }
 
-write_metadata() {
+metadata_value() {
+  local key="$1" file
+  file="$(metadata_file)"
+  [[ -f "$file" ]] || return 1
+  awk -F= -v wanted="$key" '$1 == wanted {sub(/^[^=]*=/, ""); print; exit}' "$file"
+}
+
+ensure_metadata() {
   init_evidence
+  local file sha existing_sha existing_url
+  file="$(metadata_file)"
+  sha="$(repo_sha)"
+  [[ "$sha" != unknown ]] || fail "Alpha evidence must be collected from a git checkout"
+
+  if [[ -f "$file" ]]; then
+    existing_sha="$(metadata_value candidate_sha || true)"
+    existing_url="$(metadata_value base_url || true)"
+    [[ "$existing_sha" == "$sha" ]] || fail "evidence directory belongs to candidate $existing_sha, not $sha"
+    [[ "$existing_url" == "$BASE_URL" ]] || fail "evidence directory belongs to $existing_url, not $BASE_URL"
+    return
+  fi
+
   {
-    printf 'captured_at=%s\n' "$(utc_now)"
-    printf 'candidate_sha=%s\n' "$(repo_sha)"
+    printf 'created_at=%s\n' "$(utc_now)"
+    printf 'candidate_sha=%s\n' "$sha"
     printf 'base_url=%s\n' "$BASE_URL"
     printf 'hostname=%s\n' "$(hostname 2>/dev/null || printf unknown)"
     printf 'kernel=%s\n' "$(uname -sr 2>/dev/null || printf unknown)"
-  } > "$(metadata_file)"
+  } > "$file"
 }
 
 curl_probe() {
@@ -87,7 +107,7 @@ curl_probe() {
   code="$(curl --silent --show-error --location --connect-timeout 10 --max-time 30 \
     --output "$out" --write-out '%{http_code}' "$BASE_URL$path")" || return 1
   [[ "$code" =~ ^2[0-9][0-9]$ ]] || {
-    printf 'http_status=%s\n' "$code" >> "$out"
+    printf '\nhttp_status=%s\n' "$code" >> "$out"
     return 1
   }
 }
@@ -96,8 +116,7 @@ preflight() {
   require_base_url
   require_cmd curl
   require_cmd git
-  init_evidence
-  write_metadata
+  ensure_metadata
 
   local failed=0
   for path in /health /health/live /health/ready; do
@@ -112,14 +131,13 @@ preflight() {
   done
 
   [[ "$failed" -eq 0 ]] || fail "preflight failed; inspect $EVIDENCE_DIR"
-  printf 'preflight=pass\n' >> "$(metadata_file)"
+  printf 'preflight_at=%s\npreflight=pass\n' "$(utc_now)" > "$EVIDENCE_DIR/preflight-summary.env"
 }
 
 snapshot() {
   require_base_url
   require_cmd curl
-  init_evidence
-  write_metadata
+  ensure_metadata
   local stamp
   stamp="$(date -u +'%Y%m%dT%H%M%SZ')"
   for path in /health /health/live /health/ready /metrics; do
@@ -135,8 +153,7 @@ snapshot() {
 soak() {
   require_base_url
   require_cmd curl
-  init_evidence
-  write_metadata
+  ensure_metadata
   [[ "$SOAK_DURATION_SECONDS" =~ ^[0-9]+$ ]] || fail "STRATA_ALPHA_SOAK_SECONDS must be an integer"
   [[ "$SOAK_INTERVAL_SECONDS" =~ ^[0-9]+$ ]] || fail "STRATA_ALPHA_SOAK_INTERVAL_SECONDS must be an integer"
   (( SOAK_DURATION_SECONDS > 0 )) || fail "soak duration must be > 0"
@@ -164,9 +181,11 @@ soak() {
   {
     printf 'soak_started_epoch=%s\n' "$start"
     printf 'soak_finished_epoch=%s\n' "$(date +%s)"
+    printf 'soak_requested_seconds=%s\n' "$SOAK_DURATION_SECONDS"
+    printf 'soak_interval_seconds=%s\n' "$SOAK_INTERVAL_SECONDS"
     printf 'soak_samples=%s\n' "$samples"
     printf 'soak_failed_samples=%s\n' "$failures"
-  } >> "$(metadata_file)"
+  } > "$EVIDENCE_DIR/soak-summary.env"
 
   [[ "$failures" -eq 0 ]] || fail "soak observed $failures failed readiness samples"
   log "soak completed with $samples successful samples"
@@ -202,8 +221,7 @@ fault() {
   local name="${1:-}"
   case "$name" in postgres|nats|storage|orchestrator) ;; *) fail "unsupported fault: $name" ;; esac
   [[ "$ALLOW_DESTRUCTIVE" == 1 ]] || fail "fault injection requires STRATA_ALPHA_ALLOW_DESTRUCTIVE=1"
-  init_evidence
-  write_metadata
+  ensure_metadata
 
   local fault_var recover_var started recovered
   fault_var="$(hook_var FAULT "$name")"
@@ -234,11 +252,9 @@ fault() {
 
 finalize() {
   require_base_url
-  init_evidence
-  write_metadata
+  ensure_metadata
   local sha
   sha="$(repo_sha)"
-  [[ "$sha" != unknown ]] || fail "cannot finalize evidence outside a git checkout"
   [[ -f "$EVIDENCE_DIR/soak.csv" ]] || log "warning: no soak.csv present"
 
   cat > "$EVIDENCE_DIR/README.txt" <<EOF
