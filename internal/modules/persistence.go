@@ -118,7 +118,7 @@ func (s *SQLStore) List(ctx context.Context, db DBTX) ([]InstalledModule, error)
 	if err != nil {
 		return nil, fmt.Errorf("list persisted modules: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var modules []InstalledModule
 	for rows.Next() {
