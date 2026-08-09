@@ -10,7 +10,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func TestReportSectionConstants(t *testing.T) {
+func TestReportSectionConstantsContract(t *testing.T) {
 	assert.Equal(t, ReportSection("summary"), SectionSummary)
 	assert.Equal(t, ReportSection("alerts"), SectionAlerts)
 	assert.Equal(t, ReportSection("cves"), SectionCVEs)
@@ -106,10 +106,10 @@ func TestReportDataAlertStructFields(t *testing.T) {
 
 func TestReportDataCVEStructFields(t *testing.T) {
 	cve := struct{ ID, Severity, Package, Device string }{
-		ID:      "CVE-2026-0001",
+		ID:       "CVE-2026-0001",
 		Severity: "high",
-		Package: "openssl",
-		Device:  "web-1",
+		Package:  "openssl",
+		Device:   "web-1",
 	}
 
 	assert.Equal(t, "CVE-2026-0001", cve.ID)
