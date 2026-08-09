@@ -54,6 +54,7 @@ const (
 	AccessUser
 	AccessAgent
 	AccessAdmin
+	AccessModule
 	AccessDenied
 )
 
@@ -78,7 +79,6 @@ func (s *APIServer) resolveMSPByHost(host string) (mspID, slug string) {
 	host = strings.ToLower(strings.Split(host, ":")[0])
 
 	if host == platformDomain || host == "localhost" || host == "127.0.0.1" {
-		// Platform host — no MSP context. Returns empty to indicate platform scope.
 		return "", ""
 	}
 
@@ -113,7 +113,6 @@ func (s *APIServer) withBranding(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mspID, _ := s.resolveMSPByHost(r.Host)
 		if mspID != "" {
-			// Store branding in a separate context key, not security headers
 			ctx := context.WithValue(r.Context(), ctxKeyMSPID, mspID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
@@ -280,6 +279,10 @@ func (s *APIServer) withAccessControl(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		if access == AccessModule {
+			s.serveReferenceModuleDevice(w, r)
+			return
+		}
 		if access == AccessDenied {
 			http.Error(w, `{"error":"unclassified route"}`, http.StatusForbidden)
 			return
@@ -358,38 +361,36 @@ func (s *APIServer) classifyRoute(method, path string) RouteAccess {
 	allRoutes = append(allRoutes, s.agentRoutes()...)
 	allRoutes = append(allRoutes, s.scopedUserRoutes()...)
 	allRoutes = append(allRoutes, s.adminRoutes()...)
+	allRoutes = append(allRoutes, s.moduleRoutes()...)
 	for _, r := range allRoutes {
 		if r.Method == method && matchPath(r.Path, path) {
 			return r.Access
 		}
 	}
-	// Privileged namespaces fail closed. The explicit route inventory above
-	// documents supported operations; these prefix guards ensure a newly added
-	// handler cannot silently inherit ordinary user access if its inventory entry
-	// is missed during review.
 	if strings.HasPrefix(path, "/api/v1/admin/") ||
 		strings.HasPrefix(path, "/api/v2/platform/") ||
-		strings.HasPrefix(path, "/api/v2/deployment/") {
+		strings.HasPrefix(path, "/api/v2/deployment/") ||
+		strings.HasPrefix(path, "/api/modules/") {
 		return AccessDenied
 	}
 	return AccessDenied
 }
 
-// Scoped-user routes: require authenticated user with scope-bound authorization.
-// Handlers perform resource-ownership checks; route classification is not a
-// substitute for service-layer authorization.
+func (s *APIServer) moduleRoutes() []Route {
+	return []Route{
+		{Method: "GET", Path: referenceModuleDeviceRoute, Access: AccessModule},
+	}
+}
+
 func (s *APIServer) scopedUserRoutes() []Route {
 	return []Route{
-		// User provisioning (explicitly classified before privileged-prefix fallback)
 		{Method: "POST", Path: "/api/v1/admin/users", Access: AccessUser},
 		{Method: "PUT", Path: "/api/v1/admin/users/{userID}/tenants", Access: AccessUser},
 		{Method: "PUT", Path: "/api/v1/admin/users/{userID}/memberships", Access: AccessUser},
-		// Auth
 		{Method: "POST", Path: "/api/v1/enroll", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/enrollment/tokens", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/enrollment/tokens", Access: AccessUser},
 		{Method: "DELETE", Path: "/api/v1/enrollment/tokens/{tokenID}", Access: AccessUser},
-		// Platform overview (MSP-level admin)
 		{Method: "GET", Path: "/api/v1/platform/overview", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/platform/customers", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/platform/customers/{tenantID}/devices", Access: AccessUser},
@@ -398,11 +399,9 @@ func (s *APIServer) scopedUserRoutes() []Route {
 		{Method: "POST", Path: "/api/v1/platform/customers/{tenantID}/update-source", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/platform/customers/{tenantID}/devices/{deviceID}/update", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/platform/customers/{tenantID}/devices/update-all", Access: AccessUser},
-		// Metrics
 		{Method: "GET", Path: "/api/v1/metrics", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/devices/{tenantID}/{deviceID}/metrics/{metricName}", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/heartbeat/{tenantID}/{deviceID}", Access: AccessUser},
-		// Alerts
 		{Method: "GET", Path: "/api/v1/alerts/{tenantID}", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/alerts/{tenantID}/history", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/alerts/{tenantID}/{alertID}/acknowledge", Access: AccessUser},
@@ -413,28 +412,23 @@ func (s *APIServer) scopedUserRoutes() []Route {
 		{Method: "POST", Path: "/api/v1/alerts/{tenantID}/groups/resolve-all", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/alerts/{tenantID}/groups/cascade", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/alerts/{tenantID}/groups/time-window/{duration}", Access: AccessUser},
-		// Maintenance windows
 		{Method: "POST", Path: "/api/v1/tenants/{tenantID}/maintenance-windows", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/tenants/{tenantID}/maintenance-windows", Access: AccessUser},
 		{Method: "DELETE", Path: "/api/v1/tenants/{tenantID}/maintenance-windows/{windowID}", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/maintenance-windows", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/maintenance-windows", Access: AccessUser},
 		{Method: "DELETE", Path: "/api/v1/maintenance-windows/{windowID}", Access: AccessUser},
-		// Retention
 		{Method: "GET", Path: "/api/v1/tenants/{tenantID}/retention", Access: AccessUser},
 		{Method: "PATCH", Path: "/api/v1/tenants/{tenantID}/retention", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/retention/policies", Access: AccessUser},
-		// Rules
 		{Method: "POST", Path: "/api/v1/rules/{tenantID}", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/rules/{tenantID}", Access: AccessUser},
 		{Method: "DELETE", Path: "/api/v1/rules/{tenantID}/{ruleID}", Access: AccessUser},
-		// Vulnerabilities
 		{Method: "GET", Path: "/api/v1/vulnerabilities/device/{deviceID}", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/vulnerabilities/tenant/{tenantID}", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/vulnerabilities/tenant/{tenantID}/summary", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/vulnerabilities/{vulnID}/resolve", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/vulnerabilities/{vulnID}/ignore", Access: AccessUser},
-		// CVE
 		{Method: "GET", Path: "/api/v1/cve/stats", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/cve/sync", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/cve/packages", Access: AccessUser},
@@ -442,7 +436,6 @@ func (s *APIServer) scopedUserRoutes() []Route {
 		{Method: "DELETE", Path: "/api/v1/cve/packages/{name}/{ecosystem}", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/cve/sync/status", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/cve/package/{name}", Access: AccessUser},
-		// Third-party
 		{Method: "GET", Path: "/api/v1/thirdparty/apps", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/thirdparty/packages", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/thirdparty/sync", Access: AccessUser},
@@ -450,7 +443,6 @@ func (s *APIServer) scopedUserRoutes() []Route {
 		{Method: "GET", Path: "/api/v1/thirdparty/vendors", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/thirdparty/vendors/{vendor}/sync", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/thirdparty/vendors/status", Access: AccessUser},
-		// PSA ticket management
 		{Method: "POST", Path: "/api/v1/integrations/psa/tickets", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/integrations/psa/tickets/{ticketID}", Access: AccessUser},
 		{Method: "PUT", Path: "/api/v1/integrations/psa/tickets/{ticketID}", Access: AccessUser},
@@ -458,7 +450,6 @@ func (s *APIServer) scopedUserRoutes() []Route {
 		{Method: "GET", Path: "/api/v1/integrations/psa/tickets/device/{deviceID}", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/integrations/psa/feedback", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/integrations/psa/webhooks", Access: AccessPublic},
-		// WebRTC remote support
 		{Method: "POST", Path: "/api/v1/webrtc/sessions", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/webrtc/sessions/{sessionID}", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/webrtc/sessions", Access: AccessUser},
@@ -473,13 +464,11 @@ func (s *APIServer) scopedUserRoutes() []Route {
 		{Method: "POST", Path: "/api/v1/webrtc/sessions/{sessionID}/transcribe", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/webrtc/transcriptions/{transcriptionID}/stop", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/webrtc/sessions/{sessionID}/transcriptions", Access: AccessUser},
-		// LAN Cache
 		{Method: "POST", Path: "/api/v1/lancache/entries", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/lancache/entries/{entryID}", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/lancache/entries", Access: AccessUser},
 		{Method: "DELETE", Path: "/api/v1/lancache/entries/{entryID}", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/lancache/stats", Access: AccessUser},
-		// Reports
 		{Method: "GET", Path: "/api/v1/reports/{tenantID}", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/reports/{tenantID}/schedules", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/reports/{tenantID}/schedules", Access: AccessUser},
@@ -494,7 +483,6 @@ func (s *APIServer) scopedUserRoutes() []Route {
 		{Method: "GET", Path: "/api/v1/reports/{tenantID}/compliance/{reportID}", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/reports/{tenantID}/compliance/{reportID}/export/csv", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/reports/{tenantID}/compliance/{reportID}/export/json", Access: AccessUser},
-		// CMDB / Devices
 		{Method: "GET", Path: "/api/v1/devices/relationships", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/devices/relationships", Access: AccessUser},
 		{Method: "DELETE", Path: "/api/v1/devices/relationships/{relationshipID}", Access: AccessUser},
@@ -505,31 +493,25 @@ func (s *APIServer) scopedUserRoutes() []Route {
 		{Method: "GET", Path: "/api/v1/devices/{deviceID}/packages", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/devices/{deviceID}/packages", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/devices/{deviceID}/services", Access: AccessUser},
-		// Remote support
 		{Method: "POST", Path: "/api/v1/remote/{tenantID}/session", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/remote/{tenantID}/session/{sessionID}/input", Access: AccessUser},
 		{Method: "DELETE", Path: "/api/v1/remote/{tenantID}/session/{sessionID}", Access: AccessUser},
-		// Interactive remote sessions
 		{Method: "POST", Path: "/api/v1/remote/{tenantID}/interactive", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/remote/{tenantID}/interactive/{sessionID}/input", Access: AccessUser},
 		{Method: "DELETE", Path: "/api/v1/remote/{tenantID}/interactive/{sessionID}", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/remote/{tenantID}/interactive", Access: AccessUser},
-		// Interactive recording management
 		{Method: "POST", Path: "/api/v1/remote/{tenantID}/interactive/{sessionID}/recording", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/remote/{tenantID}/recording/{recordingID}/stop", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/remote/{tenantID}/recording/{recordingID}/playback", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/remote/{tenantID}/recordings", Access: AccessUser},
-		// Keys
 		{Method: "POST", Path: "/api/v1/keys/{tenantID}", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/keys/{tenantID}", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/keys/{tenantID}/active", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/keys/{tenantID}/rotate", Access: AccessUser},
 		{Method: "DELETE", Path: "/api/v1/keys/{tenantID}/{keyID}", Access: AccessUser},
-		// Access
 		{Method: "GET", Path: "/api/v1/access/audit/{tenantID}", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/access/users/{tenantID}", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/access/permissions/{tenantID}", Access: AccessUser},
-		// Scripts
 		{Method: "GET", Path: "/api/v1/scripts/{tenantID}", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/scripts/{tenantID}", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/scripts/{tenantID}/{scriptID}", Access: AccessUser},
@@ -537,7 +519,6 @@ func (s *APIServer) scopedUserRoutes() []Route {
 		{Method: "POST", Path: "/api/v1/scripts/{tenantID}/{scriptID}/run", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/scripts/{tenantID}/executions", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/scripts/{tenantID}/executions/{execID}", Access: AccessUser},
-		// Script scheduling
 		{Method: "POST", Path: "/api/v1/tenants/{tenantID}/scripts/schedule", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/tenants/{tenantID}/scripts/schedules", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/tenants/{tenantID}/scripts/schedules/{scheduleID}", Access: AccessUser},
@@ -547,30 +528,25 @@ func (s *APIServer) scopedUserRoutes() []Route {
 		{Method: "GET", Path: "/api/v1/tenants/{tenantID}/scripts/schedules/{scheduleID}/devices", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/tenants/{tenantID}/scripts/schedules/{scheduleID}/devices/{execID}/retry", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/tenants/{tenantID}/scripts/schedules/executions", Access: AccessUser},
-		// Software
 		{Method: "GET", Path: "/api/v1/software/packages/{tenantID}", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/software/packages/{tenantID}", Access: AccessUser},
 		{Method: "DELETE", Path: "/api/v1/software/packages/{tenantID}/{pkgID}", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/software/deployments/{tenantID}", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/software/deployments/{tenantID}", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/software/deployments/{tenantID}/{deployID}", Access: AccessUser},
-		// MFA
 		{Method: "POST", Path: "/api/v1/mfa/enroll/{userID}", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/mfa/verify/{userID}", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/mfa/status/{userID}", Access: AccessUser},
 		{Method: "DELETE", Path: "/api/v1/mfa/{userID}", Access: AccessUser},
-		// Recordings
 		{Method: "GET", Path: "/api/v1/recordings/{tenantID}", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/recordings/{id}/playback", Access: AccessUser},
 		{Method: "DELETE", Path: "/api/v1/recordings/{id}", Access: AccessUser},
-		// Branding / Domains
 		{Method: "GET", Path: "/api/v1/branding", Access: AccessUser},
 		{Method: "PUT", Path: "/api/v1/branding", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/domains", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/domains", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/domains/{domainID}/verify", Access: AccessUser},
 		{Method: "DELETE", Path: "/api/v1/domains/{domainID}", Access: AccessUser},
-		// Jobs
 		{Method: "POST", Path: "/api/v1/jobs", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/jobs", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/jobs/{jobID}", Access: AccessUser},
@@ -578,11 +554,9 @@ func (s *APIServer) scopedUserRoutes() []Route {
 		{Method: "POST", Path: "/api/v1/jobs/{jobID}/retry", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/devices/{deviceID}/jobs", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/jobs/{jobID}/events", Access: AccessUser},
-		// Device groups
 		{Method: "POST", Path: "/api/v1/device-groups", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/device-groups", Access: AccessUser},
 		{Method: "DELETE", Path: "/api/v1/device-groups/{groupID}", Access: AccessUser},
-		// Smart Groups
 		{Method: "POST", Path: "/api/v1/device-groups/smart", Access: AccessUser},
 		{Method: "PUT", Path: "/api/v1/device-groups/{groupID}", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/device-groups/{groupID}/detail", Access: AccessUser},
@@ -592,7 +566,6 @@ func (s *APIServer) scopedUserRoutes() []Route {
 		{Method: "POST", Path: "/api/v1/device-groups/{groupID}/script-bindings", Access: AccessUser},
 		{Method: "DELETE", Path: "/api/v1/device-groups/{groupID}/script-bindings/{bindingID}", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/device-groups/{groupID}/script-bindings", Access: AccessUser},
-		// Policies
 		{Method: "POST", Path: "/api/v1/policies", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/policies", Access: AccessUser},
 		{Method: "GET", Path: "/api/v1/policies/{policyID}", Access: AccessUser},
@@ -604,38 +577,31 @@ func (s *APIServer) scopedUserRoutes() []Route {
 		{Method: "POST", Path: "/api/v1/policies/{policyID}/diff", Access: AccessUser},
 		{Method: "POST", Path: "/api/v1/policies/{policyID}/effective", Access: AccessUser},
 		{Method: "DELETE", Path: "/api/v1/policies/{policyID}", Access: AccessUser},
-		// Client management
 		{Method: "GET", Path: "/api/v2/clients/{clientID}/sites", Access: AccessUser},
 		{Method: "POST", Path: "/api/v2/clients/{clientID}/sites", Access: AccessUser},
 		{Method: "GET", Path: "/api/v2/clients/{clientID}/sites/{siteID}", Access: AccessUser},
 		{Method: "POST", Path: "/api/v2/clients/{clientID}/sites/{siteID}/archive", Access: AccessUser},
-		// Client portal auth
 		{Method: "GET", Path: "/api/v2/clients/{clientID}/auth/providers", Access: AccessUser},
 		{Method: "POST", Path: "/api/v2/clients/{clientID}/auth/providers", Access: AccessUser},
 		{Method: "POST", Path: "/api/v2/clients/{clientID}/sessions", Access: AccessUser},
 		{Method: "GET", Path: "/api/v2/clients/{clientID}/sessions", Access: AccessUser},
 		{Method: "DELETE", Path: "/api/v2/clients/{clientID}/sessions/{sessionID}", Access: AccessUser},
-		// Client profile/settings
 		{Method: "GET", Path: "/api/v2/clients/{clientID}/profile", Access: AccessUser},
 		{Method: "PATCH", Path: "/api/v2/clients/{clientID}/profile", Access: AccessUser},
 		{Method: "GET", Path: "/api/v2/clients/{clientID}/settings", Access: AccessUser},
 		{Method: "PATCH", Path: "/api/v2/clients/{clientID}/settings", Access: AccessUser},
-		// Client support requests
 		{Method: "POST", Path: "/api/v2/clients/{clientID}/support-requests", Access: AccessUser},
 		{Method: "GET", Path: "/api/v2/clients/{clientID}/support-requests", Access: AccessUser},
 		{Method: "GET", Path: "/api/v2/clients/{clientID}/support-requests/{requestID}", Access: AccessUser},
 		{Method: "PATCH", Path: "/api/v2/clients/{clientID}/support-requests/{requestID}/reply", Access: AccessUser},
 		{Method: "PATCH", Path: "/api/v2/clients/{clientID}/support-requests/{requestID}/close", Access: AccessUser},
-		// MSP client management
 		{Method: "GET", Path: "/api/v2/msps/{mspID}/clients", Access: AccessUser},
 		{Method: "POST", Path: "/api/v2/msps/{mspID}/clients", Access: AccessUser},
 		{Method: "GET", Path: "/api/v2/msps/{mspID}/clients/{clientID}", Access: AccessUser},
 		{Method: "POST", Path: "/api/v2/msps/{mspID}/clients/{clientID}/archive", Access: AccessUser},
-		// MSP memberships
 		{Method: "GET", Path: "/api/v2/msps/{mspID}/memberships", Access: AccessUser},
 		{Method: "POST", Path: "/api/v2/msps/{mspID}/memberships", Access: AccessUser},
 		{Method: "DELETE", Path: "/api/v2/msps/{mspID}/memberships/{membershipID}", Access: AccessUser},
-		// MSP billing
 		{Method: "GET", Path: "/api/v2/msps/{mspID}/billing/account", Access: AccessUser},
 		{Method: "POST", Path: "/api/v2/msps/{mspID}/billing/account", Access: AccessUser},
 		{Method: "DELETE", Path: "/api/v2/msps/{mspID}/billing/account", Access: AccessUser},
@@ -652,20 +618,16 @@ func (s *APIServer) scopedUserRoutes() []Route {
 		{Method: "DELETE", Path: "/api/v2/msps/{mspID}/billing/payment-methods/{paymentMethodID}", Access: AccessUser},
 		{Method: "GET", Path: "/api/v2/msps/{mspID}/billing/reports/revenue", Access: AccessUser},
 		{Method: "GET", Path: "/api/v2/platform/billing/analytics", Access: AccessAdmin},
-		// MSP usage/audit/devices
 		{Method: "GET", Path: "/api/v2/msps/{mspID}/entitlement", Access: AccessUser},
 		{Method: "GET", Path: "/api/v2/msps/{mspID}/usage", Access: AccessUser},
 		{Method: "GET", Path: "/api/v2/msps/{mspID}/audit", Access: AccessUser},
 		{Method: "GET", Path: "/api/v2/msps/{mspID}/devices", Access: AccessUser},
-		// Context
 		{Method: "GET", Path: "/api/v2/context", Access: AccessUser},
 		{Method: "POST", Path: "/api/v2/context/switch", Access: AccessUser},
-		// v2 Devices
 		{Method: "GET", Path: "/api/v2/devices", Access: AccessUser},
 		{Method: "GET", Path: "/api/v2/devices/{deviceID}", Access: AccessUser},
 		{Method: "POST", Path: "/api/v2/devices/{deviceID}/action", Access: AccessUser},
 		{Method: "POST", Path: "/api/v2/devices/bulk-action", Access: AccessUser},
-		// Approvals
 		{Method: "POST", Path: "/api/v2/approvals", Access: AccessUser},
 		{Method: "GET", Path: "/api/v2/approvals", Access: AccessUser},
 		{Method: "GET", Path: "/api/v2/approvals/{approvalID}", Access: AccessUser},
@@ -673,9 +635,7 @@ func (s *APIServer) scopedUserRoutes() []Route {
 		{Method: "POST", Path: "/api/v2/approvals/{approvalID}/reject", Access: AccessUser},
 		{Method: "POST", Path: "/api/v2/approvals/{approvalID}/cancel", Access: AccessUser},
 		{Method: "GET", Path: "/api/v2/approvals/{approvalID}/decisions", Access: AccessUser},
-		// Endpoint audit
 		{Method: "GET", Path: "/api/v2/audit/endpoint", Access: AccessUser},
-		// v2 device detail routes (GET for users, POST for agents)
 		{Method: "GET", Path: "/api/v2/devices/{deviceID}/capabilities", Access: AccessUser},
 		{Method: "GET", Path: "/api/v2/devices/{deviceID}/inventory", Access: AccessUser},
 	}
@@ -728,7 +688,6 @@ func (s *APIServer) publicRoutes() []Route {
 
 func (s *APIServer) adminRoutes() []Route {
 	return []Route{
-		// Platform-only routes
 		{Method: "GET", Path: "/api/v2/platform/msps", Access: AccessAdmin},
 		{Method: "POST", Path: "/api/v2/platform/msps", Access: AccessAdmin},
 		{Method: "GET", Path: "/api/v2/platform/msps/{mspID}", Access: AccessAdmin},
@@ -748,7 +707,6 @@ func (s *APIServer) adminRoutes() []Route {
 		{Method: "PATCH", Path: "/api/v2/platform/provider/profile", Access: AccessAdmin},
 		{Method: "GET", Path: "/api/v2/deployment/state", Access: AccessAdmin},
 		{Method: "GET", Path: "/api/v2/deployment/history", Access: AccessAdmin},
-		// Legacy admin routes
 		{Method: "GET", Path: "/api/v1/admin/users", Access: AccessAdmin},
 		{Method: "POST", Path: "/api/v1/admin/customers", Access: AccessAdmin},
 		{Method: "GET", Path: "/api/v1/admin/update/check", Access: AccessAdmin},
@@ -789,7 +747,6 @@ func hasAgentRole(roles []string) bool {
 	return false
 }
 
-// isMSPOwner returns true only for actual MSP owner-level roles.
 func isMSPOwner(roles []string) bool {
 	for _, r := range roles {
 		if r == "msp_owner" || r == "msp_admin" {
