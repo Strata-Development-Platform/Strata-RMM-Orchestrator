@@ -10,11 +10,11 @@ import (
 )
 
 var (
-	ErrModuleDisabled      = errors.New("module is not enabled")
-	ErrRouteNotDeclared    = errors.New("module route is not declared")
-	ErrMethodNotDeclared   = errors.New("module route method is not declared")
-	ErrPermissionMismatch  = errors.New("module route permission mismatch")
-	ErrRuntimeUnavailable  = errors.New("module runtime unavailable")
+	ErrModuleDisabled     = errors.New("module is not enabled")
+	ErrRouteNotDeclared   = errors.New("module route is not declared")
+	ErrMethodNotDeclared  = errors.New("module route method is not declared")
+	ErrPermissionMismatch = errors.New("module route permission mismatch")
+	ErrRuntimeUnavailable = errors.New("module runtime unavailable")
 )
 
 type Invocation struct {
@@ -43,9 +43,9 @@ type SupervisorOptions struct {
 }
 
 type Supervisor struct {
-	registry *Registry
-	runtime  Runtime
-	timeout  time.Duration
+	registry  *Registry
+	runtime   Runtime
+	timeout   time.Duration
 	threshold int
 
 	mu       sync.Mutex
@@ -68,11 +68,11 @@ func NewSupervisor(registry *Registry, runtime Runtime, options SupervisorOption
 		threshold = 3
 	}
 	return &Supervisor{
-		registry: registry,
-		runtime: runtime,
-		timeout: timeout,
+		registry:  registry,
+		runtime:   runtime,
+		timeout:   timeout,
 		threshold: threshold,
-		failures: make(map[string]int),
+		failures:  make(map[string]int),
 	}, nil
 }
 
