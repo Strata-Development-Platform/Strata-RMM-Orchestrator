@@ -53,15 +53,16 @@ sudo ./scripts/install-platform.sh \
 
 Use `--acme-ca staging` for certificate-issuance testing when appropriate; production Alpha evidence should use a normally trusted certificate.
 
-### 3. Verify readiness
+### 3. Verify readiness and start the evidence bundle
 
 After installation, verify the public endpoint using the configured domain:
 
 ```bash
-curl --fail https://rmm.example.com/health
-curl --fail https://rmm.example.com/health/live
-curl --fail https://rmm.example.com/health/ready
+export STRATA_ALPHA_URL=https://rmm.example.com
+./scripts/alpha-acceptance.sh preflight
 ```
+
+The harness checks `/health`, `/health/live`, and `/health/ready`, records the exact Git SHA and host metadata, and writes a local evidence bundle. It does **not** declare any Phase 8 gate accepted.
 
 A container merely being `running` is not sufficient. Readiness must verify the dependencies required by the selected configuration.
 
@@ -96,7 +97,7 @@ provider bootstrap
   -> rollback exercise
 ```
 
-Capture exact commit/release, timestamps, environment details, pass/fail result, and links/artifacts for each acceptance row.
+Capture exact commit/release, timestamps, environment details, pass/fail result, and links/artifacts for each acceptance row. Use `./scripts/alpha-acceptance.sh snapshot` at important lifecycle boundaries to capture health/metrics observations.
 
 ## Linux agent installation
 
@@ -113,6 +114,57 @@ The wrapper fetches the current installer from the selected Strata server. It do
 ## Native/bare-metal Alpha path
 
 `scripts/install-platform.sh --mode native` is the supported native installer path. It requires the packaged release plus protected PostgreSQL/NATS secret files and TLS configuration. Use its built-in help and `docs/DEPLOYMENT.md` for the full native requirements. The acceptance rules are identical: clean host, non-default secrets, exact build identity, readiness verification, and the complete lifecycle without database edits.
+
+## Baseline HTTP load
+
+Use `scripts/loadtest.sh` for authorized HTTP baseline measurements. The load harness deliberately does not publish directly to tenant NATS subjects or manufacture enrollment traffic with hard-coded tenant IDs.
+
+```bash
+API_URL=https://rmm.example.com DURATION=5m RATE=100 \
+  ./scripts/loadtest.sh health
+```
+
+For authenticated API load, use a short-lived real token:
+
+```bash
+API_URL=https://rmm.example.com AUTH_TOKEN='<short-lived-token>' \
+  DURATION=5m RATE=50 ./scripts/loadtest.sh authenticated
+```
+
+Agent-scale, telemetry, and reconnect-storm evidence must use enrolled agents or the repository's dedicated resilience tooling. Bypassing enrollment or tenant authorization is not valid Alpha evidence.
+
+## 24-hour soak evidence
+
+The default soak duration is 24 hours and samples readiness every 60 seconds:
+
+```bash
+STRATA_ALPHA_URL=https://rmm.example.com \
+  ./scripts/alpha-acceptance.sh soak
+```
+
+A shorter run may be used while validating the harness, but it must not be represented as A8-15 acceptance. For example:
+
+```bash
+STRATA_ALPHA_SOAK_SECONDS=600 ./scripts/alpha-acceptance.sh soak
+```
+
+The environment operator must additionally retain the corresponding server metrics needed to evaluate memory, goroutine/thread, connection, queue, latency, and telemetry-loss behavior. Readiness samples alone are not sufficient to accept A8-15.
+
+## Controlled dependency-failure exercises
+
+The acceptance harness can verify readiness degradation and recovery, but it intentionally does not assume Docker, Kubernetes, systemd, or cloud topology. The operator supplies explicit fault/recovery hooks.
+
+Example for a Docker test host:
+
+```bash
+export STRATA_ALPHA_URL=https://rmm.example.com
+export STRATA_ALPHA_ALLOW_DESTRUCTIVE=1
+export STRATA_ALPHA_FAULT_POSTGRES_CMD='docker compose stop postgres'
+export STRATA_ALPHA_RECOVER_POSTGRES_CMD='docker compose start postgres'
+./scripts/alpha-acceptance.sh fault postgres
+```
+
+Supported hook names are `postgres`, `nats`, `storage`, and `orchestrator`. Run these only in an isolated Alpha environment. A fault exercise is not complete until telemetry/jobs/data integrity are checked after recovery; the harness proves health transition timing, not all subsystem semantics.
 
 ## HTTPS and DNS
 
@@ -149,6 +201,17 @@ At least once for the candidate release, exercise:
 
 No silent telemetry loss, cross-tenant data exposure, unauthorized command execution, or destructive duplicate execution is acceptable.
 
+## Finalize the evidence bundle
+
+After the environment exercise:
+
+```bash
+STRATA_ALPHA_URL=https://rmm.example.com \
+  ./scripts/alpha-acceptance.sh finalize
+```
+
+The command records candidate identity and, when available, checksums the evidence files. The bundle remains observational evidence only. Acceptance requires review against `docs/PHASE_8_ACCEPTANCE_MATRIX.md`, CI records, lifecycle evidence, recovery results, security review, and the signed go/no-go record.
+
 ## Troubleshooting order
 
 When the deployment is not ready, check in this order:
@@ -166,4 +229,4 @@ Do not bypass a failing dependency just to make the dashboard load. Fix the fail
 
 ## Evidence checklist
 
-An Alpha deployment is not accepted until the relevant `docs/PHASE_8_ACCEPTANCE_MATRIX.md` rows have durable evidence tied to the exact candidate SHA. Documentation statements, screenshots without commit identity, or stale CI runs are not sufficient.
+An Alpha deployment is not accepted until the relevant `docs/PHASE_8_ACCEPTANCE_MATRIX.md` rows have durable evidence tied to the exact candidate SHA. Documentation statements, screenshots without commit identity, generated evidence files without review, or stale CI runs are not sufficient.
