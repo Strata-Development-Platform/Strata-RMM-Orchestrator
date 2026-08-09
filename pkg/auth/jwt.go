@@ -13,9 +13,9 @@ import (
 )
 
 const (
-	issuer           = "strata-rmm"
-	audience         = "strata-rmm-api"
-	minSecretLen     = 32
+	issuer            = "strata-rmm"
+	audience          = "strata-rmm-api"
+	minSecretLen      = 32
 	maxModuleTokenTTL = 15 * time.Minute
 )
 
@@ -54,13 +54,13 @@ type Claims struct {
 	IssuedAt  int64  `json:"iat"`
 	NotBefore int64  `json:"nbf,omitempty"`
 
-	TenantID   string   `json:"tid"`
-	MSPID      string   `json:"mid"`
-	ClientID   string   `json:"cid"`
-	SiteID     string   `json:"sid"`
-	AgentID    string   `json:"aid"`
-	ModuleID   string   `json:"mod,omitempty"`
-	Roles      []string `json:"roles"`
+	TenantID    string   `json:"tid"`
+	MSPID       string   `json:"mid"`
+	ClientID    string   `json:"cid"`
+	SiteID      string   `json:"sid"`
+	AgentID     string   `json:"aid"`
+	ModuleID    string   `json:"mod,omitempty"`
+	Roles       []string `json:"roles"`
 	Permissions []string `json:"permissions,omitempty"`
 }
 
@@ -316,11 +316,26 @@ func (g *TokenGenerator) Validate(token string) (*Claims, error) {
 	return &claims, nil
 }
 
-func (g *TokenGenerator) validateSecret() error {
-	if len(g.secret) < minSecretLen {
-		return fmt.Errorf("JWT secret must be at least %d characters", minSecretLen)
+func (g *TokenGenerator) encode(claims Claims) (string, error) {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
+
+	payloadJSON, err := json.Marshal(claims)
+	if err != nil {
+		return "", fmt.Errorf("marshaling claims: %w", err)
 	}
-	return nil
+	payload := base64.RawURLEncoding.EncodeToString(payloadJSON)
+	sig := g.sign(header + "." + payload)
+	return header + "." + payload + "." + sig, nil
+}
+
+func (g *TokenGenerator) sign(data string) string {
+	return signWithSecret(g.secret, data)
+}
+
+func signWithSecret(secret []byte, data string) string {
+	mac := hmac.New(sha256.New, secret)
+	_, _ = mac.Write([]byte(data))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
 func (g *TokenGenerator) verificationKeys() [][]byte {
@@ -330,26 +345,59 @@ func (g *TokenGenerator) verificationKeys() [][]byte {
 	return g.verifySecrets
 }
 
-func (g *TokenGenerator) encode(claims Claims) (string, error) {
-	header := map[string]string{"alg": "HS256", "typ": "JWT"}
-	headerJSON, err := json.Marshal(header)
-	if err != nil {
-		return "", err
+func (g *TokenGenerator) validateSecret() error {
+	if g == nil || len(g.secret) < minSecretLen {
+		return fmt.Errorf("JWT signing secret must be at least %d characters", minSecretLen)
 	}
-	claimsJSON, err := json.Marshal(claims)
-	if err != nil {
-		return "", err
-	}
-	headerEncoded := base64.RawURLEncoding.EncodeToString(headerJSON)
-	claimsEncoded := base64.RawURLEncoding.EncodeToString(claimsJSON)
-	unsigned := headerEncoded + "." + claimsEncoded
-	return unsigned + "." + signWithSecret(g.secret, unsigned), nil
+	return nil
 }
 
-func signWithSecret(secret []byte, data string) string {
-	mac := hmac.New(sha256.New, secret)
-	_, _ = mac.Write([]byte(data))
-	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+type EnrollmentToken struct {
+	Token     string    `json:"token"`
+	TenantID  string    `json:"tenant_id"`
+	ExpiresAt time.Time `json:"expires_at"`
+	Used      bool      `json:"used"`
+}
+
+type EnrollmentManager struct {
+	generator *TokenGenerator
+	tokens    map[string]*EnrollmentToken
+}
+
+func NewEnrollmentManager(secret string) *EnrollmentManager {
+	if secret == "" {
+		secret = jwtSecret()
+	}
+	return &EnrollmentManager{
+		generator: NewTokenGenerator(secret),
+		tokens:    make(map[string]*EnrollmentToken),
+	}
+}
+
+func (m *EnrollmentManager) CreateEnrollmentToken(tenantID string, ttl time.Duration) (*EnrollmentToken, error) {
+	token := fmt.Sprintf("enr_%s_%d", tenantID, time.Now().UnixNano())
+	et := &EnrollmentToken{
+		Token:     token,
+		TenantID:  tenantID,
+		ExpiresAt: time.Now().Add(ttl),
+	}
+	m.tokens[token] = et
+	return et, nil
+}
+
+func (m *EnrollmentManager) ValidateEnrollmentToken(token string) (string, error) {
+	et, ok := m.tokens[token]
+	if !ok {
+		return "", fmt.Errorf("token not found")
+	}
+	if et.Used {
+		return "", fmt.Errorf("token already used")
+	}
+	if time.Now().After(et.ExpiresAt) {
+		return "", fmt.Errorf("token expired")
+	}
+	et.Used = true
+	return et.TenantID, nil
 }
 
 func tokenize(s string, sep byte) []string {
