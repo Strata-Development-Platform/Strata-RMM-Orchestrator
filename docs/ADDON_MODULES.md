@@ -2,9 +2,9 @@
 
 ## Alpha scope
 
-Strata's extension boundary is a versioned, least-privilege module contract plus a fail-closed lifecycle registry, runtime supervisor, and durable platform-control-plane persistence layer. Alpha currently includes manifest validation, compatibility checking, permission allowlisting, namespaced module routes, install/enable/disable/quarantine/uninstall state, deterministic listing, permission enforcement, declared-route invocation checks, bounded runtime calls, health supervision, automatic quarantine after repeated execution failures, PostgreSQL-backed lifecycle persistence, restart restoration, platform-only RLS, and append-only lifecycle audit evidence.
+Strata's extension boundary is a versioned, least-privilege module contract plus a fail-closed lifecycle registry, runtime supervisor, durable platform-control-plane persistence layer, and a scoped module service-identity broker. Alpha currently includes manifest validation, compatibility checking, permission allowlisting, namespaced module routes, install/enable/disable/quarantine/uninstall state, deterministic listing, permission enforcement, declared-route invocation checks, bounded runtime calls, health supervision, automatic quarantine after repeated execution failures, PostgreSQL-backed lifecycle persistence, restart restoration, platform-only RLS, append-only lifecycle audit evidence, and short-lived module JWT credentials whose permissions cannot exceed the enabled manifest.
 
-Signed package distribution, marketplace/catalog services, billing for commercial modules, publisher accounts, tenant-scoped module service identities, and a concrete third-party process/container launcher remain later phases and must not be represented as complete until implemented and tested.
+Signed package distribution, marketplace/catalog services, billing for commercial modules, publisher accounts, a concrete third-party process/container launcher, and end-to-end module API middleware remain later phases and must not be represented as complete until implemented and tested.
 
 ## Design goals
 
@@ -14,6 +14,7 @@ Signed package distribution, marketplace/catalog services, billing for commercia
 - Preserve MSP/client/site/tenant authorization and audit semantics.
 - Make incompatible modules fail closed before activation.
 - Allow modules to be disabled, quarantined, or removed without destabilizing core RMM workflows.
+- Never give a module database-superuser credentials, unrestricted NATS credentials, or ambient access beyond its declared capability set.
 
 ## Manifest contract
 
@@ -73,6 +74,24 @@ Lifecycle evidence is append-only. Application roles cannot mutate visible audit
 
 This is durable lifecycle persistence, not yet a signed package manager. Package acquisition, verification, update/rollback distribution, publisher trust, and executable installation remain separate work.
 
+## Module service identity
+
+`internal/modules/identity.go` defines the credential boundary intended for future out-of-process modules. It reuses the platform JWT signer but gives modules a distinct `token_use=module` identity rather than impersonating a user or agent.
+
+A module service token contains only:
+
+- the module ID;
+- a short expiration (five minutes by default, fifteen minutes maximum);
+- optional MSP/client/site scope, with hierarchy validation;
+- an explicit permission subset that must already be present in the enabled module manifest;
+- a unique token ID used for immediate revocation.
+
+Validation is deliberately dynamic. A correctly signed token is still rejected if the module is disabled or quarantined, if a permission in the token is no longer granted by the current manifest, or if the token ID has been revoked. Revocation-store errors fail closed.
+
+`RedisRevocationStore` provides the shared production-oriented revocation backend so all API replicas can observe a revocation immediately. The in-memory revocation store exists only for tests and single-process development and must not be used as production revocation evidence.
+
+The service-identity broker does **not** hand modules PostgreSQL credentials, NATS wildcard credentials, secret-store handles, or core package access. Those capabilities must be brokered through authenticated Strata APIs/events and independently authorize the token's module ID, scope, and declared permission.
+
 ## Runtime supervisor
 
 `internal/modules/runtime.go` defines the narrow execution boundary between the Strata control plane and a future out-of-process module runtime.
@@ -97,7 +116,7 @@ The intended runtime remains out-of-process by default:
 ```text
 Strata Core
   -> Persistent Module Registry
-  -> Permission Broker
+  -> Permission / Service Identity Broker
   -> Event/API Bridge
   -> Runtime Supervisor
        -> authenticated isolated module process/container
@@ -122,7 +141,7 @@ The complete runtime implementation must enforce:
 11. tenant-aware service identity and API authorization;
 12. persistent state that survives orchestrator restart without implicitly re-enabling quarantined modules.
 
-Items 2, 3, 5, 7 (lifecycle audit foundation), 8 (execution timeout portion), 10, and 12 now have code-level foundations. Item 4 is enforced by the current platform-admin-only persistence boundary but does not yet include a complete package-install approval UI. The remaining items are not complete merely because persistence and the supervisor exist.
+Items 2, 3, 5, 7 (lifecycle audit foundation), 8 (execution timeout portion), 10, 11 (service-token foundation), and 12 now have code-level foundations. Item 4 is enforced by the current platform-admin-only persistence boundary but does not yet include a complete package-install approval UI. Item 11 is not complete end-to-end until API/event middleware consumes the module identity and proves cross-tenant negative authorization with real infrastructure.
 
 ## Testing requirements
 
@@ -139,12 +158,13 @@ Module framework work must include:
 - runtime route, method, and permission-escalation negative tests;
 - timeout/crash/failure-threshold and quarantine tests;
 - real PostgreSQL tests for RLS, platform-only persistence, audit immutability, and restart restoration;
-- cross-tenant and cross-scope negative authorization tests when runtime identities are added;
+- module service-token tests for excessive permission requests, invalid scope hierarchy, disable/quarantine invalidation, immediate revocation, wrong token type, short lifetime, and fail-closed revocation-store outage;
+- cross-tenant and sibling-scope negative API authorization tests when module middleware is wired;
 - install/update/rollback/uninstall tests when package management is added;
 - an end-to-end reference module in the Alpha environment before the runtime execution framework is called complete.
 
-The dedicated `Add-on Modules` GitHub Actions workflow executes the PostgreSQL persistence/RLS/restart test with race detection. A build-tagged integration test that is not exercised in CI does not count as durable evidence.
+The dedicated `Add-on Modules` GitHub Actions workflow executes the PostgreSQL persistence/RLS/restart test with race detection. Module service-identity unit tests also run under the repository-wide race suite. A build-tagged integration test that is not exercised in CI does not count as durable evidence.
 
 ## Alpha acceptance boundary
 
-The current foundation proves manifest validation, lifecycle/permission state, fail-closed invocation supervision, durable platform-controlled module state, restart-safe quarantine, platform-only RLS enforcement, and append-only lifecycle audit behavior. It does **not** yet prove a real third-party executable/process/container, signed package installation or update rollback, tenant-scoped module service identities, resource sandboxing, or marketplace distribution. Those capabilities remain explicitly incomplete until their implementation and environment evidence exist.
+The current foundation proves manifest validation, lifecycle/permission state, fail-closed invocation supervision, durable platform-controlled module state, restart-safe quarantine, platform-only RLS enforcement, append-only lifecycle audit behavior, and issuance/verification/revocation semantics for narrowly scoped short-lived module credentials. It does **not** yet prove a real third-party executable/process/container, signed package installation or update rollback, end-to-end module-authenticated API/event authorization, resource sandboxing, or marketplace distribution. Those capabilities remain explicitly incomplete until their implementation and environment evidence exist.

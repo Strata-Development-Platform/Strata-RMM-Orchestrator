@@ -98,6 +98,7 @@ Capture command, exit status, and meaningful output. “Should pass,” partial 
 
 ## Common mistakes that must not recur
 
+- Do not replace a mature shared source file from a partial read or reconstructed excerpt. Before a whole-file update, fetch and preserve the complete file, compare against the base, and verify that unrelated exported types/functions remain present. Prefer a minimal patch when the tool supports one; if only whole-file replacement is available, treat preservation of every unaffected declaration as an explicit acceptance check.
 - Do not create a duplicate test function or helper name across the same Go package. Run the full package/suite, not only the newly added test file.
 - Do not call CI green from documentation or memory. The exact current head SHA and GitHub checks are authoritative.
 - Do not equate a high test count with high assurance. Separate unit, structural contract, integration, browser, fault, load, soak, and hosted lifecycle evidence.
