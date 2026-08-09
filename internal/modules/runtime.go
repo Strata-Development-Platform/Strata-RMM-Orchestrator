@@ -151,9 +151,10 @@ func declaredRoute(manifest Manifest, method, path string) (Route, error) {
 
 func (s *Supervisor) recordFailure(id string, cause error) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	s.failures[id]++
 	count := s.failures[id]
-	s.mu.Unlock()
 	if count < s.threshold {
 		return
 	}
