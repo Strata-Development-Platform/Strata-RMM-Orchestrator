@@ -18,9 +18,9 @@ const (
 )
 
 var (
-	ErrNotFound        = errors.New("module not found")
-	ErrAlreadyExists   = errors.New("module already installed")
-	ErrQuarantined     = errors.New("module is quarantined")
+	ErrNotFound         = errors.New("module not found")
+	ErrAlreadyExists    = errors.New("module already installed")
+	ErrQuarantined      = errors.New("module is quarantined")
 	ErrPermissionDenied = errors.New("module permission denied")
 )
 
@@ -56,6 +56,22 @@ func (r *Registry) Install(manifest Manifest) (InstalledModule, error) {
 	installed := InstalledModule{Manifest: manifest, State: StateInstalled, InstalledAt: now, UpdatedAt: now}
 	r.modules[manifest.ID] = installed
 	return installed, nil
+}
+
+// Restore inserts already-persisted lifecycle state without replaying lifecycle
+// transitions or changing timestamps. This is used only after persisted data has
+// passed manifest/state/timestamp validation.
+func (r *Registry) Restore(module InstalledModule) error {
+	if err := validatePersistedModule(module); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.modules[module.Manifest.ID]; exists {
+		return ErrAlreadyExists
+	}
+	r.modules[module.Manifest.ID] = module
+	return nil
 }
 
 func (r *Registry) Enable(id string) (InstalledModule, error) {
