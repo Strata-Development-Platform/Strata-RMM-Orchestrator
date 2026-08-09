@@ -54,8 +54,8 @@ const (
 	AccessUser
 	AccessAgent
 	AccessAdmin
-	AccessModule
 	AccessDenied
+	AccessModule
 )
 
 type Route struct {
