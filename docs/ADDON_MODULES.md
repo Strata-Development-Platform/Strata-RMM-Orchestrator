@@ -2,9 +2,9 @@
 
 ## Alpha scope
 
-Strata's extension boundary is a versioned, least-privilege module contract plus a fail-closed lifecycle registry and runtime supervisor. Alpha currently includes manifest validation, compatibility checking, permission allowlisting, namespaced module routes, install/enable/disable/quarantine/uninstall state, deterministic listing, permission enforcement, declared-route invocation checks, bounded runtime calls, health supervision, and automatic quarantine after repeated execution failures.
+Strata's extension boundary is a versioned, least-privilege module contract plus a fail-closed lifecycle registry, runtime supervisor, and durable platform-control-plane persistence layer. Alpha currently includes manifest validation, compatibility checking, permission allowlisting, namespaced module routes, install/enable/disable/quarantine/uninstall state, deterministic listing, permission enforcement, declared-route invocation checks, bounded runtime calls, health supervision, automatic quarantine after repeated execution failures, PostgreSQL-backed lifecycle persistence, restart restoration, platform-only RLS, and append-only lifecycle audit evidence.
 
-Signed package distribution, marketplace/catalog services, billing for commercial modules, publisher accounts, durable registry persistence, tenant-scoped module service identities, and a concrete third-party process/container launcher remain later phases and must not be represented as complete until implemented and tested.
+Signed package distribution, marketplace/catalog services, billing for commercial modules, publisher accounts, tenant-scoped module service identities, and a concrete third-party process/container launcher remain later phases and must not be represented as complete until implemented and tested.
 
 ## Design goals
 
@@ -65,7 +65,13 @@ The registry is fail closed:
 - enabled modules must be disabled before uninstall;
 - invalid or duplicate manifests are rejected.
 
-The current registry is in-memory and is a core contract layer, not yet a persistent package manager. Database-backed persistence, audit-event wiring, signed packages, and package installation are still required before the complete distribution lifecycle exists.
+`internal/modules/persistence.go` and migration `00090_addon_modules` add the durable control-plane backing for this state machine. The SQL store preserves manifest, state, reason, install/update timestamps, and lifecycle audit records, and can reconstruct the in-memory registry after orchestrator restart without implicitly clearing quarantine.
+
+Persistence is intentionally platform controlled in the current Alpha scope. Both `addon_modules` and `addon_module_audit` use PostgreSQL `ENABLE ROW LEVEL SECURITY` plus `FORCE ROW LEVEL SECURITY`; the policies permit only `platform_owner` and `platform_admin` application contexts. The store does not open an elevated connection or manufacture `app.role`: callers must provide the authorization-scoped database transaction already carrying the platform's `SET LOCAL app.*` context.
+
+Lifecycle evidence is append-only. Application roles cannot mutate visible audit history through the RLS policy, and a database trigger rejects UPDATE/DELETE even for a connection that can bypass RLS. The module integration test verifies both layers independently with a real non-superuser PostgreSQL role.
+
+This is durable lifecycle persistence, not yet a signed package manager. Package acquisition, verification, update/rollback distribution, publisher trust, and executable installation remain separate work.
 
 ## Runtime supervisor
 
@@ -116,7 +122,7 @@ The complete runtime implementation must enforce:
 11. tenant-aware service identity and API authorization;
 12. persistent state that survives orchestrator restart without implicitly re-enabling quarantined modules.
 
-Items 2, 3, 5, 8 (execution timeout portion), and 10 now have code-level foundations. The remaining items are not complete merely because the supervisor interface exists.
+Items 2, 3, 5, 7 (lifecycle audit foundation), 8 (execution timeout portion), 10, and 12 now have code-level foundations. Item 4 is enforced by the current platform-admin-only persistence boundary but does not yet include a complete package-install approval UI. The remaining items are not complete merely because persistence and the supervisor exist.
 
 ## Testing requirements
 
@@ -132,11 +138,13 @@ Module framework work must include:
 - runtime denial for disabled/quarantined modules before any execution call;
 - runtime route, method, and permission-escalation negative tests;
 - timeout/crash/failure-threshold and quarantine tests;
+- real PostgreSQL tests for RLS, platform-only persistence, audit immutability, and restart restoration;
 - cross-tenant and cross-scope negative authorization tests when runtime identities are added;
 - install/update/rollback/uninstall tests when package management is added;
-- restart/persistence tests when the registry becomes durable;
 - an end-to-end reference module in the Alpha environment before the runtime execution framework is called complete.
+
+The dedicated `Add-on Modules` GitHub Actions workflow executes the PostgreSQL persistence/RLS/restart test with race detection. A build-tagged integration test that is not exercised in CI does not count as durable evidence.
 
 ## Alpha acceptance boundary
 
-The current foundation proves manifest validation, lifecycle/permission state, and fail-closed invocation supervision. It does **not** yet prove a real third-party executable/process/container, persistent module state, signed package installation, audit wiring, tenant-scoped module service identities, resource sandboxing, or marketplace distribution. Those capabilities remain explicitly incomplete until their implementation and environment evidence exist.
+The current foundation proves manifest validation, lifecycle/permission state, fail-closed invocation supervision, durable platform-controlled module state, restart-safe quarantine, platform-only RLS enforcement, and append-only lifecycle audit behavior. It does **not** yet prove a real third-party executable/process/container, signed package installation or update rollback, tenant-scoped module service identities, resource sandboxing, or marketplace distribution. Those capabilities remain explicitly incomplete until their implementation and environment evidence exist.

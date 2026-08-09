@@ -1,0 +1,52 @@
+name: Add-on Modules
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - "internal/modules/**"
+      - "migrations/00090_addon_modules.*.sql"
+      - ".github/workflows/addon-modules.yml"
+  push:
+    branches: [master, develop]
+    paths:
+      - "internal/modules/**"
+      - "migrations/00090_addon_modules.*.sql"
+      - ".github/workflows/addon-modules.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  persistence-integration:
+    name: Module Persistence Integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: strata_test
+          POSTGRES_PASSWORD: strata_test
+          POSTGRES_DB: strata_test
+          POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U strata_test -d strata_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_POSTGRES_DSN: postgres://strata_test:strata_test@localhost:5432/strata_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Verify module persistence, RLS, audit, and restart semantics
+        run: go test -tags=moduleintegration ./internal/modules -count=1 -race -v
