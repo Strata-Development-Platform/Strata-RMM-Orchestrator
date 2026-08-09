@@ -140,12 +140,44 @@ func TestAddonPersistenceRLSAuditAndRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Audit rows are immutable even to the platform role used by the app.
+	// The application platform role cannot mutate audit rows. PostgreSQL RLS may
+	// deny the statement or make it affect zero rows; either is valid fail-closed
+	// behavior. Verify the stored evidence remains unchanged either way.
 	platformTx = scopedModuleTx(t, userDB, "platform_owner")
-	if _, err := platformTx.ExecContext(ctx, `UPDATE addon_module_audit SET reason='tampered' WHERE module_id=$1`, installed.Manifest.ID); err == nil {
-		t.Fatal("append-only addon audit allowed update")
+	result, updateErr := platformTx.ExecContext(ctx, `UPDATE addon_module_audit SET reason='tampered' WHERE module_id=$1`, installed.Manifest.ID)
+	if updateErr == nil {
+		affected, err := result.RowsAffected()
+		if err != nil {
+			_ = platformTx.Rollback()
+			t.Fatal(err)
+		}
+		if affected != 0 {
+			_ = platformTx.Rollback()
+			t.Fatalf("RLS allowed mutation of %d addon audit rows", affected)
+		}
 	}
 	_ = platformTx.Rollback()
+
+	platformTx = scopedModuleTx(t, userDB, "platform_admin")
+	var reason string
+	if err := platformTx.QueryRowContext(ctx, `SELECT reason FROM addon_module_audit WHERE module_id=$1 ORDER BY id DESC LIMIT 1`, installed.Manifest.ID).Scan(&reason); err != nil {
+		t.Fatal(err)
+	}
+	if reason != "integration quarantine" {
+		t.Fatalf("audit reason changed through application role: %q", reason)
+	}
+	if err := platformTx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	// The trigger is defense in depth for roles that can bypass RLS (for example
+	// the migration owner). It must reject direct mutation even when rows are visible.
+	if _, err := admin.ExecContext(ctx, `UPDATE addon_module_audit SET reason='superuser tamper' WHERE module_id=$1`, installed.Manifest.ID); err == nil {
+		t.Fatal("append-only audit trigger allowed RLS-bypass update")
+	}
+	if _, err := admin.ExecContext(ctx, `DELETE FROM addon_module_audit WHERE module_id=$1`, installed.Manifest.ID); err == nil {
+		t.Fatal("append-only audit trigger allowed RLS-bypass delete")
+	}
 }
 
 func scopedModuleTx(t *testing.T, db *sql.DB, role string) *sql.Tx {
