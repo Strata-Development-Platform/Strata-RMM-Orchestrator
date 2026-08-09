@@ -100,6 +100,7 @@ func TestRegistryListIsDeterministic(t *testing.T) {
 	for _, id := range []string{"z.example", "a.example", "m.example"} {
 		manifest := validManifest()
 		manifest.ID = id
+		manifest.Routes[0].Path = "/api/modules/" + id + "/status"
 		if _, err := registry.Install(manifest); err != nil {
 			t.Fatalf("install %s: %v", id, err)
 		}
