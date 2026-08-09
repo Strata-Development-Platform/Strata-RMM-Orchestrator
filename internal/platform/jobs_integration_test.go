@@ -114,11 +114,6 @@ func TestDurableJobRoundTripWithRealPostgresAndNATS(t *testing.T) {
 	server := NewDispatcher(db, nc, logger)
 	server.Start(ctx)
 
-	// Give the dispatcher time to process the queued job and publish to outbox.
-	// The outboxPublisher polls every 200ms, so we wait 500ms to ensure the job
-	// is dispatched before the agent processes it.
-	time.Sleep(500 * time.Millisecond)
-
 	defer func() {
 		cancel()
 		server.Stop()
@@ -127,10 +122,10 @@ func TestDurableJobRoundTripWithRealPostgresAndNATS(t *testing.T) {
 		}
 	}()
 
-	// Wait for the job to be dispatched first, then wait for it to be succeeded.
-	// This makes the test deterministic by separating the dispatch and result
-	// processing phases, making it easier to identify where failures occur.
-	dispatchDeadline := time.Now().Add(5 * time.Second)
+	// Wait for the asynchronous dispatcher instead of relying on a fixed startup
+	// sleep. The publisher polls every 200ms, but race-enabled CI runners can be
+	// heavily contended; keep this bounded while allowing scheduling jitter.
+	dispatchDeadline := time.Now().Add(15 * time.Second)
 	waitForJobDispatched(t, db.DB(), jobID, targetID, dispatchDeadline)
 
 	// Wait for the job target to transition from "dispatched" to "succeeded".
@@ -198,12 +193,34 @@ func waitForJobDispatched(t *testing.T, db *sql.DB, jobID, targetID string, dead
 			JOIN jobs j ON j.id = jt.job_id
 			WHERE jt.id = $1
 		`, targetID).Scan(&targetStatus, &jobStatus)
-		if err == nil && (targetStatus == "dispatched" || targetStatus == "succeeded") {
+		if err == nil && (targetStatus == "dispatched" || targetStatus == "running" || targetStatus == "succeeded") {
 			return
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	t.Fatal("job was not dispatched within deadline")
+
+	var targetStatus, jobStatus string
+	statusErr := db.QueryRow(`
+		SELECT jt.status, j.status
+		FROM job_targets jt
+		JOIN jobs j ON j.id = jt.job_id
+		WHERE jt.id = $1
+	`, targetID).Scan(&targetStatus, &jobStatus)
+
+	var outboxCount, publishedCount int
+	var lastError sql.NullString
+	outboxErr := db.QueryRow(`
+		SELECT COUNT(*),
+		       COUNT(*) FILTER (WHERE published_at IS NOT NULL),
+		       MAX(last_error)
+		FROM job_outbox
+		WHERE aggregate_id = $1 AND event_type = 'job.dispatch'
+	`, jobID).Scan(&outboxCount, &publishedCount, &lastError)
+
+	t.Fatalf(
+		"job was not dispatched within deadline: target_status=%q job_status=%q status_err=%v outbox_count=%d published_count=%d last_error=%q outbox_err=%v",
+		targetStatus, jobStatus, statusErr, outboxCount, publishedCount, lastError.String, outboxErr,
+	)
 }
 
 func waitForResultReceipt(t *testing.T, ledger *agentjobs.ReceiptLedger) {

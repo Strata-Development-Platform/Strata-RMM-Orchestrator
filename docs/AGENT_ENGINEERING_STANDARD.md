@@ -4,26 +4,15 @@ This standard must be included by reference in every future implementation or re
 
 ## Operating contract
 
-The coordinator owns scope, integration, acceptance, and the final truthfulness audit. It may delegate bounded work to sub-agents, but delegation does not transfer accountability. The coordinator must read and verify every resulting change before accepting it.
+The coordinator owns scope, integration, acceptance, and the final truthfulness audit. Delegation never transfers accountability. Every change must be read, tested, and verified against the actual runtime boundary being claimed.
 
 Before editing:
 
 1. fetch the current base and create or refresh one feature branch;
 2. inspect repository instructions, architecture, schemas, runtime consumers, tests, workflows, and the open PR;
 3. convert every requirement into a traceability table with an owner, files, tests, and evidence;
-4. identify compatibility, tenancy, security, migration, deployment, and rollback effects;
-5. record assumptions as assumptions—not completed facts.
-
-## Delegation rules
-
-Use sub-agents for independent, bounded work such as implementation, tests, documentation/deployment, and adversarial review. Give each agent explicit file ownership and acceptance criteria. Prevent overlapping edits. Require each agent to report:
-
-- files and behavior changed;
-- commands actually executed and their exact results;
-- unresolved risks, assumptions, and deferred work;
-- commit SHA or patch reviewed by the coordinator.
-
-At least one reviewer must be adversarial and independent of the implementation. It must trace configuration to runtime consumers, exercise negative paths, check tenant isolation and authorization, and find claims unsupported by code or evidence.
+4. identify compatibility, tenancy, security, migration, deployment, upgrade, backup, restore, and rollback effects;
+5. record assumptions as assumptions, never as completed facts.
 
 ## Implementation rules
 
@@ -35,7 +24,54 @@ At least one reviewer must be adversarial and independent of the implementation.
 - Keep optional capabilities explicitly disabled; dependent routes must return a clear unavailable response.
 - Add a regression test that fails before each defect fix whenever practical.
 - Keep migrations, rollback steps, deployment examples, and operator documentation aligned with code.
-- Do not mark deferred, simulated, decorative, or untested behavior complete.
+- Do not mark deferred, simulated, decorative, structural-only, or untested behavior complete.
+- Optional/vendor-specific functionality should preferentially use the add-on module framework instead of increasing coupling in the core.
+- Modules may not bypass core authorization, RLS, auditing, secret storage, tenancy, compatibility, or lifecycle controls.
+
+## Required testing methodology
+
+A green compile is not acceptance. Tests must be layered and must exercise the boundary being claimed.
+
+### Unit tests
+
+Cover happy paths, invalid input, malformed payloads, nil/zero values where meaningful, boundary values, duplicate operations, timeouts, idempotency, and deterministic error handling.
+
+### Integration tests
+
+Use real infrastructure where practical. PostgreSQL, TimescaleDB, NATS JetStream, Redis, object storage, and browser/API flows must not be replaced by mocks when the claim depends on their real semantics. Integration tests must prove schema behavior, RLS, transactions, acknowledgement semantics, persistence, retries, and recovery.
+
+### Behavioral tests
+
+Behavioral tests must validate user/system workflows, not merely struct fields, constant values, JSON round-trips, reflection counts, or string presence. Structural contract tests are useful but must be labeled as structural/contract tests and never counted as workflow evidence.
+
+Examples of acceptable behavioral paths include:
+
+- provider -> MSP -> client -> site -> scoped enrollment -> agent heartbeat;
+- telemetry -> persistence -> monitoring evaluation -> alert -> ticket/notification;
+- durable command -> agent acknowledgement -> execution -> persisted result -> audit trail;
+- patch/software deployment -> maintenance policy -> execution -> result -> reboot/reconnect where applicable;
+- backup -> isolated restore -> integrity verification -> tenant authorization preserved;
+- module install -> manifest validation -> permission approval -> enable -> health -> disable/uninstall.
+
+### Failure injection
+
+Every critical subsystem must deliberately fail in tests or controlled environment exercises. Required examples include database outage, NATS outage/restart, object storage outage, invalid/expired credentials, duplicate messages, partial writes, timeout, process restart, network loss, dependency recovery, and rollback after failed upgrade. The expected behavior must be explicit: retry, NAK, fail closed, preserve state, or surface a terminal error.
+
+### Durability and messaging
+
+Never acknowledge a durable message before the claimed durable side effect is committed. For JetStream or similar systems, the default rule is validate -> persist/commit -> ACK. On transient persistence failure, NAK/retry. Poison/malformed messages may be terminated only when replay cannot make them valid and the failure is observable/audited. Tests must prove no silent loss and must consider duplicate delivery.
+
+### Security and tenancy
+
+Every privileged route or module capability requires positive-role tests and negative tests for missing credentials, wrong role, wrong MSP/client/site/tenant, sibling scope, parent escalation, inactive scope, malformed identifiers, and direct resource-ID substitution. RLS claims require real PostgreSQL evidence when possible.
+
+### Recovery and resilience
+
+For stateful features, prove restart/reconnect behavior, retry bounds, idempotency, duplicate suppression, rollback, and restoration. Alpha acceptance requires environment-level exercises for reconnect storms, dependency outages, clean-host lifecycle, and measured recovery.
+
+### Load and soak
+
+Performance claims require versioned load evidence. Run bounded CI load contracts plus representative environment tests. Alpha requires a documented soak exercise with memory, goroutine/thread, connection, queue, latency, failure, and telemetry-loss observations.
 
 ## Local verification
 
@@ -47,11 +83,29 @@ Run the repository-prescribed commands. At minimum, where applicable:
 4. race tests;
 5. frontend type-check, lint, unit, build, and browser tests;
 6. database and integration tests;
-7. security, secret, dependency, and image scans;
+7. security, secret, dependency, SBOM, and image scans;
 8. build and packaging validation;
-9. changed deployment-template rendering or validation.
+9. changed deployment-template rendering or validation;
+10. focused failure-injection and recovery tests for the changed subsystem.
 
-Capture command, exit status, and meaningful output. “Should pass,” partial suites, skipped failures, and stale results are not evidence.
+Capture command, exit status, and meaningful output. “Should pass,” partial suites, skipped failures, stale results, or unrelated green workflows are not evidence.
+
+## Common mistakes that must not recur
+
+- Do not create a duplicate test function or helper name across the same Go package. Run the full package/suite, not only the newly added test file.
+- Do not call CI green from documentation or memory. The exact current head SHA and GitHub checks are authoritative.
+- Do not equate a high test count with high assurance. Separate unit, structural contract, integration, browser, fault, load, soak, and hosted lifecycle evidence.
+- Do not acknowledge telemetry/jobs before durable persistence. This can create silent data loss during database failure.
+- Do not clear an in-memory batch before successful persistence unless a durable replay source still owns the message and acknowledgement is withheld.
+- Do not duplicate simplified production authorization logic in test-only mocks and then claim production authorization coverage.
+- Do not assume FORCE ROW LEVEL SECURITY enables RLS; verify ENABLE and FORCE semantics against the actual migration and PostgreSQL.
+- Do not write RLS policies or migrations from memory. Verify real table/column names and execute migrations in both directions where supported.
+- Do not use route classification as a substitute for handler/resource authorization.
+- Do not fix only the reported symptom when the same defect class can exist elsewhere; search for siblings and add regression coverage.
+- Do not update only embedded or standalone schema copies. Reconcile every source of migration/schema truth mechanically.
+- Do not mark a feature complete because routes, structs, UI controls, or tests exist. Acceptance requires functional wiring and evidence.
+- Do not let documentation claim capabilities beyond code or environment proof. Environment-pending work must remain explicitly pending.
+- Do not add third-party/vendor-specific core coupling when the module API is the appropriate extension boundary.
 
 ## Pull request discipline
 
@@ -62,14 +116,14 @@ Capture command, exit status, and meaningful output. “Should pass,” partial 
 - Push all fixes before starting the final evidence run.
 - Record the exact head SHA.
 - Monitor every required GitHub Actions job to a terminal conclusion.
-- Treat skipped, cancelled, neutral, or missing required jobs as unresolved until their acceptability is proven.
+- Treat skipped, cancelled, neutral, missing, or infrastructure-dependent required jobs as unresolved until their acceptability is proven.
 - If the head changes, all prior CI evidence is stale; repeat exact-head verification.
 - Do not merge, mark ready, or call the phase complete until the acceptance matrix and PR body match the exact code and evidence.
 - Never merge without explicit authorization.
 
 ## Final acceptance audit
 
-Before handoff, the coordinator must independently verify:
+Before handoff, independently verify:
 
 - the PR diff contains only intended changes;
 - every acceptance row has code/test/evidence or is honestly marked partial/deferred;
@@ -78,6 +132,8 @@ Before handoff, the coordinator must independently verify:
 - health checks perform meaningful live checks;
 - documentation and deployment examples use current names and defaults;
 - no secrets, debug bypasses, placeholder credentials, or unsupported completion claims remain;
-- the exact-head workflow URL and job results are recorded.
+- the exact-head workflow URL and job results are recorded;
+- new optional functionality uses the module boundary where appropriate;
+- any discovered agent error has been added to `docs/agents.ms` or this standard so the project learns permanently.
 
-If any check fails, continue remediation. “Complete” means the implementation, documentation, rollback plan, and exact-head CI evidence all agree.
+If any check fails, continue remediation. “Complete” means implementation, tests, documentation, recovery/rollback plan, and exact-head CI evidence all agree.

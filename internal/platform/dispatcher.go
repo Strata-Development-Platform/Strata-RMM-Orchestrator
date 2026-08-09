@@ -357,7 +357,7 @@ func (d *Dispatcher) reconcile() {
 	if _, err := d.db.DB().Exec(`
 		UPDATE job_targets jt
 		SET status = CASE WHEN jt.retry_count < j.max_retries THEN 'queued' ELSE 'failed' END,
-		    retry_count = retry_count + 1,
+		    retry_count = jt.retry_count + 1,
 		    next_retry_at = CASE WHEN jt.retry_count < j.max_retries THEN NOW() + INTERVAL '30 seconds' ELSE NULL END,
 		    lease_owner = NULL, lease_expires = NULL, error_message = 'execution acknowledgement timeout'
 		FROM jobs j
@@ -478,7 +478,7 @@ func (d *Dispatcher) handleAgentAck(subject string, data []byte) {
 		SELECT jt.status, COALESCE(jt.agent_id,''), jt.attempt, COALESCE(j.correlation_id,'')
 		FROM job_targets jt JOIN jobs j ON jt.job_id = j.id
 		WHERE jt.id = $1 AND jt.job_id = $2 AND j.msp_id = $3 AND jt.device_id = $4
-		FOR UPDATE
+		FOR NO KEY UPDATE
 	`, ack.TargetID, ack.JobID, ack.MSPID, ack.DeviceID).Scan(&currentStatus, &targetAgent, &currentAttempt, &correlationID)
 	if err != nil || targetAgent != ack.AgentID || currentAttempt != ack.Attempt || correlationID != ack.CorrelationID {
 		d.logger.Warn("acknowledgement ownership mismatch", zap.String("target", ack.TargetID), zap.Error(err))
@@ -556,7 +556,7 @@ func (d *Dispatcher) handleAgentResult(subject string, data []byte) {
 		FROM job_targets jt
 		JOIN jobs j ON jt.job_id = j.id
 		WHERE jt.id = $1 AND jt.job_id = $2 AND j.msp_id = $3 AND jt.device_id = $4
-		FOR UPDATE
+		FOR NO KEY UPDATE
 	`, res.TargetID, res.JobID, res.MSPID, res.DeviceID).Scan(&currentStatus, &agentID, &currentAttempt, &clientID, &siteID, &correlationID)
 	if err != nil || agentID != res.AgentID || currentAttempt != res.Attempt ||
 		clientID != res.ClientID || siteID != res.SiteID || correlationID != res.CorrelationID {
