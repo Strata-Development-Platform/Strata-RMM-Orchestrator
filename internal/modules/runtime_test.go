@@ -11,12 +11,17 @@ type fakeRuntime struct {
 	healthErr error
 	invokeErr error
 	calls     int
+	block     bool
 }
 
 func (f *fakeRuntime) Health(context.Context, InstalledModule) error { return f.healthErr }
 
-func (f *fakeRuntime) Invoke(_ context.Context, _ InstalledModule, _ Invocation) (InvocationResult, error) {
+func (f *fakeRuntime) Invoke(ctx context.Context, _ InstalledModule, _ Invocation) (InvocationResult, error) {
 	f.calls++
+	if f.block {
+		<-ctx.Done()
+		return InvocationResult{}, ctx.Err()
+	}
 	if f.invokeErr != nil {
 		return InvocationResult{}, f.invokeErr
 	}
@@ -99,6 +104,35 @@ func TestSupervisorInvokesEnabledModuleWithinDeclaredCapability(t *testing.T) {
 	}
 	if result.StatusCode != 200 || runtime.calls != 1 {
 		t.Fatalf("result=%+v calls=%d", result, runtime.calls)
+	}
+}
+
+func TestSupervisorTimesOutBlockedRuntime(t *testing.T) {
+	runtime := &fakeRuntime{block: true}
+	registry := NewRegistry()
+	manifest := validManifest()
+	if _, err := registry.Install(manifest); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := registry.Enable(manifest.ID); err != nil {
+		t.Fatal(err)
+	}
+	supervisor, err := NewSupervisor(registry, runtime, SupervisorOptions{
+		InvocationTimeout: 20 * time.Millisecond,
+		FailureThreshold:  3,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	_, err = supervisor.Invoke(context.Background(), manifest.ID, Invocation{
+		Method: "GET", Path: manifest.Routes[0].Path, Permission: "devices.read",
+	})
+	if !errors.Is(err, ErrRuntimeUnavailable) {
+		t.Fatalf("Invoke() error = %v, want ErrRuntimeUnavailable", err)
+	}
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("runtime timeout took too long: %v", elapsed)
 	}
 }
 
