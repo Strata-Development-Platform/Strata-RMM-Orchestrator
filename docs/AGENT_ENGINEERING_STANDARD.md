@@ -73,6 +73,12 @@ For stateful features, prove restart/reconnect behavior, retry bounds, idempoten
 
 Performance claims require versioned load evidence. Run bounded CI load contracts plus representative environment tests. Alpha requires a documented soak exercise with memory, goroutine/thread, connection, queue, latency, failure, and telemetry-loss observations.
 
+Load generators must cross the same trust boundary as production clients. Do not bypass enrollment, authorization, RLS, scoped service identity, or NATS subject credentials merely to generate traffic. Synthetic tenants/agents are valid only when they are provisioned through supported control-plane paths or a dedicated simulator that enforces equivalent scope. Readiness-only soak samples are useful observations but do not prove resource stability without corresponding server metrics.
+
+### Evidence automation
+
+Automation may collect, hash, and summarize evidence, but it must not self-certify an acceptance gate. Every evidence artifact must identify the exact candidate SHA, environment, timestamps, inputs, and limitations. A script exiting zero means the scripted observations passed; it does not mean the broader Phase 8 row is accepted unless the row's complete required proof is satisfied.
+
 ## Local verification
 
 Run the repository-prescribed commands. At minimum, where applicable:
@@ -106,6 +112,9 @@ Capture command, exit status, and meaningful output. “Should pass,” partial 
 - Do not mark a feature complete because routes, structs, UI controls, or tests exist. Acceptance requires functional wiring and evidence.
 - Do not let documentation claim capabilities beyond code or environment proof. Environment-pending work must remain explicitly pending.
 - Do not add third-party/vendor-specific core coupling when the module API is the appropriate extension boundary.
+- Do not use arbitrary fixed sleeps as readiness proof for asynchronous workers. Poll the actual state with a bounded deadline and print diagnostics on timeout.
+- Do not generate Alpha load by publishing directly to tenant NATS subjects with hard-coded tenant/device identifiers. Use enrolled/scoped identities or a simulator that preserves the production trust model.
+- Do not let an evidence collector write “accepted”, “passed Phase 8”, or equivalent merely because its own probes succeeded. Acceptance is a reviewed decision against the complete matrix.
 
 ## Pull request discipline
 
