@@ -275,6 +275,9 @@ func principalToContext(ctx context.Context, p *Principal) context.Context {
 func (s *APIServer) withAccessControl(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		access := s.classifyRoute(r.Method, r.URL.Path)
+		if access == AccessDenied && isModuleLifecycleRequest(r.Method, r.URL.Path) {
+			access = AccessAdmin
+		}
 		if access == AccessPublic {
 			next.ServeHTTP(w, r)
 			return
@@ -352,6 +355,10 @@ func (s *APIServer) withAccessControl(next http.Handler) http.Handler {
 		}
 
 		ctx := principalToContext(r.Context(), principal)
+		if isModuleLifecycleRequest(r.Method, r.URL.Path) {
+			s.serveModuleLifecycle(w, r.WithContext(ctx))
+			return
+		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
