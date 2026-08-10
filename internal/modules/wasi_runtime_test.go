@@ -80,6 +80,37 @@ func TestWASIRuntimeEnforcesManifestMemoryLimit(t *testing.T) {
 	}
 }
 
+func TestMemoryLimitPagesBoundaries(t *testing.T) {
+	tests := []struct {
+		name     string
+		memoryMB int
+		want     uint32
+		wantErr  bool
+	}{
+		{name: "below minimum", memoryMB: 15, wantErr: true},
+		{name: "minimum", memoryMB: 16, want: 256},
+		{name: "maximum", memoryMB: 512, want: 8192},
+		{name: "above maximum", memoryMB: 513, wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := memoryLimitPages(tc.memoryMB)
+			if tc.wantErr {
+				if !errors.Is(err, ErrRuntimeMemoryLimit) {
+					t.Fatalf("error = %v, want ErrRuntimeMemoryLimit", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("memoryLimitPages: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("pages = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestWASIRuntimeFailsClosedOnActiveVersionMismatch(t *testing.T) {
 	runtime, module := newWASIRuntimeFixture(t, wasmEmpty, 16, 1, 1)
 	module.Manifest.Version = "2.0.0"
