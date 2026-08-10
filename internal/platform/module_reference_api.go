@@ -5,22 +5,36 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/modules"
+	strataredis "github.com/strata-rmm/strata-rmm-orchestrator/pkg/redis"
 )
 
 const (
 	referenceModuleID               = "com.example.backup"
 	referenceModuleDevicePermission = "devices.read"
 	referenceModuleDeviceRoute      = "/api/modules/com.example.backup/devices/{deviceID}"
+	moduleBootstrapRetryDelay       = 5 * time.Second
 )
 
 type moduleTargetScopeContextKey struct{}
 
-var moduleAuthorizers sync.Map // map[*APIServer]*modules.APIAuthorizer
+type moduleRuntimeState struct {
+	mu         sync.Mutex
+	authorizer *modules.APIAuthorizer
+	retryAfter time.Time
+}
+
+var (
+	moduleAuthorizers sync.Map // map[*APIServer]*modules.APIAuthorizer
+	moduleRuntimes    sync.Map // map[*APIServer]*moduleRuntimeState
+)
 
 // WithModuleAuthorizer configures the dedicated module-service authorization
 // broker for this API server. Module credentials remain separate from the
@@ -41,12 +55,100 @@ func (s *APIServer) configuredModuleAuthorizer() *modules.APIAuthorizer {
 	if s == nil {
 		return nil
 	}
-	value, ok := moduleAuthorizers.Load(s)
-	if !ok {
+	if value, ok := moduleAuthorizers.Load(s); ok {
+		authorizer, _ := value.(*modules.APIAuthorizer)
+		return authorizer
+	}
+
+	value, _ := moduleRuntimes.LoadOrStore(s, &moduleRuntimeState{})
+	state := value.(*moduleRuntimeState)
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.authorizer != nil {
+		return state.authorizer
+	}
+	if !state.retryAfter.IsZero() && time.Now().Before(state.retryAfter) {
 		return nil
 	}
-	authorizer, _ := value.(*modules.APIAuthorizer)
-	return authorizer
+
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	authorizer, err := s.bootstrapModuleAuthorizer(ctx)
+	if err != nil {
+		state.retryAfter = time.Now().Add(moduleBootstrapRetryDelay)
+		if s.logger != nil {
+			s.logger.Error("module API authorization unavailable", zap.Error(err), zap.Duration("retry_in", moduleBootstrapRetryDelay))
+		}
+		return nil
+	}
+	state.authorizer = authorizer
+	state.retryAfter = time.Time{}
+	if s.logger != nil {
+		s.logger.Info("module API authorization initialized from durable state")
+	}
+	return state.authorizer
+}
+
+// bootstrapModuleAuthorizer restores platform-controlled module lifecycle state
+// under the same platform RLS scope used by module persistence, then binds JWT
+// validation to a shared Redis revocation store. It never falls back to the
+// in-memory revocation implementation, so a missing/unreachable Redis service
+// leaves module endpoints fail closed.
+func (s *APIServer) bootstrapModuleAuthorizer(ctx context.Context) (*modules.APIAuthorizer, error) {
+	if s == nil || s.db == nil || s.db.DB() == nil {
+		return nil, errors.New("module registry database unavailable")
+	}
+	if s.tokenGen == nil {
+		return nil, errors.New("module token generator unavailable")
+	}
+
+	redisURL := strings.TrimSpace(os.Getenv("REDIS_URL"))
+	if redisURL == "" {
+		return nil, errors.New("REDIS_URL is required for durable module token revocation")
+	}
+
+	tx, err := s.db.DB().BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.role', $1, true)`, "platform_admin"); err != nil {
+		return nil, err
+	}
+	registry, err := modules.NewSQLStore().RestoreRegistry(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	committed = true
+
+	redisClient, err := strataredis.NewClient(ctx, strataredis.PoolConfig{URL: redisURL})
+	if err != nil {
+		return nil, err
+	}
+	revocations, err := modules.NewRedisRevocationStore(redisClient)
+	if err != nil {
+		_ = redisClient.Close()
+		return nil, err
+	}
+	identities, err := modules.NewIdentityManager(registry, s.tokenGen, revocations)
+	if err != nil {
+		_ = redisClient.Close()
+		return nil, err
+	}
+	authorizer, err := modules.NewAPIAuthorizer(identities)
+	if err != nil {
+		_ = redisClient.Close()
+		return nil, err
+	}
+	return authorizer, nil
 }
 
 // serveReferenceModuleDevice is dispatched by the AccessModule route class.
