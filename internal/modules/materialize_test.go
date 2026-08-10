@@ -30,6 +30,15 @@ func TestMaterializePayloadPromotesValidatedPackageAtomically(t *testing.T) {
 	if result.FileCount != 2 || result.ExpandedBytes != int64(len("binary")+len(`{"enabled":true}`)) {
 		t.Fatalf("materialized result = %#v", result)
 	}
+	if runtime.GOOS != "windows" {
+		rootInfo, err := os.Stat(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rootInfo.Mode().Perm() != 0o700 {
+			t.Fatalf("install root mode = %#o, want 0700", rootInfo.Mode().Perm())
+		}
+	}
 
 	binaryPath := filepath.Join(result.Path, "bin", "module")
 	data, err := os.ReadFile(binaryPath)
