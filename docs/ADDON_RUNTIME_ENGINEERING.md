@@ -97,6 +97,7 @@ A green manifest/runtime-contract PR proves the contract only. It does not prove
 - **Overbroad permissions:** Newly created module install/control roots should be least privilege by default; scanner findings such as G301 are merge blockers.
 - **Stale CI reuse:** Never cite green jobs from a prior SHA after any commit, including documentation-only commits.
 - **Flake assumption without proof:** A job is not a flake because the changed files seem unrelated. Re-run on the same SHA; repeated failure requires investigation.
+- **Concurrent lifecycle channel close:** Never clear a lifecycle state flag and then close its stop channel outside the same synchronization boundary. Concurrent Start/Stop can otherwise double-close a channel or let an old worker observe a replacement channel. Allocate per-run stop channels, capture them in the worker, and make Stop idempotent under the lifecycle mutex; prove restart and concurrent shutdown under the race detector.
 - **Contract/execution conflation:** Runtime schema validation is not sandbox proof. Health callback success is not guest-runtime proof. A mock runtime is not third-party execution evidence.
 - **Ambient capability leakage:** Do not use engine defaults that inherit host environment, filesystem, stdio, networking, or process configuration without an explicit reviewed reason.
 - **Authorization at install time only:** Brokered runtime/API/event calls must re-authorize current state and scope at invocation time.
