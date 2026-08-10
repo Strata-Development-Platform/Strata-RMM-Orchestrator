@@ -95,7 +95,9 @@ func MaterializePayload(pkg VerifiedPackage, payload ValidatedPayload, options M
 		_ = os.Remove(lockPath)
 		return MaterializedModule{}, fmt.Errorf("close module install lock: %w", err)
 	}
-	defer os.Remove(lockPath)
+	defer func() {
+		_ = os.Remove(lockPath)
+	}()
 
 	stage, err := os.MkdirTemp(moduleDir, "."+pkg.Manifest.Version+".staging-")
 	if err != nil {
@@ -109,6 +111,11 @@ func MaterializePayload(pkg VerifiedPackage, payload ValidatedPayload, options M
 	}()
 	if err := os.Chmod(stage, 0o750); err != nil {
 		return MaterializedModule{}, fmt.Errorf("set staging directory mode: %w", err)
+	}
+	if options.Ownership != nil {
+		if err := os.Chown(stage, options.Ownership.UID, options.Ownership.GID); err != nil {
+			return MaterializedModule{}, fmt.Errorf("set staging directory ownership: %w", err)
+		}
 	}
 
 	seen := make(map[string]struct{}, len(payload.Files))
@@ -140,9 +147,6 @@ func MaterializePayload(pkg VerifiedPackage, payload ValidatedPayload, options M
 	}
 	if len(payload.Files) == 0 {
 		return MaterializedModule{}, errors.New("validated payload contains no files")
-	}
-	if err := applyDirectoryPolicy(stage, options.Ownership); err != nil {
-		return MaterializedModule{}, err
 	}
 
 	if _, err := os.Lstat(target); err == nil {
@@ -240,7 +244,7 @@ func ensureContained(root, candidate string) error {
 
 func createMaterializedFile(stage, destination string, file PayloadFile, ownership *MaterializeOwnership) error {
 	parent := filepath.Dir(destination)
-	if err := ensureStageDirectories(stage, parent); err != nil {
+	if err := ensureStageDirectories(stage, parent, ownership); err != nil {
 		return err
 	}
 
@@ -260,7 +264,7 @@ func createMaterializedFile(stage, destination string, file PayloadFile, ownersh
 	if err := handle.Sync(); err != nil {
 		return fmt.Errorf("sync module payload file %q: %w", file.Path, err)
 	}
-	if err := handle.Chmod(os.FileMode(file.Mode)); err != nil {
+	if err := handle.Chmod(payloadFileMode(file.Mode)); err != nil {
 		return fmt.Errorf("set module payload file mode %q: %w", file.Path, err)
 	}
 	if ownership != nil {
@@ -275,7 +279,39 @@ func createMaterializedFile(stage, destination string, file PayloadFile, ownersh
 	return nil
 }
 
-func ensureStageDirectories(stage, directory string) error {
+func payloadFileMode(mode int64) os.FileMode {
+	var result os.FileMode
+	if mode&0o400 != 0 {
+		result |= 0o400
+	}
+	if mode&0o200 != 0 {
+		result |= 0o200
+	}
+	if mode&0o100 != 0 {
+		result |= 0o100
+	}
+	if mode&0o040 != 0 {
+		result |= 0o040
+	}
+	if mode&0o020 != 0 {
+		result |= 0o020
+	}
+	if mode&0o010 != 0 {
+		result |= 0o010
+	}
+	if mode&0o004 != 0 {
+		result |= 0o004
+	}
+	if mode&0o002 != 0 {
+		result |= 0o002
+	}
+	if mode&0o001 != 0 {
+		result |= 0o001
+	}
+	return result
+}
+
+func ensureStageDirectories(stage, directory string, ownership *MaterializeOwnership) error {
 	if err := ensureContained(stage, directory); err != nil {
 		return err
 	}
@@ -302,29 +338,11 @@ func ensureStageDirectories(stage, directory string) error {
 		if err := os.Chmod(current, 0o750); err != nil {
 			return fmt.Errorf("set staging directory mode %q: %w", current, err)
 		}
-	}
-	return nil
-}
-
-func applyDirectoryPolicy(stage string, ownership *MaterializeOwnership) error {
-	return filepath.WalkDir(stage, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if !entry.IsDir() {
-			return nil
-		}
-		if entry.Type()&os.ModeSymlink != 0 {
-			return fmt.Errorf("unsafe symlinked staging directory %q", path)
-		}
-		if err := os.Chmod(path, 0o750); err != nil {
-			return fmt.Errorf("set staging directory mode %q: %w", path, err)
-		}
 		if ownership != nil {
-			if err := os.Chown(path, ownership.UID, ownership.GID); err != nil {
-				return fmt.Errorf("set staging directory ownership %q: %w", path, err)
+			if err := os.Chown(current, ownership.UID, ownership.GID); err != nil {
+				return fmt.Errorf("set staging directory ownership %q: %w", current, err)
 			}
 		}
-		return nil
-	})
+	}
+	return nil
 }
