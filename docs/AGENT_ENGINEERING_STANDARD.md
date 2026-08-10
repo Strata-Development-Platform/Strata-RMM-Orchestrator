@@ -117,6 +117,7 @@ Capture command, exit status, and meaningful output. “Should pass,” partial 
 - Do not use arbitrary fixed sleeps as readiness proof for asynchronous workers. Poll the actual state with a bounded deadline and print diagnostics on timeout.
 - Do not generate Alpha load by publishing directly to tenant NATS subjects with hard-coded tenant/device identifiers. Use enrolled/scoped identities or a simulator that preserves the production trust model.
 - Do not let an evidence collector write “accepted”, “passed Phase 8”, or equivalent merely because its own probes succeeded. Acceptance is a reviewed decision against the complete matrix.
+- Do not enforce untrusted archive or file-size limits by converting signed limits to unsigned metadata fields. Validate the configured limit first, keep size arithmetic in a single signed domain, and enforce the limit with bounded streaming reads. High-severity gosec integer-conversion findings are merge blockers and must not be suppressed merely because normal configured limits are small.
 
 ## Pull request discipline
 
