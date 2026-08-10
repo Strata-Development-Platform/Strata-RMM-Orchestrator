@@ -2,9 +2,9 @@
 
 ## Alpha scope
 
-Strata's extension boundary is a versioned, least-privilege module contract plus a fail-closed lifecycle registry, runtime supervisor, durable platform-control-plane persistence layer, scoped module service-identity broker, signed-package verifier, and bounded payload-archive validator. Alpha currently includes manifest validation, compatibility checking, permission allowlisting, namespaced module routes, install/enable/disable/quarantine/uninstall state, deterministic listing, permission enforcement, declared-route invocation checks, bounded runtime calls, health supervision, automatic quarantine after repeated execution failures, PostgreSQL-backed lifecycle persistence, restart restoration, platform-only RLS, append-only lifecycle audit evidence, short-lived module JWT credentials whose permissions cannot exceed the enabled manifest, Ed25519 package verification, SHA-256 payload integrity checks, and non-executable validation of signed `payload.tar.gz` contents.
+Strata's extension boundary is a versioned, least-privilege module contract plus a fail-closed lifecycle registry, runtime supervisor, durable platform-control-plane persistence layer, scoped module service-identity broker, signed-package verifier, bounded payload-archive validator, and non-executable filesystem materializer. Alpha currently includes manifest validation, compatibility checking, permission allowlisting, namespaced module routes, install/enable/disable/quarantine/uninstall state, deterministic listing, permission enforcement, declared-route invocation checks, bounded runtime calls, health supervision, automatic quarantine after repeated execution failures, PostgreSQL-backed lifecycle persistence, restart restoration, platform-only RLS, append-only lifecycle audit evidence, short-lived module JWT credentials whose permissions cannot exceed the enabled manifest, Ed25519 package verification, SHA-256 payload integrity checks, bounded validation of signed `payload.tar.gz` contents, and staged materialization of validated files into immutable versioned module directories.
 
-Marketplace/catalog services, billing for commercial modules, publisher-account management, filesystem materialization, update/rollback installation, a concrete third-party process/container launcher, resource sandboxing, and end-to-end module API/event middleware remain later phases and must not be represented as complete until implemented and tested.
+Marketplace/catalog services, billing for commercial modules, publisher-account management, active-version switching, update/rollback orchestration, uninstall garbage collection, a concrete third-party process/container launcher, resource sandboxing, and end-to-end module API/event middleware remain later phases and must not be represented as complete until implemented and tested.
 
 ## Design goals
 
@@ -72,7 +72,7 @@ Persistence is intentionally platform controlled in the current Alpha scope. Bot
 
 Lifecycle evidence is append-only. Application roles cannot mutate visible audit history through the RLS policy, and a database trigger rejects UPDATE/DELETE even for a connection that can bypass RLS. The module integration test verifies both layers independently with a real non-superuser PostgreSQL role.
 
-This durable lifecycle state remains intentionally separate from package acquisition and executable installation. Lifecycle installation records an approved manifest; it does not itself fetch, unpack, launch, or trust third-party code.
+This durable lifecycle state remains intentionally separate from package acquisition, filesystem activation, and runtime execution. Lifecycle installation records an approved manifest; it does not itself fetch, activate, or launch third-party code.
 
 ## Signed package verification
 
@@ -92,7 +92,7 @@ The verifier:
 
 ## Payload archive validation
 
-`internal/modules/payload.go` is the next non-executable boundary after signed-package verification. It accepts only the opaque `payload.tar.gz` bytes already present in a `VerifiedPackage` and validates the archive before any future filesystem or runtime adapter is allowed to consume it.
+`internal/modules/payload.go` is the next non-executable boundary after signed-package verification. It accepts only the opaque `payload.tar.gz` bytes already present in a `VerifiedPackage` and validates the archive before any filesystem or runtime adapter is allowed to consume it.
 
 The validator:
 
@@ -101,9 +101,32 @@ The validator:
 - rejects unsupported permission bits such as setuid/setgid/sticky metadata;
 - bounds regular-file count, individual file size, and total expanded bytes;
 - requires at least one regular file;
-- returns validated file bytes in memory in archive order.
+- returns validated file bytes in memory in archive order;
+- binds module ID, version, payload digest, and the exact validated file set into a private fingerprint so post-validation mutation is rejected by the filesystem stage.
 
-This stage deliberately performs **no filesystem writes and no execution**. Filesystem ownership, atomic materialization, immutable install directories, process/container launch, resource controls, service-identity injection, health-gated activation, failed-update rollback, and cleanup remain later trust boundaries.
+This stage deliberately performs **no filesystem writes and no execution**.
+
+## Safe filesystem materialization
+
+`internal/modules/materialize.go` is the first filesystem boundary. `MaterializePayload` accepts a `VerifiedPackage` and the matching sealed `ValidatedPayload`, rechecks package/payload identity and limits, and materializes the files beneath a configured install root without executing them.
+
+The materializer:
+
+- requires a non-empty trusted install root and canonicalizes it before deriving module paths;
+- rejects a symlinked install root and a symlinked/non-directory module directory;
+- requires module ID and version to be single safe path components;
+- rechecks payload path canonicality, duplicate paths, modes, file-count limits, per-file limits, and total expanded-byte limits;
+- creates a per-version exclusive install lock so cooperating installers cannot race the same version;
+- stages files in a sibling hidden directory beneath the module directory;
+- creates payload files with `O_EXCL`, syncs their contents, applies the validated permission mode, and optionally applies an explicit UID/GID ownership policy;
+- applies controlled directory modes/ownership before promotion;
+- refuses to overwrite an existing version directory;
+- rechecks the target before promotion and renames the completed sibling staging tree into the version path;
+- removes the staging directory on failure and removes the install lock when the operation returns.
+
+The sibling rename gives process-level atomic visibility of a completed materialized tree on the same filesystem. It is not an activation mechanism and it is not a full crash-recovery protocol. A process crash can leave a stale install lock or hidden staging directory; stale-lock recovery and cleanup policy remain explicit future work rather than being silently guessed.
+
+Materialized version directories are immutable to this implementation. The current materializer does **not** create or update an `active` pointer, replace a previously materialized version, select a runtime entrypoint, issue module credentials, start a process/container, mount anything, grant network access, or mutate lifecycle state. Active-version switching, failed-upgrade rollback, uninstall/garbage collection, resource isolation, and executable launch remain later trust boundaries.
 
 ## Module service identity
 
@@ -150,6 +173,7 @@ Strata Core
   -> Permission / Service Identity Broker
   -> Signed Package Verification
   -> Bounded Payload Validation
+  -> Safe Versioned Materialization
   -> Event/API Bridge
   -> Runtime Supervisor
        -> authenticated isolated module process/container
@@ -174,7 +198,7 @@ The complete runtime implementation must enforce:
 11. tenant-aware service identity and API authorization;
 12. persistent state that survives orchestrator restart without implicitly re-enabling quarantined modules.
 
-Items 1, 2, 3, 5, 7 (lifecycle audit foundation), 8 (archive bounds and execution-timeout foundations), 10, 11 (service-token foundation), and 12 now have code-level foundations. Item 4 is enforced by the current platform-admin-only persistence boundary but does not yet include a complete package-install approval UI. Item 1 does not yet include marketplace acquisition, publisher onboarding/key-rotation workflows, or update/rollback installation. Item 8 does not yet include process/container CPU, memory, filesystem, syscall, or network sandbox enforcement. Item 11 is not complete end-to-end until API/event middleware consumes the module identity and proves cross-tenant negative authorization with real infrastructure.
+Items 1, 2, 3, 5, 7 (lifecycle audit foundation), 8 (archive/materialization bounds and execution-timeout foundations), 10, 11 (service-token foundation), and 12 now have code-level foundations. Item 4 is enforced by the current platform-admin-only persistence boundary but does not yet include a complete package-install approval UI. Item 1 does not yet include marketplace acquisition or publisher onboarding/key-rotation workflows. Item 5 now has a non-executable filesystem foundation, but activation and runtime selection are still absent. Item 8 does not yet include process/container CPU, memory, filesystem, syscall, or network sandbox enforcement. Item 9 remains incomplete because there is no active-version pointer or failed-upgrade rollback orchestrator. Item 11 is not complete end-to-end until API/event middleware consumes the module identity and proves cross-tenant negative authorization with real infrastructure.
 
 ## Testing requirements
 
@@ -193,13 +217,15 @@ Module framework work must include:
 - real PostgreSQL tests for RLS, platform-only persistence, audit immutability, and restart restoration;
 - module service-token tests for excessive permission requests, invalid scope hierarchy, disable/quarantine invalidation, immediate revocation, wrong token type, short lifetime, and fail-closed revocation-store outage;
 - signed-package tests for digest/signature tampering, untrusted publisher keys, malformed metadata, path abuse, duplicate/unexpected ZIP members, and byte limits;
-- payload-archive tests for traversal, absolute/non-canonical/backslash paths, duplicates, links/special files, unsafe modes, invalid compression, empty archives, entry-size bounds, file-count bounds, and total expanded-size bounds;
+- payload-archive tests for traversal, absolute/non-canonical/backslash paths, duplicates, links/special files, unsafe modes, invalid compression, empty archives, entry-size bounds, file-count bounds, total expanded-size bounds, and mutation after validation;
+- materialization tests for the full verification/validation/materialization chain, immutable existing versions, concurrent install locking, symlinked roots/module directories, unsafe target components, staged-failure cleanup, file modes, and containment;
+- stale-lock/stale-staging crash-recovery tests when recovery policy is implemented;
 - cross-tenant and sibling-scope negative API authorization tests when module middleware is wired;
-- install/update/rollback/uninstall tests when filesystem/package installation is added;
+- active-version update/rollback/uninstall tests when activation and package lifecycle orchestration are added;
 - an end-to-end reference module in the Alpha environment before the runtime execution framework is called complete.
 
-The dedicated `Add-on Modules` GitHub Actions workflow executes the PostgreSQL persistence/RLS/restart test with race detection. Module package, payload, service-identity, registry, and supervisor unit tests also run under the repository-wide race suite. A build-tagged integration test that is not exercised in CI does not count as durable evidence.
+The dedicated `Add-on Modules` GitHub Actions workflow executes the PostgreSQL persistence/RLS/restart test with race detection. Module package, payload, materialization, service-identity, registry, and supervisor unit tests also run under the repository-wide race suite. A build-tagged integration test that is not exercised in CI does not count as durable evidence.
 
 ## Alpha acceptance boundary
 
-The current foundation proves manifest validation, lifecycle/permission state, fail-closed invocation supervision, durable platform-controlled module state, restart-safe quarantine, platform-only RLS enforcement, append-only lifecycle audit behavior, issuance/verification/revocation semantics for narrowly scoped short-lived module credentials, cryptographic verification of bounded signed packages, and non-executable validation of bounded payload archives. It does **not** yet prove filesystem installation/materialization, a real third-party executable/process/container, update rollback, end-to-end module-authenticated API/event authorization, process/container resource sandboxing, publisher onboarding/key lifecycle, or marketplace distribution. Those capabilities remain explicitly incomplete until their implementation and environment evidence exist.
+The current foundation proves manifest validation, lifecycle/permission state, fail-closed invocation supervision, durable platform-controlled module state, restart-safe quarantine, platform-only RLS enforcement, append-only lifecycle audit behavior, issuance/verification/revocation semantics for narrowly scoped short-lived module credentials, cryptographic verification of bounded signed packages, non-executable validation of bounded payload archives, and staged non-executable materialization into immutable versioned module directories. It does **not** yet prove active-version selection, failed-upgrade rollback, uninstall garbage collection, a real third-party executable/process/container, end-to-end module-authenticated API/event authorization, process/container resource sandboxing, publisher onboarding/key lifecycle, or marketplace distribution. Those capabilities remain explicitly incomplete until their implementation and environment evidence exist.
