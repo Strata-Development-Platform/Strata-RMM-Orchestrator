@@ -86,7 +86,7 @@ func validateTarPayload(reader *tar.Reader) (ValidatedPayload, error) {
 				return ValidatedPayload{}, fmt.Errorf("module payload directory %q has non-zero size", clean)
 			}
 			continue
-		case tar.TypeReg, tar.TypeRegA:
+		case tar.TypeReg:
 			// accepted below
 		default:
 			return ValidatedPayload{}, fmt.Errorf("module payload path %q uses unsupported tar type %d", clean, header.Typeflag)
