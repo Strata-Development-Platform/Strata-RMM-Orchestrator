@@ -1,54 +1,66 @@
 # Strata RMM Add-on Modules Framework
 
-## Alpha scope
+## Alpha status
 
-Strata's extension boundary is a versioned, least-privilege module contract plus a fail-closed lifecycle registry, runtime supervisor, durable platform-control-plane persistence layer, scoped module service-identity broker, signed-package verifier, bounded payload-archive validator, and non-executable filesystem materializer. Alpha currently includes manifest validation, compatibility checking, permission allowlisting, namespaced module routes, install/enable/disable/quarantine/uninstall state, deterministic listing, permission enforcement, declared-route invocation checks, bounded runtime calls, health supervision, automatic quarantine after repeated execution failures, PostgreSQL-backed lifecycle persistence, restart restoration, platform-only RLS, append-only lifecycle audit evidence, short-lived module JWT credentials whose permissions cannot exceed the enabled manifest, Ed25519 package verification, SHA-256 payload integrity checks, bounded validation of signed `payload.tar.gz` contents, and staged materialization of validated files into immutable versioned module directories.
+The add-on framework now has a complete **non-executing trust chain** plus the control-plane foundations required for isolated Alpha execution:
 
-Marketplace/catalog services, billing for commercial modules, publisher-account management, active-version switching, update/rollback orchestration, uninstall garbage collection, a concrete third-party process/container launcher, resource sandboxing, and end-to-end module API/event middleware remain later phases and must not be represented as complete until implemented and tested.
+1. manifest validation and compatibility checks;
+2. lifecycle registry with install/enable/disable/quarantine/uninstall;
+3. PostgreSQL persistence with platform-only RLS and append-only audit evidence;
+4. scoped short-lived module service identities with shared Redis revocation;
+5. brokered module API authorization with MSP/client/site scope enforcement;
+6. signed package verification using Ed25519 and SHA-256;
+7. bounded `payload.tar.gz` validation;
+8. safe immutable filesystem materialization;
+9. conservative stale install-lock recovery;
+10. atomic active-version metadata and reversible rollback;
+11. health-gated activation that preserves the previous active state on failure;
+12. a bounded WASI runtime declaration in the manifest.
 
-## Design goals
+The framework still **does not execute third-party module code**. A concrete WASI engine, brokered host functions, publisher trust administration, package-install approval UI, uninstall garbage collection, and marketplace/catalog distribution remain incomplete.
 
-- Keep optional and vendor-specific functionality out of the core where practical.
-- Never load untrusted third-party code directly into the orchestrator process by default.
-- Require explicit administrator approval for module permissions.
-- Preserve MSP/client/site/tenant authorization and audit semantics.
-- Make incompatible modules fail closed before activation.
-- Allow modules to be disabled, quarantined, or removed without destabilizing core RMM workflows.
-- Never give a module database-superuser credentials, unrestricted NATS credentials, or ambient access beyond its declared capability set.
+## Design rules
+
+- Optional/vendor-specific functionality should use the module boundary instead of increasing core coupling where practical.
+- Third-party code must never run inside the orchestrator process by default.
+- Modules never receive PostgreSQL superuser credentials, RLS bypass, unrestricted NATS credentials, raw secret-store handles, ambient environment secrets, or arbitrary host filesystem/network access.
+- Every capability is explicitly declared, administrator-approved, brokered, tenant-scoped, auditable, and fail closed.
+- Disable, quarantine, revocation, or durable-state refresh failures must remove access rather than extend it.
+- Documentation may only claim capabilities proven by code and exact-head CI/environment evidence.
 
 ## Manifest contract
 
-The canonical Go contract is `internal/modules/manifest.go`. Each module declares:
+`internal/modules/manifest.go` is canonical. A module declares identity, version/API compatibility, publisher, requested permissions, event access, namespaced routes, optional UI extensions, and optionally a runtime contract.
 
-- stable lowercase module ID;
-- display name, semantic version, publisher, and supported Strata module API version;
-- requested permissions from the platform allowlist;
-- event subscriptions/publications;
-- API routes under `/api/modules/<module-id>/...`;
-- optional UI navigation extensions.
+Routes must remain beneath `/api/modules/<module-id>/...`, and route permissions must already be present in the manifest permission set.
 
-A module cannot invent permissions or escape its API namespace. Route permissions must also be present in the manifest's declared permission set.
-
-Example:
+For executable Alpha modules, `runtime` is optional for backward compatibility but, when present, is intentionally constrained:
 
 ```yaml
-id: com.example.backup
-name: Example Backup
-version: 1.0.0
-api_version: v1
-publisher: Example Inc.
-permissions:
-  - devices.read
-  - alerts.write
-routes:
-  - path: /api/modules/com.example.backup/status
-    methods: [GET]
-    permission: devices.read
+runtime:
+  kind: wasi
+  entrypoint: bin/module.wasm
+  memory_mib: 128
+  timeout_seconds: 30
+  max_concurrency: 4
+  network: none
 ```
 
-## Lifecycle registry
+Current runtime declaration rules:
 
-`internal/modules/registry.go` provides the current Alpha lifecycle state machine:
+- only `wasi` is accepted;
+- entrypoints must be relative, canonical, contained `.wasm` paths;
+- memory is bounded to 16–512 MiB;
+- execution timeout is bounded to 1–120 seconds;
+- concurrency is bounded to 1–32;
+- network is either `none` or `brokered`;
+- native-process, absolute/traversal/backslash paths, host-network requests, and unbounded resource declarations are rejected.
+
+This contract does not itself execute WASM.
+
+## Lifecycle and persistence
+
+`internal/modules/registry.go` provides the fail-closed state machine:
 
 ```text
 install -> installed -> enabled
@@ -58,174 +70,146 @@ install -> installed -> enabled
 enabled -> disabled -> uninstall
 ```
 
-The registry is fail closed:
+`internal/modules/persistence.go` and migration `00090_addon_modules` persist manifest/state/reason/timestamps and append-only audit records. The module tables use both `ENABLE ROW LEVEL SECURITY` and `FORCE ROW LEVEL SECURITY`, limited to platform-owner/platform-admin application contexts.
 
-- an installed-but-not-enabled module receives no permission;
-- undeclared permissions are denied;
-- quarantined modules cannot be re-enabled through the normal enable operation;
-- enabled modules must be disabled before uninstall;
-- invalid or duplicate manifests are rejected.
+Real PostgreSQL integration tests prove platform-only access, RLS behavior, audit immutability, restart restoration, and quarantine persistence.
 
-`internal/modules/persistence.go` and migration `00090_addon_modules` add the durable control-plane backing for this state machine. The SQL store preserves manifest, state, reason, install/update timestamps, and lifecycle audit records, and can reconstruct the in-memory registry after orchestrator restart without implicitly clearing quarantine.
+The runtime registry is refreshed from durable state. When a due refresh fails, module authorization fails closed rather than trusting stale enabled permissions.
 
-Persistence is intentionally platform controlled in the current Alpha scope. Both `addon_modules` and `addon_module_audit` use PostgreSQL `ENABLE ROW LEVEL SECURITY` plus `FORCE ROW LEVEL SECURITY`; the policies permit only `platform_owner` and `platform_admin` application contexts. The store does not open an elevated connection or manufacture `app.role`: callers must provide the authorization-scoped database transaction already carrying the platform's `SET LOCAL app.*` context.
+## Module service identity and API authorization
 
-Lifecycle evidence is append-only. Application roles cannot mutate visible audit history through the RLS policy, and a database trigger rejects UPDATE/DELETE even for a connection that can bypass RLS. The module integration test verifies both layers independently with a real non-superuser PostgreSQL role.
+`internal/modules/identity.go` issues distinct `token_use=module` JWTs. Tokens are short-lived, bound to module ID, may be scoped to MSP/client/site, contain only an explicit subset of currently enabled manifest permissions, and have unique IDs for immediate revocation.
 
-This durable lifecycle state remains intentionally separate from package acquisition, filesystem activation, and runtime execution. Lifecycle installation records an approved manifest; it does not itself fetch, activate, or launch third-party code.
+Validation rejects tokens when:
+
+- the module is disabled or quarantined;
+- a token permission is no longer present in the enabled manifest;
+- the token is expired, wrong type, wrong module, or malformed;
+- the scope hierarchy is invalid;
+- the token ID is revoked;
+- the shared revocation backend cannot be checked.
+
+Production revocation uses Redis and fails closed on Redis errors. Modules never receive direct database or unrestricted NATS credentials.
+
+The module HTTP authorization boundary validates module identity, declared permission, and authoritative MSP/client/site resource scope before handler execution. Device ownership is resolved from platform storage rather than trusted caller headers. Sibling and cross-tenant access is denied.
 
 ## Signed package verification
 
-`internal/modules/package.go` defines the cryptographic package-verification boundary. A package ZIP must contain exactly `manifest.json`, `payload.tar.gz`, and `signature.json`. Verification is bounded and fail closed before a `VerifiedPackage` is returned.
+`internal/modules/package.go` accepts a ZIP containing exactly:
 
-The verifier:
+- `manifest.json`
+- `payload.tar.gz`
+- `signature.json`
 
-- validates safe ZIP entry names and rejects directories, duplicates, and unexpected entries;
-- bounds manifest, signature, payload, and overall package reads;
-- decodes manifest and signature metadata with strict JSON handling;
-- validates the manifest through the canonical module contract;
-- verifies the payload SHA-256 digest;
-- resolves a publisher/key identifier through a trust-store interface;
-- verifies an Ed25519 signature bound to canonical manifest JSON plus the payload digest.
+Verification is bounded and fail closed. It rejects duplicate/unexpected members, malformed metadata, unsafe ZIP paths, oversized reads, digest tampering, bad signatures, and untrusted publisher/key IDs. Ed25519 verification binds canonical manifest JSON and the SHA-256 payload digest.
 
-`VerifyPackage` does not extract `payload.tar.gz`, write files, install a module, or execute code. Publisher-account enrollment, trust-key rotation/distribution, marketplace acquisition, and update/rollback orchestration are still separate work.
+Untrusted packages are never extracted or executed.
 
-## Payload archive validation
+## Payload validation
 
-`internal/modules/payload.go` is the next non-executable boundary after signed-package verification. It accepts only the opaque `payload.tar.gz` bytes already present in a `VerifiedPackage` and validates the archive before any filesystem or runtime adapter is allowed to consume it.
+`internal/modules/payload.go` validates the already-verified `payload.tar.gz` in memory before filesystem use. It accepts directories and regular files only and rejects traversal, absolute/non-canonical/backslash paths, duplicates, symlinks/hardlinks/devices/FIFOs, unsafe mode bits, invalid compression, excessive file counts, excessive member sizes, and excessive total expanded bytes.
 
-The validator:
+A private fingerprint binds module ID, version, payload digest, and the exact validated file set so post-validation mutation is rejected by the next boundary.
 
-- accepts directories and regular files only;
-- rejects absolute paths, traversal, non-canonical paths, Windows separators, duplicate paths, symlinks, hardlinks, devices, and FIFOs;
-- rejects unsupported permission bits such as setuid/setgid/sticky metadata;
-- bounds regular-file count, individual file size, and total expanded bytes;
-- requires at least one regular file;
-- returns validated file bytes in memory in archive order;
-- binds module ID, version, payload digest, and the exact validated file set into a private fingerprint so post-validation mutation is rejected by the filesystem stage.
+## Filesystem materialization
 
-This stage deliberately performs **no filesystem writes and no execution**.
+`internal/modules/materialize.go` writes only a matching verified/sealed payload beneath a trusted install root. It:
 
-## Safe filesystem materialization
+- rejects symlinked/unsafe roots and target components;
+- uses an exclusive per-version install lock;
+- applies strict directory/file permissions and optional ownership during creation;
+- stages in a hidden sibling directory;
+- uses exclusive file creation;
+- refuses to overwrite an existing version;
+- atomically promotes a completed staging tree by same-filesystem rename;
+- cleans staging state on failure;
+- conservatively reclaims stale install locks only after the configured grace period and identity recheck.
 
-`internal/modules/materialize.go` is the first filesystem boundary. `MaterializePayload` accepts a `VerifiedPackage` and the matching sealed `ValidatedPayload`, rechecks package/payload identity and limits, and materializes the files beneath a configured install root without executing them.
+Materialized version directories are immutable to this implementation.
 
-The materializer:
+## Active version and rollback
 
-- requires a non-empty trusted install root and canonicalizes it before deriving module paths;
-- rejects a symlinked install root and a symlinked/non-directory module directory;
-- requires module ID and version to be single safe path components;
-- rechecks payload path canonicality, duplicate paths, modes, file-count limits, per-file limits, and total expanded-byte limits;
-- creates a per-version exclusive install lock so cooperating installers cannot race the same version;
-- stages files in a sibling hidden directory beneath the module directory;
-- creates payload files with `O_EXCL`, syncs their contents, applies the validated permission mode, and optionally applies an explicit UID/GID ownership policy;
-- applies controlled directory modes/ownership before promotion;
-- refuses to overwrite an existing version directory;
-- rechecks the target before promotion and renames the completed sibling staging tree into the version path;
-- removes the staging directory on failure and removes the install lock when the operation returns.
+`internal/modules/activation.go` selects only an already-materialized immutable version. Activation is serialized and atomically replaces small metadata rather than modifying the version tree itself.
 
-The sibling rename gives process-level atomic visibility of a completed materialized tree on the same filesystem. It is not an activation mechanism and it is not a full crash-recovery protocol. A process crash can leave a stale install lock or hidden staging directory; stale-lock recovery and cleanup policy remain explicit future work rather than being silently guessed.
+The state preserves the current active version plus one previous version. Rollback swaps to the previous version and remains reversible. Missing versions, malformed/symlinked state, and activation lock contention fail closed.
 
-Materialized version directories are immutable to this implementation. The current materializer does **not** create or update an `active` pointer, replace a previously materialized version, select a runtime entrypoint, issue module credentials, start a process/container, mount anything, grant network access, or mutate lifecycle state. Active-version switching, failed-upgrade rollback, uninstall/garbage collection, resource isolation, and executable launch remain later trust boundaries.
+This is metadata selection only; it does not launch code.
 
-## Module service identity
+## Health-gated activation
 
-`internal/modules/identity.go` defines the credential boundary intended for future out-of-process modules. It reuses the platform JWT signer but gives modules a distinct `token_use=module` identity rather than impersonating a user or agent.
+`internal/modules/activation_health.go` adds the orchestration gate between a candidate version and active metadata. A trusted host-side checker runs under a bounded context before the active state can change.
 
-A module service token contains only:
+Health failure, timeout, cancellation, missing candidate, or lock contention leaves the prior `.active.json` state unchanged. A successful check is required before active/previous metadata changes.
 
-- the module ID;
-- a short expiration (five minutes by default, fifteen minutes maximum);
-- optional MSP/client/site scope, with hierarchy validation;
-- an explicit permission subset that must already be present in the enabled module manifest;
-- a unique token ID used for immediate revocation.
-
-Validation is deliberately dynamic. A correctly signed token is still rejected if the module is disabled or quarantined, if a permission in the token is no longer granted by the current manifest, or if the token ID has been revoked. Revocation-store errors fail closed.
-
-`RedisRevocationStore` provides the shared production-oriented revocation backend so all API replicas can observe a revocation immediately. The in-memory revocation store exists only for tests and single-process development and must not be used as production revocation evidence.
-
-The service-identity broker does **not** hand modules PostgreSQL credentials, NATS wildcard credentials, secret-store handles, or core package access. Those capabilities must be brokered through authenticated Strata APIs/events and independently authorize the token's module ID, scope, and declared permission.
+The health-check interface is deliberately separated from the future WASI engine so activation semantics remain independently testable.
 
 ## Runtime supervisor
 
-`internal/modules/runtime.go` defines the narrow execution boundary between the Strata control plane and a future out-of-process module runtime.
+`internal/modules/runtime.go` is the brokered invocation supervisor. Before any runtime call, it requires an existing enabled/non-quarantined module, an exact manifest-declared route/method, the exact route permission, and a currently granted permission.
 
-Before a runtime call is allowed, the supervisor requires all of the following:
+Calls are context-bounded. Repeated execution failures cause quarantine; a successful invocation resets the consecutive-failure count. Quarantined modules are denied before reaching the runtime.
 
-1. the module exists;
-2. the module is enabled and not quarantined;
-3. the requested path exactly matches a manifest-declared module route;
-4. the HTTP-style method is declared on that route;
-5. the invocation permission exactly matches the route permission;
-6. the permission is currently granted by the enabled module manifest.
+The `Runtime` interface exposes no database handles, unrestricted NATS clients, secret-store handles, or arbitrary core packages.
 
-Runtime calls are bounded by a context timeout. Consecutive execution failures are counted per module; once the configured threshold is reached, the registry quarantines the module. A successful invocation resets the consecutive-failure counter. Quarantined modules do not reach the runtime again.
+## Intended WASI execution architecture
 
-The `Runtime` interface intentionally does not expose database handles, unrestricted NATS clients, secret-store handles, or imports from core internal packages. A future process/container adapter must authenticate the module with a scoped service identity and preserve this brokered boundary.
-
-## Required runtime architecture
-
-The intended runtime remains out-of-process by default:
+The next execution boundary is intentionally WASI-only for Alpha:
 
 ```text
 Strata Core
-  -> Persistent Module Registry
+  -> Durable Module Registry
   -> Permission / Service Identity Broker
   -> Signed Package Verification
   -> Bounded Payload Validation
-  -> Safe Versioned Materialization
-  -> Event/API Bridge
+  -> Immutable Materialization
+  -> Active Version + Health Gate
   -> Runtime Supervisor
-       -> authenticated isolated module process/container
+  -> WASI Runtime Adapter
+       -> no ambient filesystem
+       -> no ambient environment/secrets
+       -> no raw sockets
+       -> bounded memory/time/concurrency
+       -> brokered Strata host APIs only
 ```
 
-Modules must receive scoped service identities, not database superuser credentials. Direct unrestricted PostgreSQL, RLS bypass, unrestricted NATS wildcards, raw secret-store access, or arbitrary core package imports are prohibited extension patterns.
-
-## Runtime lifecycle requirements
-
-The complete runtime implementation must enforce:
-
-1. package checksum/signature verification;
-2. manifest schema validation;
-3. module API compatibility validation;
-4. explicit administrator permission review;
-5. installation in a non-enabled state;
-6. health check before activation;
-7. auditable enable/disable/update/uninstall operations;
-8. bounded startup/execution time and resource use;
-9. failed-upgrade rollback;
-10. emergency quarantine/disable;
-11. tenant-aware service identity and API authorization;
-12. persistent state that survives orchestrator restart without implicitly re-enabling quarantined modules.
-
-Items 1, 2, 3, 5, 7 (lifecycle audit foundation), 8 (archive/materialization bounds and execution-timeout foundations), 10, 11 (service-token foundation), and 12 now have code-level foundations. Item 4 is enforced by the current platform-admin-only persistence boundary but does not yet include a complete package-install approval UI. Item 1 does not yet include marketplace acquisition or publisher onboarding/key-rotation workflows. Item 5 now has a non-executable filesystem foundation, but activation and runtime selection are still absent. Item 8 does not yet include process/container CPU, memory, filesystem, syscall, or network sandbox enforcement. Item 9 remains incomplete because there is no active-version pointer or failed-upgrade rollback orchestrator. Item 11 is not complete end-to-end until API/event middleware consumes the module identity and proves cross-tenant negative authorization with real infrastructure.
+The future engine must not infer capabilities from payload contents. It must enforce the manifest runtime contract and expose only explicitly reviewed host functions.
 
 ## Testing requirements
 
-Module framework work must include:
+Every add-on change must include the narrow tests for its boundary plus the repository-wide exact-head matrix.
 
-- valid-manifest positive tests;
-- invalid ID/version/API rejection;
-- unknown and duplicate permission rejection;
-- route namespace escape rejection;
-- undeclared route permission rejection;
-- lifecycle tests covering install/enable/disable/quarantine/uninstall;
-- permission denial for disabled and quarantined modules;
-- runtime denial for disabled/quarantined modules before any execution call;
-- runtime route, method, and permission-escalation negative tests;
-- timeout/crash/failure-threshold and quarantine tests;
-- real PostgreSQL tests for RLS, platform-only persistence, audit immutability, and restart restoration;
-- module service-token tests for excessive permission requests, invalid scope hierarchy, disable/quarantine invalidation, immediate revocation, wrong token type, short lifetime, and fail-closed revocation-store outage;
-- signed-package tests for digest/signature tampering, untrusted publisher keys, malformed metadata, path abuse, duplicate/unexpected ZIP members, and byte limits;
-- payload-archive tests for traversal, absolute/non-canonical/backslash paths, duplicates, links/special files, unsafe modes, invalid compression, empty archives, entry-size bounds, file-count bounds, total expanded-size bounds, and mutation after validation;
-- materialization tests for the full verification/validation/materialization chain, immutable existing versions, concurrent install locking, symlinked roots/module directories, unsafe target components, staged-failure cleanup, file modes, and containment;
-- stale-lock/stale-staging crash-recovery tests when recovery policy is implemented;
-- cross-tenant and sibling-scope negative API authorization tests when module middleware is wired;
-- active-version update/rollback/uninstall tests when activation and package lifecycle orchestration are added;
-- an end-to-end reference module in the Alpha environment before the runtime execution framework is called complete.
+Required coverage includes:
 
-The dedicated `Add-on Modules` GitHub Actions workflow executes the PostgreSQL persistence/RLS/restart test with race detection. Module package, payload, materialization, service-identity, registry, and supervisor unit tests also run under the repository-wide race suite. A build-tagged integration test that is not exercised in CI does not count as durable evidence.
+- manifest identity/API/permission/route validation;
+- runtime-contract rejection for native runtime, unsafe entrypoints, invalid network mode, and resource limits;
+- lifecycle install/enable/disable/quarantine/uninstall transitions;
+- disabled/quarantined permission and invocation denial;
+- real PostgreSQL RLS, audit immutability, and restart restoration;
+- service-token permission/scope/revocation/outage negative tests;
+- sibling/cross-tenant API authorization denial;
+- signed-package digest/signature/trust/path/size adversarial tests;
+- archive traversal/link/special-file/mode/count/size/mutation tests;
+- materialization containment, modes, symlink, immutable-version, locking, cleanup, and stale-lock recovery tests;
+- active-version switch, reversible rollback, malformed state, missing-version, and concurrency tests;
+- health success/failure/timeout/cancellation/state-preservation tests;
+- supervisor route/method/permission/timeout/failure-threshold/quarantine tests;
+- future WASI-engine tests for host-import allowlisting, no ambient filesystem/env/network, memory/time/concurrency enforcement, cancellation, malformed WASM, traps, and brokered identity/scope.
 
-## Alpha acceptance boundary
+The dedicated `Add-on Modules` workflow plus repository-wide race tests are required. Exact-head CI, Security Gate, Backup/Restore, Observability, Resilience, MSP Lifecycle, and Internal Alpha remain mandatory before merge. If the head changes, prior evidence is stale.
 
-The current foundation proves manifest validation, lifecycle/permission state, fail-closed invocation supervision, durable platform-controlled module state, restart-safe quarantine, platform-only RLS enforcement, append-only lifecycle audit behavior, issuance/verification/revocation semantics for narrowly scoped short-lived module credentials, cryptographic verification of bounded signed packages, non-executable validation of bounded payload archives, and staged non-executable materialization into immutable versioned module directories. It does **not** yet prove active-version selection, failed-upgrade rollback, uninstall garbage collection, a real third-party executable/process/container, end-to-end module-authenticated API/event authorization, process/container resource sandboxing, publisher onboarding/key lifecycle, or marketplace distribution. Those capabilities remain explicitly incomplete until their implementation and environment evidence exist.
+## Current Alpha acceptance boundary
+
+Proven foundations now include lifecycle/persistence/RLS/audit, scoped module identity and brokered API authorization, signed package verification, bounded payload validation, immutable materialization, stale-lock recovery, active-version metadata, reversible rollback, health-gated activation, runtime supervision, and a bounded WASI runtime declaration.
+
+Still incomplete and must remain labeled incomplete:
+
+- a concrete WASI execution engine;
+- reviewed brokered WASI host functions;
+- runtime memory enforcement evidence beyond manifest validation;
+- executable end-to-end reference module evidence;
+- publisher onboarding/trust-key rotation administration;
+- package-install permission approval UI;
+- uninstall garbage collection;
+- marketplace/catalog/billing/distribution.
+
+Do not call executable add-ons complete until a real reference WASI module crosses the full signed-package -> validation -> materialization -> health -> runtime -> brokered API boundary under exact-head CI/environment evidence.
