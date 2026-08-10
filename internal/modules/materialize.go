@@ -186,7 +186,7 @@ func prepareInstallRoot(root string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve module install root: %w", err)
 	}
-	if err := os.MkdirAll(absolute, 0o750); err != nil {
+	if err := os.MkdirAll(absolute, 0o700); err != nil {
 		return "", fmt.Errorf("create module install root: %w", err)
 	}
 	info, err := os.Lstat(absolute)
