@@ -4,10 +4,13 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"path"
+	"strconv"
 	"strings"
 )
 
@@ -27,9 +30,16 @@ type PayloadFile struct {
 }
 
 // ValidatedPayload is the non-executable result of inspecting a verified
-// package payload. Files are ordered exactly as they appeared in the archive.
+// package payload. Package identity is retained so a later filesystem stage
+// can reject a payload that does not belong to the package being installed.
+// Files are ordered exactly as they appeared in the archive.
 type ValidatedPayload struct {
-	Files []PayloadFile
+	ModuleID      string
+	Version       string
+	PayloadSHA256 string
+	Files         []PayloadFile
+
+	validationFingerprint [sha256.Size]byte
 }
 
 // ValidatePayload parses the opaque payload.tar.gz bytes from a package that
@@ -54,6 +64,10 @@ func ValidatePayload(pkg VerifiedPackage) (ValidatedPayload, error) {
 	if closeErr != nil {
 		return ValidatedPayload{}, fmt.Errorf("close module payload gzip: %w", closeErr)
 	}
+	payload.ModuleID = pkg.Manifest.ID
+	payload.Version = pkg.Manifest.Version
+	payload.PayloadSHA256 = pkg.PayloadSHA256
+	payload.validationFingerprint = fingerprintValidatedPayload(payload.ModuleID, payload.Version, payload.PayloadSHA256, payload.Files)
 	return payload, nil
 }
 
@@ -114,6 +128,30 @@ func validateTarPayload(reader *tar.Reader) (ValidatedPayload, error) {
 		return ValidatedPayload{}, errors.New("module payload contains no regular files")
 	}
 	return ValidatedPayload{Files: files}, nil
+}
+
+func fingerprintValidatedPayload(moduleID, version, payloadSHA256 string, files []PayloadFile) [sha256.Size]byte {
+	hash := sha256.New()
+	writeBytes := func(data []byte) {
+		var length [8]byte
+		binary.BigEndian.PutUint64(length[:], uint64(len(data)))
+		_, _ = hash.Write(length[:])
+		_, _ = hash.Write(data)
+	}
+	writeBytes([]byte(moduleID))
+	writeBytes([]byte(version))
+	writeBytes([]byte(strings.ToLower(payloadSHA256)))
+	var count [8]byte
+	binary.BigEndian.PutUint64(count[:], uint64(len(files)))
+	_, _ = hash.Write(count[:])
+	for _, file := range files {
+		writeBytes([]byte(file.Path))
+		writeBytes([]byte(strconv.FormatInt(file.Mode, 10)))
+		writeBytes(file.Data)
+	}
+	var fingerprint [sha256.Size]byte
+	copy(fingerprint[:], hash.Sum(nil))
+	return fingerprint
 }
 
 func validatePayloadLimits(fileCount int, expandedBytes, fileSize int64) error {
