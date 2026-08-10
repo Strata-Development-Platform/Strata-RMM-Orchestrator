@@ -28,8 +28,6 @@ type moduleTargetScopeContextKey struct{}
 type moduleRuntimeState struct {
 	mu         sync.Mutex
 	authorizer *modules.APIAuthorizer
-	redis      *strataredis.Client
-	lastErr    error
 	retryAfter time.Time
 }
 
@@ -75,9 +73,8 @@ func (s *APIServer) configuredModuleAuthorizer() *modules.APIAuthorizer {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	authorizer, redisClient, err := s.bootstrapModuleAuthorizer(ctx)
+	authorizer, err := s.bootstrapModuleAuthorizer(ctx)
 	if err != nil {
-		state.lastErr = err
 		state.retryAfter = time.Now().Add(moduleBootstrapRetryDelay)
 		if s.logger != nil {
 			s.logger.Error("module API authorization unavailable", zap.Error(err), zap.Duration("retry_in", moduleBootstrapRetryDelay))
@@ -85,8 +82,6 @@ func (s *APIServer) configuredModuleAuthorizer() *modules.APIAuthorizer {
 		return nil
 	}
 	state.authorizer = authorizer
-	state.redis = redisClient // retained for the API server lifetime by the authorizer runtime
-	state.lastErr = nil
 	state.retryAfter = time.Time{}
 	if s.logger != nil {
 		s.logger.Info("module API authorization initialized from durable state")
@@ -99,22 +94,22 @@ func (s *APIServer) configuredModuleAuthorizer() *modules.APIAuthorizer {
 // validation to a shared Redis revocation store. It never falls back to the
 // in-memory revocation implementation, so a missing/unreachable Redis service
 // leaves module endpoints fail closed.
-func (s *APIServer) bootstrapModuleAuthorizer(ctx context.Context) (*modules.APIAuthorizer, *strataredis.Client, error) {
+func (s *APIServer) bootstrapModuleAuthorizer(ctx context.Context) (*modules.APIAuthorizer, error) {
 	if s == nil || s.db == nil || s.db.DB() == nil {
-		return nil, nil, errors.New("module registry database unavailable")
+		return nil, errors.New("module registry database unavailable")
 	}
 	if s.tokenGen == nil {
-		return nil, nil, errors.New("module token generator unavailable")
+		return nil, errors.New("module token generator unavailable")
 	}
 
 	redisURL := strings.TrimSpace(os.Getenv("REDIS_URL"))
 	if redisURL == "" {
-		return nil, nil, errors.New("REDIS_URL is required for durable module token revocation")
+		return nil, errors.New("REDIS_URL is required for durable module token revocation")
 	}
 
 	tx, err := s.db.DB().BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	committed := false
 	defer func() {
@@ -123,37 +118,37 @@ func (s *APIServer) bootstrapModuleAuthorizer(ctx context.Context) (*modules.API
 		}
 	}()
 	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.role', $1, true)`, "platform_admin"); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	registry, err := modules.NewSQLStore().RestoreRegistry(ctx, tx)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	committed = true
 
 	redisClient, err := strataredis.NewClient(ctx, strataredis.PoolConfig{URL: redisURL})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	revocations, err := modules.NewRedisRevocationStore(redisClient)
 	if err != nil {
 		_ = redisClient.Close()
-		return nil, nil, err
+		return nil, err
 	}
 	identities, err := modules.NewIdentityManager(registry, s.tokenGen, revocations)
 	if err != nil {
 		_ = redisClient.Close()
-		return nil, nil, err
+		return nil, err
 	}
 	authorizer, err := modules.NewAPIAuthorizer(identities)
 	if err != nil {
 		_ = redisClient.Close()
-		return nil, nil, err
+		return nil, err
 	}
-	return authorizer, redisClient, nil
+	return authorizer, nil
 }
 
 // serveReferenceModuleDevice is dispatched by the AccessModule route class.
