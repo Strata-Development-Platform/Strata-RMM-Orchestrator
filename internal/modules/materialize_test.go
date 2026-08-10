@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestMaterializePayloadPromotesValidatedPackageAtomically(t *testing.T) {
@@ -126,6 +127,76 @@ func TestMaterializePayloadRejectsConcurrentInstallLock(t *testing.T) {
 	_, err := MaterializePayload(pkg, payload, MaterializeOptions{Root: root})
 	if !errors.Is(err, ErrInstallInProgress) {
 		t.Fatalf("MaterializePayload error = %v, want ErrInstallInProgress", err)
+	}
+}
+
+func TestMaterializePayloadReclaimsStaleInstallLock(t *testing.T) {
+	pkg, payload := testVerifiedMaterializePayload(t, "3.0.1", []payloadArchiveEntry{
+		{name: "module", typeflag: tar.TypeReg, mode: 0o700, data: []byte("recovered")},
+	})
+	root := filepath.Join(t.TempDir(), "modules")
+	moduleDir := filepath.Join(root, pkg.Manifest.ID)
+	if err := os.MkdirAll(moduleDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(moduleDir, "."+pkg.Manifest.Version+".install.lock")
+	if err := os.WriteFile(lockPath, []byte("crashed installer"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	staleAt := time.Now().Add(-staleInstallLockAfter - time.Minute)
+	if err := os.Chtimes(lockPath, staleAt, staleAt); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := MaterializePayload(pkg, payload, MaterializeOptions{Root: root})
+	if err != nil {
+		t.Fatalf("MaterializePayload returned error after stale lock: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(result.Path, "module"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "recovered" {
+		t.Fatalf("materialized contents = %q", data)
+	}
+	assertNoInstallScratch(t, moduleDir, pkg.Manifest.Version)
+}
+
+func TestMaterializePayloadRejectsSymlinkInstallLock(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation commonly requires elevated Windows privileges")
+	}
+	pkg, payload := testVerifiedMaterializePayload(t, "3.0.2", []payloadArchiveEntry{
+		{name: "module", typeflag: tar.TypeReg, mode: 0o700, data: []byte("x")},
+	})
+	root := filepath.Join(t.TempDir(), "modules")
+	moduleDir := filepath.Join(root, pkg.Manifest.ID)
+	if err := os.MkdirAll(moduleDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "outside-lock")
+	if err := os.WriteFile(outside, []byte("do not remove"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-staleInstallLockAfter - time.Hour)
+	if err := os.Chtimes(outside, old, old); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(moduleDir, "."+pkg.Manifest.Version+".install.lock")
+	if err := os.Symlink(outside, lockPath); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := MaterializePayload(pkg, payload, MaterializeOptions{Root: root})
+	if !errors.Is(err, ErrInstallInProgress) {
+		t.Fatalf("MaterializePayload error = %v, want ErrInstallInProgress", err)
+	}
+	data, err := os.ReadFile(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "do not remove" {
+		t.Fatalf("symlink target changed to %q", data)
 	}
 }
 
