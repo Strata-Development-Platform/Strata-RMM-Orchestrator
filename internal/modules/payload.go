@@ -92,20 +92,14 @@ func validateTarPayload(reader *tar.Reader) (ValidatedPayload, error) {
 			return ValidatedPayload{}, fmt.Errorf("module payload path %q uses unsupported tar type %d", clean, header.Typeflag)
 		}
 
-		if len(files) >= maxPayloadFiles {
-			return ValidatedPayload{}, fmt.Errorf("module payload exceeds %d regular files", maxPayloadFiles)
-		}
 		if header.Size < 0 {
 			return ValidatedPayload{}, fmt.Errorf("module payload file %q has negative size", clean)
-		}
-		if header.Size > maxPayloadFileBytes {
-			return ValidatedPayload{}, fmt.Errorf("module payload file %q exceeds %d bytes", clean, maxPayloadFileBytes)
 		}
 		if header.Mode < 0 || header.Mode&^int64(0o777) != 0 {
 			return ValidatedPayload{}, fmt.Errorf("module payload file %q has unsupported mode %#o", clean, header.Mode)
 		}
-		if header.Size > maxPayloadExpandedBytes-expandedBytes {
-			return ValidatedPayload{}, fmt.Errorf("module payload exceeds %d expanded bytes", maxPayloadExpandedBytes)
+		if err := validatePayloadLimits(len(files), expandedBytes, header.Size); err != nil {
+			return ValidatedPayload{}, fmt.Errorf("module payload file %q: %w", clean, err)
 		}
 
 		data, err := readBoundedTarFile(reader, header.Size)
@@ -120,6 +114,22 @@ func validateTarPayload(reader *tar.Reader) (ValidatedPayload, error) {
 		return ValidatedPayload{}, errors.New("module payload contains no regular files")
 	}
 	return ValidatedPayload{Files: files}, nil
+}
+
+func validatePayloadLimits(fileCount int, expandedBytes, fileSize int64) error {
+	if fileCount >= maxPayloadFiles {
+		return fmt.Errorf("exceeds %d regular files", maxPayloadFiles)
+	}
+	if fileSize > maxPayloadFileBytes {
+		return fmt.Errorf("exceeds %d bytes", maxPayloadFileBytes)
+	}
+	if expandedBytes < 0 || expandedBytes > maxPayloadExpandedBytes {
+		return errors.New("invalid expanded-byte accounting")
+	}
+	if fileSize > maxPayloadExpandedBytes-expandedBytes {
+		return fmt.Errorf("exceeds %d expanded bytes", maxPayloadExpandedBytes)
+	}
+	return nil
 }
 
 func cleanPayloadPath(name string) (string, error) {
