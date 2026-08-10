@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"path"
+	"strconv"
 	"strings"
 )
 
@@ -145,9 +146,7 @@ func fingerprintValidatedPayload(moduleID, version, payloadSHA256 string, files 
 	_, _ = hash.Write(count[:])
 	for _, file := range files {
 		writeBytes([]byte(file.Path))
-		var mode [8]byte
-		binary.BigEndian.PutUint64(mode[:], uint64(file.Mode))
-		_, _ = hash.Write(mode[:])
+		writeBytes([]byte(strconv.FormatInt(file.Mode, 10)))
 		writeBytes(file.Data)
 	}
 	var fingerprint [sha256.Size]byte
