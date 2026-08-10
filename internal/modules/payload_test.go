@@ -106,6 +106,24 @@ func TestValidatePayloadRejectsOversizedFileFromHeader(t *testing.T) {
 	}
 }
 
+func TestValidatePayloadRejectsFileCountLimit(t *testing.T) {
+	if err := validatePayloadLimits(maxPayloadFiles, 0, 1); err == nil || !strings.Contains(err.Error(), "regular files") {
+		t.Fatalf("validatePayloadLimits error = %v, want file-count rejection", err)
+	}
+	if err := validatePayloadLimits(maxPayloadFiles-1, 0, 1); err != nil {
+		t.Fatalf("validatePayloadLimits rejected last allowed file: %v", err)
+	}
+}
+
+func TestValidatePayloadRejectsExpandedByteLimit(t *testing.T) {
+	if err := validatePayloadLimits(0, maxPayloadExpandedBytes-1, 1); err != nil {
+		t.Fatalf("validatePayloadLimits rejected exact boundary: %v", err)
+	}
+	if err := validatePayloadLimits(0, maxPayloadExpandedBytes-1, 2); err == nil || !strings.Contains(err.Error(), "expanded bytes") {
+		t.Fatalf("validatePayloadLimits error = %v, want expanded-size rejection", err)
+	}
+}
+
 func TestReadBoundedTarFileRequiresDeclaredSize(t *testing.T) {
 	_, err := readBoundedTarFile(bytes.NewReader([]byte("x")), 2)
 	if !errors.Is(err, io.ErrUnexpectedEOF) {
