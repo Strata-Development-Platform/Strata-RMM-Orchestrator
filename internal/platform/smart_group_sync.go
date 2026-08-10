@@ -15,6 +15,7 @@ type SmartGroupSync struct {
 	srv      *APIServer
 	logger   *zap.Logger
 	stopCh   chan struct{}
+	doneCh   chan struct{}
 	mu       sync.Mutex
 	running  bool
 }
@@ -29,27 +30,33 @@ func NewSmartGroupSync(interval time.Duration, srv *APIServer, logger *zap.Logge
 		interval: interval,
 		srv:      srv,
 		logger:   logger,
-		stopCh:   make(chan struct{}),
 	}
 }
 
 // Start launches the background evaluation loop in a goroutine.
-// Calling Start while already running is a no-op.
+// Calling Start while already running is a no-op. A new lifecycle channel pair
+// is allocated for each run so a stopped sync can be restarted safely.
 func (s *SmartGroupSync) Start(ctx context.Context) {
 	s.mu.Lock()
 	if s.running {
 		s.mu.Unlock()
 		return
 	}
+	stopCh := make(chan struct{})
+	doneCh := make(chan struct{})
+	s.stopCh = stopCh
+	s.doneCh = doneCh
 	s.running = true
 	s.mu.Unlock()
 
 	s.logger.Info("smart group sync starting", zap.Duration("interval", s.interval))
-	go s.runLoop(ctx)
+	go s.runLoop(ctx, stopCh, doneCh)
 }
 
-// Stop signals the background loop to exit and waits for it to finish.
-// Calling Stop when not running is a no-op.
+// Stop signals the current background loop to exit and waits for that specific
+// worker to finish. Calling Stop when not running is a no-op. The lifecycle
+// mutex remains held through worker shutdown so Start and concurrent Stop calls
+// cannot interleave with the channel close or reuse a stale lifecycle.
 func (s *SmartGroupSync) Stop() {
 	s.mu.Lock()
 	if !s.running {
@@ -57,17 +64,21 @@ func (s *SmartGroupSync) Stop() {
 		return
 	}
 	s.running = false
-	s.mu.Unlock()
-	select {
-	case <-s.stopCh:
-		// already closed
-	default:
-		close(s.stopCh)
+	stopCh := s.stopCh
+	doneCh := s.doneCh
+	if stopCh != nil {
+		close(stopCh)
 	}
+	if doneCh != nil {
+		<-doneCh
+	}
+	s.mu.Unlock()
+
 	s.logger.Info("smart group sync stopped")
 }
 
-func (s *SmartGroupSync) runLoop(ctx context.Context) {
+func (s *SmartGroupSync) runLoop(ctx context.Context, stopCh <-chan struct{}, doneCh chan<- struct{}) {
+	defer close(doneCh)
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
 	for {
@@ -75,7 +86,7 @@ func (s *SmartGroupSync) runLoop(ctx context.Context) {
 		case <-ctx.Done():
 			s.logger.Info("smart group sync: context done, exiting")
 			return
-		case <-s.stopCh:
+		case <-stopCh:
 			s.logger.Info("smart group sync: stop signal received, exiting")
 			return
 		case <-ticker.C:
@@ -86,6 +97,9 @@ func (s *SmartGroupSync) runLoop(ctx context.Context) {
 
 // evaluateSmartGroups is the public wrapper used by tests.
 func (s *SmartGroupSync) evaluateSmartGroups(ctx context.Context) {
+	if s.srv == nil {
+		return
+	}
 	s.srv.evaluateAllSmartGroups(ctx)
 }
 
