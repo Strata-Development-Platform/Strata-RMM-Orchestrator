@@ -17,6 +17,7 @@ require (
 	github.com/shirou/gopsutil/v3 v3.24.5
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
+	github.com/tetratelabs/wazero v1.12.0
 	go.etcd.io/bbolt v1.3.11
 	go.uber.org/zap v1.27.0
 	golang.org/x/crypto v0.54.0
