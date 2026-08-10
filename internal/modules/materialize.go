@@ -174,6 +174,10 @@ func validateMaterializeIdentity(pkg VerifiedPackage, payload ValidatedPayload) 
 	if payload.ModuleID != pkg.Manifest.ID || payload.Version != pkg.Manifest.Version || !strings.EqualFold(payload.PayloadSHA256, pkg.PayloadSHA256) {
 		return ErrPayloadIdentityMismatch
 	}
+	expectedFingerprint := fingerprintValidatedPayload(payload.ModuleID, payload.Version, payload.PayloadSHA256, payload.Files)
+	if payload.validationFingerprint != expectedFingerprint {
+		return ErrPayloadIdentityMismatch
+	}
 	return nil
 }
 
