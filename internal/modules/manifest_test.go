@@ -25,9 +25,36 @@ func validManifest() Manifest {
 	}
 }
 
+func validRuntime() *RuntimeSpec {
+	return &RuntimeSpec{
+		Kind:           RuntimeKindWASI,
+		Entrypoint:     "module/main.wasm",
+		MemoryMB:       64,
+		TimeoutSeconds: 30,
+		MaxConcurrency: 4,
+		Network:        RuntimeNetworkBrokered,
+	}
+}
+
 func TestManifestValidateAcceptsNamespacedLeastPrivilegeModule(t *testing.T) {
 	if err := validManifest().Validate(); err != nil {
 		t.Fatalf("valid manifest rejected: %v", err)
+	}
+}
+
+func TestManifestValidateAcceptsBoundedWASIRuntime(t *testing.T) {
+	m := validManifest()
+	m.Runtime = validRuntime()
+	if err := m.Validate(); err != nil {
+		t.Fatalf("valid WASI runtime rejected: %v", err)
+	}
+}
+
+func TestManifestValidateKeepsRuntimeOptional(t *testing.T) {
+	m := validManifest()
+	m.Runtime = nil
+	if err := m.Validate(); err != nil {
+		t.Fatalf("manifest without runtime rejected: %v", err)
 	}
 }
 
@@ -80,6 +107,41 @@ func TestManifestValidateRejectsRouteEscapeAndUndeclaredPermission(t *testing.T)
 	m.Routes[0].Permission = "reports.write"
 	if err := m.Validate(); err == nil || !strings.Contains(err.Error(), "undeclared permission") {
 		t.Fatalf("expected undeclared permission rejection, got %v", err)
+	}
+}
+
+func TestRuntimeSpecRejectsUnsafeOrUnboundedDeclarations(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*RuntimeSpec)
+		want   string
+	}{
+		{"unsupported kind", func(r *RuntimeSpec) { r.Kind = "process" }, "unsupported runtime kind"},
+		{"missing entrypoint", func(r *RuntimeSpec) { r.Entrypoint = "" }, "entrypoint is required"},
+		{"absolute entrypoint", func(r *RuntimeSpec) { r.Entrypoint = "/module.wasm" }, "relative slash-separated"},
+		{"backslash entrypoint", func(r *RuntimeSpec) { r.Entrypoint = `module\\main.wasm` }, "relative slash-separated"},
+		{"traversal entrypoint", func(r *RuntimeSpec) { r.Entrypoint = "../main.wasm" }, "normalized and contained"},
+		{"non-normalized entrypoint", func(r *RuntimeSpec) { r.Entrypoint = "module/../main.wasm" }, "normalized and contained"},
+		{"wrong extension", func(r *RuntimeSpec) { r.Entrypoint = "module/main.exe" }, "must end in .wasm"},
+		{"memory too small", func(r *RuntimeSpec) { r.MemoryMB = 15 }, "memory_mb"},
+		{"memory too large", func(r *RuntimeSpec) { r.MemoryMB = 513 }, "memory_mb"},
+		{"timeout too small", func(r *RuntimeSpec) { r.TimeoutSeconds = 0 }, "timeout_seconds"},
+		{"timeout too large", func(r *RuntimeSpec) { r.TimeoutSeconds = 121 }, "timeout_seconds"},
+		{"concurrency too small", func(r *RuntimeSpec) { r.MaxConcurrency = 0 }, "max_concurrency"},
+		{"concurrency too large", func(r *RuntimeSpec) { r.MaxConcurrency = 33 }, "max_concurrency"},
+		{"unsupported network", func(r *RuntimeSpec) { r.Network = "host" }, "network policy"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runtime := validRuntime()
+			tt.mutate(runtime)
+			m := validManifest()
+			m.Runtime = runtime
+			err := m.Validate()
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Validate() error = %v, want substring %q", err, tt.want)
+			}
+		})
 	}
 }
 
