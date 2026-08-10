@@ -27,9 +27,14 @@ type PayloadFile struct {
 }
 
 // ValidatedPayload is the non-executable result of inspecting a verified
-// package payload. Files are ordered exactly as they appeared in the archive.
+// package payload. Package identity is retained so a later filesystem stage
+// can reject a payload that does not belong to the package being installed.
+// Files are ordered exactly as they appeared in the archive.
 type ValidatedPayload struct {
-	Files []PayloadFile
+	ModuleID      string
+	Version       string
+	PayloadSHA256 string
+	Files         []PayloadFile
 }
 
 // ValidatePayload parses the opaque payload.tar.gz bytes from a package that
@@ -54,6 +59,9 @@ func ValidatePayload(pkg VerifiedPackage) (ValidatedPayload, error) {
 	if closeErr != nil {
 		return ValidatedPayload{}, fmt.Errorf("close module payload gzip: %w", closeErr)
 	}
+	payload.ModuleID = pkg.Manifest.ID
+	payload.Version = pkg.Manifest.Version
+	payload.PayloadSHA256 = pkg.PayloadSHA256
 	return payload, nil
 }
 
