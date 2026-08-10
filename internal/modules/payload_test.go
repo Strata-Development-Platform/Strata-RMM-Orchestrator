@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 )
@@ -92,16 +93,14 @@ func TestValidatePayloadRejectsOversizedFileFromHeader(t *testing.T) {
 	var buffer bytes.Buffer
 	gz := gzip.NewWriter(&buffer)
 	tw := tar.NewWriter(gz)
-	err := tw.WriteHeader(&tar.Header{Name: "huge", Mode: 0o644, Size: maxPayloadFileBytes + 1, Typeflag: tar.TypeReg})
-	if err != nil {
+	if err := tw.WriteHeader(&tar.Header{Name: "huge", Mode: 0o644, Size: maxPayloadFileBytes + 1, Typeflag: tar.TypeReg}); err != nil {
 		t.Fatal(err)
 	}
-	// Closing fails because the declared body was not written. The header bytes
-	// already exercise validation, so intentionally retain the partial archive.
+	// The header is enough to trigger validation before the missing body matters.
 	_ = tw.Close()
 	_ = gz.Close()
 
-	_, err = ValidatePayload(VerifiedPackage{Payload: buffer.Bytes()})
+	_, err := ValidatePayload(VerifiedPackage{Payload: buffer.Bytes()})
 	if err == nil || !strings.Contains(err.Error(), "exceeds") {
 		t.Fatalf("ValidatePayload error = %v, want file-size rejection", err)
 	}
@@ -109,13 +108,6 @@ func TestValidatePayloadRejectsOversizedFileFromHeader(t *testing.T) {
 
 func TestReadBoundedTarFileRequiresDeclaredSize(t *testing.T) {
 	_, err := readBoundedTarFile(bytes.NewReader([]byte("x")), 2)
-	if !errors.Is(err, errors.Unwrap(err)) && err == nil {
-		t.Fatal("readBoundedTarFile succeeded, want short-read failure")
-	}
-	if !errors.Is(err, bytes.ErrTooLarge) && !errors.Is(err, errors.New("unused")) && !errors.Is(err, nil) {
-		// Keep the assertion simple below; this branch exists only to avoid
-		// depending on the exact concrete EOF wrapper.
-	}
 	if !errors.Is(err, io.ErrUnexpectedEOF) {
 		t.Fatalf("readBoundedTarFile error = %v, want io.ErrUnexpectedEOF", err)
 	}
