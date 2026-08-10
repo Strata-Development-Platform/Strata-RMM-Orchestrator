@@ -20,15 +20,17 @@ const (
 	referenceModuleID               = "com.example.backup"
 	referenceModuleDevicePermission = "devices.read"
 	referenceModuleDeviceRoute      = "/api/modules/com.example.backup/devices/{deviceID}"
+	moduleBootstrapRetryDelay       = 5 * time.Second
 )
 
 type moduleTargetScopeContextKey struct{}
 
 type moduleRuntimeState struct {
-	once       sync.Once
+	mu         sync.Mutex
 	authorizer *modules.APIAuthorizer
 	redis      *strataredis.Client
-	err        error
+	lastErr    error
+	retryAfter time.Time
 }
 
 var (
@@ -62,20 +64,33 @@ func (s *APIServer) configuredModuleAuthorizer() *modules.APIAuthorizer {
 
 	value, _ := moduleRuntimes.LoadOrStore(s, &moduleRuntimeState{})
 	state := value.(*moduleRuntimeState)
-	state.once.Do(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-		defer cancel()
-		state.authorizer, state.redis, state.err = s.bootstrapModuleAuthorizer(ctx)
-		if state.err != nil {
-			if s.logger != nil {
-				s.logger.Error("module API authorization unavailable", zap.Error(state.err))
-			}
-			return
-		}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.authorizer != nil {
+		return state.authorizer
+	}
+	if !state.retryAfter.IsZero() && time.Now().Before(state.retryAfter) {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	authorizer, redisClient, err := s.bootstrapModuleAuthorizer(ctx)
+	if err != nil {
+		state.lastErr = err
+		state.retryAfter = time.Now().Add(moduleBootstrapRetryDelay)
 		if s.logger != nil {
-			s.logger.Info("module API authorization initialized from durable state")
+			s.logger.Error("module API authorization unavailable", zap.Error(err), zap.Duration("retry_in", moduleBootstrapRetryDelay))
 		}
-	})
+		return nil
+	}
+	state.authorizer = authorizer
+	state.redis = redisClient // retained for the API server lifetime by the authorizer runtime
+	state.lastErr = nil
+	state.retryAfter = time.Time{}
+	if s.logger != nil {
+		s.logger.Info("module API authorization initialized from durable state")
+	}
 	return state.authorizer
 }
 
