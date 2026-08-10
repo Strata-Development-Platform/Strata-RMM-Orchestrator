@@ -201,23 +201,30 @@ func packageSigningMessage(manifest Manifest, payloadSHA256 string) ([]byte, err
 }
 
 func readZipEntry(file *zip.File, limit int64) ([]byte, error) {
-	if file.UncompressedSize64 > uint64(limit) {
-		return nil, fmt.Errorf("entry %q exceeds %d bytes", file.Name, limit)
+	if limit < 0 {
+		return nil, errors.New("zip entry byte limit must not be negative")
 	}
+
 	reader, err := file.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer reader.Close()
 
-	limited := io.LimitReader(reader, limit+1)
-	data, err := io.ReadAll(limited)
+	data, err := io.ReadAll(io.LimitReader(reader, limit))
 	if err != nil {
 		return nil, err
 	}
-	if int64(len(data)) > limit {
+
+	var extra [1]byte
+	n, err := reader.Read(extra[:])
+	if n > 0 {
 		return nil, fmt.Errorf("entry %q exceeds %d bytes", file.Name, limit)
 	}
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+
 	return data, nil
 }
 
