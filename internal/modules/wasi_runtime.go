@@ -21,6 +21,7 @@ const (
 	defaultWASIIOBytes   = 1 << 20
 	maxWASIBinaryBytes   = 64 << 20
 	wasmPageBytes        = 64 << 10
+	wasmPagesPerMiB      = (1024 * 1024) / wasmPageBytes
 	wasiInvocationSchema = 1
 )
 
@@ -31,6 +32,7 @@ var (
 	ErrRuntimeInputTooLarge      = errors.New("module runtime input exceeds limit")
 	ErrRuntimeOutputTooLarge     = errors.New("module runtime output exceeds limit")
 	ErrRuntimeConcurrencyLimited = errors.New("module runtime concurrency wait canceled")
+	ErrRuntimeMemoryLimit        = errors.New("module runtime memory limit is invalid")
 )
 
 type WASIRuntimeOptions struct {
@@ -148,7 +150,10 @@ func (r *WASIRuntime) execute(ctx context.Context, module InstalledModule, input
 
 	execCtx, cancel := context.WithTimeout(ctx, time.Duration(spec.TimeoutSeconds)*time.Second)
 	defer cancel()
-	pages := uint32((spec.MemoryMB * 1024 * 1024) / wasmPageBytes)
+	pages, err := memoryLimitPages(spec.MemoryMB)
+	if err != nil {
+		return nil, err
+	}
 	config := wazero.NewRuntimeConfig().WithMemoryLimitPages(pages).WithCloseOnContextDone(true)
 	engine := wazero.NewRuntimeWithConfig(execCtx, config)
 	defer func() { _ = engine.Close(context.Background()) }()
@@ -183,6 +188,21 @@ func (r *WASIRuntime) execute(ctx context.Context, module InstalledModule, input
 		return nil, ErrRuntimeOutputTooLarge
 	}
 	return append([]byte(nil), stdout.Bytes()...), nil
+}
+
+func memoryLimitPages(memoryMB int) (uint32, error) {
+	if memoryMB < 16 || memoryMB > 512 {
+		return 0, ErrRuntimeMemoryLimit
+	}
+
+	// Avoid narrowing an int into wazero's uint32 page count. RuntimeSpec uses
+	// int for JSON/YAML compatibility, so accumulate the bounded count directly
+	// in the destination type after validating the manifest range.
+	var pages uint32
+	for megabyte := 0; megabyte < memoryMB; megabyte++ {
+		pages += wasmPagesPerMiB
+	}
+	return pages, nil
 }
 
 func (r *WASIRuntime) resolveRuntime(module InstalledModule) (RuntimeSpec, string, string, error) {
