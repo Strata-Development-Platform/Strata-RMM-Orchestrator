@@ -113,3 +113,70 @@ func TestRegistryListIsDeterministic(t *testing.T) {
 		t.Fatalf("list order = %v", []string{modules[0].Manifest.ID, modules[1].Manifest.ID, modules[2].Manifest.ID})
 	}
 }
+
+func TestRegistryReplaceSnapshotRevokesAndAddsAtomically(t *testing.T) {
+	registry := NewRegistry()
+	installed, err := registry.Install(validManifest())
+	if err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	enabled, err := registry.Enable(installed.Manifest.ID)
+	if err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	if err := registry.RequirePermission(enabled.Manifest.ID, "devices.read"); err != nil {
+		t.Fatalf("precondition permission: %v", err)
+	}
+
+	disabled := enabled
+	disabled.State = StateDisabled
+	disabled.Reason = "operator disabled"
+	disabled.UpdatedAt = disabled.UpdatedAt.Add(time.Second)
+	added := disabled
+	added.Manifest = validManifest()
+	added.Manifest.ID = "com.example.inventory"
+	added.Manifest.Routes[0].Path = "/api/modules/com.example.inventory/status"
+	added.State = StateEnabled
+	added.Reason = ""
+	added.InstalledAt = disabled.UpdatedAt
+	added.UpdatedAt = disabled.UpdatedAt
+
+	if err := registry.ReplaceSnapshot([]InstalledModule{disabled, added}); err != nil {
+		t.Fatalf("replace snapshot: %v", err)
+	}
+	if !errors.Is(registry.RequirePermission(enabled.Manifest.ID, "devices.read"), ErrPermissionDenied) {
+		t.Fatal("disabled module retained permission after snapshot refresh")
+	}
+	if err := registry.RequirePermission(added.Manifest.ID, "devices.read"); err != nil {
+		t.Fatalf("new enabled module unavailable after refresh: %v", err)
+	}
+}
+
+func TestRegistryReplaceSnapshotRejectsInvalidWithoutMutation(t *testing.T) {
+	registry := NewRegistry()
+	installed, err := registry.Install(validManifest())
+	if err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	enabled, err := registry.Enable(installed.Manifest.ID)
+	if err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+
+	invalid := enabled
+	invalid.State = State("corrupted")
+	if err := registry.ReplaceSnapshot([]InstalledModule{invalid}); err == nil {
+		t.Fatal("invalid snapshot accepted")
+	}
+	if err := registry.RequirePermission(enabled.Manifest.ID, "devices.read"); err != nil {
+		t.Fatalf("live registry mutated by rejected snapshot: %v", err)
+	}
+
+	duplicate := enabled
+	if err := registry.ReplaceSnapshot([]InstalledModule{enabled, duplicate}); err == nil {
+		t.Fatal("duplicate snapshot accepted")
+	}
+	if err := registry.RequirePermission(enabled.Manifest.ID, "devices.read"); err != nil {
+		t.Fatalf("live registry mutated by duplicate snapshot: %v", err)
+	}
+}

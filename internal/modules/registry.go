@@ -74,6 +74,30 @@ func (r *Registry) Restore(module InstalledModule) error {
 	return nil
 }
 
+// ReplaceSnapshot atomically replaces the registry with a validated durable
+// snapshot. Validation happens before the write lock is taken, so a malformed or
+// duplicate snapshot cannot partially mutate the live authorization registry.
+func (r *Registry) ReplaceSnapshot(snapshot []InstalledModule) error {
+	if r == nil {
+		return errors.New("module registry is required")
+	}
+	next := make(map[string]InstalledModule, len(snapshot))
+	for _, module := range snapshot {
+		if err := validatePersistedModule(module); err != nil {
+			return fmt.Errorf("validate module %q in registry snapshot: %w", module.Manifest.ID, err)
+		}
+		if _, exists := next[module.Manifest.ID]; exists {
+			return fmt.Errorf("duplicate module %q in registry snapshot", module.Manifest.ID)
+		}
+		next[module.Manifest.ID] = module
+	}
+
+	r.mu.Lock()
+	r.modules = next
+	r.mu.Unlock()
+	return nil
+}
+
 func (r *Registry) Enable(id string) (InstalledModule, error) {
 	return r.transition(id, func(module InstalledModule) (InstalledModule, error) {
 		if module.State == StateQuarantined {
