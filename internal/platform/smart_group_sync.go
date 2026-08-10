@@ -29,27 +29,31 @@ func NewSmartGroupSync(interval time.Duration, srv *APIServer, logger *zap.Logge
 		interval: interval,
 		srv:      srv,
 		logger:   logger,
-		stopCh:   make(chan struct{}),
 	}
 }
 
 // Start launches the background evaluation loop in a goroutine.
-// Calling Start while already running is a no-op.
+// Calling Start while already running is a no-op. A new stop channel is
+// allocated for each run so a stopped sync can be started again safely.
 func (s *SmartGroupSync) Start(ctx context.Context) {
 	s.mu.Lock()
 	if s.running {
 		s.mu.Unlock()
 		return
 	}
+	stopCh := make(chan struct{})
+	s.stopCh = stopCh
 	s.running = true
 	s.mu.Unlock()
 
 	s.logger.Info("smart group sync starting", zap.Duration("interval", s.interval))
-	go s.runLoop(ctx)
+	go s.runLoop(ctx, stopCh)
 }
 
-// Stop signals the background loop to exit and waits for it to finish.
-// Calling Stop when not running is a no-op.
+// Stop signals the current background loop to exit.
+// Calling Stop when not running is a no-op. The running transition and channel
+// close happen under the same mutex so concurrent Stop calls cannot close the
+// same channel twice.
 func (s *SmartGroupSync) Stop() {
 	s.mu.Lock()
 	if !s.running {
@@ -57,17 +61,16 @@ func (s *SmartGroupSync) Stop() {
 		return
 	}
 	s.running = false
-	s.mu.Unlock()
-	select {
-	case <-s.stopCh:
-		// already closed
-	default:
-		close(s.stopCh)
+	stopCh := s.stopCh
+	if stopCh != nil {
+		close(stopCh)
 	}
+	s.mu.Unlock()
+
 	s.logger.Info("smart group sync stopped")
 }
 
-func (s *SmartGroupSync) runLoop(ctx context.Context) {
+func (s *SmartGroupSync) runLoop(ctx context.Context, stopCh <-chan struct{}) {
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
 	for {
@@ -75,7 +78,7 @@ func (s *SmartGroupSync) runLoop(ctx context.Context) {
 		case <-ctx.Done():
 			s.logger.Info("smart group sync: context done, exiting")
 			return
-		case <-s.stopCh:
+		case <-stopCh:
 			s.logger.Info("smart group sync: stop signal received, exiting")
 			return
 		case <-ticker.C:
