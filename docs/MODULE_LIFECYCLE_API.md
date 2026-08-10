@@ -32,7 +32,7 @@ Each mutation runs in a serializable PostgreSQL transaction. The transaction est
 
 Serialization failures and deadlocks are retried a bounded number of times. The live authorization registry is never changed before the database commit succeeds. After a successful commit, the runtime refresh deadline is invalidated so the next module authorization request reloads committed lifecycle state immediately through the durable refresh mechanism introduced in PR #121.
 
-This means a disable, quarantine, manifest permission reduction, or uninstall cannot be made visible to authorization before its audit/database transaction commits, and a failed transaction cannot partially alter the live authorization view.
+This means a disable, quarantine, or uninstall cannot be made visible to authorization before its audit/database transaction commits, and a failed transaction cannot partially alter the live authorization view. Updating an installed manifest or changing its declared permissions belongs to the future signed package/update workflow rather than this lifecycle-state API.
 
 ## State rules
 
