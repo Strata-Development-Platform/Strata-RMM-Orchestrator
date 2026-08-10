@@ -9,7 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
+
+const staleInstallLockAfter = 30 * time.Minute
 
 var (
 	ErrPayloadIdentityMismatch   = errors.New("validated payload does not match verified package")
@@ -84,12 +87,9 @@ func MaterializePayload(pkg VerifiedPackage, payload ValidatedPayload, options M
 	}
 
 	lockPath := filepath.Join(moduleDir, "."+pkg.Manifest.Version+".install.lock")
-	lock, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	lock, err := acquireInstallLock(lockPath, target)
 	if err != nil {
-		if errors.Is(err, fs.ErrExist) {
-			return MaterializedModule{}, ErrInstallInProgress
-		}
-		return MaterializedModule{}, fmt.Errorf("create module install lock: %w", err)
+		return MaterializedModule{}, err
 	}
 	if err := lock.Close(); err != nil {
 		_ = os.Remove(lockPath)
@@ -167,6 +167,66 @@ func MaterializePayload(pkg VerifiedPackage, payload ValidatedPayload, options M
 		FileCount:     len(payload.Files),
 		ExpandedBytes: expandedBytes,
 	}, nil
+}
+
+func acquireInstallLock(lockPath, target string) (*os.File, error) {
+	lock, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err == nil {
+		return lock, nil
+	}
+	if !errors.Is(err, fs.ErrExist) {
+		return nil, fmt.Errorf("create module install lock: %w", err)
+	}
+	if err := reclaimStaleInstallLock(lockPath, target, time.Now()); err != nil {
+		return nil, err
+	}
+	lock, err = os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return nil, ErrInstallInProgress
+		}
+		return nil, fmt.Errorf("create module install lock after stale-lock recovery: %w", err)
+	}
+	return lock, nil
+}
+
+func reclaimStaleInstallLock(lockPath, target string, now time.Time) error {
+	info, err := os.Lstat(lockPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect module install lock: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return fmt.Errorf("%w: install lock is not a regular file", ErrInstallInProgress)
+	}
+	age := now.Sub(info.ModTime())
+	if age < 0 || age < staleInstallLockAfter {
+		return ErrInstallInProgress
+	}
+	if _, err := os.Lstat(target); err == nil {
+		return ErrMaterializedVersionExists
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("inspect module target during stale-lock recovery: %w", err)
+	}
+	current, err := os.Lstat(lockPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("reinspect module install lock: %w", err)
+	}
+	if !os.SameFile(info, current) {
+		return ErrInstallInProgress
+	}
+	if err := os.Remove(lockPath); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("remove stale module install lock: %w", err)
+	}
+	return nil
 }
 
 func validateMaterializeIdentity(pkg VerifiedPackage, payload ValidatedPayload) error {
