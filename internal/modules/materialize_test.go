@@ -1,6 +1,7 @@
 package modules
 
 import (
+	"archive/tar"
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
@@ -13,8 +14,8 @@ import (
 
 func TestMaterializePayloadPromotesValidatedPackageAtomically(t *testing.T) {
 	pkg, payload := testVerifiedMaterializePayload(t, "1.0.0", []payloadArchiveEntry{
-		{name: "bin/module", typeflag: 0, mode: 0o755, data: []byte("binary")},
-		{name: "config/default.json", typeflag: 0, mode: 0o640, data: []byte(`{"enabled":true}`)},
+		{name: "bin/module", typeflag: tar.TypeReg, mode: 0o755, data: []byte("binary")},
+		{name: "config/default.json", typeflag: tar.TypeReg, mode: 0o640, data: []byte(`{"enabled":true}`)},
 	})
 	root := filepath.Join(t.TempDir(), "modules")
 
@@ -50,7 +51,7 @@ func TestMaterializePayloadPromotesValidatedPackageAtomically(t *testing.T) {
 
 func TestMaterializePayloadRejectsMutationAfterValidation(t *testing.T) {
 	pkg, payload := testVerifiedMaterializePayload(t, "1.0.1", []payloadArchiveEntry{
-		{name: "bin/module", typeflag: 0, mode: 0o755, data: []byte("binary")},
+		{name: "bin/module", typeflag: tar.TypeReg, mode: 0o755, data: []byte("binary")},
 	})
 	payload.Files[0].Data = []byte("tampered after validation")
 	root := filepath.Join(t.TempDir(), "modules")
@@ -66,7 +67,7 @@ func TestMaterializePayloadRejectsMutationAfterValidation(t *testing.T) {
 
 func TestMaterializePayloadRejectsDifferentPackageIdentity(t *testing.T) {
 	pkg, payload := testVerifiedMaterializePayload(t, "1.0.2", []payloadArchiveEntry{
-		{name: "module", typeflag: 0, mode: 0o700, data: []byte("x")},
+		{name: "module", typeflag: tar.TypeReg, mode: 0o700, data: []byte("x")},
 	})
 	pkg.Manifest.Version = "1.0.3"
 
@@ -78,7 +79,7 @@ func TestMaterializePayloadRejectsDifferentPackageIdentity(t *testing.T) {
 
 func TestMaterializePayloadNeverOverwritesExistingVersion(t *testing.T) {
 	pkg, payload := testVerifiedMaterializePayload(t, "2.0.0", []payloadArchiveEntry{
-		{name: "module", typeflag: 0, mode: 0o700, data: []byte("first")},
+		{name: "module", typeflag: tar.TypeReg, mode: 0o700, data: []byte("first")},
 	})
 	root := filepath.Join(t.TempDir(), "modules")
 	first, err := MaterializePayload(pkg, payload, MaterializeOptions{Root: root})
@@ -101,7 +102,7 @@ func TestMaterializePayloadNeverOverwritesExistingVersion(t *testing.T) {
 
 func TestMaterializePayloadRejectsConcurrentInstallLock(t *testing.T) {
 	pkg, payload := testVerifiedMaterializePayload(t, "3.0.0", []payloadArchiveEntry{
-		{name: "module", typeflag: 0, mode: 0o700, data: []byte("x")},
+		{name: "module", typeflag: tar.TypeReg, mode: 0o700, data: []byte("x")},
 	})
 	root := filepath.Join(t.TempDir(), "modules")
 	moduleDir := filepath.Join(root, pkg.Manifest.ID)
@@ -121,7 +122,7 @@ func TestMaterializePayloadRejectsConcurrentInstallLock(t *testing.T) {
 
 func TestMaterializePayloadCleansStageOnFailure(t *testing.T) {
 	pkg, payload := testVerifiedMaterializePayload(t, "4.0.0", []payloadArchiveEntry{
-		{name: "module", typeflag: 0, mode: 0o700, data: []byte("x")},
+		{name: "module", typeflag: tar.TypeReg, mode: 0o700, data: []byte("x")},
 	})
 	// Corrupt both the public data and the private seal so this test reaches the
 	// filesystem loop and proves staging cleanup rather than identity rejection.
@@ -145,7 +146,7 @@ func TestMaterializePayloadRejectsSymlinkedInstallRoot(t *testing.T) {
 		t.Skip("symlink creation commonly requires elevated Windows privileges")
 	}
 	pkg, payload := testVerifiedMaterializePayload(t, "5.0.0", []payloadArchiveEntry{
-		{name: "module", typeflag: 0, mode: 0o700, data: []byte("x")},
+		{name: "module", typeflag: tar.TypeReg, mode: 0o700, data: []byte("x")},
 	})
 	base := t.TempDir()
 	realRoot := filepath.Join(base, "real")
@@ -168,7 +169,7 @@ func TestMaterializePayloadRejectsSymlinkedModuleDirectory(t *testing.T) {
 		t.Skip("symlink creation commonly requires elevated Windows privileges")
 	}
 	pkg, payload := testVerifiedMaterializePayload(t, "6.0.0", []payloadArchiveEntry{
-		{name: "module", typeflag: 0, mode: 0o700, data: []byte("x")},
+		{name: "module", typeflag: tar.TypeReg, mode: 0o700, data: []byte("x")},
 	})
 	root := filepath.Join(t.TempDir(), "modules")
 	if err := os.MkdirAll(root, 0o750); err != nil {
@@ -194,7 +195,7 @@ func TestMaterializePayloadRejectsSymlinkedModuleDirectory(t *testing.T) {
 
 func TestMaterializePayloadRejectsUnsafeVersionComponent(t *testing.T) {
 	pkg, payload := testVerifiedMaterializePayload(t, "7.0.0", []payloadArchiveEntry{
-		{name: "module", typeflag: 0, mode: 0o700, data: []byte("x")},
+		{name: "module", typeflag: tar.TypeReg, mode: 0o700, data: []byte("x")},
 	})
 	pkg.Manifest.Version = "../7.0.0"
 	payload.Version = pkg.Manifest.Version
