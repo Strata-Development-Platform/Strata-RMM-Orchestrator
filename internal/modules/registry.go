@@ -18,10 +18,11 @@ const (
 )
 
 var (
-	ErrNotFound         = errors.New("module not found")
-	ErrAlreadyExists    = errors.New("module already installed")
-	ErrQuarantined      = errors.New("module is quarantined")
-	ErrPermissionDenied = errors.New("module permission denied")
+	ErrNotFound          = errors.New("module not found")
+	ErrAlreadyExists     = errors.New("module already installed")
+	ErrQuarantined       = errors.New("module is quarantined")
+	ErrPermissionDenied  = errors.New("module permission denied")
+	ErrVersionTransition = errors.New("module version transition is not allowed")
 )
 
 type InstalledModule struct {
@@ -127,6 +128,41 @@ func (r *Registry) Quarantine(id, reason string) (InstalledModule, error) {
 	return r.transition(id, func(module InstalledModule) (InstalledModule, error) {
 		module.State = StateQuarantined
 		module.Reason = reason
+		return module, nil
+	})
+}
+
+// Upgrade replaces the current manifest with a newly verified release manifest
+// while preserving lifecycle state and installation time. Version transitions
+// are intentionally forbidden while enabled or quarantined so executable bytes
+// and authorization cannot change underneath an active or isolated runtime.
+func (r *Registry) Upgrade(id string, manifest Manifest) (InstalledModule, error) {
+	return r.replaceManifest(id, manifest)
+}
+
+// Rollback restores a previously verified release manifest. The same guarded
+// state rules as Upgrade apply; callers must source the manifest from trusted,
+// immutable release metadata rather than an untrusted request body.
+func (r *Registry) Rollback(id string, manifest Manifest) (InstalledModule, error) {
+	return r.replaceManifest(id, manifest)
+}
+
+func (r *Registry) replaceManifest(id string, manifest Manifest) (InstalledModule, error) {
+	if err := manifest.Validate(); err != nil {
+		return InstalledModule{}, fmt.Errorf("validate module manifest: %w", err)
+	}
+	if manifest.ID != id {
+		return InstalledModule{}, fmt.Errorf("%w: manifest id %q does not match module %q", ErrVersionTransition, manifest.ID, id)
+	}
+	return r.transition(id, func(module InstalledModule) (InstalledModule, error) {
+		if module.State == StateEnabled || module.State == StateQuarantined {
+			return InstalledModule{}, fmt.Errorf("%w: module state %s", ErrVersionTransition, module.State)
+		}
+		if module.Manifest.Version == manifest.Version {
+			return InstalledModule{}, fmt.Errorf("%w: version %q is already current", ErrVersionTransition, manifest.Version)
+		}
+		module.Manifest = manifest
+		module.Reason = ""
 		return module, nil
 	})
 }
