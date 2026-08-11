@@ -23,6 +23,11 @@ const (
 	maxManifestBytes  = 1 << 20
 	maxSignatureBytes = 64 << 10
 	maxPayloadBytes   = 60 << 20
+
+	// MaxPackageBytes is the maximum accepted signed module-package size. HTTP
+	// and other ingress layers should enforce this same bound before buffering a
+	// package for VerifyPackage.
+	MaxPackageBytes = maxPackageBytes
 )
 
 var (

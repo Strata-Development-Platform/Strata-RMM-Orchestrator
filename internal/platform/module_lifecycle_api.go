@@ -128,13 +128,22 @@ func moduleLifecycleActor(r *http.Request) (string, bool) {
 }
 
 func (s *APIServer) handleModuleInstall(w http.ResponseWriter, r *http.Request, actor string) {
-	var manifest modules.Manifest
-	if err := decodeModuleLifecycleJSON(w, r, &manifest); err != nil {
+	prepared, err := prepareSignedModulePackage(w, r)
+	if err != nil {
+		if !writeSignedModuleInstallError(w, err) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid signed module package"})
+		}
 		return
 	}
 	module, err := s.mutateModuleLifecycle(r.Context(), actor, func(registry *modules.Registry, store *modules.SQLStore, tx *sql.Tx) (modules.InstalledModule, error) {
-		installed, err := registry.Install(manifest)
+		installed, err := registry.Install(prepared.pkg.Manifest)
 		if err != nil {
+			return modules.InstalledModule{}, err
+		}
+		if _, err := modules.MaterializePayloadRetrySafe(prepared.pkg, prepared.payload, modules.MaterializeOptions{Root: prepared.root}); err != nil {
+			return modules.InstalledModule{}, err
+		}
+		if _, err := modules.ActivateMaterializedVersion(prepared.root, prepared.pkg.Manifest.ID, prepared.pkg.Manifest.Version); err != nil {
 			return modules.InstalledModule{}, err
 		}
 		if err := store.Save(r.Context(), tx, installed, actor, "install"); err != nil {
@@ -143,7 +152,9 @@ func (s *APIServer) handleModuleInstall(w http.ResponseWriter, r *http.Request, 
 		return installed, nil
 	})
 	if err != nil {
-		writeModuleLifecycleError(w, err)
+		if !writeSignedModuleInstallError(w, err) {
+			writeModuleLifecycleError(w, err)
+		}
 		return
 	}
 	writeJSON(w, http.StatusCreated, module)
