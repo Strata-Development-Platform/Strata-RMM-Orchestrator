@@ -148,9 +148,14 @@ func (m *Manager) Start(ctx context.Context) error {
 }
 
 func (m *Manager) handlePatchResult(msg *nats.Msg) {
+	tenantID, deviceID, err := patchResultTransportIdentity(msg.Subject)
+	if err != nil {
+		m.logger.Warn("invalid patch result subject", zap.String("subject", msg.Subject), zap.Error(err))
+		return
+	}
+
 	var result struct {
 		DeploymentID string      `json:"deployment_id"`
-		DeviceID     string      `json:"device_id"`
 		PatchID      string      `json:"patch_id"`
 		Status       PatchStatus `json:"status"`
 		Error        string      `json:"error,omitempty"`
@@ -160,16 +165,15 @@ func (m *Manager) handlePatchResult(msg *nats.Msg) {
 		return
 	}
 
-	state := &DevicePatchState{
-		DeviceID:     result.DeviceID,
-		DeploymentID: result.DeploymentID,
-		PatchID:      result.PatchID,
-		Status:       result.Status,
-		Error:        result.Error,
-		UpdatedAt:    time.Now(),
-	}
-	if err := m.store.UpdateDeviceState(context.Background(), state); err != nil {
-		m.logger.Error("update device patch state", zap.Error(err))
+	if err := m.store.ApplyDevicePatchResult(
+		context.Background(), tenantID, deviceID, result.DeploymentID, result.PatchID, result.Status, result.Error,
+	); err != nil {
+		m.logger.Error("apply device patch result",
+			zap.String("tenant_id", tenantID),
+			zap.String("device_id", deviceID),
+			zap.String("deployment_id", result.DeploymentID),
+			zap.Error(err),
+		)
 	}
 }
 
