@@ -11,18 +11,26 @@ var ErrPatchResultScope = errors.New("patch result is outside deployment scope")
 
 const maxPatchResultErrorBytes = 4096
 
+func patchAgentTransportIdentity(subject, terminal string) (tenantID, deviceID string, err error) {
+	parts := strings.Split(subject, ".")
+	if len(parts) != 6 || parts[0] != "tenant" || parts[2] != "agent" || parts[4] != "patch" || parts[5] != terminal {
+		return "", "", fmt.Errorf("invalid patch %s subject", terminal)
+	}
+	if parts[1] == "" || parts[3] == "" || strings.ContainsAny(parts[1], "*> ") || strings.ContainsAny(parts[3], "*> ") {
+		return "", "", fmt.Errorf("invalid patch %s subject identity", terminal)
+	}
+	return parts[1], parts[3], nil
+}
+
 // patchResultTransportIdentity extracts the authoritative tenant and device
 // identity from the subscribed NATS subject. Result payloads must not choose
 // either value.
 func patchResultTransportIdentity(subject string) (tenantID, deviceID string, err error) {
-	parts := strings.Split(subject, ".")
-	if len(parts) != 6 || parts[0] != "tenant" || parts[2] != "agent" || parts[4] != "patch" || parts[5] != "result" {
-		return "", "", fmt.Errorf("invalid patch result subject")
-	}
-	if parts[1] == "" || parts[3] == "" || strings.ContainsAny(parts[1], "*> ") || strings.ContainsAny(parts[3], "*> ") {
-		return "", "", fmt.Errorf("invalid patch result subject identity")
-	}
-	return parts[1], parts[3], nil
+	return patchAgentTransportIdentity(subject, "result")
+}
+
+func patchInventoryTransportIdentity(subject string) (tenantID, deviceID string, err error) {
+	return patchAgentTransportIdentity(subject, "inventory")
 }
 
 func normalizePatchResultError(value string) string {
