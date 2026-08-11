@@ -15,6 +15,11 @@ const (
 	SubjectAlerts         = "tenant.*.alerts"
 	SubjectConfig         = "tenant.*.config.*"
 	SubjectCmd            = "tenant.*.cmd.*"
+	// SubjectCommands captures both the base endpoint command subject and
+	// command-specific suffixes such as .software. Keeping SubjectCmd preserves
+	// the existing public subject contract while the stream wildcard provides
+	// durable offline delivery for endpoint command families.
+	SubjectCommands = "tenant.*.cmd.>"
 )
 
 // Stream names for JetStream streams.
@@ -22,6 +27,7 @@ const (
 	StreamMetrics      = "STRATA_METRICS"
 	StreamEvents       = "STRATA_EVENTS"
 	StreamHeartbeats   = "STRATA_HEARTBEATS"
+	StreamCommands     = "STRATA_COMMANDS"
 	StreamCmdResults   = "STRATA_CMD_RESULTS"
 	StreamProbes       = "STRATA_PROBES"
 	StreamDiscovery    = "STRATA_DISCOVERY"
@@ -50,6 +56,8 @@ func ToStream(subject string) string {
 		return StreamEvents
 	case subjectContains(subject, ".heartbeat"):
 		return StreamHeartbeats
+	case subjectContains(subject, ".cmd."):
+		return StreamCommands
 	case subjectContains(subject, ".result"), subjectContains(subject, ".ack"):
 		return StreamCmdResults
 	case subjectContains(subject, ".probe."):
