@@ -15,6 +15,16 @@ func TestPatchResultTransportIdentityUsesSubject(t *testing.T) {
 	}
 }
 
+func TestPatchInventoryTransportIdentityUsesSubject(t *testing.T) {
+	tenantID, deviceID, err := patchInventoryTransportIdentity("tenant.tenant-a.agent.device-1.patch.inventory")
+	if err != nil {
+		t.Fatalf("parse inventory subject: %v", err)
+	}
+	if tenantID != "tenant-a" || deviceID != "device-1" {
+		t.Fatalf("identity = %q/%q, want tenant-a/device-1", tenantID, deviceID)
+	}
+}
+
 func TestPatchResultTransportIdentityRejectsMalformedSubjects(t *testing.T) {
 	for _, subject := range []string{
 		"",
@@ -27,6 +37,12 @@ func TestPatchResultTransportIdentityRejectsMalformedSubjects(t *testing.T) {
 		if _, _, err := patchResultTransportIdentity(subject); err == nil {
 			t.Fatalf("subject %q unexpectedly accepted", subject)
 		}
+	}
+}
+
+func TestPatchInventoryTransportIdentityRejectsResultSubject(t *testing.T) {
+	if _, _, err := patchInventoryTransportIdentity("tenant.tenant-a.agent.device-1.patch.result"); err == nil {
+		t.Fatal("patch result subject unexpectedly accepted as inventory")
 	}
 }
 
