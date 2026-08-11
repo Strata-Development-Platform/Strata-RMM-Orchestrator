@@ -22,6 +22,10 @@ type Invocation struct {
 	Path       string
 	Permission string
 	Body       []byte
+	// Scope is resolved by trusted Strata host code from the concrete target
+	// resource. It is never sourced from guest memory and is used only by
+	// brokered host capabilities.
+	Scope ResourceScope
 }
 
 type InvocationResult struct {

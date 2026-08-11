@@ -33,11 +33,13 @@ var (
 	ErrRuntimeOutputTooLarge     = errors.New("module runtime output exceeds limit")
 	ErrRuntimeConcurrencyLimited = errors.New("module runtime concurrency wait canceled")
 	ErrRuntimeMemoryLimit        = errors.New("module runtime memory limit is invalid")
+	ErrRuntimeBrokerUnavailable  = errors.New("module brokered runtime capability is unavailable")
 )
 
 type WASIRuntimeOptions struct {
 	Root       string
 	MaxIOBytes int
+	Broker     *CapabilityBroker
 }
 
 type wasiLimiter struct {
@@ -47,11 +49,12 @@ type wasiLimiter struct {
 
 // WASIRuntime executes the active immutable module version with wazero. Each
 // invocation receives a fresh wazero runtime configured without ambient host
-// filesystem, argv, environment, or host-defined network/broker modules.
-// Brokered host functions are intentionally a separate reviewed capability.
+// filesystem, argv, environment, or raw network access. Brokered modules may
+// receive only the reviewed strata_broker host ABI backed by CapabilityBroker.
 type WASIRuntime struct {
 	root       string
 	maxIOBytes int
+	broker     *CapabilityBroker
 
 	mu       sync.Mutex
 	limiters map[string]*wasiLimiter
@@ -92,6 +95,7 @@ func NewWASIRuntime(options WASIRuntimeOptions) (*WASIRuntime, error) {
 	return &WASIRuntime{
 		root:       canonicalRoot,
 		maxIOBytes: maxIOBytes,
+		broker:     options.Broker,
 		limiters:   make(map[string]*wasiLimiter),
 	}, nil
 }
@@ -101,7 +105,7 @@ func (r *WASIRuntime) Health(ctx context.Context, module InstalledModule) error 
 	if err != nil {
 		return fmt.Errorf("encode WASI health envelope: %w", err)
 	}
-	_, err = r.execute(ctx, module, input)
+	_, err = r.execute(ctx, module, input, ResourceScope{}, false)
 	return err
 }
 
@@ -123,14 +127,14 @@ func (r *WASIRuntime) Invoke(ctx context.Context, module InstalledModule, invoca
 	if len(input) > r.maxIOBytes*2 {
 		return InvocationResult{}, ErrRuntimeInputTooLarge
 	}
-	output, err := r.execute(ctx, module, input)
+	output, err := r.execute(ctx, module, input, invocation.Scope, true)
 	if err != nil {
 		return InvocationResult{}, err
 	}
 	return InvocationResult{StatusCode: 200, Body: output}, nil
 }
 
-func (r *WASIRuntime) execute(ctx context.Context, module InstalledModule, input []byte) ([]byte, error) {
+func (r *WASIRuntime) execute(ctx context.Context, module InstalledModule, input []byte, scope ResourceScope, brokerAllowed bool) ([]byte, error) {
 	if ctx == nil {
 		return nil, errors.New("module runtime context is required")
 	}
@@ -160,6 +164,14 @@ func (r *WASIRuntime) execute(ctx context.Context, module InstalledModule, input
 
 	if _, err := wasi_snapshot_preview1.Instantiate(execCtx, engine); err != nil {
 		return nil, fmt.Errorf("instantiate WASI host: %w", err)
+	}
+	if spec.Network == RuntimeNetworkBrokered {
+		if r.broker == nil {
+			return nil, ErrRuntimeBrokerUnavailable
+		}
+		if err := r.instantiateBrokerHost(execCtx, engine, module, scope, brokerAllowed); err != nil {
+			return nil, err
+		}
 	}
 	compiled, err := engine.CompileModule(execCtx, wasm)
 	if err != nil {
