@@ -15,7 +15,7 @@ type StreamManager struct {
 	log *zap.Logger
 }
 
-// NewStreamManager creates a new consumer manager.
+// NewStreamManager creates a new stream manager.
 func NewStreamManager(js nats.JetStreamContext, cfg Config, log *zap.Logger) *StreamManager {
 	return &StreamManager{js: js, cfg: cfg, log: log}
 }
@@ -65,7 +65,8 @@ func (m *StreamManager) requiredStreams() []*StreamConfig {
 		m.cfg.StreamConfigFor(StreamEvents, []string{SubjectEvents}),
 		m.cfg.StreamConfigFor(StreamHeartbeats, []string{SubjectHeartbeat}),
 		m.cfg.StreamConfigFor(StreamCommands, []string{SubjectCommands}),
-		m.cfg.StreamConfigFor(StreamCmdResults, []string{SubjectCmdResult, SubjectCmdAck, SubjectScriptResult, SubjectSoftwareResult}),
+		m.cfg.StreamConfigFor(StreamCmdResults, []string{SubjectCmdResult, SubjectCmdAck}),
+		m.cfg.StreamConfigFor(StreamEndpointResults, []string{SubjectScriptResult, SubjectSoftwareResult}),
 		m.cfg.StreamConfigFor(StreamProbes, []string{SubjectProbeSNMP, SubjectProbeFlow}),
 		m.cfg.StreamConfigFor(StreamDiscovery, []string{SubjectProbeDiscovery}),
 		m.cfg.StreamConfigFor(StreamAgentSession, []string{"strata.agent.*"}),
