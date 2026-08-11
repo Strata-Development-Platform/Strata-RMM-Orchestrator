@@ -1,18 +1,20 @@
 package modules
 
 import (
+	"archive/tar"
 	"errors"
+	"path/filepath"
 	"testing"
 )
 
 func TestActivateExpectedPreviousVersionIsRetrySafe(t *testing.T) {
-	root := t.TempDir()
-	pkg1, payload1 := testMaterializedPackage(t, "1.0.0")
-	pkg2, payload2 := testMaterializedPackage(t, "2.0.0")
-	if _, err := MaterializePayload(root, pkg1, payload1); err != nil {
+	root := filepath.Join(t.TempDir(), "modules")
+	pkg1, payload1 := testVerifiedMaterializePayload(t, "1.0.0", []payloadArchiveEntry{{name: "module", typeflag: tar.TypeReg, mode: 0o700, data: []byte("one")}})
+	pkg2, payload2 := testVerifiedMaterializePayload(t, "2.0.0", []payloadArchiveEntry{{name: "module", typeflag: tar.TypeReg, mode: 0o700, data: []byte("two")}})
+	if _, err := MaterializePayload(pkg1, payload1, MaterializeOptions{Root: root}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := MaterializePayload(root, pkg2, payload2); err != nil {
+	if _, err := MaterializePayload(pkg2, payload2, MaterializeOptions{Root: root}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := ActivateMaterializedVersion(root, pkg1.Manifest.ID, "1.0.0"); err != nil {
@@ -40,15 +42,15 @@ func TestActivateExpectedPreviousVersionIsRetrySafe(t *testing.T) {
 }
 
 func TestActivateExpectedPreviousVersionRejectsConcurrentChange(t *testing.T) {
-	root := t.TempDir()
-	pkg1, payload1 := testMaterializedPackage(t, "1.0.0")
-	pkg2, payload2 := testMaterializedPackage(t, "2.0.0")
-	pkg3, payload3 := testMaterializedPackage(t, "3.0.0")
+	root := filepath.Join(t.TempDir(), "modules")
+	pkg1, payload1 := testVerifiedMaterializePayload(t, "1.0.0", []payloadArchiveEntry{{name: "module", typeflag: tar.TypeReg, mode: 0o700, data: []byte("one")}})
+	pkg2, payload2 := testVerifiedMaterializePayload(t, "2.0.0", []payloadArchiveEntry{{name: "module", typeflag: tar.TypeReg, mode: 0o700, data: []byte("two")}})
+	pkg3, payload3 := testVerifiedMaterializePayload(t, "3.0.0", []payloadArchiveEntry{{name: "module", typeflag: tar.TypeReg, mode: 0o700, data: []byte("three")}})
 	for _, item := range []struct {
-		pkg VerifiedPackage
+		pkg     VerifiedPackage
 		payload ValidatedPayload
 	}{{pkg1, payload1}, {pkg2, payload2}, {pkg3, payload3}} {
-		if _, err := MaterializePayload(root, item.pkg, item.payload); err != nil {
+		if _, err := MaterializePayload(item.pkg, item.payload, MaterializeOptions{Root: root}); err != nil {
 			t.Fatal(err)
 		}
 	}
