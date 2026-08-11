@@ -60,7 +60,7 @@ type PatchPolicy struct {
 	Name           string            `json:"name"`
 	Enabled        bool              `json:"enabled"`
 	Platforms      []Platform        `json:"platforms"`
-	ApprovalMode   string            `json:"approval_mode"` // auto, manual
+	ApprovalMode   string            `json:"approval_mode"`
 	Severity       PatchSeverity     `json:"severity"`
 	MaintenanceWin string            `json:"maintenance_window"`
 	DeviceFilter   map[string]string `json:"device_filter"`
@@ -105,13 +105,7 @@ type Manager struct {
 }
 
 func NewManager(nc *nats.Conn, tsdb *timescale.Client, store *Store, logger *zap.Logger) *Manager {
-	return &Manager{
-		nats:     nc,
-		tsdb:     tsdb,
-		logger:   logger,
-		store:    store,
-		policies: make(map[string]*PatchPolicy),
-	}
+	return &Manager{nats: nc, tsdb: tsdb, logger: logger, store: store, policies: make(map[string]*PatchPolicy)}
 }
 
 func (m *Manager) Start(ctx context.Context) error {
@@ -128,14 +122,12 @@ func (m *Manager) Start(ctx context.Context) error {
 	m.mu.Unlock()
 	m.logger.Info("patch policies loaded", zap.Int("count", len(policies)))
 
-	// Subscribe to patch result events from agents
 	sub, err := m.nats.Subscribe("tenant.*.agent.*.patch.result", m.handlePatchResult)
 	if err != nil {
 		return fmt.Errorf("subscribe patch results: %w", err)
 	}
 	defer sub.Unsubscribe()
 
-	// Subscribe to patch inventory reports
 	invSub, err := m.nats.Subscribe("tenant.*.agent.*.patch.inventory", m.handlePatchInventory)
 	if err != nil {
 		return fmt.Errorf("subscribe patch inventory: %w", err)
@@ -143,7 +135,6 @@ func (m *Manager) Start(ctx context.Context) error {
 	defer invSub.Unsubscribe()
 
 	go m.deploymentScheduler(ctx)
-
 	return nil
 }
 
@@ -165,22 +156,18 @@ func (m *Manager) handlePatchResult(msg *nats.Msg) {
 		return
 	}
 
-	if err := m.store.ApplyDevicePatchResult(
-		context.Background(), tenantID, deviceID, result.DeploymentID, result.PatchID, result.Status, result.Error,
-	); err != nil {
-		m.logger.Error("apply device patch result",
-			zap.String("tenant_id", tenantID),
-			zap.String("device_id", deviceID),
-			zap.String("deployment_id", result.DeploymentID),
-			zap.Error(err),
-		)
+	if err := m.store.ApplyDevicePatchResult(context.Background(), tenantID, deviceID, result.DeploymentID, result.PatchID, result.Status, result.Error); err != nil {
+		m.logger.Error("apply device patch result", zap.String("tenant_id", tenantID), zap.String("device_id", deviceID), zap.String("deployment_id", result.DeploymentID), zap.Error(err))
 	}
 }
 
 func (m *Manager) handlePatchInventory(msg *nats.Msg) {
+	tenantID, deviceID, err := patchInventoryTransportIdentity(msg.Subject)
+	if err != nil {
+		m.logger.Warn("invalid patch inventory subject", zap.String("subject", msg.Subject), zap.Error(err))
+		return
+	}
 	var inv struct {
-		DeviceID  string   `json:"device_id"`
-		TenantID  string   `json:"tenant_id"`
 		OS        string   `json:"os"`
 		Installed []*Patch `json:"installed"`
 		Missing   []*Patch `json:"missing"`
@@ -189,15 +176,14 @@ func (m *Manager) handlePatchInventory(msg *nats.Msg) {
 		m.logger.Warn("invalid patch inventory", zap.Error(err))
 		return
 	}
-	if err := m.store.SaveInventory(context.Background(), inv.TenantID, inv.DeviceID, inv.Installed, inv.Missing); err != nil {
-		m.logger.Error("save patch inventory", zap.Error(err))
+	if err := m.store.SaveInventory(context.Background(), tenantID, deviceID, inv.Installed, inv.Missing); err != nil {
+		m.logger.Error("save patch inventory", zap.String("tenant_id", tenantID), zap.String("device_id", deviceID), zap.Error(err))
 	}
 }
 
 func (m *Manager) deploymentScheduler(ctx context.Context) {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -214,7 +200,6 @@ func (m *Manager) processScheduledDeployments(ctx context.Context) {
 		m.logger.Error("get pending deployments", zap.Error(err))
 		return
 	}
-
 	for _, d := range deployments {
 		if time.Now().Before(d.ScheduledFor) {
 			continue
@@ -224,10 +209,7 @@ func (m *Manager) processScheduledDeployments(ctx context.Context) {
 }
 
 func (m *Manager) executeDeployment(ctx context.Context, dep *Deployment) {
-	m.logger.Info("executing patch deployment",
-		zap.String("deployment_id", dep.ID),
-		zap.Time("scheduled", dep.ScheduledFor),
-	)
+	m.logger.Info("executing patch deployment", zap.String("deployment_id", dep.ID), zap.Time("scheduled", dep.ScheduledFor))
 
 	now := time.Now()
 	dep.StartedAt = &now
@@ -256,17 +238,14 @@ func (m *Manager) executeDeployment(ctx context.Context, dep *Deployment) {
 		"approval_mode": policy.ApprovalMode,
 		"max_retries":   policy.MaxRetries,
 	}
-
+	data, _ := json.Marshal(cmd)
 	for _, device := range devices {
 		subject := fmt.Sprintf("tenant.%s.cmd.%s", dep.TenantID, device)
-		data, _ := json.Marshal(cmd)
 		if err := m.nats.Publish(subject, data); err != nil {
 			m.logger.Error("send patch command", zap.String("device", device), zap.Error(err))
 		}
 	}
 }
-
-// API Methods
 
 func (m *Manager) CreatePolicy(ctx context.Context, policy *PatchPolicy) error {
 	if err := m.store.SavePolicy(ctx, policy); err != nil {
