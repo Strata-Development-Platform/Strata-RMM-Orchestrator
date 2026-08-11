@@ -67,6 +67,7 @@ func (m *StreamManager) requiredStreams() []*StreamConfig {
 		m.cfg.StreamConfigFor(StreamMetrics, []string{SubjectMetrics}),
 		m.cfg.StreamConfigFor(StreamEvents, []string{SubjectEvents}),
 		m.cfg.StreamConfigFor(StreamHeartbeats, []string{SubjectHeartbeat}),
+		m.cfg.StreamConfigFor(StreamCommands, []string{SubjectCommands}),
 		m.cfg.StreamConfigFor(StreamCmdResults, []string{SubjectCmdResult, SubjectCmdAck}),
 		m.cfg.StreamConfigFor(StreamProbes, []string{SubjectProbeSNMP, SubjectProbeFlow}),
 		m.cfg.StreamConfigFor(StreamDiscovery, []string{SubjectProbeDiscovery}),
