@@ -52,6 +52,12 @@ func verifyExistingMaterializedPayload(pkg VerifiedPackage, payload ValidatedPay
 		return MaterializedModule{}, ErrMaterializedVersionExists
 	}
 
+	existingRoot, err := os.OpenRoot(target)
+	if err != nil {
+		return MaterializedModule{}, fmt.Errorf("open existing materialized version root: %w", err)
+	}
+	defer func() { _ = existingRoot.Close() }()
+
 	expected := make(map[string]PayloadFile, len(payload.Files))
 	var expanded int64
 	for _, file := range payload.Files {
@@ -65,12 +71,13 @@ func verifyExistingMaterializedPayload(pkg VerifiedPackage, payload ValidatedPay
 		expected[clean] = file
 		expanded += int64(len(file.Data))
 	}
+
 	seen := 0
-	err = filepath.WalkDir(target, func(current string, entry fs.DirEntry, walkErr error) error {
+	err = fs.WalkDir(existingRoot.FS(), ".", func(name string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
-		if current == target {
+		if name == "." {
 			return nil
 		}
 		if entry.Type()&os.ModeSymlink != 0 {
@@ -79,26 +86,21 @@ func verifyExistingMaterializedPayload(pkg VerifiedPackage, payload ValidatedPay
 		if entry.IsDir() {
 			return nil
 		}
-		info, err := entry.Info()
+		info, err := existingRoot.Lstat(name)
 		if err != nil {
 			return err
 		}
-		if !info.Mode().IsRegular() {
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 			return ErrMaterializedVersionExists
 		}
-		relative, err := filepath.Rel(target, current)
-		if err != nil {
-			return err
-		}
-		name := filepath.ToSlash(relative)
-		file, ok := expected[name]
+		file, ok := expected[filepath.ToSlash(name)]
 		if !ok {
 			return ErrMaterializedVersionExists
 		}
 		if info.Mode().Perm() != payloadFileMode(file.Mode).Perm() || info.Size() != int64(len(file.Data)) {
 			return ErrMaterializedVersionExists
 		}
-		handle, err := os.Open(current)
+		handle, err := existingRoot.Open(name)
 		if err != nil {
 			return err
 		}
