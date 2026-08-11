@@ -49,7 +49,7 @@ func isModuleLifecycleRequest(method, path string) bool {
 		return false
 	}
 	switch parts[5] {
-	case "enable", "disable", "quarantine":
+	case "enable", "disable", "quarantine", "upgrade", "rollback":
 		return method == http.MethodPost
 	case "uninstall":
 		return method == http.MethodDelete
@@ -107,6 +107,10 @@ func (s *APIServer) serveModuleLifecycle(w http.ResponseWriter, r *http.Request)
 		s.handleModuleDisable(w, r, actor, id)
 	case r.Method == http.MethodPost && action == "quarantine":
 		s.handleModuleQuarantine(w, r, actor, id)
+	case r.Method == http.MethodPost && action == "upgrade":
+		s.handleModuleUpgrade(w, r, actor, id)
+	case r.Method == http.MethodPost && action == "rollback":
+		s.handleModuleRollback(w, r, actor, id)
 	case r.Method == http.MethodDelete && action == "uninstall":
 		s.handleModuleUninstall(w, r, actor, id)
 	default:
