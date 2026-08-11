@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http/httptest"
 	"path/filepath"
@@ -28,14 +29,14 @@ func TestPrepareSignedModulePackageRejectsRawManifestJSON(t *testing.T) {
 	}
 }
 
-func TestPrepareSignedModulePackageFailsClosedWithoutConfiguration(t *testing.T) {
+func TestPrepareSignedModulePackageFailsClosedWithoutRuntimeRoot(t *testing.T) {
 	r := httptest.NewRequest("POST", moduleLifecycleCollectionPath, bytes.NewBufferString("not-a-package"))
 	w := httptest.NewRecorder()
 	t.Setenv(moduleRuntimeRootEnv, "")
 	t.Setenv(modulePublisherTrustEnv, "")
 	_, err := prepareSignedModulePackage(w, r)
-	if !errorsIsAny(err, errModuleRuntimeRootRequired, errModulePublisherTrust) {
-		t.Fatalf("error=%v, want fail-closed configuration error", err)
+	if !errors.Is(err, errModuleRuntimeRootRequired) {
+		t.Fatalf("error=%v, want errModuleRuntimeRootRequired", err)
 	}
 }
 
@@ -56,7 +57,7 @@ func TestValidateSignedModuleEntrypointRequiresPayloadFile(t *testing.T) {
 		},
 	}
 	payload := modules.ValidatedPayload{Files: []modules.PayloadFile{{Path: "bin/other.wasm", Mode: 0o500, Data: []byte("wasm")}}}
-	if err := validateSignedModuleEntrypoint(manifest, payload); err != errModuleEntrypointMissing {
+	if err := validateSignedModuleEntrypoint(manifest, payload); !errors.Is(err, errModuleEntrypointMissing) {
 		t.Fatalf("error=%v, want errModuleEntrypointMissing", err)
 	}
 	payload.Files[0].Path = "bin/module.wasm"
@@ -68,16 +69,7 @@ func TestValidateSignedModuleEntrypointRequiresPayloadFile(t *testing.T) {
 func TestReadSignedModulePackageRejectsEmptyBody(t *testing.T) {
 	r := httptest.NewRequest("POST", moduleLifecycleCollectionPath, bytes.NewReader(nil))
 	w := httptest.NewRecorder()
-	if _, err := readSignedModulePackage(w, r); err != errModulePackageBodyRequired {
+	if _, err := readSignedModulePackage(w, r); !errors.Is(err, errModulePackageBodyRequired) {
 		t.Fatalf("error=%v, want errModulePackageBodyRequired", err)
 	}
-}
-
-func errorsIsAny(err error, targets ...error) bool {
-	for _, target := range targets {
-		if err != nil && target != nil && err.Error() == target.Error() {
-			return true
-		}
-	}
-	return false
 }
