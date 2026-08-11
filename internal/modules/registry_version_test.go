@@ -70,6 +70,7 @@ func TestRegistryVersionTransitionRejectsWrongIDSameVersionAndQuarantine(t *test
 	}
 
 	wrongID := manifest
+	wrongID.Routes = append([]Route(nil), manifest.Routes...)
 	wrongID.ID = "com.example.other"
 	wrongID.Routes[0].Path = "/api/modules/com.example.other/status"
 	if _, err := registry.Upgrade(manifest.ID, wrongID); !errors.Is(err, ErrVersionTransition) {
