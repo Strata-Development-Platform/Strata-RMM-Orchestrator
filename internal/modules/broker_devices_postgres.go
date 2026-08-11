@@ -51,7 +51,7 @@ func (r *PostgresBrokerDeviceResolver) ResolveBrokerDevice(ctx context.Context, 
 		LEFT JOIN client_organizations c ON c.id = d.client_id
 		LEFT JOIN sites s ON s.id = d.site_id
 		WHERE d.id = $1::uuid
-		  AND d.is_active = TRUE
+		  AND d.status <> 'disabled'
 	`, deviceID).Scan(
 		&device.ID,
 		&device.Hostname,
