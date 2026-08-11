@@ -37,7 +37,7 @@ func TestPostgresDeviceBrokerAuthoritativeScopeIsolation(t *testing.T) {
 		`CREATE TABLE msp_tenants (id UUID PRIMARY KEY)`,
 		`CREATE TABLE client_organizations (id UUID PRIMARY KEY, msp_id UUID NOT NULL)`,
 		`CREATE TABLE sites (id UUID PRIMARY KEY, client_id UUID NOT NULL)`,
-		`CREATE TABLE devices (id UUID PRIMARY KEY, hostname TEXT NOT NULL, status TEXT NOT NULL, msp_id UUID, client_id UUID, site_id UUID, is_active BOOLEAN NOT NULL DEFAULT TRUE)`,
+		`CREATE TABLE devices (id UUID PRIMARY KEY, hostname TEXT NOT NULL, status TEXT NOT NULL, msp_id UUID, client_id UUID, site_id UUID)`,
 	} {
 		if _, err := db.ExecContext(ctx, statement); err != nil {
 			t.Fatal(err)
@@ -45,19 +45,20 @@ func TestPostgresDeviceBrokerAuthoritativeScopeIsolation(t *testing.T) {
 	}
 
 	const (
-		mspA    = "00000000-0000-0000-0000-000000000101"
-		mspB    = "00000000-0000-0000-0000-000000000102"
-		clientA = "00000000-0000-0000-0000-000000000201"
-		clientB = "00000000-0000-0000-0000-000000000202"
-		siteA   = "00000000-0000-0000-0000-000000000301"
-		siteB   = "00000000-0000-0000-0000-000000000302"
-		deviceA = "00000000-0000-0000-0000-000000000401"
+		mspA     = "00000000-0000-0000-0000-000000000101"
+		mspB     = "00000000-0000-0000-0000-000000000102"
+		clientA  = "00000000-0000-0000-0000-000000000201"
+		clientB  = "00000000-0000-0000-0000-000000000202"
+		siteA    = "00000000-0000-0000-0000-000000000301"
+		siteB    = "00000000-0000-0000-0000-000000000302"
+		deviceA  = "00000000-0000-0000-0000-000000000401"
+		disabled = "00000000-0000-0000-0000-000000000402"
 	)
 	for _, statement := range []string{
 		fmt.Sprintf(`INSERT INTO msp_tenants(id) VALUES ('%s'),('%s')`, mspA, mspB),
 		fmt.Sprintf(`INSERT INTO client_organizations(id,msp_id) VALUES ('%s','%s'),('%s','%s')`, clientA, mspA, clientB, mspA),
 		fmt.Sprintf(`INSERT INTO sites(id,client_id) VALUES ('%s','%s'),('%s','%s')`, siteA, clientA, siteB, clientB),
-		fmt.Sprintf(`INSERT INTO devices(id,hostname,status,msp_id,client_id,site_id,is_active) VALUES ('%s','endpoint-a','online','%s','%s','%s',TRUE)`, deviceA, mspA, clientA, siteA),
+		fmt.Sprintf(`INSERT INTO devices(id,hostname,status,msp_id,client_id,site_id) VALUES ('%s','endpoint-a','online','%s','%s','%s'),('%s','endpoint-disabled','disabled','%s','%s','%s')`, deviceA, mspA, clientA, siteA, disabled, mspA, clientA, siteA),
 	} {
 		if _, err := db.ExecContext(ctx, statement); err != nil {
 			t.Fatal(err)
@@ -92,6 +93,9 @@ func TestPostgresDeviceBrokerAuthoritativeScopeIsolation(t *testing.T) {
 	}
 	if got.ID != deviceA || got.Hostname != "endpoint-a" || got.Status != "online" {
 		t.Fatalf("unexpected broker response: %+v", got)
+	}
+	if _, err := resolver.ResolveBrokerDevice(ctx, disabled); err == nil {
+		t.Fatal("disabled device unexpectedly resolved through broker")
 	}
 
 	for name, scope := range map[string]ResourceScope{
