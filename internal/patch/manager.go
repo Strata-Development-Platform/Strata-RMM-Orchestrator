@@ -35,10 +35,13 @@ type PatchStatus string
 const (
 	StatusPending   PatchStatus = "pending"
 	StatusApproved  PatchStatus = "approved"
+	StatusCanary    PatchStatus = "canary"
 	StatusDeploying PatchStatus = "deploying"
 	StatusInstalled PatchStatus = "installed"
+	StatusCompleted PatchStatus = "completed"
 	StatusFailed    PatchStatus = "failed"
 	StatusRebootReq PatchStatus = "reboot_required"
+	StatusCancelled PatchStatus = "cancelled"
 )
 
 type Patch struct {
@@ -182,6 +185,9 @@ func (m *Manager) handlePatchInventory(msg *nats.Msg) {
 }
 
 func (m *Manager) deploymentScheduler(ctx context.Context) {
+	// Reconcile once at startup so a restarted orchestrator does not wait for the
+	// first minute tick before resuming a durable canary/broad rollout.
+	m.processScheduledDeployments(ctx)
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 	for {
@@ -195,42 +201,153 @@ func (m *Manager) deploymentScheduler(ctx context.Context) {
 }
 
 func (m *Manager) processScheduledDeployments(ctx context.Context) {
-	deployments, err := m.store.GetPendingDeployments(ctx)
+	pending, err := m.store.GetPendingDeployments(ctx)
 	if err != nil {
 		m.logger.Error("get pending deployments", zap.Error(err))
 		return
 	}
-	for _, d := range deployments {
+	for _, d := range pending {
 		if time.Now().Before(d.ScheduledFor) {
 			continue
 		}
-		go m.executeDeployment(ctx, d)
+		m.executeDeployment(ctx, d)
+	}
+
+	canaries, err := m.store.GetCanaryDeployments(ctx)
+	if err != nil {
+		m.logger.Error("get canary deployments", zap.Error(err))
+		return
+	}
+	for _, d := range canaries {
+		m.advanceCanaryDeployment(ctx, d)
+	}
+
+	deploying, err := m.store.GetDeployingDeployments(ctx)
+	if err != nil {
+		m.logger.Error("get deploying deployments", zap.Error(err))
+		return
+	}
+	for _, d := range deploying {
+		m.advanceDeployingDeployment(ctx, d)
 	}
 }
 
+func (m *Manager) policyFor(id string) (*PatchPolicy, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	policy, ok := m.policies[id]
+	return policy, ok
+}
+
 func (m *Manager) executeDeployment(ctx context.Context, dep *Deployment) {
-	m.logger.Info("executing patch deployment", zap.String("deployment_id", dep.ID), zap.Time("scheduled", dep.ScheduledFor))
-
-	now := time.Now()
-	dep.StartedAt = &now
-	dep.Status = StatusDeploying
-	if err := m.store.UpdateDeployment(ctx, dep); err != nil {
-		m.logger.Error("update deployment", zap.Error(err))
-		return
-	}
-
-	devices, err := m.store.GetDeploymentDevices(ctx, dep.ID)
-	if err != nil {
-		m.logger.Error("get deployment devices", zap.Error(err))
-		return
-	}
-
-	policy, ok := m.policies[dep.PolicyID]
+	m.logger.Info("starting patch canary", zap.String("deployment_id", dep.ID), zap.Time("scheduled", dep.ScheduledFor))
+	policy, ok := m.policyFor(dep.PolicyID)
 	if !ok {
 		m.logger.Error("policy not found", zap.String("policy_id", dep.PolicyID))
 		return
 	}
+	if !maintenanceWindowAllows(time.Now(), policy.MaintenanceWin) {
+		m.logger.Debug("patch deployment outside maintenance window", zap.String("deployment_id", dep.ID))
+		return
+	}
+	if _, err := m.store.PrepareCanaryRollout(ctx, dep.ID, defaultCanaryPercent); err != nil {
+		m.logger.Error("prepare canary rollout", zap.String("deployment_id", dep.ID), zap.Error(err))
+		return
+	}
 
+	now := time.Now()
+	dep.StartedAt = &now
+	dep.Status = StatusCanary
+	if err := m.store.UpdateDeployment(ctx, dep); err != nil {
+		m.logger.Error("persist canary deployment phase", zap.Error(err))
+		return
+	}
+	m.dispatchRolloutGroup(ctx, dep, policy, rolloutGroupCanary)
+}
+
+func (m *Manager) advanceCanaryDeployment(ctx context.Context, dep *Deployment) {
+	policy, ok := m.policyFor(dep.PolicyID)
+	if !ok {
+		m.logger.Error("policy not found", zap.String("policy_id", dep.PolicyID))
+		return
+	}
+	if maintenanceWindowAllows(time.Now(), policy.MaintenanceWin) {
+		m.dispatchRolloutGroup(ctx, dep, policy, rolloutGroupCanary)
+	}
+	gate, err := m.store.GetCanaryGate(ctx, dep.ID, defaultCanaryPercent)
+	if err != nil {
+		m.logger.Error("evaluate canary gate", zap.String("deployment_id", dep.ID), zap.Error(err))
+		return
+	}
+	if !gate.Ready() {
+		return
+	}
+	dep.Installed = gate.Succeeded
+	dep.Failed = gate.Failed
+	dep.Pending = dep.DeviceCount - gate.Completed
+	if !gate.Passes(defaultCanarySuccessThreshold) {
+		now := time.Now()
+		dep.Status = StatusFailed
+		dep.CompletedAt = &now
+		if err := m.store.UpdateDeployment(ctx, dep); err != nil {
+			m.logger.Error("persist failed canary gate", zap.Error(err))
+		}
+		return
+	}
+	dep.Status = StatusDeploying
+	if err := m.store.UpdateDeployment(ctx, dep); err != nil {
+		m.logger.Error("persist broad rollout phase", zap.Error(err))
+		return
+	}
+	if maintenanceWindowAllows(time.Now(), policy.MaintenanceWin) {
+		m.dispatchRolloutGroup(ctx, dep, policy, rolloutGroupBroad)
+	}
+}
+
+func (m *Manager) advanceDeployingDeployment(ctx context.Context, dep *Deployment) {
+	policy, ok := m.policyFor(dep.PolicyID)
+	if !ok {
+		m.logger.Error("policy not found", zap.String("policy_id", dep.PolicyID))
+		return
+	}
+	if maintenanceWindowAllows(time.Now(), policy.MaintenanceWin) {
+		m.dispatchRolloutGroup(ctx, dep, policy, rolloutGroupBroad)
+	}
+	gate, err := m.store.GetDeploymentGate(ctx, dep.ID)
+	if err != nil {
+		m.logger.Error("evaluate deployment result gate", zap.String("deployment_id", dep.ID), zap.Error(err))
+		return
+	}
+	dep.Installed = gate.Succeeded
+	dep.Failed = gate.Failed
+	dep.Pending = gate.Total - gate.Completed
+	if !gate.Ready() {
+		if err := m.store.UpdateDeployment(ctx, dep); err != nil {
+			m.logger.Error("persist deployment aggregate progress", zap.Error(err))
+		}
+		return
+	}
+	now := time.Now()
+	dep.CompletedAt = &now
+	if gate.Failed > 0 {
+		dep.Status = StatusFailed
+	} else {
+		dep.Status = StatusCompleted
+	}
+	if err := m.store.UpdateDeployment(ctx, dep); err != nil {
+		m.logger.Error("persist deployment completion", zap.Error(err))
+	}
+}
+
+func (m *Manager) dispatchRolloutGroup(ctx context.Context, dep *Deployment, policy *PatchPolicy, rolloutGroup string) {
+	devices, err := m.store.GetUndispatchedRolloutDevices(ctx, dep.ID, rolloutGroup)
+	if err != nil {
+		m.logger.Error("get undispatched patch targets", zap.String("deployment_id", dep.ID), zap.String("group", rolloutGroup), zap.Error(err))
+		return
+	}
+	if len(devices) == 0 {
+		return
+	}
 	cmd := map[string]interface{}{
 		"type":          "patch_install",
 		"policy_id":     dep.PolicyID,
@@ -238,11 +355,25 @@ func (m *Manager) executeDeployment(ctx context.Context, dep *Deployment) {
 		"approval_mode": policy.ApprovalMode,
 		"max_retries":   policy.MaxRetries,
 	}
-	data, _ := json.Marshal(cmd)
+	data, err := json.Marshal(cmd)
+	if err != nil {
+		m.logger.Error("marshal patch command", zap.Error(err))
+		return
+	}
+	js, err := m.nats.JetStream()
+	if err != nil {
+		m.logger.Error("open patch command JetStream", zap.Error(err))
+		return
+	}
 	for _, device := range devices {
 		subject := fmt.Sprintf("tenant.%s.cmd.%s", dep.TenantID, device)
-		if err := m.nats.Publish(subject, data); err != nil {
+		messageID := fmt.Sprintf("patch:%s:%s", dep.ID, device)
+		if _, err := js.Publish(subject, data, nats.MsgId(messageID)); err != nil {
 			m.logger.Error("send patch command", zap.String("device", device), zap.Error(err))
+			continue
+		}
+		if err := m.store.MarkRolloutDeviceDispatched(ctx, dep.ID, device); err != nil {
+			m.logger.Error("persist patch dispatch marker", zap.String("device", device), zap.Error(err))
 		}
 	}
 }
