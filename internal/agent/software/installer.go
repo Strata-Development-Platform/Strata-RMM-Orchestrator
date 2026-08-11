@@ -103,7 +103,7 @@ func (inst *Installer) Start(ctx context.Context) error {
 		nats.Durable(durable),
 		nats.ManualAck(),
 		nats.AckExplicit(),
-		nats.DeliverAllAvailable(),
+		nats.DeliverAll(),
 		nats.BindStream(jsmsg.StreamCommands),
 	)
 	if err != nil {
