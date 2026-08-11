@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/nats-io/nats.go"
 	"go.uber.org/zap"
 )
+
+const maxSoftwareResultErrorBytes = 4096
 
 type SoftwareEngine struct {
 	nc     *nats.Conn
@@ -42,8 +45,9 @@ func (s *APIServer) handleCreatePackage(w http.ResponseWriter, r *http.Request) 
 	if req.Platform == "" {
 		req.Platform = "all"
 	}
-	if req.PackageType == "" {
-		req.PackageType = "other"
+	if !validSoftwarePackageType(req.PackageType) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported package_type"})
+		return
 	}
 
 	var pkgID string
@@ -63,6 +67,15 @@ func (s *APIServer) handleCreatePackage(w http.ResponseWriter, r *http.Request) 
 		"id": pkgID, "name": req.Name, "version": req.Version,
 		"package_type": req.PackageType, "created_at": createdAt,
 	})
+}
+
+func validSoftwarePackageType(value string) bool {
+	switch value {
+	case "msi", "exe", "deb", "rpm", "appimage", "script":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *APIServer) handleListPackages(w http.ResponseWriter, r *http.Request) {
@@ -98,7 +111,8 @@ func (s *APIServer) handleListPackages(w http.ResponseWriter, r *http.Request) {
 
 func (s *APIServer) handleDeletePackage(w http.ResponseWriter, r *http.Request) {
 	pkgID := r.PathValue("pkgID")
-	_, err := s.requestDB(r).ExecContext(r.Context(), `DELETE FROM software_packages WHERE id = $1`, pkgID)
+	tenantID := r.PathValue("tenantID")
+	_, err := s.requestDB(r).ExecContext(r.Context(), `DELETE FROM software_packages WHERE id = $1 AND tenant_id = $2`, pkgID, tenantID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -122,6 +136,10 @@ func (s *APIServer) handleCreateDeployment(w http.ResponseWriter, r *http.Reques
 	if req.Action == "" {
 		req.Action = "install"
 	}
+	if req.Action != "install" && req.Action != "uninstall" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported action"})
+		return
+	}
 	if req.ScheduleType == "" {
 		req.ScheduleType = "now"
 	}
@@ -136,10 +154,20 @@ func (s *APIServer) handleCreateDeployment(w http.ResponseWriter, r *http.Reques
 	}
 	err := s.requestDB(r).QueryRowContext(r.Context(), `
 		SELECT name, source_url, checksum, package_type, install_args, uninstall_args
-		FROM software_packages WHERE id = $1
-	`, req.PackageID).Scan(&pkg.Name, &pkg.SourceURL, &pkg.Checksum, &pkg.PkgType, &pkg.InstallArgs, &pkg.UninstallArgs)
+		FROM software_packages WHERE id = $1 AND tenant_id = $2
+	`, req.PackageID, tenantID).Scan(&pkg.Name, &pkg.SourceURL, &pkg.Checksum, &pkg.PkgType, &pkg.InstallArgs, &pkg.UninstallArgs)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "package not found"})
+		return
+	}
+	if !validSoftwarePackageType(pkg.PkgType) {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "package has unsupported type"})
+		return
+	}
+
+	js, err := s.nats.JetStream()
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "durable command broker unavailable"})
 		return
 	}
 
@@ -161,6 +189,14 @@ func (s *APIServer) handleCreateDeployment(w http.ResponseWriter, r *http.Reques
 
 	var targets []map[string]interface{}
 	for _, deviceID := range req.DeviceIDs {
+		var authorized bool
+		if err := s.requestDB(r).QueryRowContext(r.Context(), `
+			SELECT EXISTS (SELECT 1 FROM devices WHERE id = $1 AND tenant_id = $2 AND is_active = TRUE)
+		`, deviceID, tenantID).Scan(&authorized); err != nil || !authorized {
+			s.logger.Warn("reject software deployment target outside tenant", zap.String("device_id", deviceID), zap.String("tenant_id", tenantID))
+			continue
+		}
+
 		_, err := s.requestDB(r).ExecContext(r.Context(), `
 			INSERT INTO software_deployment_targets (deployment_id, device_id, status)
 			VALUES ($1, $2, 'pending')
@@ -182,19 +218,26 @@ func (s *APIServer) handleCreateDeployment(w http.ResponseWriter, r *http.Reques
 		})
 
 		subject := fmt.Sprintf("tenant.%s.cmd.%s", tenantID, deviceID)
-		if err := s.nats.Publish(subject, cmdPayload); err != nil {
-			s.logger.Warn("publish software command", zap.Error(err))
+		if _, err := js.Publish(subject, cmdPayload); err != nil {
+			s.logger.Warn("persist software command", zap.Error(err), zap.String("device_id", deviceID))
 			if _, updateErr := s.requestDB(r).ExecContext(r.Context(),
-				`UPDATE software_deployment_targets SET status = 'failed', error_message = 'NATS publish failed' WHERE deployment_id = $1 AND device_id = $2`,
+				`UPDATE software_deployment_targets SET status = 'failed', error_message = 'command persistence failed' WHERE deployment_id = $1 AND device_id = $2`,
 				deployID, deviceID); updateErr != nil {
 				s.logger.Error("mark software deployment failed", zap.Error(updateErr))
 			}
+			continue
 		}
 
 		targets = append(targets, map[string]interface{}{
 			"device_id": deviceID,
 			"status":    "pending",
 		})
+	}
+
+	if len(targets) == 0 {
+		_, _ = s.requestDB(r).ExecContext(r.Context(), `UPDATE software_deployments SET status = 'failed', completed_at = NOW() WHERE id = $1 AND tenant_id = $2`, deployID, tenantID)
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no valid deployment targets"})
+		return
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
@@ -307,7 +350,31 @@ func (s *APIServer) handleGetDeployment(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+func parseSoftwareResultSubject(subject string) (tenantID, deviceID string, ok bool) {
+	parts := strings.Split(subject, ".")
+	if len(parts) != 6 || parts[0] != "tenant" || parts[2] != "agent" || parts[4] != "software" || parts[5] != "result" {
+		return "", "", false
+	}
+	if parts[1] == "" || parts[3] == "" || strings.ContainsAny(parts[1], "*> ") || strings.ContainsAny(parts[3], "*> ") {
+		return "", "", false
+	}
+	return parts[1], parts[3], true
+}
+
+func boundedSoftwareResultError(value string) string {
+	if len(value) > maxSoftwareResultErrorBytes {
+		return value[:maxSoftwareResultErrorBytes]
+	}
+	return value
+}
+
 func (s *APIServer) handleSoftwareResultNATS(msg *nats.Msg) {
+	tenantID, deviceID, ok := parseSoftwareResultSubject(msg.Subject)
+	if !ok {
+		s.logger.Warn("reject malformed software result subject", zap.String("subject", msg.Subject))
+		return
+	}
+
 	var result struct {
 		Type         string `json:"type"`
 		DeploymentID string `json:"deployment_id"`
@@ -319,28 +386,55 @@ func (s *APIServer) handleSoftwareResultNATS(msg *nats.Msg) {
 	if err := json.Unmarshal(msg.Data, &result); err != nil {
 		return
 	}
-	if result.Type != "software_result" || result.DeploymentID == "" {
+	if result.Type != "software_result" || result.DeploymentID == "" || (result.Action != "install" && result.Action != "uninstall") {
+		return
+	}
+	if result.Status != "success" && result.Status != "failed" {
+		return
+	}
+	if result.DurationMs < 0 {
+		return
+	}
+	result.ErrorMessage = boundedSoftwareResultError(result.ErrorMessage)
+
+	now := time.Now()
+	res, err := s.db.DB().Exec(`
+		UPDATE software_deployment_targets AS t
+		SET status = $1, error_message = $2, duration_ms = $3, completed_at = $4
+		FROM software_deployments AS d, devices AS dv
+		WHERE t.deployment_id = $5
+		  AND t.device_id = $6
+		  AND d.id = t.deployment_id
+		  AND d.tenant_id = $7
+		  AND dv.id = t.device_id
+		  AND dv.tenant_id = d.tenant_id
+		  AND t.status IN ('pending', 'deploying')
+	`, result.Status, result.ErrorMessage, result.DurationMs, now, result.DeploymentID, deviceID, tenantID)
+	if err != nil {
+		s.logger.Error("update deployment target", zap.Error(err))
+		return
+	}
+	if rows, err := res.RowsAffected(); err == nil && rows == 0 {
+		s.logger.Warn("software result did not match an authorized pending target",
+			zap.String("tenant_id", tenantID), zap.String("device_id", deviceID), zap.String("deployment_id", result.DeploymentID))
 		return
 	}
 
-	now := time.Now()
-	var deviceID string
-	subject := msg.Subject
-	fmt.Sscanf(subject, "tenant.%s.agent.%s.software.result", &deviceID, &deviceID)
-
-	dbStatus := result.Status
-	if dbStatus == "success" {
-		dbStatus = "success"
-	} else {
-		dbStatus = "failed"
-	}
-
-	_, err := s.db.DB().Exec(`
-		UPDATE software_deployment_targets
-		SET status = $1, error_message = $2, duration_ms = $3, completed_at = $4
-		WHERE deployment_id = $5 AND status = 'pending'
-	`, dbStatus, result.ErrorMessage, result.DurationMs, now, result.DeploymentID)
+	_, err = s.db.DB().Exec(`
+		UPDATE software_deployments AS d
+		SET status = CASE
+			WHEN EXISTS (SELECT 1 FROM software_deployment_targets t WHERE t.deployment_id = d.id AND t.status = 'failed') THEN 'failed'
+			ELSE 'completed'
+		END,
+		completed_at = $2
+		WHERE d.id = $1
+		  AND d.tenant_id = $3
+		  AND NOT EXISTS (
+			SELECT 1 FROM software_deployment_targets t
+			WHERE t.deployment_id = d.id AND t.status IN ('pending', 'deploying')
+		  )
+	`, result.DeploymentID, now, tenantID)
 	if err != nil {
-		s.logger.Error("update deployment target", zap.Error(err))
+		s.logger.Error("update aggregate software deployment", zap.Error(err))
 	}
 }
