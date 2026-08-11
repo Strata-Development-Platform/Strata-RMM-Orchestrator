@@ -18,6 +18,8 @@ var (
 const (
 	defaultCanaryPercent          = 10
 	defaultCanarySuccessThreshold = 90
+	rolloutGroupCanary            = "canary"
+	rolloutGroupBroad             = "broad"
 )
 
 type CanaryGate struct {
@@ -92,6 +94,91 @@ func (s *Store) getTenantValidDeploymentDevices(ctx context.Context, deploymentI
 	return eligible, nil
 }
 
+// PrepareCanaryRollout atomically labels the deterministic canary set and
+// resets dispatch metadata before the first rollout publication.
+func (s *Store) PrepareCanaryRollout(ctx context.Context, deploymentID string, canaryPercent int) ([]string, error) {
+	canary, err := s.GetCanaryDeploymentDevices(ctx, deploymentID, canaryPercent)
+	if err != nil {
+		return nil, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE patch_deployment_devices
+		SET rollout_group = 'broad', dispatched_at = NULL, dispatch_attempts = 0
+		WHERE deployment_id = $1
+	`, deploymentID); err != nil {
+		return nil, fmt.Errorf("reset rollout targets: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE patch_deployment_devices
+		SET rollout_group = 'canary'
+		WHERE deployment_id = $1 AND device_id = ANY($2)
+	`, deploymentID, pq.Array(canary)); err != nil {
+		return nil, fmt.Errorf("mark canary rollout targets: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return canary, nil
+}
+
+func (s *Store) GetUndispatchedRolloutDevices(ctx context.Context, deploymentID, rolloutGroup string) ([]string, error) {
+	if rolloutGroup != rolloutGroupCanary && rolloutGroup != rolloutGroupBroad {
+		return nil, errors.New("invalid patch rollout group")
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT pdd.device_id
+		FROM patch_deployments pd
+		JOIN patch_deployment_devices pdd ON pdd.deployment_id = pd.id
+		JOIN devices d ON d.id = pdd.device_id AND d.tenant_id = pd.tenant_id
+		WHERE pd.id = $1
+		  AND pdd.rollout_group = $2
+		  AND pdd.dispatched_at IS NULL
+		ORDER BY pdd.device_id ASC
+	`, deploymentID, rolloutGroup)
+	if err != nil {
+		return nil, fmt.Errorf("query undispatched rollout devices: %w", err)
+	}
+	defer rows.Close()
+	var devices []string
+	for rows.Next() {
+		var deviceID string
+		if err := rows.Scan(&deviceID); err != nil {
+			return nil, err
+		}
+		devices = append(devices, deviceID)
+	}
+	return devices, rows.Err()
+}
+
+func (s *Store) MarkRolloutDeviceDispatched(ctx context.Context, deploymentID, deviceID string) error {
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE patch_deployment_devices pdd
+		SET dispatched_at = NOW(), dispatch_attempts = dispatch_attempts + 1
+		FROM patch_deployments pd, devices d
+		WHERE pdd.deployment_id = $1
+		  AND pdd.device_id = $2
+		  AND pd.id = pdd.deployment_id
+		  AND d.id = pdd.device_id
+		  AND d.tenant_id = pd.tenant_id
+	`, deploymentID, deviceID)
+	if err != nil {
+		return fmt.Errorf("mark rollout device dispatched: %w", err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count != 1 {
+		return ErrPatchResultScope
+	}
+	return nil
+}
+
 func (s *Store) GetRemainingDeploymentDevices(ctx context.Context, deploymentID string, canaryPercent int) ([]string, error) {
 	eligible, err := s.getTenantValidDeploymentDevices(ctx, deploymentID)
 	if err != nil {
@@ -109,13 +196,9 @@ func (s *Store) GetRemainingDeploymentDevices(ctx context.Context, deploymentID 
 	return remaining, nil
 }
 
-// GetCanaryGate derives canary progress solely from durable result rows for the
-// deterministic canary set. A canary device is complete when at least one
-// terminal patch result exists; any failed patch makes that device fail.
-func (s *Store) GetCanaryGate(ctx context.Context, deploymentID string, canaryPercent int) (CanaryGate, error) {
-	devices, err := s.GetCanaryDeploymentDevices(ctx, deploymentID, canaryPercent)
-	if err != nil {
-		return CanaryGate{}, err
+func (s *Store) getResultGate(ctx context.Context, deploymentID string, devices []string) (CanaryGate, error) {
+	if len(devices) == 0 {
+		return CanaryGate{}, nil
 	}
 	gate := CanaryGate{Total: len(devices)}
 	rows, err := s.db.QueryContext(ctx, `
@@ -133,14 +216,14 @@ func (s *Store) GetCanaryGate(ctx context.Context, deploymentID string, canaryPe
 		GROUP BY pdd.device_id
 	`, deploymentID, pq.Array(devices))
 	if err != nil {
-		return CanaryGate{}, fmt.Errorf("query canary result gate: %w", err)
+		return CanaryGate{}, fmt.Errorf("query patch result gate: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var deviceID string
 		var reported, failed, succeeded bool
 		if err := rows.Scan(&deviceID, &reported, &failed, &succeeded); err != nil {
-			return CanaryGate{}, fmt.Errorf("scan canary result gate: %w", err)
+			return CanaryGate{}, fmt.Errorf("scan patch result gate: %w", err)
 		}
 		if !reported {
 			continue
@@ -153,12 +236,31 @@ func (s *Store) GetCanaryGate(ctx context.Context, deploymentID string, canaryPe
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return CanaryGate{}, fmt.Errorf("iterate canary result gate: %w", err)
+		return CanaryGate{}, fmt.Errorf("iterate patch result gate: %w", err)
 	}
 	return gate, nil
 }
 
-func (s *Store) GetCanaryDeployments(ctx context.Context) ([]*Deployment, error) {
+// GetCanaryGate derives canary progress solely from durable result rows for the
+// deterministic canary set. A canary device is complete when at least one
+// terminal patch result exists; any failed patch makes that device fail.
+func (s *Store) GetCanaryGate(ctx context.Context, deploymentID string, canaryPercent int) (CanaryGate, error) {
+	devices, err := s.GetCanaryDeploymentDevices(ctx, deploymentID, canaryPercent)
+	if err != nil {
+		return CanaryGate{}, err
+	}
+	return s.getResultGate(ctx, deploymentID, devices)
+}
+
+func (s *Store) GetDeploymentGate(ctx context.Context, deploymentID string) (CanaryGate, error) {
+	devices, err := s.getTenantValidDeploymentDevices(ctx, deploymentID)
+	if err != nil {
+		return CanaryGate{}, err
+	}
+	return s.getResultGate(ctx, deploymentID, devices)
+}
+
+func (s *Store) getDeploymentsByStatus(ctx context.Context, status PatchStatus) ([]*Deployment, error) {
 	if s == nil || s.db == nil {
 		return nil, errors.New("patch store database is required")
 	}
@@ -166,11 +268,11 @@ func (s *Store) GetCanaryDeployments(ctx context.Context) ([]*Deployment, error)
 		SELECT id, policy_id, tenant_id, status, device_count, installed, failed, pending,
 		       scheduled_for, started_at, completed_at, created_at
 		FROM patch_deployments
-		WHERE status = 'canary'
+		WHERE status = $1
 		ORDER BY started_at ASC NULLS FIRST, scheduled_for ASC
-	`)
+	`, status)
 	if err != nil {
-		return nil, fmt.Errorf("query canary deployments: %w", err)
+		return nil, fmt.Errorf("query %s deployments: %w", status, err)
 	}
 	defer rows.Close()
 	var deployments []*Deployment
@@ -179,14 +281,22 @@ func (s *Store) GetCanaryDeployments(ctx context.Context) ([]*Deployment, error)
 		if err := rows.Scan(&d.ID, &d.PolicyID, &d.TenantID, &d.Status, &d.DeviceCount,
 			&d.Installed, &d.Failed, &d.Pending, &d.ScheduledFor,
 			&d.StartedAt, &d.CompletedAt, &d.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scan canary deployment: %w", err)
+			return nil, fmt.Errorf("scan %s deployment: %w", status, err)
 		}
 		deployments = append(deployments, &d)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate canary deployments: %w", err)
+		return nil, fmt.Errorf("iterate %s deployments: %w", status, err)
 	}
 	return deployments, nil
+}
+
+func (s *Store) GetCanaryDeployments(ctx context.Context) ([]*Deployment, error) {
+	return s.getDeploymentsByStatus(ctx, StatusCanary)
+}
+
+func (s *Store) GetDeployingDeployments(ctx context.Context) ([]*Deployment, error) {
+	return s.getDeploymentsByStatus(ctx, StatusDeploying)
 }
 
 // selectCanarySubset selects ceil(percent * n / 100), with at least one device
