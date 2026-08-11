@@ -28,6 +28,9 @@ func decodeWASIInvocationResponse(output []byte, maxBodyBytes int) (InvocationRe
 		// requiring every non-empty response to use the versioned response ABI.
 		return InvocationResult{StatusCode: 200}, nil
 	}
+	if err := rejectDuplicateWASIResponseFields(trimmed); err != nil {
+		return InvocationResult{}, err
+	}
 
 	decoder := json.NewDecoder(bytes.NewReader(trimmed))
 	decoder.DisallowUnknownFields()
@@ -52,4 +55,43 @@ func decodeWASIInvocationResponse(output []byte, maxBodyBytes int) (InvocationRe
 		StatusCode: response.StatusCode,
 		Body:       append([]byte(nil), response.Body...),
 	}, nil
+}
+
+func rejectDuplicateWASIResponseFields(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	start, err := decoder.Token()
+	if err != nil {
+		return fmt.Errorf("%w: decode response", ErrRuntimeResponseInvalid)
+	}
+	if delimiter, ok := start.(json.Delim); !ok || delimiter != '{' {
+		return fmt.Errorf("%w: response must be an object", ErrRuntimeResponseInvalid)
+	}
+
+	seen := make(map[string]struct{}, 3)
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return fmt.Errorf("%w: decode response field", ErrRuntimeResponseInvalid)
+		}
+		key, ok := token.(string)
+		if !ok {
+			return fmt.Errorf("%w: invalid response field", ErrRuntimeResponseInvalid)
+		}
+		if _, duplicate := seen[key]; duplicate {
+			return fmt.Errorf("%w: duplicate field %q", ErrRuntimeResponseInvalid, key)
+		}
+		seen[key] = struct{}{}
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return fmt.Errorf("%w: decode response field", ErrRuntimeResponseInvalid)
+		}
+	}
+	end, err := decoder.Token()
+	if err != nil {
+		return fmt.Errorf("%w: decode response", ErrRuntimeResponseInvalid)
+	}
+	if delimiter, ok := end.(json.Delim); !ok || delimiter != '}' {
+		return fmt.Errorf("%w: response must be an object", ErrRuntimeResponseInvalid)
+	}
+	return nil
 }
