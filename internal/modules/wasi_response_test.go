@@ -24,6 +24,7 @@ func TestDecodeWASIInvocationResponse(t *testing.T) {
 		{name: "structured success", output: valid, maxBody: 32, wantStatus: 207, wantBody: "hello"},
 		{name: "malformed json", output: `{`, maxBody: 32, wantErr: ErrRuntimeResponseInvalid},
 		{name: "unknown field", output: `{"schema_version":1,"status_code":200,"extra":true}`, maxBody: 32, wantErr: ErrRuntimeResponseInvalid},
+		{name: "duplicate field", output: `{"schema_version":1,"status_code":200,"status_code":500}`, maxBody: 32, wantErr: ErrRuntimeResponseInvalid},
 		{name: "trailing json", output: `{"schema_version":1,"status_code":200}{}`, maxBody: 32, wantErr: ErrRuntimeResponseInvalid},
 		{name: "wrong schema", output: `{"schema_version":2,"status_code":200}`, maxBody: 32, wantErr: ErrRuntimeResponseInvalid},
 		{name: "informational status denied", output: `{"schema_version":1,"status_code":199}`, maxBody: 32, wantErr: ErrRuntimeResponseInvalid},
