@@ -15,10 +15,10 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"go.etcd.io/bbolt"
 	"go.uber.org/zap"
 
 	jsmsg "github.com/strata-rmm/strata-rmm-orchestrator/internal/messaging/jetstream"
@@ -59,14 +59,21 @@ type Installer struct {
 	agentID    string
 	sub        *nats.Subscription
 	httpClient *http.Client
-
-	mu      sync.Mutex
-	results map[string]SoftwareResult
+	db         *bbolt.DB
+	ledger     *softwareReceiptLedger
 }
 
-func NewInstaller(nc *nats.Conn, logger *zap.Logger, tenantID, agentID string) *Installer {
+// NewInstaller accepts the agent's durable bbolt database as an optional final
+// argument so package-local execution tests can construct the installer without
+// storage. Start fails closed without durable storage; production always passes
+// the enrolled agent database.
+func NewInstaller(nc *nats.Conn, logger *zap.Logger, tenantID, agentID string, databases ...*bbolt.DB) *Installer {
 	if logger == nil {
 		logger = zap.NewNop()
+	}
+	var db *bbolt.DB
+	if len(databases) > 0 {
+		db = databases[0]
 	}
 	return &Installer{
 		nc:         nc,
@@ -74,7 +81,7 @@ func NewInstaller(nc *nats.Conn, logger *zap.Logger, tenantID, agentID string) *
 		tenantID:   tenantID,
 		agentID:    agentID,
 		httpClient: &http.Client{Timeout: 30 * time.Minute},
-		results:    make(map[string]SoftwareResult),
+		db:         db,
 	}
 }
 
@@ -88,6 +95,17 @@ func (inst *Installer) Start(ctx context.Context) error {
 	if inst.tenantID == "" || inst.agentID == "" {
 		return errors.New("software installer tenant and agent identity are required")
 	}
+	if inst.db == nil {
+		return errors.New("software installer durable database is required")
+	}
+	ledger, err := newSoftwareReceiptLedger(inst.db)
+	if err != nil {
+		return err
+	}
+	if err := ledger.resumeInterrupted(); err != nil {
+		return fmt.Errorf("resume interrupted software commands: %w", err)
+	}
+	inst.ledger = ledger
 
 	js, err := inst.nc.JetStream()
 	if err != nil {
@@ -128,9 +146,35 @@ func softwareDurableName(tenantID, agentID string) string {
 	return "software_" + hex.EncodeToString(sum[:12])
 }
 
-func (inst *Installer) handleCommand(parent context.Context, msg *nats.Msg) {
+func softwareCommandFingerprint(cmd SoftwareCommand) (string, error) {
+	data, err := json.Marshal(cmd)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+func decodeSoftwareCommand(data []byte) (SoftwareCommand, error) {
 	var cmd SoftwareCommand
-	if err := json.Unmarshal(msg.Data, &cmd); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&cmd); err != nil {
+		return SoftwareCommand{}, err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return SoftwareCommand{}, errors.New("software command contains multiple JSON values")
+		}
+		return SoftwareCommand{}, err
+	}
+	return cmd, nil
+}
+
+func (inst *Installer) handleCommand(parent context.Context, msg *nats.Msg) {
+	cmd, err := decodeSoftwareCommand(msg.Data)
+	if err != nil {
 		inst.logger.Warn("discard malformed software command", zap.Error(err))
 		_ = msg.Term()
 		return
@@ -140,19 +184,58 @@ func (inst *Installer) handleCommand(parent context.Context, msg *nats.Msg) {
 		_ = msg.Term()
 		return
 	}
+	if inst.ledger == nil {
+		inst.logger.Error("software receipt ledger unavailable")
+		_ = msg.Nak()
+		return
+	}
 
 	key := softwareCommandKey(cmd)
-	if cached, ok := inst.cachedResult(key); ok {
-		if err := inst.publishResult(cached); err != nil {
+	fingerprint, err := softwareCommandFingerprint(cmd)
+	if err != nil {
+		inst.logger.Error("fingerprint software command", zap.Error(err))
+		_ = msg.Term()
+		return
+	}
+	disposition, replay, err := inst.ledger.begin(key, fingerprint)
+	if err != nil {
+		if errors.Is(err, errSoftwareCommandConflict) {
+			inst.logger.Warn("reject conflicting software command", zap.String("deployment_id", cmd.DeploymentID), zap.String("action", cmd.Action))
+			_ = msg.Term()
+			return
+		}
+		inst.logger.Error("claim software command", zap.Error(err))
+		_ = msg.Nak()
+		return
+	}
+	switch disposition {
+	case softwareBeginReplay:
+		if err := inst.publishResult(replay); err != nil {
 			_ = msg.Nak()
 			return
 		}
 		_ = msg.Ack()
 		return
+	case softwareBeginInFlight:
+		_ = msg.Nak()
+		return
+	case softwareBeginExecute:
+		// continue below
+	default:
+		inst.logger.Error("invalid software receipt disposition")
+		_ = msg.Nak()
+		return
 	}
 
 	result := inst.executeWithContext(parent, cmd)
-	inst.cacheResult(key, result)
+	if err := inst.ledger.complete(key, fingerprint, result); err != nil {
+		inst.logger.Error("persist software result before acknowledgement", zap.Error(err), zap.String("deployment_id", cmd.DeploymentID))
+		if releaseErr := inst.ledger.release(key, fingerprint); releaseErr != nil {
+			inst.logger.Error("release software command after persistence failure", zap.Error(releaseErr))
+		}
+		_ = msg.Nak()
+		return
+	}
 	if err := inst.publishResult(result); err != nil {
 		inst.logger.Warn("publish software result; command will redeliver", zap.Error(err), zap.String("deployment_id", cmd.DeploymentID))
 		_ = msg.Nak()
@@ -187,19 +270,6 @@ func validateSoftwareCommand(cmd SoftwareCommand) error {
 
 func softwareCommandKey(cmd SoftwareCommand) string {
 	return cmd.DeploymentID + "\x00" + cmd.Action
-}
-
-func (inst *Installer) cachedResult(key string) (SoftwareResult, bool) {
-	inst.mu.Lock()
-	defer inst.mu.Unlock()
-	result, ok := inst.results[key]
-	return result, ok
-}
-
-func (inst *Installer) cacheResult(key string, result SoftwareResult) {
-	inst.mu.Lock()
-	defer inst.mu.Unlock()
-	inst.results[key] = result
 }
 
 func (inst *Installer) execute(cmd SoftwareCommand) {
