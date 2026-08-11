@@ -54,6 +54,24 @@ func TestNormalizePatchResultErrorIsBounded(t *testing.T) {
 	}
 }
 
+func TestMaxPatchAttemptsIncludesInitialAttemptAndBoundsInvalidPolicy(t *testing.T) {
+	tests := []struct {
+		maxRetries int
+		want       int
+	}{
+		{maxRetries: -10, want: 1},
+		{maxRetries: -1, want: 1},
+		{maxRetries: 0, want: 1},
+		{maxRetries: 1, want: 2},
+		{maxRetries: 3, want: 4},
+	}
+	for _, test := range tests {
+		if got := maxPatchAttempts(test.maxRetries); got != test.want {
+			t.Fatalf("maxPatchAttempts(%d) = %d, want %d", test.maxRetries, got, test.want)
+		}
+	}
+}
+
 func TestValidPatchResultStatusAllowsOnlyAgentTerminalResults(t *testing.T) {
 	for _, status := range []PatchStatus{StatusInstalled, StatusFailed, StatusRebootReq} {
 		if !validPatchResultStatus(status) {
