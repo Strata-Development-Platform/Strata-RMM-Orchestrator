@@ -130,7 +130,7 @@ func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 				}
 			}()
 
-			swInstaller := software.NewInstaller(natsClient.Conn(), logger, agent.Identity().TenantID, agent.Identity().AgentID)
+			swInstaller := software.NewInstaller(natsClient.Conn(), logger, agent.Identity().TenantID, agent.Identity().AgentID, agent.Store().DB())
 			if err := swInstaller.Start(ctx); err != nil {
 				logger.Warn("starting software installer", zap.Error(err))
 			}
