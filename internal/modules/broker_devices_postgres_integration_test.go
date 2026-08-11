@@ -45,13 +45,13 @@ func TestPostgresDeviceBrokerAuthoritativeScopeIsolation(t *testing.T) {
 	}
 
 	const (
-		mspA     = "00000000-0000-0000-0000-000000000101"
-		mspB     = "00000000-0000-0000-0000-000000000102"
-		clientA  = "00000000-0000-0000-0000-000000000201"
-		clientB  = "00000000-0000-0000-0000-000000000202"
-		siteA    = "00000000-0000-0000-0000-000000000301"
-		siteB    = "00000000-0000-0000-0000-000000000302"
-		deviceA  = "00000000-0000-0000-0000-000000000401"
+		mspA    = "00000000-0000-0000-0000-000000000101"
+		mspB    = "00000000-0000-0000-0000-000000000102"
+		clientA = "00000000-0000-0000-0000-000000000201"
+		clientB = "00000000-0000-0000-0000-000000000202"
+		siteA   = "00000000-0000-0000-0000-000000000301"
+		siteB   = "00000000-0000-0000-0000-000000000302"
+		deviceA = "00000000-0000-0000-0000-000000000401"
 	)
 	for _, statement := range []string{
 		fmt.Sprintf(`INSERT INTO msp_tenants(id) VALUES ('%s'),('%s')`, mspA, mspB),
@@ -65,15 +65,14 @@ func TestPostgresDeviceBrokerAuthoritativeScopeIsolation(t *testing.T) {
 	}
 
 	registry, module := enabledBrokerModule(t, []string{"devices.read"})
+	runtime, err := NewPostgresWASIRuntime(db, registry, PostgresWASIRuntimeOptions{Root: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.broker == nil {
+		t.Fatal("production WASI runtime has no capability broker")
+	}
 	resolver, err := NewPostgresBrokerDeviceResolver(db)
-	if err != nil {
-		t.Fatal(err)
-	}
-	operation, err := NewDeviceGetBrokerOperation(resolver)
-	if err != nil {
-		t.Fatal(err)
-	}
-	broker, err := NewCapabilityBroker(registry, []BrokerOperation{operation}, CapabilityBrokerOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +82,7 @@ func TestPostgresDeviceBrokerAuthoritativeScopeIsolation(t *testing.T) {
 	}
 
 	exactScope := ResourceScope{MSPID: mspA, ClientID: clientA, SiteID: siteA}
-	output, err := broker.Call(ctx, module, BrokerRequest{Operation: BrokerOperationDevicesGet, Scope: exactScope, Input: input})
+	output, err := runtime.broker.Call(ctx, module, BrokerRequest{Operation: BrokerOperationDevicesGet, Scope: exactScope, Input: input})
 	if err != nil {
 		t.Fatalf("authorized broker read: %v", err)
 	}
@@ -101,7 +100,7 @@ func TestPostgresDeviceBrokerAuthoritativeScopeIsolation(t *testing.T) {
 		"cross MSP":      {MSPID: mspB},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := broker.Call(ctx, module, BrokerRequest{Operation: BrokerOperationDevicesGet, Scope: scope, Input: input})
+			_, err := runtime.broker.Call(ctx, module, BrokerRequest{Operation: BrokerOperationDevicesGet, Scope: scope, Input: input})
 			if !errors.Is(err, ErrBrokerScopeInvalid) {
 				t.Fatalf("error=%v, want ErrBrokerScopeInvalid", err)
 			}
