@@ -131,7 +131,7 @@ func (r *WASIRuntime) Invoke(ctx context.Context, module InstalledModule, invoca
 	if err != nil {
 		return InvocationResult{}, err
 	}
-	return InvocationResult{StatusCode: 200, Body: output}, nil
+	return decodeWASIInvocationResponse(output, r.maxIOBytes)
 }
 
 func (r *WASIRuntime) execute(ctx context.Context, module InstalledModule, input []byte, scope ResourceScope, brokerAllowed bool) ([]byte, error) {
