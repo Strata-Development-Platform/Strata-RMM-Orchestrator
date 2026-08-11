@@ -36,7 +36,14 @@ func TestMaterializePayloadRetrySafeRejectsChangedExistingVersion(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(result.Path, "module.wasm"), []byte("changed"), 0o500); err != nil {
+	modulePath := filepath.Join(result.Path, "module.wasm")
+	if err := os.Chmod(modulePath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(modulePath, []byte("changed"), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(modulePath, 0o500); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := MaterializePayloadRetrySafe(pkg, payload, MaterializeOptions{Root: root}); !errors.Is(err, ErrMaterializedVersionExists) {
