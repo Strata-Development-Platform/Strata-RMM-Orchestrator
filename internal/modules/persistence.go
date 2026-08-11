@@ -200,9 +200,9 @@ func validateAuditTransition(previous sql.NullString, next State, action string)
 		if next != StateQuarantined {
 			return fmt.Errorf("invalid quarantine transition %s -> %s", previousState, next)
 		}
-	case "restore":
+	case "restore", "upgrade", "rollback":
 		if next != previousState {
-			return fmt.Errorf("restore action may not change state: %s -> %s", previousState, next)
+			return fmt.Errorf("%s action may not change state: %s -> %s", action, previousState, next)
 		}
 	default:
 		return fmt.Errorf("invalid module persistence action %q", action)
@@ -221,7 +221,7 @@ func validState(state State) bool {
 
 func validAuditAction(action string) bool {
 	switch action {
-	case "install", "enable", "disable", "quarantine", "restore", "uninstall":
+	case "install", "enable", "disable", "quarantine", "restore", "upgrade", "rollback", "uninstall":
 		return true
 	default:
 		return false
