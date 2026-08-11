@@ -2,6 +2,7 @@ package patch
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -83,15 +84,10 @@ func (s *Store) ApplyDevicePatchResult(ctx context.Context, tenantID, deviceID, 
 		  AND pdd.device_id = $3
 		  AND d.tenant_id = pd.tenant_id
 	`, deploymentID, tenantID, deviceID).Scan(&maxRetries)
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return err
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrPatchResultScope
 	}
 	if err != nil {
-		// QueryRow's no-row result means the transport-owned tenant/device is not
-		// a member of this deployment. Keep that distinction from DB failures.
-		if strings.Contains(strings.ToLower(err.Error()), "no rows") {
-			return ErrPatchResultScope
-		}
 		return fmt.Errorf("authorize patch result target: %w", err)
 	}
 
