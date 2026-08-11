@@ -15,10 +15,12 @@ import (
 // byte exactly matches the validated payload. This allows an installer to
 // recover after a crash between filesystem promotion and durable lifecycle
 // persistence without treating an unrelated existing directory as trusted.
+// Every accepted version also receives immutable signed release metadata before
+// the operation is considered complete.
 func MaterializePayloadRetrySafe(pkg VerifiedPackage, payload ValidatedPayload, options MaterializeOptions) (MaterializedModule, error) {
 	result, err := MaterializePayload(pkg, payload, options)
 	if err == nil {
-		return result, nil
+		return finalizeRetrySafeMaterialization(pkg, options, result)
 	}
 	if !errors.Is(err, ErrMaterializedVersionExists) {
 		return MaterializedModule{}, err
@@ -26,7 +28,18 @@ func MaterializePayloadRetrySafe(pkg VerifiedPackage, payload ValidatedPayload, 
 	if err := validateMaterializeIdentity(pkg, payload); err != nil {
 		return MaterializedModule{}, err
 	}
-	return verifyExistingMaterializedPayload(pkg, payload, options)
+	result, err = verifyExistingMaterializedPayload(pkg, payload, options)
+	if err != nil {
+		return MaterializedModule{}, err
+	}
+	return finalizeRetrySafeMaterialization(pkg, options, result)
+}
+
+func finalizeRetrySafeMaterialization(pkg VerifiedPackage, options MaterializeOptions, result MaterializedModule) (MaterializedModule, error) {
+	if _, err := PersistReleaseMetadata(options.Root, pkg); err != nil {
+		return MaterializedModule{}, fmt.Errorf("persist signed module release identity: %w", err)
+	}
+	return result, nil
 }
 
 func verifyExistingMaterializedPayload(pkg VerifiedPackage, payload ValidatedPayload, options MaterializeOptions) (MaterializedModule, error) {

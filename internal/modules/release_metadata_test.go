@@ -65,7 +65,10 @@ func TestReadReleaseMetadataRejectsSymlink(t *testing.T) {
 		{name: "module.wasm", typeflag: tar.TypeReg, mode: 0o500, data: []byte("trusted")},
 	})
 	root := filepath.Join(t.TempDir(), "modules")
-	if _, err := MaterializePayloadRetrySafe(pkg, payload, MaterializeOptions{Root: root}); err != nil {
+	// Plain materialization creates only the immutable payload. The test then
+	// supplies a hostile release-metadata pathname without the retry-safe layer
+	// pre-populating the legitimate metadata record first.
+	if _, err := MaterializePayload(pkg, payload, MaterializeOptions{Root: root}); err != nil {
 		t.Fatal(err)
 	}
 	releaseDir := filepath.Join(root, pkg.Manifest.ID, ".releases")
