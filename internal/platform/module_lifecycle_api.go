@@ -28,12 +28,18 @@ type moduleLifecycleReasonRequest struct {
 	Reason string `json:"reason"`
 }
 
-// isModuleLifecycleRequest recognizes only the operator lifecycle routes that
-// are explicitly implemented below. Unknown methods/actions remain unclassified
-// and therefore fail closed in the platform access-control layer.
+// isModuleLifecycleRequest recognizes only the operator lifecycle and
+// platform-global invocation routes explicitly implemented below. Unknown
+// methods/actions remain unclassified and therefore fail closed in the platform
+// access-control layer.
 func isModuleLifecycleRequest(method, path string) bool {
 	if method == http.MethodPost && path == moduleLifecycleCollectionPath {
 		return true
+	}
+	if method == http.MethodPost {
+		if _, _, ok := moduleDeviceInvocationTarget(path); ok {
+			return true
+		}
 	}
 	if !strings.HasPrefix(path, moduleLifecycleItemPrefix) {
 		return false
@@ -67,7 +73,7 @@ func moduleLifecycleID(path string) (string, string, bool) {
 
 // serveModuleLifecycle is reached only after withAccessControl has established
 // an authenticated user principal and platform-global authorization. It repeats
-// those checks as defense in depth before any mutation or audit write.
+// those checks as defense in depth before any mutation, invocation, or audit write.
 func (s *APIServer) serveModuleLifecycle(w http.ResponseWriter, r *http.Request) {
 	actor, ok := moduleLifecycleActor(r)
 	if !ok {
@@ -82,6 +88,12 @@ func (s *APIServer) serveModuleLifecycle(w http.ResponseWriter, r *http.Request)
 	if r.Method == http.MethodPost && r.URL.Path == moduleLifecycleCollectionPath {
 		s.handleModuleInstall(w, r, actor)
 		return
+	}
+	if r.Method == http.MethodPost {
+		if moduleID, deviceID, ok := moduleDeviceInvocationTarget(r.URL.Path); ok {
+			s.handleModuleDeviceInvocation(w, r, moduleID, deviceID)
+			return
+		}
 	}
 	id, action, ok := moduleLifecycleID(r.URL.Path)
 	if !ok {
