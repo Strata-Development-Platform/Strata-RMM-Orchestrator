@@ -78,7 +78,7 @@ func (s *Store) getTenantValidDeploymentDevices(ctx context.Context, deploymentI
 	if err != nil {
 		return nil, fmt.Errorf("query tenant-valid deployment devices: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var eligible []string
 	for rows.Next() {
@@ -105,7 +105,7 @@ func (s *Store) PrepareCanaryRollout(ctx context.Context, deploymentID string, c
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE patch_deployment_devices
 		SET rollout_group = 'broad', dispatched_at = NULL, dispatch_attempts = 0
@@ -143,7 +143,7 @@ func (s *Store) GetUndispatchedRolloutDevices(ctx context.Context, deploymentID,
 	if err != nil {
 		return nil, fmt.Errorf("query undispatched rollout devices: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var devices []string
 	for rows.Next() {
 		var deviceID string
@@ -218,7 +218,7 @@ func (s *Store) getResultGate(ctx context.Context, deploymentID string, devices 
 	if err != nil {
 		return CanaryGate{}, fmt.Errorf("query patch result gate: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var deviceID string
 		var reported, failed, succeeded bool
@@ -274,7 +274,7 @@ func (s *Store) getDeploymentsByStatus(ctx context.Context, status PatchStatus) 
 	if err != nil {
 		return nil, fmt.Errorf("query %s deployments: %w", status, err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var deployments []*Deployment
 	for rows.Next() {
 		var d Deployment
