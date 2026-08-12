@@ -70,7 +70,7 @@ func (s *Store) ApplyDevicePatchResult(ctx context.Context, tenantID, deviceID, 
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	var maxRetries int
 	err = tx.QueryRowContext(ctx, `
