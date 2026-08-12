@@ -12,7 +12,7 @@ import (
 )
 
 var (
-	ErrNoDeploymentPatches = errors.New("patch deployment has no selected patches")
+	ErrNoDeploymentPatches  = errors.New("patch deployment has no selected patches")
 	ErrPatchRetriesExhausted = errors.New("patch deployment retry budget exhausted")
 )
 
@@ -50,54 +50,19 @@ func (s *Store) GetDeploymentPatchIDs(ctx context.Context, deploymentID string) 
 	return patchIDs, nil
 }
 
-// ResetExpiredRolloutDevices releases only maintenance-window-expired generic
-// job mappings when policy attempts remain. The generic target's retry_count is
-// folded into the patch target's durable dispatch_attempts before requeueing,
-// keeping the total initial-attempt-plus-retries budget bounded across windows.
-func (s *Store) ResetExpiredRolloutDevices(ctx context.Context, deploymentID, rolloutGroup string, maxRetries int) error {
-	if rolloutGroup != rolloutGroupCanary && rolloutGroup != rolloutGroupBroad {
-		return errors.New("invalid patch rollout group")
-	}
-	attemptCap := maxPatchAttempts(maxRetries)
-	_, err := s.db.ExecContext(ctx, `
-		UPDATE patch_deployment_devices pdd
-		SET dispatch_attempts = LEAST(pdd.dispatch_attempts + jt.retry_count, $3),
-		    job_id = NULL,
-		    job_target_id = NULL,
-		    dispatched_at = NULL
-		FROM job_targets jt
-		WHERE pdd.deployment_id = $1
-		  AND pdd.rollout_group = $2
-		  AND pdd.job_target_id = jt.id
-		  AND jt.status = 'expired'
-		  AND pdd.dispatch_attempts + jt.retry_count < $3
-	`, deploymentID, rolloutGroup, attemptCap)
-	if err != nil {
-		return fmt.Errorf("reset expired patch rollout targets: %w", err)
-	}
-	return nil
-}
-
 // QueuePatchRolloutDevice creates one ordinary durable job target for one patch
 // deployment device. The platform dispatcher owns envelope construction,
 // outbox publication, retries, reconnect recovery, expiry, ACK handling, and
-// stale-attempt result rejection. Device scope is re-resolved from authoritative
-// storage at queue time; payloads never choose MSP/client/site/agent identity.
-func (s *Store) QueuePatchRolloutDevice(ctx context.Context, deploymentID, deviceID string, maxRetries int, expiresAt time.Time) error {
+// stale-attempt result rejection. The queue transaction re-resolves device and
+// policy state authoritatively. For a configured maintenance window, the job
+// expires at the active window boundary; an expired prior target may be replaced
+// in a later window only if the global policy attempt budget still has room.
+func (s *Store) QueuePatchRolloutDevice(ctx context.Context, deploymentID, deviceID string, requestedMaxRetries int) error {
 	if s == nil || s.db == nil {
 		return errors.New("patch store database is required")
 	}
 	if deploymentID == "" || deviceID == "" {
 		return errors.New("patch deployment and device are required")
-	}
-	if !expiresAt.After(time.Now()) {
-		return ErrOutsideMaintenanceWindow
-	}
-	if maxRetries < 0 {
-		maxRetries = 0
-	}
-	if maxRetries > 10 {
-		maxRetries = 10
 	}
 
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
@@ -106,21 +71,27 @@ func (s *Store) QueuePatchRolloutDevice(ctx context.Context, deploymentID, devic
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var policyID, mspID, clientID, siteID, agentID string
-	var existingJobID, existingTargetID sql.NullString
-	var consumedAttempts int
+	var policyID, mspID, clientID, siteID, agentID, maintenanceWindow string
+	var existingJobID, existingTargetID, existingTargetStatus sql.NullString
+	var consumedAttempts, existingRetryCount, durableMaxRetries int
 	err = tx.QueryRowContext(ctx, `
 		SELECT pd.policy_id::text,
 		       d.msp_id::text,
 		       d.client_id::text,
 		       COALESCE(d.site_id::text, ''),
 		       d.agent_id::text,
+		       COALESCE(pp.maintenance_window, ''),
+		       pp.max_retries,
 		       pdd.job_id::text,
 		       pdd.job_target_id::text,
+		       jt.status,
+		       COALESCE(jt.retry_count, 0),
 		       pdd.dispatch_attempts
 		FROM patch_deployments pd
+		JOIN patch_policies pp ON pp.id = pd.policy_id AND pp.tenant_id = pd.tenant_id
 		JOIN patch_deployment_devices pdd ON pdd.deployment_id = pd.id
 		JOIN devices d ON d.id = pdd.device_id
+		LEFT JOIN job_targets jt ON jt.id = pdd.job_target_id AND jt.job_id = pdd.job_id
 		WHERE pd.id = $1
 		  AND pdd.device_id = $2
 		  AND d.tenant_id = pd.tenant_id
@@ -129,23 +100,46 @@ func (s *Store) QueuePatchRolloutDevice(ctx context.Context, deploymentID, devic
 		  AND d.agent_id IS NOT NULL
 		  AND d.status <> 'disabled'
 		FOR UPDATE OF pdd
-	`, deploymentID, deviceID).Scan(&policyID, &mspID, &clientID, &siteID, &agentID, &existingJobID, &existingTargetID, &consumedAttempts)
+	`, deploymentID, deviceID).Scan(
+		&policyID, &mspID, &clientID, &siteID, &agentID, &maintenanceWindow,
+		&durableMaxRetries, &existingJobID, &existingTargetID, &existingTargetStatus,
+		&existingRetryCount, &consumedAttempts,
+	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrPatchResultScope
 	}
 	if err != nil {
 		return fmt.Errorf("resolve durable patch target: %w", err)
 	}
+	_ = requestedMaxRetries // The persisted policy is authoritative at dispatch time.
+	if durableMaxRetries < 0 {
+		durableMaxRetries = 0
+	}
+	if durableMaxRetries > 10 {
+		durableMaxRetries = 10
+	}
+	attemptCap := maxPatchAttempts(durableMaxRetries)
+
 	if existingJobID.Valid || existingTargetID.Valid {
-		if existingJobID.Valid && existingTargetID.Valid {
+		if !existingJobID.Valid || !existingTargetID.Valid {
+			return errors.New("patch rollout durable job mapping is incomplete")
+		}
+		if !existingTargetStatus.Valid || existingTargetStatus.String != "expired" {
 			return tx.Commit()
 		}
-		return errors.New("patch rollout durable job mapping is incomplete")
+		consumedAttempts += existingRetryCount
+		if consumedAttempts >= attemptCap {
+			return ErrPatchRetriesExhausted
+		}
 	}
-
-	attemptCap := maxPatchAttempts(maxRetries)
 	if consumedAttempts >= attemptCap {
 		return ErrPatchRetriesExhausted
+	}
+
+	now := time.Now().UTC()
+	expiresAt, err := maintenanceWindowDeadline(now, maintenanceWindow)
+	if err != nil {
+		return err
 	}
 	remainingRetries := attemptCap - consumedAttempts - 1
 	if remainingRetries < 0 {
@@ -193,7 +187,6 @@ func (s *Store) QueuePatchRolloutDevice(ctx context.Context, deploymentID, devic
 	jobID := uuid.NewString()
 	targetID := uuid.NewString()
 	correlationID := uuid.NewString()
-	now := time.Now().UTC()
 	cycle := consumedAttempts + 1
 	idempotencyKey := fmt.Sprintf("patch:%s:%s:%d", deploymentID, deviceID, cycle)
 
@@ -219,14 +212,15 @@ func (s *Store) QueuePatchRolloutDevice(ctx context.Context, deploymentID, devic
 		return fmt.Errorf("create durable patch job target: %w", err)
 	}
 
+	newConsumedAttempts := consumedAttempts + 1
 	result, err := tx.ExecContext(ctx, `
 		UPDATE patch_deployment_devices
 		SET job_id = $1,
 		    job_target_id = $2,
-		    dispatched_at = COALESCE(dispatched_at, NOW()),
-		    dispatch_attempts = dispatch_attempts + 1
+		    dispatched_at = NOW(),
+		    dispatch_attempts = $5
 		WHERE deployment_id = $3 AND device_id = $4
-	`, jobID, targetID, deploymentID, deviceID)
+	`, jobID, targetID, deploymentID, deviceID, newConsumedAttempts)
 	if err != nil {
 		return fmt.Errorf("map durable patch job target: %w", err)
 	}
@@ -275,9 +269,15 @@ func (s *Store) GetRolloutJobGate(ctx context.Context, deploymentID, rolloutGrou
 		case "succeeded":
 			gate.Completed++
 			gate.Succeeded++
-		case "failed", "cancelled", "expired":
+		case "failed", "cancelled":
 			gate.Completed++
 			gate.Failed++
+		case "expired":
+			// Expiry at a maintenance boundary is not terminal while the durable
+			// retry budget has capacity; QueuePatchRolloutDevice can replace it in
+			// the next permitted window. A fully exhausted expired target is
+			// classified by GetUndispatchedRolloutDevices/queue as exhausted and
+			// remains incomplete until scheduler reconciliation marks failure.
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -311,7 +311,7 @@ func (s *Store) GetDeploymentJobGate(ctx context.Context, deploymentID string) (
 		case "succeeded":
 			gate.Completed++
 			gate.Succeeded++
-		case "failed", "cancelled", "expired":
+		case "failed", "cancelled":
 			gate.Completed++
 			gate.Failed++
 		}
