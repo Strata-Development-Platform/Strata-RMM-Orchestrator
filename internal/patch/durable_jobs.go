@@ -11,7 +11,10 @@ import (
 	"github.com/google/uuid"
 )
 
-var ErrNoDeploymentPatches = errors.New("patch deployment has no selected patches")
+var (
+	ErrNoDeploymentPatches = errors.New("patch deployment has no selected patches")
+	ErrPatchRetriesExhausted = errors.New("patch deployment retry budget exhausted")
+)
 
 // GetDeploymentPatchIDs returns the explicit approved patch selection for a
 // deployment. Patch rollout never falls back to "install everything" because
@@ -47,17 +50,48 @@ func (s *Store) GetDeploymentPatchIDs(ctx context.Context, deploymentID string) 
 	return patchIDs, nil
 }
 
+// ResetExpiredRolloutDevices releases only maintenance-window-expired generic
+// job mappings when policy attempts remain. The generic target's retry_count is
+// folded into the patch target's durable dispatch_attempts before requeueing,
+// keeping the total initial-attempt-plus-retries budget bounded across windows.
+func (s *Store) ResetExpiredRolloutDevices(ctx context.Context, deploymentID, rolloutGroup string, maxRetries int) error {
+	if rolloutGroup != rolloutGroupCanary && rolloutGroup != rolloutGroupBroad {
+		return errors.New("invalid patch rollout group")
+	}
+	attemptCap := maxPatchAttempts(maxRetries)
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE patch_deployment_devices pdd
+		SET dispatch_attempts = LEAST(pdd.dispatch_attempts + jt.retry_count, $3),
+		    job_id = NULL,
+		    job_target_id = NULL,
+		    dispatched_at = NULL
+		FROM job_targets jt
+		WHERE pdd.deployment_id = $1
+		  AND pdd.rollout_group = $2
+		  AND pdd.job_target_id = jt.id
+		  AND jt.status = 'expired'
+		  AND pdd.dispatch_attempts + jt.retry_count < $3
+	`, deploymentID, rolloutGroup, attemptCap)
+	if err != nil {
+		return fmt.Errorf("reset expired patch rollout targets: %w", err)
+	}
+	return nil
+}
+
 // QueuePatchRolloutDevice creates one ordinary durable job target for one patch
 // deployment device. The platform dispatcher owns envelope construction,
 // outbox publication, retries, reconnect recovery, expiry, ACK handling, and
 // stale-attempt result rejection. Device scope is re-resolved from authoritative
 // storage at queue time; payloads never choose MSP/client/site/agent identity.
-func (s *Store) QueuePatchRolloutDevice(ctx context.Context, deploymentID, deviceID string, maxRetries int) error {
+func (s *Store) QueuePatchRolloutDevice(ctx context.Context, deploymentID, deviceID string, maxRetries int, expiresAt time.Time) error {
 	if s == nil || s.db == nil {
 		return errors.New("patch store database is required")
 	}
 	if deploymentID == "" || deviceID == "" {
 		return errors.New("patch deployment and device are required")
+	}
+	if !expiresAt.After(time.Now()) {
+		return ErrOutsideMaintenanceWindow
 	}
 	if maxRetries < 0 {
 		maxRetries = 0
@@ -74,6 +108,7 @@ func (s *Store) QueuePatchRolloutDevice(ctx context.Context, deploymentID, devic
 
 	var policyID, mspID, clientID, siteID, agentID string
 	var existingJobID, existingTargetID sql.NullString
+	var consumedAttempts int
 	err = tx.QueryRowContext(ctx, `
 		SELECT pd.policy_id::text,
 		       d.msp_id::text,
@@ -81,7 +116,8 @@ func (s *Store) QueuePatchRolloutDevice(ctx context.Context, deploymentID, devic
 		       COALESCE(d.site_id::text, ''),
 		       d.agent_id::text,
 		       pdd.job_id::text,
-		       pdd.job_target_id::text
+		       pdd.job_target_id::text,
+		       pdd.dispatch_attempts
 		FROM patch_deployments pd
 		JOIN patch_deployment_devices pdd ON pdd.deployment_id = pd.id
 		JOIN devices d ON d.id = pdd.device_id
@@ -93,7 +129,7 @@ func (s *Store) QueuePatchRolloutDevice(ctx context.Context, deploymentID, devic
 		  AND d.agent_id IS NOT NULL
 		  AND d.status <> 'disabled'
 		FOR UPDATE OF pdd
-	`, deploymentID, deviceID).Scan(&policyID, &mspID, &clientID, &siteID, &agentID, &existingJobID, &existingTargetID)
+	`, deploymentID, deviceID).Scan(&policyID, &mspID, &clientID, &siteID, &agentID, &existingJobID, &existingTargetID, &consumedAttempts)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrPatchResultScope
 	}
@@ -105,6 +141,15 @@ func (s *Store) QueuePatchRolloutDevice(ctx context.Context, deploymentID, devic
 			return tx.Commit()
 		}
 		return errors.New("patch rollout durable job mapping is incomplete")
+	}
+
+	attemptCap := maxPatchAttempts(maxRetries)
+	if consumedAttempts >= attemptCap {
+		return ErrPatchRetriesExhausted
+	}
+	remainingRetries := attemptCap - consumedAttempts - 1
+	if remainingRetries < 0 {
+		remainingRetries = 0
 	}
 
 	rows, err := tx.QueryContext(ctx, `
@@ -149,7 +194,8 @@ func (s *Store) QueuePatchRolloutDevice(ctx context.Context, deploymentID, devic
 	targetID := uuid.NewString()
 	correlationID := uuid.NewString()
 	now := time.Now().UTC()
-	expiresAt := now.Add(72 * time.Hour)
+	cycle := consumedAttempts + 1
+	idempotencyKey := fmt.Sprintf("patch:%s:%s:%d", deploymentID, deviceID, cycle)
 
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO jobs (
@@ -160,8 +206,8 @@ func (s *Store) QueuePatchRolloutDevice(ctx context.Context, deploymentID, devic
 		VALUES ($1, $2, $3, NULLIF($4, '')::uuid, 'patch-manager', 'patch_install',
 		        'queued', 0, $5, $6, $7, 1, $8, $9, $10, $11)
 	`, jobID, mspID, clientID, siteID, payload,
-		"patch:"+deploymentID+":"+deviceID, maxRetries, expiresAt,
-		correlationID, now, "patch:"+deploymentID+":"+deviceID)
+		idempotencyKey, remainingRetries, expiresAt.UTC(),
+		correlationID, now, idempotencyKey)
 	if err != nil {
 		return fmt.Errorf("create durable patch job: %w", err)
 	}
