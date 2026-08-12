@@ -12,28 +12,33 @@ import (
 )
 
 type createPatchDeploymentRequest struct {
-	PolicyID  string   `json:"policy_id"`
-	DeviceIDs []string `json:"device_ids"`
-	PatchIDs  []string `json:"patch_ids"`
-	ScheduleAt string  `json:"schedule_at,omitempty"`
+	PolicyID   string   `json:"policy_id"`
+	DeviceIDs  []string `json:"device_ids"`
+	PatchIDs   []string `json:"patch_ids"`
+	ScheduleAt string   `json:"schedule_at,omitempty"`
 }
 
 // handleCreatePatchDeployment creates a rollout only after resolving scope from
-// the authenticated MSP/client context and durable device ownership. The body
-// never supplies tenant/MSP/client/site/agent identity, and an explicit patch
+// the authenticated client context and durable device ownership. The body never
+// supplies tenant/MSP/client/site/agent identity, and an explicit patch
 // selection is mandatory.
 func (s *APIServer) handleCreatePatchDeployment(w http.ResponseWriter, r *http.Request) {
 	if s.patchMgr == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "patch manager unavailable"})
 		return
 	}
-	mspID := r.Header.Get("X-MSP-ID")
+	requestedMSPID := r.Header.Get("X-MSP-ID")
 	clientID := r.URL.Query().Get("client_id")
-	if mspID == "" || clientID == "" {
+	if requestedMSPID == "" || clientID == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "msp_id and client_id required"})
 		return
 	}
-	if !s.AuthorizeMSPAccess(w, r, mspID) || !s.AuthorizeClientManage(w, r, clientID) {
+	mspID, ok := s.authorizeClientManage(w, r, clientID)
+	if !ok {
+		return
+	}
+	if mspID != requestedMSPID {
+		writeAuthorizationDenied(w)
 		return
 	}
 
