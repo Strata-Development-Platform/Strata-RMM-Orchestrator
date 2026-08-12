@@ -125,43 +125,22 @@ func (m *Manager) Start(ctx context.Context) error {
 	m.mu.Unlock()
 	m.logger.Info("patch policies loaded", zap.Int("count", len(policies)))
 
-	sub, err := m.nats.Subscribe("tenant.*.agent.*.patch.result", m.handlePatchResult)
-	if err != nil {
-		return fmt.Errorf("subscribe patch results: %w", err)
-	}
-	defer sub.Unsubscribe()
-
+	// Patch install commands and terminal results use the platform's generic
+	// durable jobs/outbox protocol. This legacy inventory subject remains read-
+	// only until patch scan inventory is moved onto the same structured result
+	// contract.
 	invSub, err := m.nats.Subscribe("tenant.*.agent.*.patch.inventory", m.handlePatchInventory)
 	if err != nil {
 		return fmt.Errorf("subscribe patch inventory: %w", err)
 	}
-	defer invSub.Unsubscribe()
+	defer func() {
+		if err := invSub.Unsubscribe(); err != nil {
+			m.logger.Warn("unsubscribe patch inventory", zap.Error(err))
+		}
+	}()
 
 	go m.deploymentScheduler(ctx)
 	return nil
-}
-
-func (m *Manager) handlePatchResult(msg *nats.Msg) {
-	tenantID, deviceID, err := patchResultTransportIdentity(msg.Subject)
-	if err != nil {
-		m.logger.Warn("invalid patch result subject", zap.String("subject", msg.Subject), zap.Error(err))
-		return
-	}
-
-	var result struct {
-		DeploymentID string      `json:"deployment_id"`
-		PatchID      string      `json:"patch_id"`
-		Status       PatchStatus `json:"status"`
-		Error        string      `json:"error,omitempty"`
-	}
-	if err := json.Unmarshal(msg.Data, &result); err != nil {
-		m.logger.Warn("invalid patch result", zap.Error(err))
-		return
-	}
-
-	if err := m.store.ApplyDevicePatchResult(context.Background(), tenantID, deviceID, result.DeploymentID, result.PatchID, result.Status, result.Error); err != nil {
-		m.logger.Error("apply device patch result", zap.String("tenant_id", tenantID), zap.String("device_id", deviceID), zap.String("deployment_id", result.DeploymentID), zap.Error(err))
-	}
 }
 
 func (m *Manager) handlePatchInventory(msg *nats.Msg) {
@@ -250,6 +229,10 @@ func (m *Manager) executeDeployment(ctx context.Context, dep *Deployment) {
 		m.logger.Debug("patch deployment outside maintenance window", zap.String("deployment_id", dep.ID))
 		return
 	}
+	if _, err := m.store.GetDeploymentPatchIDs(ctx, dep.ID); err != nil {
+		m.logger.Error("patch deployment has no explicit approved patch selection", zap.String("deployment_id", dep.ID), zap.Error(err))
+		return
+	}
 	if _, err := m.store.PrepareCanaryRollout(ctx, dep.ID, defaultCanaryPercent); err != nil {
 		m.logger.Error("prepare canary rollout", zap.String("deployment_id", dep.ID), zap.Error(err))
 		return
@@ -274,9 +257,9 @@ func (m *Manager) advanceCanaryDeployment(ctx context.Context, dep *Deployment) 
 	if maintenanceWindowAllows(time.Now(), policy.MaintenanceWin) {
 		m.dispatchRolloutGroup(ctx, dep, policy, rolloutGroupCanary)
 	}
-	gate, err := m.store.GetCanaryGate(ctx, dep.ID, defaultCanaryPercent)
+	gate, err := m.store.GetRolloutJobGate(ctx, dep.ID, rolloutGroupCanary)
 	if err != nil {
-		m.logger.Error("evaluate canary gate", zap.String("deployment_id", dep.ID), zap.Error(err))
+		m.logger.Error("evaluate canary durable-job gate", zap.String("deployment_id", dep.ID), zap.Error(err))
 		return
 	}
 	if !gate.Ready() {
@@ -313,9 +296,9 @@ func (m *Manager) advanceDeployingDeployment(ctx context.Context, dep *Deploymen
 	if maintenanceWindowAllows(time.Now(), policy.MaintenanceWin) {
 		m.dispatchRolloutGroup(ctx, dep, policy, rolloutGroupBroad)
 	}
-	gate, err := m.store.GetDeploymentGate(ctx, dep.ID)
+	gate, err := m.store.GetDeploymentJobGate(ctx, dep.ID)
 	if err != nil {
-		m.logger.Error("evaluate deployment result gate", zap.String("deployment_id", dep.ID), zap.Error(err))
+		m.logger.Error("evaluate deployment durable-job gate", zap.String("deployment_id", dep.ID), zap.Error(err))
 		return
 	}
 	dep.Installed = gate.Succeeded
@@ -345,35 +328,9 @@ func (m *Manager) dispatchRolloutGroup(ctx context.Context, dep *Deployment, pol
 		m.logger.Error("get undispatched patch targets", zap.String("deployment_id", dep.ID), zap.String("group", rolloutGroup), zap.Error(err))
 		return
 	}
-	if len(devices) == 0 {
-		return
-	}
-	cmd := map[string]interface{}{
-		"type":          "patch_install",
-		"policy_id":     dep.PolicyID,
-		"deployment_id": dep.ID,
-		"approval_mode": policy.ApprovalMode,
-		"max_retries":   policy.MaxRetries,
-	}
-	data, err := json.Marshal(cmd)
-	if err != nil {
-		m.logger.Error("marshal patch command", zap.Error(err))
-		return
-	}
-	js, err := m.nats.JetStream()
-	if err != nil {
-		m.logger.Error("open patch command JetStream", zap.Error(err))
-		return
-	}
-	for _, device := range devices {
-		subject := fmt.Sprintf("tenant.%s.cmd.%s", dep.TenantID, device)
-		messageID := fmt.Sprintf("patch:%s:%s", dep.ID, device)
-		if _, err := js.Publish(subject, data, nats.MsgId(messageID)); err != nil {
-			m.logger.Error("send patch command", zap.String("device", device), zap.Error(err))
-			continue
-		}
-		if err := m.store.MarkRolloutDeviceDispatched(ctx, dep.ID, device); err != nil {
-			m.logger.Error("persist patch dispatch marker", zap.String("device", device), zap.Error(err))
+	for _, deviceID := range devices {
+		if err := m.store.QueuePatchRolloutDevice(ctx, dep.ID, deviceID, policy.MaxRetries); err != nil {
+			m.logger.Error("queue durable patch job", zap.String("deployment_id", dep.ID), zap.String("device_id", deviceID), zap.Error(err))
 		}
 	}
 }
@@ -402,8 +359,15 @@ func (m *Manager) DeletePolicy(ctx context.Context, policyID string) error {
 	return nil
 }
 
+// CreateDeployment remains for compatibility with older internal callers. New
+// production callers must use CreateDeploymentWithPatches so a deployment has
+// an explicit approved patch selection before it can leave pending state.
 func (m *Manager) CreateDeployment(ctx context.Context, dep *Deployment, deviceIDs []string) error {
 	return m.store.CreateDeployment(ctx, dep, deviceIDs)
+}
+
+func (m *Manager) CreateDeploymentWithPatches(ctx context.Context, dep *Deployment, deviceIDs, patchIDs []string) error {
+	return m.store.CreateDeploymentWithPatches(ctx, dep, deviceIDs, patchIDs)
 }
 
 func (m *Manager) ListDeployments(ctx context.Context, tenantID string) ([]*Deployment, error) {
