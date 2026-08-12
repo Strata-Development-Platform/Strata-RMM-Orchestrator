@@ -22,7 +22,7 @@ func openSoftwareLedgerTestDB(t *testing.T) (*bbolt.DB, string) {
 
 func TestSoftwareReceiptLedgerConcurrentDuplicateExecutesOnce(t *testing.T) {
 	db, _ := openSoftwareLedgerTestDB(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	ledger, err := newSoftwareReceiptLedger(db)
 	if err != nil {
 		t.Fatal(err)
@@ -82,7 +82,7 @@ func TestSoftwareReceiptLedgerTerminalResultSurvivesRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	ledger, err = newSoftwareReceiptLedger(db)
 	if err != nil {
 		t.Fatal(err)
@@ -104,7 +104,7 @@ func TestSoftwareReceiptLedgerTerminalResultSurvivesRestart(t *testing.T) {
 
 func TestSoftwareReceiptLedgerResumesOnlyInterruptedExecution(t *testing.T) {
 	db, _ := openSoftwareLedgerTestDB(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	ledger, err := newSoftwareReceiptLedger(db)
 	if err != nil {
 		t.Fatal(err)
@@ -136,7 +136,7 @@ func TestSoftwareReceiptLedgerResumesOnlyInterruptedExecution(t *testing.T) {
 
 func TestSoftwareReceiptLedgerRejectsPayloadSubstitution(t *testing.T) {
 	db, _ := openSoftwareLedgerTestDB(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	ledger, err := newSoftwareReceiptLedger(db)
 	if err != nil {
 		t.Fatal(err)
