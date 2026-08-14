@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,6 +17,23 @@ type createPatchDeploymentRequest struct {
 	DeviceIDs  []string `json:"device_ids"`
 	PatchIDs   []string `json:"patch_ids"`
 	ScheduleAt string   `json:"schedule_at,omitempty"`
+}
+
+func normalizePatchDeploymentIDs(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	normalized := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		normalized = append(normalized, value)
+	}
+	return normalized
 }
 
 // handleCreatePatchDeployment creates a rollout only after resolving scope from
@@ -45,7 +63,14 @@ func (s *APIServer) handleCreatePatchDeployment(w http.ResponseWriter, r *http.R
 	var req createPatchDeploymentRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&req); err != nil || req.PolicyID == "" || len(req.DeviceIDs) == 0 || len(req.PatchIDs) == 0 {
+	if err := decoder.Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid patch deployment request"})
+		return
+	}
+	req.PolicyID = strings.TrimSpace(req.PolicyID)
+	req.DeviceIDs = normalizePatchDeploymentIDs(req.DeviceIDs)
+	req.PatchIDs = normalizePatchDeploymentIDs(req.PatchIDs)
+	if req.PolicyID == "" || len(req.DeviceIDs) == 0 || len(req.PatchIDs) == 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "policy_id, device_ids, and patch_ids are required"})
 		return
 	}
