@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"go.etcd.io/bbolt"
 )
@@ -174,8 +175,11 @@ func (l *softwareReceiptLedger) release(key, fingerprint string) error {
 	})
 }
 
-// resumeInterrupted makes only commands that were running when the process
-// stopped eligible for redelivery. Completed results remain immutable/replayable.
+// resumeInterrupted fails closed for commands that were running when the
+// process stopped. The endpoint side effect may already have completed before
+// the terminal receipt was persisted, so automatic re-execution is unsafe.
+// Convert the ambiguous receipt into a durable terminal failure that can be
+// replayed to the control plane for operator reconciliation.
 func (l *softwareReceiptLedger) resumeInterrupted() error {
 	if l == nil || l.db == nil {
 		return errors.New("software receipt ledger is required")
@@ -190,7 +194,19 @@ func (l *softwareReceiptLedger) resumeInterrupted() error {
 			if receipt.State != softwareStateRunning {
 				return nil
 			}
-			receipt.State = softwareStateReceived
+			parts := strings.SplitN(receipt.Key, "\x00", 2)
+			if len(parts) != 2 || parts[0] == "" || (parts[1] != "install" && parts[1] != "uninstall") {
+				return fmt.Errorf("invalid interrupted software receipt key %q", receipt.Key)
+			}
+			receipt.State = softwareStateTerminal
+			receipt.Result = SoftwareResult{
+				Type:         "software_result",
+				DeploymentID: parts[0],
+				Action:       parts[1],
+				Status:       "failed",
+				ErrorMessage: "execution outcome unknown after agent restart; manual reconciliation required",
+			}
+			receipt.HasResult = true
 			encoded, err := json.Marshal(receipt)
 			if err != nil {
 				return err
