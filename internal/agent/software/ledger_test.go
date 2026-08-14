@@ -3,6 +3,7 @@ package software
 import (
 	"errors"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -102,7 +103,7 @@ func TestSoftwareReceiptLedgerTerminalResultSurvivesRestart(t *testing.T) {
 	}
 }
 
-func TestSoftwareReceiptLedgerResumesOnlyInterruptedExecution(t *testing.T) {
+func TestSoftwareReceiptLedgerFailsClosedOnInterruptedExecution(t *testing.T) {
 	db, _ := openSoftwareLedgerTestDB(t)
 	defer func() { _ = db.Close() }()
 	ledger, err := newSoftwareReceiptLedger(db)
@@ -124,11 +125,21 @@ func TestSoftwareReceiptLedgerResumesOnlyInterruptedExecution(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	disposition, _, err := ledger.begin("running\x00install", "fp-running")
-	if err != nil || disposition != softwareBeginExecute {
-		t.Fatalf("interrupted begin = %v, %v; want execute", disposition, err)
+	disposition, got, err := ledger.begin("running\x00install", "fp-running")
+	if err != nil {
+		t.Fatalf("interrupted begin error = %v", err)
 	}
-	disposition, got, err := ledger.begin("terminal\x00install", "fp-terminal")
+	if disposition != softwareBeginReplay {
+		t.Fatalf("interrupted disposition = %v, want replay", disposition)
+	}
+	if got.Status != "failed" || got.DeploymentID != "running" || got.Action != "install" {
+		t.Fatalf("interrupted replay = %+v", got)
+	}
+	if !strings.Contains(got.ErrorMessage, "outcome unknown") || !strings.Contains(got.ErrorMessage, "manual reconciliation") {
+		t.Fatalf("interrupted replay error = %q", got.ErrorMessage)
+	}
+
+	disposition, got, err = ledger.begin("terminal\x00install", "fp-terminal")
 	if err != nil || disposition != softwareBeginReplay || got != terminal {
 		t.Fatalf("terminal begin = %v, %+v, %v; want replay", disposition, got, err)
 	}
