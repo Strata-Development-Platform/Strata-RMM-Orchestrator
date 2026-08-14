@@ -91,7 +91,7 @@ describe('platform MSP tenants', () => {
     expect(create).not.toHaveBeenCalled();
     expect(screen.queryByLabelText(/password/i)).not.toBeInTheDocument();
 
-    await user.type(screen.getByLabelText('Owner email'), 'owner@example.test');
+    await user.type(screen.getByLabelText('Owner email'), 'owner@example.com');
     await user.click(screen.getByRole('button', { name: 'Create MSP' }));
 
     expect(await screen.findByRole('status')).toHaveTextContent('owner invitation delivered');
@@ -99,7 +99,7 @@ describe('platform MSP tenants', () => {
       name: 'New MSP',
       slug: 'new-msp',
       plan: 'free',
-      owner_email: 'owner@example.test',
+      owner_email: 'owner@example.com',
     });
   });
 
