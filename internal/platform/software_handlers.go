@@ -3,7 +3,6 @@ package platform
 import (
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -121,135 +120,7 @@ func (s *APIServer) handleDeletePackage(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *APIServer) handleCreateDeployment(w http.ResponseWriter, r *http.Request) {
-	tenantID := r.PathValue("tenantID")
-	var req struct {
-		PackageID    string   `json:"package_id"`
-		Name         string   `json:"name"`
-		DeviceIDs    []string `json:"device_ids"`
-		Action       string   `json:"action"`
-		ScheduleType string   `json:"schedule_type"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.PackageID == "" || len(req.DeviceIDs) == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "package_id and device_ids required"})
-		return
-	}
-	if req.Action == "" {
-		req.Action = "install"
-	}
-	if req.Action != "install" && req.Action != "uninstall" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported action"})
-		return
-	}
-	if req.ScheduleType == "" {
-		req.ScheduleType = "now"
-	}
-
-	var pkg struct {
-		Name          string `json:"name"`
-		SourceURL     string `json:"source_url"`
-		Checksum      string `json:"checksum"`
-		PkgType       string `json:"package_type"`
-		InstallArgs   string `json:"install_args"`
-		UninstallArgs string `json:"uninstall_args"`
-	}
-	err := s.requestDB(r).QueryRowContext(r.Context(), `
-		SELECT name, source_url, checksum, package_type, install_args, uninstall_args
-		FROM software_packages WHERE id = $1 AND tenant_id = $2
-	`, req.PackageID, tenantID).Scan(&pkg.Name, &pkg.SourceURL, &pkg.Checksum, &pkg.PkgType, &pkg.InstallArgs, &pkg.UninstallArgs)
-	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "package not found"})
-		return
-	}
-	if !validSoftwarePackageType(pkg.PkgType) {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "package has unsupported type"})
-		return
-	}
-
-	js, err := s.nats.JetStream()
-	if err != nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "durable command broker unavailable"})
-		return
-	}
-
-	deployName := req.Name
-	if deployName == "" {
-		deployName = fmt.Sprintf("Deploy %s", pkg.Name)
-	}
-
-	var deployID string
-	err = s.requestDB(r).QueryRowContext(r.Context(), `
-		INSERT INTO software_deployments (package_id, tenant_id, name, schedule_type, status)
-		VALUES ($1, $2, $3, $4, 'deploying')
-		RETURNING id
-	`, req.PackageID, tenantID, deployName, req.ScheduleType).Scan(&deployID)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-
-	var targets []map[string]interface{}
-	for _, deviceID := range req.DeviceIDs {
-		var agentID string
-		if err := s.requestDB(r).QueryRowContext(r.Context(), `
-			SELECT agent_id::text
-			FROM devices
-			WHERE id = $1 AND tenant_id = $2 AND is_active = TRUE AND agent_id IS NOT NULL
-		`, deviceID, tenantID).Scan(&agentID); err != nil || agentID == "" {
-			s.logger.Warn("reject software deployment target outside tenant or without agent identity", zap.String("device_id", deviceID), zap.String("tenant_id", tenantID))
-			continue
-		}
-
-		_, err := s.requestDB(r).ExecContext(r.Context(), `
-			INSERT INTO software_deployment_targets (deployment_id, device_id, status)
-			VALUES ($1, $2, 'pending')
-		`, deployID, deviceID)
-		if err != nil {
-			continue
-		}
-
-		cmdPayload, _ := json.Marshal(map[string]interface{}{
-			"type":           fmt.Sprintf("software_%s", req.Action),
-			"deployment_id":  deployID,
-			"action":         req.Action,
-			"source_url":     pkg.SourceURL,
-			"checksum":       pkg.Checksum,
-			"install_args":   pkg.InstallArgs,
-			"uninstall_args": pkg.UninstallArgs,
-			"package_type":   pkg.PkgType,
-			"timeout":        600,
-		})
-
-		subject := fmt.Sprintf("tenant.%s.cmd.%s", tenantID, agentID)
-		if _, err := js.Publish(subject, cmdPayload); err != nil {
-			s.logger.Warn("persist software command", zap.Error(err), zap.String("device_id", deviceID), zap.String("agent_id", agentID))
-			if _, updateErr := s.requestDB(r).ExecContext(r.Context(),
-				`UPDATE software_deployment_targets SET status = 'failed', error_message = 'command persistence failed' WHERE deployment_id = $1 AND device_id = $2`,
-				deployID, deviceID); updateErr != nil {
-				s.logger.Error("mark software deployment failed", zap.Error(updateErr))
-			}
-			continue
-		}
-
-		targets = append(targets, map[string]interface{}{
-			"device_id": deviceID,
-			"agent_id":  agentID,
-			"status":    "pending",
-		})
-	}
-
-	if len(targets) == 0 {
-		_, _ = s.requestDB(r).ExecContext(r.Context(), `UPDATE software_deployments SET status = 'failed', completed_at = NOW() WHERE id = $1 AND tenant_id = $2`, deployID, tenantID)
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no valid deployment targets"})
-		return
-	}
-
-	writeJSON(w, http.StatusCreated, map[string]interface{}{
-		"deployment_id": deployID,
-		"name":          deployName,
-		"package":       pkg.Name,
-		"action":        req.Action,
-		"targets":       len(targets),
-	})
+	s.handleCreateDurableSoftwareDeployment(w, r)
 }
 
 func (s *APIServer) handleListDeployments(w http.ResponseWriter, r *http.Request) {
