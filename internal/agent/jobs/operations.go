@@ -3,8 +3,10 @@ package jobs
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -64,7 +66,14 @@ func marshalOperationResult(result OperationResult) []byte {
 }
 
 func runOperationCommand(ctx context.Context, name string, args ...string) (string, error) {
-	commandCtx, cancel := context.WithTimeout(ctx, operationTimeout)
+	return runOperationCommandWithTimeout(ctx, operationTimeout, name, args...)
+}
+
+func runOperationCommandWithTimeout(ctx context.Context, timeout time.Duration, name string, args ...string) (string, error) {
+	if timeout <= 0 {
+		timeout = operationTimeout
+	}
+	commandCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	output, err := exec.CommandContext(commandCtx, name, args...).CombinedOutput()
 	if len(output) > maxCommandOutput {
@@ -305,28 +314,19 @@ func handlePatchInstall(ctx context.Context, cmd *CommandEnvelope) (string, int,
 	}
 
 	output, rebootReq, err := runPatchInstall(ctx, payload.PatchIDs)
+	result := OperationResult{
+		Action: "patch_install",
+		Output: truncate(output, 4096),
+		Data:   map[string]bool{"reboot_required": rebootReq},
+	}
 	if err != nil {
-		result := OperationResult{
-			Action:    "patch_install",
-			Succeeded: false,
-			Message:   err.Error(),
-			Output:    truncate(output, 4096),
-		}
-		if rebootReq {
-			result.Message += " (reboot required)"
-		}
+		result.Succeeded = false
+		result.Message = err.Error()
 		return "failed", 1, marshalOperationResult(result), nil
 	}
 
-	result := OperationResult{
-		Action:    "patch_install",
-		Succeeded: true,
-		Message:   fmt.Sprintf("installed %d patches", len(payload.PatchIDs)),
-		Output:    truncate(output, 4096),
-	}
-	if rebootReq {
-		result.Message += " - reboot required"
-	}
+	result.Succeeded = true
+	result.Message = fmt.Sprintf("installed %d patches", len(payload.PatchIDs))
 	return "succeeded", 0, marshalOperationResult(result), nil
 }
 
@@ -358,7 +358,7 @@ foreach ($Update in $SearchResult.Updates) {
 }
 $Updates | ConvertTo-Json -Compress`
 
-	return runOperationCommand(ctx, "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script)
+	return runOperationCommandWithTimeout(ctx, 5*time.Minute, "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script)
 }
 
 func runLinuxPatchScan(ctx context.Context) (string, error) {
@@ -384,7 +384,14 @@ func runLinuxPatchScan(ctx context.Context) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported package manager: %s", pm)
 	}
-	return runOperationCommand(ctx, cmdName, cmdArgs...)
+	output, err := runOperationCommandWithTimeout(ctx, 5*time.Minute, cmdName, cmdArgs...)
+	if err != nil && (pm == "dnf" || pm == "yum") {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 100 {
+			return output, nil
+		}
+	}
+	return output, err
 }
 
 func runPatchInstall(ctx context.Context, patchIDs []string) (string, bool, error) {
@@ -398,29 +405,65 @@ func runPatchInstall(ctx context.Context, patchIDs []string) (string, bool, erro
 	}
 }
 
+func windowsPatchPattern(patchIDs []string) (string, error) {
+	if len(patchIDs) == 0 {
+		return "", fmt.Errorf("no patch IDs provided")
+	}
+	patterns := make([]string, 0, len(patchIDs))
+	for _, raw := range patchIDs {
+		id := strings.TrimSpace(raw)
+		if id == "" || len(id) > 128 {
+			return "", fmt.Errorf("invalid Windows patch identifier")
+		}
+		for _, r := range id {
+			if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '.' || r == '_' || r == ':' || r == '-') {
+				return "", fmt.Errorf("invalid Windows patch identifier")
+			}
+		}
+		patterns = append(patterns, regexp.QuoteMeta(id))
+	}
+	return "^(?:" + strings.Join(patterns, "|") + ")$", nil
+}
+
 func runWindowsPatchInstall(ctx context.Context, patchIDs []string) (string, bool, error) {
-	kbFilter := strings.Join(patchIDs, ",")
+	kbPattern, err := windowsPatchPattern(patchIDs)
+	if err != nil {
+		return "", false, err
+	}
 	script := fmt.Sprintf(`$Session = New-Object -ComObject Microsoft.Update.Session
 $Searcher = $Session.CreateUpdateSearcher()
 $SearchResult = $Searcher.Search("IsInstalled=0 AND IsHidden=0")
 $Updates = @()
 foreach ($Update in $SearchResult.Updates) {
-    $kb = ($Update.KBArticleIDs | ForEach-Object { $_.ToString() }) -join ','
-    if ($kb -match '%s') {
+    $ids = @($Update.KBArticleIDs | ForEach-Object { $_.ToString() })
+    if ($ids | Where-Object { $_ -match '%s' }) {
         $Updates += $Update
     }
 }
+if ($Updates.Count -eq 0) { throw 'No requested Windows updates were found' }
 $Downloader = $Session.CreateUpdateDownloader()
 $Downloader.Updates = $Updates
-$Downloader.Download()
+$DownloadResult = $Downloader.Download()
 $Installer = New-Object -ComObject Microsoft.Update.Installer
 $Installer.Updates = $Updates
 $Result = $Installer.Install()
-$Result.ResultCode`, kbFilter)
+[PSCustomObject]@{ ResultCode = [int]$Result.ResultCode; RebootRequired = [bool]$Result.RebootRequired } | ConvertTo-Json -Compress`, kbPattern)
 
-	output, err := runOperationCommand(ctx, "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script)
-	rebootReq := strings.Contains(output, "2") || strings.Contains(output, "Reboot")
-	return output, rebootReq, err
+	output, runErr := runOperationCommandWithTimeout(ctx, 10*time.Minute, "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script)
+	if runErr != nil {
+		return output, false, runErr
+	}
+	var result struct {
+		ResultCode     int  `json:"ResultCode"`
+		RebootRequired bool `json:"RebootRequired"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(output)), &result); err != nil {
+		return output, false, fmt.Errorf("decode Windows Update result: %w", err)
+	}
+	if result.ResultCode != 2 {
+		return output, result.RebootRequired, fmt.Errorf("Windows Update installation returned result code %d", result.ResultCode)
+	}
+	return output, result.RebootRequired, nil
 }
 
 func runLinuxPatchInstall(ctx context.Context, patchIDs []string) (string, bool, error) {
@@ -434,12 +477,12 @@ func runLinuxPatchInstall(ctx context.Context, patchIDs []string) (string, bool,
 		args = append([]string{"--non-interactive", "update"}, patchIDs...)
 		cmdName = "zypper"
 	}
-	output, err := runOperationCommand(ctx, cmdName, args...)
+	output, err := runOperationCommandWithTimeout(ctx, 10*time.Minute, cmdName, args...)
 	return output, false, err
 }
 
 func detectPackageManager() string {
-	for _, pm := range []string{"apt", "dnf", "yum", "zypper", "pacman"} {
+	for _, pm := range []string{"apt", "dnf", "yum", "zypper"} {
 		_, err := exec.LookPath(pm)
 		if err == nil {
 			return pm
