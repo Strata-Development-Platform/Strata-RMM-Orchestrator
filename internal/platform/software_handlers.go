@@ -189,11 +189,13 @@ func (s *APIServer) handleCreateDeployment(w http.ResponseWriter, r *http.Reques
 
 	var targets []map[string]interface{}
 	for _, deviceID := range req.DeviceIDs {
-		var authorized bool
+		var agentID string
 		if err := s.requestDB(r).QueryRowContext(r.Context(), `
-			SELECT EXISTS (SELECT 1 FROM devices WHERE id = $1 AND tenant_id = $2 AND is_active = TRUE)
-		`, deviceID, tenantID).Scan(&authorized); err != nil || !authorized {
-			s.logger.Warn("reject software deployment target outside tenant", zap.String("device_id", deviceID), zap.String("tenant_id", tenantID))
+			SELECT agent_id::text
+			FROM devices
+			WHERE id = $1 AND tenant_id = $2 AND is_active = TRUE AND agent_id IS NOT NULL
+		`, deviceID, tenantID).Scan(&agentID); err != nil || agentID == "" {
+			s.logger.Warn("reject software deployment target outside tenant or without agent identity", zap.String("device_id", deviceID), zap.String("tenant_id", tenantID))
 			continue
 		}
 
@@ -217,9 +219,9 @@ func (s *APIServer) handleCreateDeployment(w http.ResponseWriter, r *http.Reques
 			"timeout":        600,
 		})
 
-		subject := fmt.Sprintf("tenant.%s.cmd.%s", tenantID, deviceID)
+		subject := fmt.Sprintf("tenant.%s.cmd.%s", tenantID, agentID)
 		if _, err := js.Publish(subject, cmdPayload); err != nil {
-			s.logger.Warn("persist software command", zap.Error(err), zap.String("device_id", deviceID))
+			s.logger.Warn("persist software command", zap.Error(err), zap.String("device_id", deviceID), zap.String("agent_id", agentID))
 			if _, updateErr := s.requestDB(r).ExecContext(r.Context(),
 				`UPDATE software_deployment_targets SET status = 'failed', error_message = 'command persistence failed' WHERE deployment_id = $1 AND device_id = $2`,
 				deployID, deviceID); updateErr != nil {
@@ -230,6 +232,7 @@ func (s *APIServer) handleCreateDeployment(w http.ResponseWriter, r *http.Reques
 
 		targets = append(targets, map[string]interface{}{
 			"device_id": deviceID,
+			"agent_id":  agentID,
 			"status":    "pending",
 		})
 	}
@@ -295,6 +298,7 @@ func (s *APIServer) handleListDeployments(w http.ResponseWriter, r *http.Request
 }
 
 func (s *APIServer) handleGetDeployment(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.PathValue("tenantID")
 	deployID := r.PathValue("deployID")
 	var deploy struct {
 		ID, Name, Status, SchedType string
@@ -303,8 +307,8 @@ func (s *APIServer) handleGetDeployment(w http.ResponseWriter, r *http.Request) 
 	}
 	err := s.requestDB(r).QueryRowContext(r.Context(), `
 		SELECT id, name, status, schedule_type, scheduled_for, completed_at, created_at
-		FROM software_deployments WHERE id = $1
-	`, deployID).Scan(&deploy.ID, &deploy.Name, &deploy.Status, &deploy.SchedType,
+		FROM software_deployments WHERE id = $1 AND tenant_id = $2
+	`, deployID, tenantID).Scan(&deploy.ID, &deploy.Name, &deploy.Status, &deploy.SchedType,
 		&deploy.ScheduledFor, &deploy.CompletedAt, &deploy.CreatedAt)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "deployment not found"})
@@ -314,9 +318,10 @@ func (s *APIServer) handleGetDeployment(w http.ResponseWriter, r *http.Request) 
 	rows, err := s.requestDB(r).QueryContext(r.Context(), `
 		SELECT t.device_id, d.hostname, t.status, t.error_message, t.duration_ms, t.started_at, t.completed_at
 		FROM software_deployment_targets t
-		JOIN devices d ON t.device_id = d.id
-		WHERE t.deployment_id = $1
-	`, deployID)
+		JOIN software_deployments sd ON sd.id = t.deployment_id
+		JOIN devices d ON t.device_id = d.id AND d.tenant_id = sd.tenant_id
+		WHERE t.deployment_id = $1 AND sd.tenant_id = $2
+	`, deployID, tenantID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -350,7 +355,7 @@ func (s *APIServer) handleGetDeployment(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-func parseSoftwareResultSubject(subject string) (tenantID, deviceID string, ok bool) {
+func parseSoftwareResultSubject(subject string) (tenantID, agentID string, ok bool) {
 	parts := strings.Split(subject, ".")
 	if len(parts) != 6 || parts[0] != "tenant" || parts[2] != "agent" || parts[4] != "software" || parts[5] != "result" {
 		return "", "", false
@@ -369,7 +374,7 @@ func boundedSoftwareResultError(value string) string {
 }
 
 func (s *APIServer) handleSoftwareResultNATS(msg *nats.Msg) {
-	tenantID, deviceID, ok := parseSoftwareResultSubject(msg.Subject)
+	tenantID, agentID, ok := parseSoftwareResultSubject(msg.Subject)
 	if !ok {
 		s.logger.Warn("reject malformed software result subject", zap.String("subject", msg.Subject))
 		return
@@ -397,30 +402,58 @@ func (s *APIServer) handleSoftwareResultNATS(msg *nats.Msg) {
 	}
 	result.ErrorMessage = boundedSoftwareResultError(result.ErrorMessage)
 
+	tx, err := s.db.DB().Begin()
+	if err != nil {
+		s.logger.Error("begin software result transaction", zap.Error(err))
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	now := time.Now()
-	res, err := s.db.DB().Exec(`
+	res, err := tx.Exec(`
 		UPDATE software_deployment_targets AS t
 		SET status = $1, error_message = $2, duration_ms = $3, completed_at = $4
 		FROM software_deployments AS d, devices AS dv
 		WHERE t.deployment_id = $5
-		  AND t.device_id = $6
 		  AND d.id = t.deployment_id
-		  AND d.tenant_id = $7
+		  AND d.tenant_id = $6
 		  AND dv.id = t.device_id
 		  AND dv.tenant_id = d.tenant_id
+		  AND dv.agent_id::text = $7
 		  AND t.status IN ('pending', 'deploying')
-	`, result.Status, result.ErrorMessage, result.DurationMs, now, result.DeploymentID, deviceID, tenantID)
+	`, result.Status, result.ErrorMessage, result.DurationMs, now, result.DeploymentID, tenantID, agentID)
 	if err != nil {
 		s.logger.Error("update deployment target", zap.Error(err))
 		return
 	}
-	if rows, err := res.RowsAffected(); err == nil && rows == 0 {
-		s.logger.Warn("software result did not match an authorized pending target",
-			zap.String("tenant_id", tenantID), zap.String("device_id", deviceID), zap.String("deployment_id", result.DeploymentID))
+	rows, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		s.logger.Error("inspect software deployment target update", zap.Error(rowsErr))
 		return
 	}
+	if rows == 0 {
+		var existingStatus string
+		err := tx.QueryRow(`
+			SELECT t.status
+			FROM software_deployment_targets t
+			JOIN software_deployments d ON d.id = t.deployment_id
+			JOIN devices dv ON dv.id = t.device_id AND dv.tenant_id = d.tenant_id
+			WHERE t.deployment_id = $1 AND d.tenant_id = $2 AND dv.agent_id::text = $3
+		`, result.DeploymentID, tenantID, agentID).Scan(&existingStatus)
+		if err != nil {
+			s.logger.Warn("software result did not match an authorized target",
+				zap.String("tenant_id", tenantID), zap.String("agent_id", agentID), zap.String("deployment_id", result.DeploymentID))
+			return
+		}
+		if existingStatus != result.Status {
+			s.logger.Warn("reject conflicting terminal software result",
+				zap.String("tenant_id", tenantID), zap.String("agent_id", agentID), zap.String("deployment_id", result.DeploymentID),
+				zap.String("existing_status", existingStatus), zap.String("result_status", result.Status))
+			return
+		}
+	}
 
-	_, err = s.db.DB().Exec(`
+	if _, err := tx.Exec(`
 		UPDATE software_deployments AS d
 		SET status = CASE
 			WHEN EXISTS (SELECT 1 FROM software_deployment_targets t WHERE t.deployment_id = d.id AND t.status = 'failed') THEN 'failed'
@@ -433,8 +466,11 @@ func (s *APIServer) handleSoftwareResultNATS(msg *nats.Msg) {
 			SELECT 1 FROM software_deployment_targets t
 			WHERE t.deployment_id = d.id AND t.status IN ('pending', 'deploying')
 		  )
-	`, result.DeploymentID, now, tenantID)
-	if err != nil {
+	`, result.DeploymentID, now, tenantID); err != nil {
 		s.logger.Error("update aggregate software deployment", zap.Error(err))
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		s.logger.Error("commit software deployment result", zap.Error(err))
 	}
 }
