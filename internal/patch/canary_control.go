@@ -330,11 +330,16 @@ func maintenanceWindowAllows(now time.Time, window string) bool {
 	if len(parts) != 2 {
 		return false
 	}
-	start, err := time.Parse("15:04", strings.TrimSpace(parts[0]))
+	startValue := strings.TrimSpace(parts[0])
+	endValue := strings.TrimSpace(parts[1])
+	if !validMaintenanceClock(startValue) || !validMaintenanceClock(endValue) {
+		return false
+	}
+	start, err := time.Parse("15:04", startValue)
 	if err != nil {
 		return false
 	}
-	end, err := time.Parse("15:04", strings.TrimSpace(parts[1]))
+	end, err := time.Parse("15:04", endValue)
 	if err != nil {
 		return false
 	}
@@ -348,6 +353,20 @@ func maintenanceWindowAllows(now time.Time, window string) bool {
 		return minute >= startMinute && minute < endMinute
 	}
 	return minute >= startMinute || minute < endMinute
+}
+
+func validMaintenanceClock(value string) bool {
+	if len(value) != 5 || value[2] != ':' {
+		return false
+	}
+	for _, idx := range []int{0, 1, 3, 4} {
+		if value[idx] < '0' || value[idx] > '9' {
+			return false
+		}
+	}
+	hour := int(value[0]-'0')*10 + int(value[1]-'0')
+	minute := int(value[3]-'0')*10 + int(value[4]-'0')
+	return hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59
 }
 
 // CanaryDeploymentDevices is the Manager-level production boundary for canary
