@@ -255,7 +255,7 @@ func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 	cmd.Flags().String("enrollment-token", "", "Agent enrollment token")
 	cmd.Flags().StringSlice("nats-url", []string{"nats://localhost:4222"}, "NATS server URL(s)")
 	cmd.Flags().Bool("install-service", false, "Install as system service")
-	cmd.Flags().Bool("uninstall-service", false, "Uninstall as system service")
+	cmd.Flags().Bool("uninstall-service", false, "Uninstall system service")
 
 	return cmd
 }
