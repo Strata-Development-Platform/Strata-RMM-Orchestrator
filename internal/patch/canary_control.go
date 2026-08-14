@@ -133,11 +133,20 @@ func (s *Store) GetUndispatchedRolloutDevices(ctx context.Context, deploymentID,
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT pdd.device_id
 		FROM patch_deployments pd
+		JOIN patch_policies pp ON pp.id = pd.policy_id AND pp.tenant_id = pd.tenant_id
 		JOIN patch_deployment_devices pdd ON pdd.deployment_id = pd.id
 		JOIN devices d ON d.id = pdd.device_id AND d.tenant_id = pd.tenant_id
+		LEFT JOIN job_targets jt ON jt.id = pdd.job_target_id AND jt.job_id = pdd.job_id
 		WHERE pd.id = $1
 		  AND pdd.rollout_group = $2
-		  AND pdd.dispatched_at IS NULL
+		  AND (
+			pdd.dispatched_at IS NULL
+			OR (
+				jt.status = 'expired'
+				AND pdd.dispatch_attempts + COALESCE(jt.retry_count, 0)
+				    < LEAST(GREATEST(pp.max_retries, 0), 10) + 1
+			)
+		  )
 		ORDER BY pdd.device_id ASC
 	`, deploymentID, rolloutGroup)
 	if err != nil {
