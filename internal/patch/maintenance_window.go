@@ -25,11 +25,16 @@ func maintenanceWindowDeadline(now time.Time, window string) (time.Time, error) 
 	if len(parts) != 2 {
 		return time.Time{}, ErrInvalidMaintenanceWindow
 	}
-	startClock, err := time.Parse("15:04", strings.TrimSpace(parts[0]))
+	startValue := strings.TrimSpace(parts[0])
+	endValue := strings.TrimSpace(parts[1])
+	if !validMaintenanceClock(startValue) || !validMaintenanceClock(endValue) {
+		return time.Time{}, ErrInvalidMaintenanceWindow
+	}
+	startClock, err := time.Parse("15:04", startValue)
 	if err != nil {
 		return time.Time{}, ErrInvalidMaintenanceWindow
 	}
-	endClock, err := time.Parse("15:04", strings.TrimSpace(parts[1]))
+	endClock, err := time.Parse("15:04", endValue)
 	if err != nil {
 		return time.Time{}, ErrInvalidMaintenanceWindow
 	}
