@@ -416,7 +416,7 @@ func windowsPatchPattern(patchIDs []string) (string, error) {
 			return "", fmt.Errorf("invalid Windows patch identifier")
 		}
 		for _, r := range id {
-			if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '.' || r == '_' || r == ':' || r == '-') {
+			if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '.' && r != '_' && r != ':' && r != '-' {
 				return "", fmt.Errorf("invalid Windows patch identifier")
 			}
 		}
@@ -461,7 +461,7 @@ $Result = $Installer.Install()
 		return output, false, fmt.Errorf("decode Windows Update result: %w", err)
 	}
 	if result.ResultCode != 2 {
-		return output, result.RebootRequired, fmt.Errorf("Windows Update installation returned result code %d", result.ResultCode)
+		return output, result.RebootRequired, fmt.Errorf("windows update installation returned result code %d", result.ResultCode)
 	}
 	return output, result.RebootRequired, nil
 }
