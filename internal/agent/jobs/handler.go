@@ -464,5 +464,6 @@ func (d *JobDispatcher) resultReplayLoop(ctx context.Context) {
 			if err := d.replayResults(ctx); err != nil && ctx.Err() == nil {
 				d.logger.Warn("periodic result replay", zap.Error(err))
 			}
+		}
 	}
 }
