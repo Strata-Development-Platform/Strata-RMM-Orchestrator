@@ -457,7 +457,10 @@ func (d *Dispatcher) subscribeResults(ctx context.Context) {
 		}
 	}()
 
-	<-ctx.Done()
+	select {
+	case <-ctx.Done():
+	case <-d.stopCh:
+	}
 }
 
 func (d *Dispatcher) resultProcessed(mspID, messageID string) bool {
