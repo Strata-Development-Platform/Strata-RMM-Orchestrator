@@ -17,6 +17,7 @@ import (
 	"go.uber.org/zap"
 
 	agentjobs "github.com/strata-rmm/strata-rmm-orchestrator/internal/agent/jobs"
+	jsmsg "github.com/strata-rmm/strata-rmm-orchestrator/internal/messaging/jetstream"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/postgres"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/timescale"
 )
@@ -54,6 +55,13 @@ func TestDurableJobRoundTripWithRealPostgresAndNATS(t *testing.T) {
 	}
 	defer nc.Close()
 	logger := zap.NewNop()
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatalf("JetStream is required for durable platform integration: %v", err)
+	}
+	if err := jsmsg.NewStreamManager(js, jsmsg.Default(), logger).EnsureStreams(context.Background()); err != nil {
+		t.Fatalf("provision durable platform streams: %v", err)
+	}
 
 	const (
 		mspID    = "10000000-0000-0000-0000-000000000001"
