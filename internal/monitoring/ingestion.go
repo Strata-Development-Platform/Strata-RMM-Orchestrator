@@ -26,6 +26,9 @@ func NewIngestService(nc *nats.Conn, tsdb *timescale.Client, logger *zap.Logger)
 	if err != nil {
 		return nil, fmt.Errorf("create jetstream context: %w", err)
 	}
+	if err := jetstream.NewStreamManager(js, jetstream.Default(), logger).EnsureStreams(context.Background()); err != nil {
+		return nil, fmt.Errorf("ensure required jetstream streams: %w", err)
+	}
 	return &IngestService{nc: nc, js: js, tsdb: tsdb, logger: logger, batch: NewBatchBuffer(5 * time.Second)}, nil
 }
 
