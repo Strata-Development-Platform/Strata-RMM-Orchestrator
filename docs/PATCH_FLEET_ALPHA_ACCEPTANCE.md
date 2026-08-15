@@ -6,67 +6,66 @@ This document tracks Issue #147. Completion requires production-boundary evidenc
 
 - Base branch: `master`
 - Starting SHA: `d0a84f7569c4bd6e128f40f4c4b08a5f10ca97d0` (PR #146)
-- Primary packages: `internal/patch`, `internal/agent/software`, durable jobs/NATS/agent command paths
-- Evidence statuses below intentionally distinguish repository proof from integration or representative-host proof. Implementation presence alone is not Alpha completion.
+- Primary packages: `internal/patch`, `internal/agent/software`, generic durable jobs/NATS/agent command paths
+- Evidence statuses distinguish repository proof, integration proof, and representative-host proof. Implementation presence alone is not Alpha completion.
 
 ## Patch lifecycle
 
 | ID | Proof | Status | Current evidence / remaining gate |
 |---|---|---|---|
-| PF-01 | Canary selection uses authoritative tenant-scoped device storage, not an empty/stub selector | Repository-proven | `Store.GetCanaryDeploymentDevices` resolves deployment targets by joining durable deployment/device ownership and fails closed without the store/DB. Canary selection tests cover deterministic bounded selection. |
-| PF-02 | Canary threshold success advances rollout; threshold failure halts rollout fail-closed | Implementation + unit proof; integration pending | `advanceCanaryDeployment` gates on durable job results and persists either failed or broad-rollout state; `CanaryGate` threshold tests cover pass/fail math. Still requires production DB/job-path integration evidence. |
-| PF-03 | Deployment state survives orchestrator/agent restart | Partial implementation; restart reconciliation pending | Orchestrator scheduler re-reads persisted pending/canary/deploying deployments at startup. Agent generic-job receipts persist, but a command left `running` across agent restart does not yet have an authoritative outcome-reconciliation path and can remain stranded. Process-restart integration evidence remains required. |
-| PF-04 | Duplicate/late device results converge idempotently and cannot overwrite newer terminal state | Implementation present; DB integration pending | Generic durable-job result ingestion binds job/target/agent/attempt/correlation identity and rejects invalid terminal transitions; patch result storage also prevents terminal regression. SQL-backed cross-attempt evidence is still required. |
-| PF-05 | Retry counters are bounded and durable | Implementation + unit proof; integration pending | Retry ceiling is derived as initial attempt plus bounded persisted policy retries. Retryable expired rollout targets now re-enter scheduler selection only while `dispatch_attempts + target retry_count` remains below that cap. Exhausted-expiry terminal reconciliation still needs closure and DB-backed restart evidence. |
-| PF-06 | `reboot_required` is persisted/surfaced without automatic reboot | Incomplete; representative-host and structured-result work pending | The control plane recognizes `reboot_required` as terminal success, but the endpoint Windows execution path still needs authoritative structured reboot-required detection rather than relying on human-readable output. Windows representative-host evidence remains required. |
-| PF-07 | Maintenance windows are enforced before dispatch and after offline-agent recovery | Implementation strengthened; recovery integration pending | Strict `HH:MM-HH:MM` parsing now fails malformed windows closed in both dispatch and durable-job expiry. Retryable expired targets can be selected in a later valid window. Exhausted-expiry terminal reconciliation and offline reconnect integration remain required. |
+| PF-01 | Canary selection uses authoritative tenant-scoped device storage | Repository-proven | `Store.GetCanaryDeploymentDevices` joins durable deployment/device ownership and deterministic canary tests cover bounded selection. |
+| PF-02 | Canary threshold success advances rollout; threshold failure halts fail-closed | Implementation + unit proof; integration pending | `advanceCanaryDeployment` gates on durable generic-job target results and persists failed or broad-rollout state. Production DB/job-path canary progression evidence is still required. |
+| PF-03 | Deployment state survives orchestrator/agent restart | Implementation strengthened; job-integration evidence pending exact head | Scheduler reconciles persisted patch deployments immediately at startup. Generic commands now use stable per-agent JetStream durables. A stale `running` receipt after agent restart fails closed as outcome-unknown instead of re-executing an ambiguous side effect. Reconnect/restart integration tests are retained under the `jobintegration` tag and must pass on the final SHA. |
+| PF-04 | Duplicate/late results converge idempotently and cannot overwrite newer state | Strong implementation evidence; SQL cross-attempt proof pending | Generic result ingestion binds target/agent/attempt/client/site/correlation identity and rejects invalid terminal transitions. Cross-attempt SQL integration evidence remains required. |
+| PF-05 | Retry counters are bounded, durable, and exhaustion converges terminally | Implementation strengthened; exact-head validation pending | Policy retry cap is persisted/bounded. Retryable maintenance expiry re-enters selection only while budget remains. An expired target whose persisted dispatch+retry budget is exhausted is classified as terminal patch failure so the rollout cannot hang indefinitely. |
+| PF-06 | `reboot_required` is persisted/surfaced without automatic reboot | Repository implementation complete; representative Windows proof pending | Windows Update reads the structured `RebootRequired` result and returns it as structured command data; ResultCode success is checked independently. No Alpha path automatically reboots. Representative-host observation remains required. |
+| PF-07 | Maintenance windows are enforced before dispatch and after offline recovery | Implementation strengthened; integration pending | Strict `HH:MM-HH:MM` parsing fails malformed windows closed in both dispatch and expiry. Retryable expired work can resume in a later valid window and exhausted work converges to patch failure. Offline/reconnect integration must pass on the final SHA. |
 
 ## Software deployment
 
 | ID | Proof | Status | Current evidence / remaining gate |
 |---|---|---|---|
-| SF-01 | Create -> target -> dispatch -> agent execution -> result -> aggregate state crosses production NATS/persistence path | Pending end-to-end | Production pieces exist, but a real JetStream + persistence integration harness has not yet proven the entire lifecycle. The patch deployment create route is also still unreachable until its POST route is registered. |
-| SF-02 | SHA-256 failure is terminal and cannot execute payload | Implementation present; execution proof pending | Download verification fails on checksum mismatch before installer execution. Add an execution-boundary test proving the payload is never run after mismatch. |
-| SF-03 | Download failure, timeout, cancellation, unsupported package, and uninstall failure are bounded/recorded | Implementation present; failure-matrix proof pending | Installer fails closed, bounds timeout/error text, validates package types, and records exit/timeout/cancellation outcomes. The full failure matrix still needs behavioral/integration evidence. |
-| SF-04 | Duplicate command delivery is safely idempotent/deduplicated | Repository-proven for concurrency and terminal replay; crash ambiguity now fails closed | Concurrent duplicate receipt tests prove one execution claim and terminal results replay after restart. A receipt found `running` after restart is now converted to a durable terminal `failed` outcome-unknown result instead of re-executing an ambiguous endpoint side effect. Live JetStream redelivery evidence is still required. |
-| SF-05 | Agent disconnect during work cannot produce premature success | Pending integration | Agent command ACK occurs only after durable local completion and result publication, but orchestrator software-result ingestion is still core NATS and target/aggregate persistence is not yet one crash-consistent durable boundary. Disconnect/restart integration remains required. |
+| SF-01 | Create -> target -> dispatch -> execution -> result -> aggregate crosses production persistence/NATS path | Partial production-boundary proof; software-specific E2E pending | Creation is transactionally bridged into generic jobs/outbox with authoritative device→agent identity. The generic Postgres+JetStream round trip is integration-tested, but a software-specific create-to-legacy-aggregate E2E case is still required. |
+| SF-02 | SHA-256 failure is terminal and cannot execute payload | Repository-proven | Production `executeWithContext` verifies SHA-256 during download before chmod/installer execution. `TestChecksumMismatchNeverExecutesDownloadedPayload` uses a runnable marker script and proves checksum mismatch leaves the marker absent. |
+| SF-03 | Download failure, timeout, cancellation, unsupported package, and uninstall failure are bounded/recorded | Implementation + unit proof; failure-matrix integration pending | Installer validates package types, bounds timeout/error text, propagates cancellation/timeout, and records terminal failure. Complete behavioral failure-matrix evidence remains open. |
+| SF-04 | Duplicate command delivery is safely idempotent/deduplicated | Repository proof + JetStream integration harness; exact-head pass pending | Terminal receipts persist locally, duplicates replay the persisted result without re-execution, and ambiguous interrupted execution fails closed. Offline/reconnect and duplicate-delivery jobintegration tests must pass on the final SHA. |
+| SF-05 | Disconnect/restart cannot produce premature or lost success | Implementation strengthened; integration pending | Generic command delivery is JetStream durable and ACKs only after a terminal local receipt exists. Generic results are durably consumed from `STRATA_CMD_RESULTS`, ACK only after `job_inbox.processed_at` is committed, and the agent retains/replays unacknowledged results. Disconnect-during-work proof remains required. |
 
 ## Fleet durability
 
 | ID | Proof | Status | Current evidence / remaining gate |
 |---|---|---|---|
-| FD-01 | Outstanding commands survive agent reconnect | Pending integration | Durable software command consumer identity is stable per tenant/agent and uses explicit ACK semantics, but reconnect behavior has not been exercised end-to-end. Generic job command transport/recovery must also be reconciled against restart behavior. |
-| FD-02 | Outstanding commands survive orchestrator/agent restart | Partial durable proof; process/NATS reconciliation pending | Software terminal results survive DB reopen, and ambiguous interrupted software execution now fails closed without duplicate execution. Generic durable-job receipts persist but lack production startup reconciliation for `running` receipts. Full process restart with JetStream/redelivery remains required. |
-| FD-03 | ACK/NAK/redelivery converges on one logical command outcome | Implementation present; JetStream proof pending | Software consumer ACKs only after durable completion + result publication, NAKs retryable failures/in-flight duplicates, and terminates malformed/conflicting commands. Orchestrator result consumption must become durable and crash-consistent before this can close. |
-| FD-04 | Stale result from an older attempt cannot overwrite newer terminal state | Strong implementation evidence; integration pending | Generic job result ingestion requires exact target, agent, attempt, tenant/client/site, and correlation identity and rejects invalid terminal transitions, preventing a stale result from mutating a replacement target. Cross-attempt SQL integration evidence remains required. |
-| FD-05 | Bounded reconnect-storm harness preserves trust boundaries and produces evidence | Pending | No bounded reconnect-storm harness evidence is retained yet. |
+| FD-01 | Outstanding commands survive agent reconnect | Integration harness added; exact-head pass pending | Stable tenant/agent JetStream durables retain commands while consumers are offline. `TestCommandPublishedWhileAgentOfflineExecutesAfterReconnect` and the bounded reconnect-storm harness exercise offline publication and reconnect. |
+| FD-02 | Outstanding work/results survive orchestrator/agent restart | Integration harness added; exact-head pass pending | Agent terminal receipts persist and replay until platform receipt; stale `running` receipts fail closed without repeat execution. Platform result consumption is JetStream durable and ACK-after-DB-commit. Final exact-head restart/redelivery evidence is required. |
+| FD-03 | ACK/NAK/redelivery converges on one logical outcome | Implementation + integration harness; exact-head pass pending | Generic command consumer uses manual explicit ACK/NAK/TERM, in-progress heartbeats, durable receipts, and terminal-result replay. Platform results are idempotently claimed in `job_inbox` and broker-ACKed only after durable processing. |
+| FD-04 | Stale older-attempt result cannot overwrite newer terminal state | Strong implementation evidence; integration pending | Result ingestion requires exact target, agent, attempt, tenant/client/site, and correlation identity and rejects invalid terminal transitions. Cross-attempt SQL integration evidence remains open. |
+| FD-05 | Bounded reconnect-storm harness preserves trust boundaries and produces evidence | Harness added; exact-head pass pending | `TestBoundedReconnectStormPreservesTenantAgentIsolation` cycles six endpoint identities across two tenants through four offline/reconnect rounds, queues work while offline, verifies per-identity execution, and proves duplicate suppression. |
 
 ## Representative-host evidence
 
-Environment-dependent acceptance must remain explicitly separate from repository-only proof.
+Environment-dependent acceptance remains separate from repository-only proof.
 
-- Windows: Windows Update scan/install on representative endpoint, Winget/Chocolatey where available, reboot-required observation.
-- Linux: native OS patch scan/install plus DEB/RPM or script deployment on representative endpoint.
-- No hosted/representative result may be marked complete without retained evidence tied to an exact candidate SHA.
+- **Windows pending:** Windows Update scan/install on a representative endpoint, structured reboot-required observation, and supported software install/uninstall evidence where available.
+- **Linux pending:** native OS patch scan/install plus a representative DEB/RPM or script software deployment.
+- No representative result may be marked complete without retained evidence tied to the final candidate SHA.
 
 ## Security invariants
 
 - Tenant/MSP/client/site/device scope comes from authoritative host state.
 - Agent payload cannot self-select broader scope.
+- Patch IDs are validated against the latest tenant/device missing-patch inventory before deployment creation.
+- Caller-derived patch identifiers are validated/escaped before Windows command construction.
 - No automatic reboot in Alpha unless an explicit approved policy/action authorizes it.
 - NATS isolation, RLS, approval gates, checksum verification, and maintenance windows may not be weakened for test convenience.
 
 ## Immediate blockers before merge
 
-1. Wire `POST /api/v1/patch-deployments` to `s.handleCreatePatchDeployment`; the current unregistered handler is the exact cause of the PR's golangci-lint failure and leaves deployment creation unreachable.
-2. Validate selected patch IDs against authoritative tenant-scoped inventory/catalog data and remove patch-ID interpolation from executable PowerShell source.
-3. Resolve software device IDs to authoritative agent IDs for NATS command/result routing; tenant-scope deployment detail reads.
-4. Make software result ingestion durable and crash-consistent, including aggregate reconciliation on duplicate terminal delivery.
-5. Complete generic patch restart reconciliation and exhausted-expiry terminal handling.
-6. Add/retain production-boundary integration evidence for canary progression, JetStream redelivery/reconnect, restart recovery, and the bounded FD-05 reconnect-storm harness.
-7. Retain Windows and Linux representative-host evidence on the final frozen candidate SHA.
-8. Freeze the final head and require every repository workflow to be terminal green on that exact SHA before changing the PR out of draft.
+1. Freeze the candidate SHA and require all required repository workflows, including the real Postgres+JetStream durable-job suite and reconnect-storm harness, to be terminal green on that exact head.
+2. Add software-specific end-to-end evidence from durable deployment creation through generic execution/result and legacy deployment aggregate convergence (SF-01).
+3. Retain SQL-backed canary progression and cross-attempt stale-result evidence for PF-02/PF-04/FD-04.
+4. Complete the software failure-matrix integration evidence for SF-03/SF-05.
+5. Retain representative Windows and Linux endpoint evidence on the final candidate SHA.
 
 ## Merge gate
 
-The implementation PR remains draft until the final head is frozen and focused race/integration tests plus the repository's required workflow matrix are terminal green on that exact SHA. Any head change invalidates prior evidence.
+PR #148 remains draft until the final head is frozen and focused race/integration tests plus every required repository workflow are terminal green on that exact SHA. Any head change invalidates prior evidence. Representative-host items remain environment gates and must not be self-certified by repository-only tests.
