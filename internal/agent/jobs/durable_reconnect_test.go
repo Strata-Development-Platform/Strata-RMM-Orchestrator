@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nats-io/nats.go"
 	"go.uber.org/zap"
 )
 
