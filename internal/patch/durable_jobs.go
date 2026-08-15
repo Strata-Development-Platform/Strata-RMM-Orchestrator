@@ -240,14 +240,24 @@ func (s *Store) QueuePatchRolloutDevice(ctx context.Context, deploymentID, devic
 // GetRolloutJobGate derives rollout completion from the generic durable job
 // target state. One target represents the aggregate patch installation command
 // for one device, so canary progression cannot occur after only one of several
-// selected patches reports.
+// selected patches reports. A maintenance-window expiry remains retryable while
+// policy budget remains; once the persisted budget is exhausted, the patch gate
+// classifies that expired target as a terminal failure without rewriting the
+// generic job target's truthful historical state.
 func (s *Store) GetRolloutJobGate(ctx context.Context, deploymentID, rolloutGroup string) (CanaryGate, error) {
 	if rolloutGroup != rolloutGroupCanary && rolloutGroup != rolloutGroupBroad {
 		return CanaryGate{}, errors.New("invalid patch rollout group")
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT COALESCE(jt.status, '')
+		SELECT COALESCE(jt.status, ''),
+		       COALESCE(
+		         jt.status = 'expired'
+		         AND pdd.dispatch_attempts + COALESCE(jt.retry_count, 0)
+		             >= LEAST(GREATEST(pp.max_retries, 0), 10) + 1,
+		         FALSE
+		       ) AS retry_exhausted
 		FROM patch_deployments pd
+		JOIN patch_policies pp ON pp.id = pd.policy_id AND pp.tenant_id = pd.tenant_id
 		JOIN patch_deployment_devices pdd ON pdd.deployment_id = pd.id
 		JOIN devices d ON d.id = pdd.device_id AND d.tenant_id = pd.tenant_id
 		LEFT JOIN job_targets jt ON jt.id = pdd.job_target_id AND jt.job_id = pdd.job_id
@@ -261,7 +271,8 @@ func (s *Store) GetRolloutJobGate(ctx context.Context, deploymentID, rolloutGrou
 	var gate CanaryGate
 	for rows.Next() {
 		var status string
-		if err := rows.Scan(&status); err != nil {
+		var retryExhausted bool
+		if err := rows.Scan(&status, &retryExhausted); err != nil {
 			return CanaryGate{}, fmt.Errorf("scan patch rollout job gate: %w", err)
 		}
 		gate.Total++
@@ -273,11 +284,10 @@ func (s *Store) GetRolloutJobGate(ctx context.Context, deploymentID, rolloutGrou
 			gate.Completed++
 			gate.Failed++
 		case "expired":
-			// Expiry at a maintenance boundary is not terminal while the durable
-			// retry budget has capacity; QueuePatchRolloutDevice can replace it in
-			// the next permitted window. A fully exhausted expired target is
-			// classified by GetUndispatchedRolloutDevices/queue as exhausted and
-			// remains incomplete until scheduler reconciliation marks failure.
+			if retryExhausted {
+				gate.Completed++
+				gate.Failed++
+			}
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -288,8 +298,15 @@ func (s *Store) GetRolloutJobGate(ctx context.Context, deploymentID, rolloutGrou
 
 func (s *Store) GetDeploymentJobGate(ctx context.Context, deploymentID string) (CanaryGate, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT COALESCE(jt.status, '')
+		SELECT COALESCE(jt.status, ''),
+		       COALESCE(
+		         jt.status = 'expired'
+		         AND pdd.dispatch_attempts + COALESCE(jt.retry_count, 0)
+		             >= LEAST(GREATEST(pp.max_retries, 0), 10) + 1,
+		         FALSE
+		       ) AS retry_exhausted
 		FROM patch_deployments pd
+		JOIN patch_policies pp ON pp.id = pd.policy_id AND pp.tenant_id = pd.tenant_id
 		JOIN patch_deployment_devices pdd ON pdd.deployment_id = pd.id
 		JOIN devices d ON d.id = pdd.device_id AND d.tenant_id = pd.tenant_id
 		LEFT JOIN job_targets jt ON jt.id = pdd.job_target_id AND jt.job_id = pdd.job_id
@@ -303,7 +320,8 @@ func (s *Store) GetDeploymentJobGate(ctx context.Context, deploymentID string) (
 	var gate CanaryGate
 	for rows.Next() {
 		var status string
-		if err := rows.Scan(&status); err != nil {
+		var retryExhausted bool
+		if err := rows.Scan(&status, &retryExhausted); err != nil {
 			return CanaryGate{}, fmt.Errorf("scan patch deployment job gate: %w", err)
 		}
 		gate.Total++
@@ -314,6 +332,11 @@ func (s *Store) GetDeploymentJobGate(ctx context.Context, deploymentID string) (
 		case "failed", "cancelled":
 			gate.Completed++
 			gate.Failed++
+		case "expired":
+			if retryExhausted {
+				gate.Completed++
+				gate.Failed++
+			}
 		}
 	}
 	if err := rows.Err(); err != nil {
