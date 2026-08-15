@@ -416,8 +416,7 @@ func (d *Dispatcher) subscribeResults(ctx context.Context) {
 
 		processed := false
 		d.withRecoveryReadLock(func() {
-			d.handleAgentResult(msg.Subject, msg.Data)
-			processed = d.resultProcessed(res.MSPID, res.MessageID)
+			processed = d.processAgentResultWithRetry(ctx, msg.Subject, msg.Data)
 		})
 		if processed {
 			_ = msg.Ack()
