@@ -443,6 +443,7 @@ func (inst *Installer) runShell(ctx context.Context, command string) int {
 
 func (inst *Installer) runProgram(ctx context.Context, program string, args ...string) int {
 	cmd := exec.CommandContext(ctx, program, args...)
+	configureSoftwareProcessTree(cmd)
 	cmd.Stdout = &bytes.Buffer{}
 	cmd.Stderr = &bytes.Buffer{}
 	if err := cmd.Run(); err != nil {
