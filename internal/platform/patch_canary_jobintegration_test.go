@@ -101,7 +101,7 @@ func TestPatchCanaryTerminalGateAdvancesOrStopsBroadRollout(t *testing.T) {
 		INSERT INTO patch_policies (
 			id, tenant_id, name, enabled, platforms, approval_mode, severity,
 			maintenance_window, device_filter, max_retries, created_at, updated_at
-		) VALUES ($1, $2, 'Canary Integration', TRUE, '["linux"]'::jsonb, 'automatic',
+		) VALUES ($1, $2, 'Canary Integration', TRUE, '["linux"]'::jsonb, 'auto',
 		          'critical', '', '{}'::jsonb, 2, $3, $3)
 	`, policyID, tenantID, now)
 
