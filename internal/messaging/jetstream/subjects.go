@@ -29,6 +29,10 @@ const (
 	StreamHeartbeats      = "STRATA_HEARTBEATS"
 	StreamCommands        = "STRATA_COMMANDS"
 	StreamCmdResults      = "STRATA_CMD_RESULTS"
+	// StreamAgentResults is the semantic name used by the durable job protocol.
+	// It intentionally aliases the existing command-result stream so installs
+	// have one canonical stream for tenant.*.agent.*.result and *.ack subjects.
+	StreamAgentResults    = StreamCmdResults
 	StreamEndpointResults = "STRATA_ENDPOINT_RESULTS"
 	StreamProbes          = "STRATA_PROBES"
 	StreamDiscovery       = "STRATA_DISCOVERY"
