@@ -191,17 +191,23 @@ func (s *APIServer) handleCreateDurableSoftwareDeployment(w http.ResponseWriter,
 			return
 		}
 
+		// Store the exact generic command envelope expected by the durable agent
+		// dispatcher. This row suppresses ensureQueuedOutbox for the same target,
+		// so it must be protocol-complete rather than a software-specific shape.
 		outboxPayload, err := json.Marshal(map[string]interface{}{
+			"schema_version": 1,
+			"event_id":       fmt.Sprintf("%s:%s:%d", jobID, targetID, 1),
 			"job_id":         jobID,
 			"target_id":      targetID,
+			"msp_id":         canonicalMSPID,
+			"client_id":      canonicalClientID,
 			"device_id":      target.DeviceID,
 			"agent_id":       target.AgentID,
-			"msp_id":         canonicalMSPID,
 			"correlation_id": correlationID,
 			"attempt":        1,
 			"issued_at":      scheduledFor.Format(time.RFC3339),
 			"expires_at":     expiresAt.Format(time.RFC3339),
-			"type":           jobType,
+			"command_type":   jobType,
 			"payload":        commandPayload,
 		})
 		if err != nil {
