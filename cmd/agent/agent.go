@@ -137,12 +137,7 @@ func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 					logger.Warn("stopping durable job dispatcher", zap.Error(err))
 				}
 			}()
-
-			if err := swInstaller.Start(ctx); err != nil {
-				logger.Warn("starting software installer", zap.Error(err))
-			}
-			defer swInstaller.Stop()
-			logger.Info("software installer started")
+			logger.Info("software install/uninstall handlers registered with durable job dispatcher")
 
 			remoteMgr := remotecontrol.NewManager(natsClient.Conn(), logger, agent.Identity().TenantID, agent.Identity().AgentID)
 			if err := remoteMgr.Start(ctx); err != nil {
