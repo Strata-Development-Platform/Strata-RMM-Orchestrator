@@ -44,6 +44,9 @@ func TestDurableSoftwareDeploymentLifecycleWithRealPostgresAndJetStream(t *testi
 	if err := postgres.NewSchemaManager(rawDB).Apply(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	if err := postgres.ApplyDurabilitySchema(context.Background(), rawDB); err != nil {
+		t.Fatalf("apply production durability schema: %v", err)
+	}
 	if err := rawDB.Close(); err != nil {
 		t.Fatal(err)
 	}
