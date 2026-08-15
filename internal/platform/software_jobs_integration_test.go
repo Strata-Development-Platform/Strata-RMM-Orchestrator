@@ -24,6 +24,7 @@ import (
 	agentjobs "github.com/strata-rmm/strata-rmm-orchestrator/internal/agent/jobs"
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/agent/software"
 	jsmsg "github.com/strata-rmm/strata-rmm-orchestrator/internal/messaging/jetstream"
+	"github.com/strata-rmm/strata-rmm-orchestrator/internal/testsupport"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/postgres"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/timescale"
 )
@@ -59,7 +60,12 @@ func TestDurableSoftwareDeploymentLifecycleWithRealPostgresAndJetStream(t *testi
 	}
 	defer db.Close()
 
-	nc, err := nats.Connect(os.Getenv("TEST_NATS_URL"))
+	jetStreamURL, cleanupJetStream, err := testsupport.EnsureJetStreamURL(context.Background(), os.Getenv("TEST_NATS_URL"))
+	if err != nil {
+		t.Fatalf("provision JetStream integration endpoint: %v", err)
+	}
+	defer cleanupJetStream()
+	nc, err := nats.Connect(jetStreamURL)
 	if err != nil {
 		t.Fatal(err)
 	}
