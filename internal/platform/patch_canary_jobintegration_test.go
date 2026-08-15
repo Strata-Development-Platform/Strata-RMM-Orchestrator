@@ -58,12 +58,16 @@ func TestPatchCanaryTerminalGateAdvancesOrStopsBroadRollout(t *testing.T) {
 		passBroadDevice   = "30000000-0000-0000-0000-000000000012"
 		passCanaryJob     = "30000000-0000-0000-0000-000000000013"
 		passCanaryTarget  = "30000000-0000-0000-0000-000000000014"
+		passCanaryAgent   = "30000000-0000-0000-0000-000000000111"
+		passBroadAgent    = "30000000-0000-0000-0000-000000000112"
 
 		failDeploymentID = "30000000-0000-0000-0000-000000000020"
 		failCanaryDevice  = "30000000-0000-0000-0000-000000000021"
 		failBroadDevice   = "30000000-0000-0000-0000-000000000022"
 		failCanaryJob     = "30000000-0000-0000-0000-000000000023"
 		failCanaryTarget  = "30000000-0000-0000-0000-000000000024"
+		failCanaryAgent   = "30000000-0000-0000-0000-000000000121"
+		failBroadAgent    = "30000000-0000-0000-0000-000000000122"
 	)
 
 	mustExec := func(query string, args ...interface{}) {
@@ -79,17 +83,17 @@ func TestPatchCanaryTerminalGateAdvancesOrStopsBroadRollout(t *testing.T) {
 	mustExec(`INSERT INTO sites (id, client_id, name, slug, is_active) VALUES ($1, $2, 'Patch Canary Site', 'patch-canary-site', TRUE)`, siteID, clientID)
 
 	for _, device := range []struct {
-		id, agent string
+		id, agent, hostname string
 	}{
-		{passCanaryDevice, "patch-pass-canary"},
-		{passBroadDevice, "patch-pass-broad"},
-		{failCanaryDevice, "patch-fail-canary"},
-		{failBroadDevice, "patch-fail-broad"},
+		{passCanaryDevice, passCanaryAgent, "patch-pass-canary"},
+		{passBroadDevice, passBroadAgent, "patch-pass-broad"},
+		{failCanaryDevice, failCanaryAgent, "patch-fail-canary"},
+		{failBroadDevice, failBroadAgent, "patch-fail-broad"},
 	} {
 		mustExec(`
 			INSERT INTO devices (id, msp_id, client_id, site_id, tenant_id, agent_id, hostname, status, is_active)
-			VALUES ($1, $2, $3, $4, $5, $6, $6, 'online', TRUE)
-		`, device.id, mspID, clientID, siteID, tenantID, device.agent)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, 'online', TRUE)
+		`, device.id, mspID, clientID, siteID, tenantID, device.agent, device.hostname)
 	}
 
 	now := time.Now().UTC()
@@ -101,7 +105,7 @@ func TestPatchCanaryTerminalGateAdvancesOrStopsBroadRollout(t *testing.T) {
 		          'critical', '', '{}'::jsonb, 2, $3, $3)
 	`, policyID, tenantID, now)
 
-	seedDeployment := func(deploymentID, canaryDevice, broadDevice, canaryJob, canaryTarget, terminalStatus string) {
+	seedDeployment := func(deploymentID, canaryDevice, canaryAgent, broadDevice, canaryJob, canaryTarget, terminalStatus string) {
 		t.Helper()
 		mustExec(`
 			INSERT INTO patch_deployments (
@@ -123,15 +127,7 @@ func TestPatchCanaryTerminalGateAdvancesOrStopsBroadRollout(t *testing.T) {
 				id, job_id, device_id, agent_id, msp_id, status, attempt,
 				started_at, completed_at
 			) VALUES ($1, $2, $3, $4, $5, $6, 1, NOW(), NOW())
-		`, canaryTarget, canaryJob, canaryDevice, "agent-"+canaryDevice[len(canaryDevice)-3:], mspID, terminalStatus)
-		// Keep the job target identity authoritative by aligning it to the device's
-		// actual registered agent after insertion.
-		mustExec(`
-			UPDATE job_targets jt
-			SET agent_id = d.agent_id
-			FROM devices d
-			WHERE jt.id = $1 AND d.id = jt.device_id
-		`, canaryTarget)
+		`, canaryTarget, canaryJob, canaryDevice, canaryAgent, mspID, terminalStatus)
 		mustExec(`
 			INSERT INTO patch_deployment_devices (
 				deployment_id, device_id, rollout_group, dispatched_at,
@@ -141,8 +137,8 @@ func TestPatchCanaryTerminalGateAdvancesOrStopsBroadRollout(t *testing.T) {
 		`, deploymentID, canaryDevice, canaryJob, canaryTarget, broadDevice)
 	}
 
-	seedDeployment(passDeploymentID, passCanaryDevice, passBroadDevice, passCanaryJob, passCanaryTarget, "succeeded")
-	seedDeployment(failDeploymentID, failCanaryDevice, failBroadDevice, failCanaryJob, failCanaryTarget, "failed")
+	seedDeployment(passDeploymentID, passCanaryDevice, passCanaryAgent, passBroadDevice, passCanaryJob, passCanaryTarget, "succeeded")
+	seedDeployment(failDeploymentID, failCanaryDevice, failCanaryAgent, failBroadDevice, failCanaryJob, failCanaryTarget, "failed")
 
 	store := patch.NewStore(db)
 	manager := patch.NewManager(nc, nil, store, zap.NewNop())
