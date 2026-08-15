@@ -463,20 +463,6 @@ func (d *Dispatcher) subscribeResults(ctx context.Context) {
 	}
 }
 
-func (d *Dispatcher) resultProcessed(mspID, messageID string) bool {
-	var processed bool
-	if err := d.db.DB().QueryRow(`
-		SELECT EXISTS (
-			SELECT 1 FROM job_inbox
-			WHERE msp_id = $1 AND message_id = $2 AND processed_at IS NOT NULL
-		)
-	`, mspID, messageID).Scan(&processed); err != nil {
-		d.logger.Warn("verify durable agent result commit", zap.Error(err))
-		return false
-	}
-	return processed
-}
-
 func subjectIdentity(subject, suffix string) (string, string, bool) {
 	parts := strings.Split(subject, ".")
 	if len(parts) != 5 || parts[0] != "tenant" || parts[2] != "agent" || parts[4] != suffix {
