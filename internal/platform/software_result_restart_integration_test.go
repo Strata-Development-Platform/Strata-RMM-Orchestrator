@@ -169,6 +169,52 @@ func TestSoftwareResultRetainedWhilePlatformDispatcherOffline(t *testing.T) {
 	`, created.JobID).Scan(&targetID, &outboxPayload); err != nil {
 		t.Fatal(err)
 	}
+	var canonicalDispatch struct {
+		Attempt int `json:"attempt"`
+	}
+	if err := json.Unmarshal([]byte(outboxPayload), &canonicalDispatch); err != nil {
+		t.Fatalf("decode canonical dispatch envelope: %v", err)
+	}
+	if canonicalDispatch.Attempt < 1 {
+		t.Fatalf("canonical dispatch envelope has invalid attempt %d", canonicalDispatch.Attempt)
+	}
+
+	// Model the real processOutbox crash boundary. Production commits the target
+	// and job as dispatched before NATS publish so a fast result can never race a
+	// database target that still says queued. We deliberately leave published_at
+	// unset to represent a crash after publish but before outbox finalization;
+	// restart may therefore redeliver the command and must still execute once.
+	dispatchTx, err := db.DB().BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := dispatchTx.ExecContext(ctx, `
+		UPDATE job_targets
+		SET status='dispatched', dispatched_at=COALESCE(dispatched_at, NOW()), attempt=$2,
+		    lease_owner=NULL, lease_expires=NOW() + INTERVAL '2 minutes'
+		WHERE id=$1 AND status='queued'
+	`, targetID, canonicalDispatch.Attempt)
+	if err != nil {
+		_ = dispatchTx.Rollback()
+		t.Fatalf("persist pre-publish target state: %v", err)
+	}
+	if affected, rowsErr := result.RowsAffected(); rowsErr != nil || affected != 1 {
+		_ = dispatchTx.Rollback()
+		t.Fatalf("persist pre-publish target state affected=%d err=%v", affected, rowsErr)
+	}
+	if _, err := dispatchTx.ExecContext(ctx, `
+		UPDATE jobs
+		SET dispatch_count=dispatch_count + 1,
+		    status=CASE WHEN status IN ('pending','queued') THEN 'dispatched' ELSE status END,
+		    updated_at=NOW()
+		WHERE id=$1
+	`, created.JobID); err != nil {
+		_ = dispatchTx.Rollback()
+		t.Fatalf("persist pre-publish job state: %v", err)
+	}
+	if err := dispatchTx.Commit(); err != nil {
+		t.Fatalf("commit pre-publish dispatch state: %v", err)
+	}
 
 	ledgerDB, err := bbolt.Open(filepath.Join(t.TempDir(), "software-outage-receipts.db"), 0600, nil)
 	if err != nil {
@@ -191,8 +237,8 @@ func TestSoftwareResultRetainedWhilePlatformDispatcherOffline(t *testing.T) {
 	defer func() { _ = agent.Stop() }()
 
 	// The platform dispatcher is intentionally not running here. Publish the
-	// transactionally-created canonical outbox envelope to simulate a command
-	// that left the orchestrator immediately before an outage.
+	// transactionally-created canonical outbox envelope to simulate the command
+	// leaving the orchestrator immediately before the process dies.
 	if err := nc.Publish("tenant."+mspID+".cmd."+agentID, []byte(outboxPayload)); err != nil {
 		t.Fatal(err)
 	}
@@ -222,14 +268,15 @@ func TestSoftwareResultRetainedWhilePlatformDispatcherOffline(t *testing.T) {
 	if err := db.DB().QueryRow(`SELECT status FROM software_deployment_targets WHERE deployment_id=$1 AND device_id=$2`, created.DeploymentID, deviceID).Scan(&beforeLegacy); err != nil {
 		t.Fatal(err)
 	}
-	if beforeTarget == "succeeded" || beforeLegacy == "success" {
-		t.Fatalf("software result mutated platform state while dispatcher was offline: target=%q legacy=%q", beforeTarget, beforeLegacy)
+	if beforeTarget != "dispatched" || beforeLegacy == "success" {
+		t.Fatalf("software outage boundary is not production-equivalent: target=%q legacy=%q", beforeTarget, beforeLegacy)
 	}
 
 	// A fresh dispatcher instance represents orchestrator restart. Its durable
 	// result consumer must replay the retained result. Its outbox worker may also
-	// redeliver the original command; the agent receipt ledger must suppress a
-	// second side effect and replay the exact persisted terminal result instead.
+	// redeliver the original command because published_at was not finalized; the
+	// agent receipt ledger must suppress a second side effect and replay the exact
+	// persisted terminal result instead.
 	restarted := NewDispatcher(db, nc, logger)
 	restarted.Start(ctx)
 	defer restarted.Stop()
