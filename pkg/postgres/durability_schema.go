@@ -309,5 +309,19 @@ AFTER UPDATE OF status ON job_targets
 FOR EACH ROW EXECUTE FUNCTION refresh_job_terminal_aggregate_from_target();
 `,
 		},
+		{
+			ID:   5,
+			Name: "patch_deployment_status_lifecycle",
+			Up: `
+ALTER TABLE patch_deployments
+    DROP CONSTRAINT IF EXISTS patch_deployments_status_check;
+ALTER TABLE patch_deployments
+    ADD CONSTRAINT patch_deployments_status_check
+    CHECK (status IN (
+        'pending', 'approved', 'canary', 'deploying', 'installed',
+        'completed', 'failed', 'reboot_required', 'cancelled'
+    ));
+`,
+		},
 	}
 }
