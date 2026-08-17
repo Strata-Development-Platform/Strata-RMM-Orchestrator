@@ -72,7 +72,7 @@ func TestSoftwareResultRetainedWhilePlatformDispatcherOffline(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer nc.Close()
-	logger := zap.NewNop()
+	logger := zap.NewExample()
 	js, err := nc.JetStream()
 	if err != nil {
 		t.Fatal(err)
