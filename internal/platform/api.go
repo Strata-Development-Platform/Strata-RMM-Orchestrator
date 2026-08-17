@@ -348,6 +348,7 @@ func (s *APIServer) Start(ctx context.Context) error {
 	mux.HandleFunc("POST /api/v1/patch-policies", s.handleCreatePatchPolicy)
 	mux.HandleFunc("DELETE /api/v1/patch-policies/{policyID}", s.handleDeletePatchPolicy)
 	mux.HandleFunc("GET /api/v1/patch-deployments", s.handleListPatchDeployments)
+	mux.HandleFunc("POST /api/v1/patch-deployments", s.handleCreatePatchDeployment)
 	mux.HandleFunc("GET /api/v1/patch-inventory/{tenantID}/{deviceID}", s.handleGetPatchInventory)
 	mux.HandleFunc("GET /api/v1/patch-inventory/{tenantID}/{deviceID}/latest", s.handleGetLatestPatchInventory)
 

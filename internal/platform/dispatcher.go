@@ -18,6 +18,7 @@ import (
 	"github.com/nats-io/nats.go"
 	"go.uber.org/zap"
 
+	jsmsg "github.com/strata-rmm/strata-rmm-orchestrator/internal/messaging/jetstream"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/postgres"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/timescale"
 )
@@ -345,7 +346,7 @@ func (d *Dispatcher) expireOfflineWork() {
 }
 
 func (d *Dispatcher) reconcile() {
-	// Claim expired dispatcher leases
+	// Claim expired dispatcher leases.
 	if _, err := d.db.DB().Exec(`
 		UPDATE job_targets SET status = 'queued', lease_owner = NULL, lease_expires = NULL
 		WHERE status = 'dispatched' AND lease_owner IS NOT NULL AND lease_expires < NOW()
@@ -368,22 +369,16 @@ func (d *Dispatcher) reconcile() {
 	`); err != nil {
 		d.logger.Error("recover timed out execution", zap.Error(err))
 	}
-	// Aggregate job state from target states
+	// Reconcile only jobs whose targets are all terminal, using the same
+	// precedence as the database trigger: failed/expired, then cancelled, then success.
 	if _, err := d.db.DB().Exec(`
-		UPDATE jobs j SET status = CASE
-			WHEN (SELECT count(*) FROM job_targets WHERE job_id = j.id AND status IN ('pending','queued','dispatched','running')) = 0
-			     AND (SELECT count(*) FROM job_targets WHERE job_id = j.id AND status = 'failed') > 0
-			     AND (SELECT count(*) FROM job_targets WHERE job_id = j.id AND status = 'succeeded') = 0
-			THEN 'failed'
-			WHEN (SELECT count(*) FROM job_targets WHERE job_id = j.id AND status IN ('pending','queued','dispatched','running')) = 0
-			     AND (SELECT count(*) FROM job_targets WHERE job_id = j.id AND status = 'failed') = 0
-			THEN 'succeeded'
-			WHEN (SELECT count(*) FROM job_targets WHERE job_id = j.id AND status IN ('pending','queued','dispatched','running')) = 0
-			     AND (SELECT count(*) FROM job_targets WHERE job_id = j.id AND status = 'failed') > 0
-			THEN 'failed'
-			ELSE j.status END,
-			completed_at = CASE WHEN (SELECT count(*) FROM job_targets WHERE job_id = j.id AND status IN ('pending','queued','dispatched','running')) = 0
-			              THEN NOW() ELSE NULL END,
+		UPDATE jobs j SET
+			status = CASE
+				WHEN EXISTS (SELECT 1 FROM job_targets WHERE job_id = j.id AND status IN ('failed','expired')) THEN 'failed'
+				WHEN EXISTS (SELECT 1 FROM job_targets WHERE job_id = j.id AND status = 'cancelled') THEN 'cancelled'
+				ELSE 'succeeded'
+			END,
+			completed_at = NOW(),
 			updated_at = NOW(),
 			completed_count = (SELECT count(*) FROM job_targets WHERE job_id = j.id AND status = 'succeeded'),
 			failed_count = (SELECT count(*) FROM job_targets WHERE job_id = j.id AND status IN ('failed','expired'))
@@ -400,21 +395,53 @@ func (d *Dispatcher) reconcile() {
 
 func (d *Dispatcher) subscribeResults(ctx context.Context) {
 	defer d.wg.Done()
-	sub, err := d.nc.Subscribe("tenant.*.agent.*.result", func(msg *nats.Msg) {
-		d.withRecoveryReadLock(func() {
-			d.handleAgentResult(msg.Subject, msg.Data)
-		})
-	})
+
+	js, err := d.nc.JetStream()
 	if err != nil {
-		d.logger.Error("subscribe agent results", zap.Error(err))
+		d.logger.Error("create agent result JetStream context", zap.Error(err))
+		return
+	}
+	resultSub, err := js.QueueSubscribe("tenant.*.agent.*.result", "orchestrator-job-results", func(msg *nats.Msg) {
+		subjectMSP, subjectAgent, ok := subjectIdentity(msg.Subject, "result")
+		if !ok {
+			_ = msg.Term()
+			return
+		}
+		res, validateErr := ValidateResultEnvelope(msg.Data, subjectMSP, subjectAgent, "")
+		if validateErr != nil || res.MessageID == "" {
+			d.logger.Warn("terminating malformed durable agent result", zap.Error(validateErr))
+			_ = msg.Term()
+			return
+		}
+
+		processed := false
+		d.withRecoveryReadLock(func() {
+			processed = d.processAgentResultWithRetry(ctx, msg.Subject, msg.Data)
+		})
+		if processed {
+			_ = msg.Ack()
+			return
+		}
+		_ = msg.Nak()
+	},
+		nats.Durable("orchestrator_job_results"),
+		nats.ManualAck(),
+		nats.AckExplicit(),
+		nats.DeliverAll(),
+		nats.BindStream(jsmsg.StreamAgentResults),
+	)
+	if err != nil {
+		d.logger.Error("subscribe durable agent results", zap.Error(err))
 		return
 	}
 	defer func() {
-		if err := sub.Unsubscribe(); err != nil {
-			d.logger.Warn("unsubscribe agent results", zap.Error(err))
+		if err := resultSub.Unsubscribe(); err != nil {
+			d.logger.Warn("unsubscribe durable agent results", zap.Error(err))
 		}
 	}()
 
+	// Agent acknowledgements are advisory/transient. Losing one does not lose
+	// terminal work because the durable result path is authoritative.
 	ackSub, err := d.nc.Subscribe("tenant.*.agent.*.ack", func(msg *nats.Msg) {
 		d.withRecoveryReadLock(func() {
 			d.handleAgentAck(msg.Subject, msg.Data)
@@ -430,7 +457,10 @@ func (d *Dispatcher) subscribeResults(ctx context.Context) {
 		}
 	}()
 
-	<-ctx.Done()
+	select {
+	case <-ctx.Done():
+	case <-d.stopCh:
+	}
 }
 
 func subjectIdentity(subject, suffix string) (string, string, bool) {
@@ -599,18 +629,16 @@ func (d *Dispatcher) handleAgentResult(subject string, data []byte) {
 			completed_count = (SELECT COUNT(*) FROM job_targets WHERE job_id = $1 AND status = 'succeeded'),
 			failed_count = (SELECT COUNT(*) FROM job_targets WHERE job_id = $1 AND status IN ('failed','expired')),
 			status = CASE
-				WHEN (SELECT COUNT(*) FROM job_targets WHERE job_id = $1 AND status IN ('pending','queued','dispatched','running')) = 0
+				WHEN (SELECT COUNT(*) FROM job_targets WHERE job_id = $1 AND status NOT IN ('succeeded','failed','cancelled','expired')) = 0
 				THEN CASE
-					WHEN (SELECT COUNT(*) FROM job_targets WHERE job_id = $1 AND status = 'failed') > 0
-					THEN 'failed'
-					WHEN (SELECT COUNT(*) FROM job_targets WHERE job_id = $1 AND status = 'cancelled') > 0
-					THEN 'cancelled'
+					WHEN (SELECT COUNT(*) FROM job_targets WHERE job_id = $1 AND status IN ('failed','expired')) > 0 THEN 'failed'
+					WHEN (SELECT COUNT(*) FROM job_targets WHERE job_id = $1 AND status = 'cancelled') > 0 THEN 'cancelled'
 					ELSE 'succeeded'
 				END
 				ELSE status
 			END,
 			completed_at = CASE
-				WHEN (SELECT COUNT(*) FROM job_targets WHERE job_id = $1 AND status IN ('pending','queued','dispatched','running')) = 0
+				WHEN (SELECT COUNT(*) FROM job_targets WHERE job_id = $1 AND status NOT IN ('succeeded','failed','cancelled','expired')) = 0
 				THEN NOW()
 				ELSE NULL
 			END,

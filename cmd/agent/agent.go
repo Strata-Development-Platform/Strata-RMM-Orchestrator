@@ -108,6 +108,8 @@ func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 			defer scriptExec.Stop()
 			logger.Info("script executor started")
 
+			swInstaller := software.NewInstaller(natsClient.Conn(), logger, agent.Identity().TenantID, agent.Identity().AgentID, agent.Store().DB())
+
 			ledger, err := jobs.NewReceiptLedger(agent.Store().DB(), logger)
 			if err != nil {
 				return fmt.Errorf("initializing durable command ledger: %w", err)
@@ -115,6 +117,12 @@ func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 			registry := jobs.NewHandlerRegistry()
 			registry.Register("script_exec", func(handlerCtx context.Context, command *jobs.CommandEnvelope) (string, int, []byte, error) {
 				return scriptExec.RunJob(handlerCtx, command.Payload)
+			})
+			registry.Register("software_install", func(handlerCtx context.Context, command *jobs.CommandEnvelope) (string, int, []byte, error) {
+				return swInstaller.RunDurableJob(handlerCtx, command.Payload, "install")
+			})
+			registry.Register("software_uninstall", func(handlerCtx context.Context, command *jobs.CommandEnvelope) (string, int, []byte, error) {
+				return swInstaller.RunDurableJob(handlerCtx, command.Payload, "uninstall")
 			})
 			jobs.RegisterDeviceOperations(registry)
 			jobDispatcher := jobs.NewJobDispatcher(
@@ -129,13 +137,7 @@ func NewCommand(ctx context.Context, logger *zap.Logger) *cobra.Command {
 					logger.Warn("stopping durable job dispatcher", zap.Error(err))
 				}
 			}()
-
-			swInstaller := software.NewInstaller(natsClient.Conn(), logger, agent.Identity().TenantID, agent.Identity().AgentID)
-			if err := swInstaller.Start(ctx); err != nil {
-				logger.Warn("starting software installer", zap.Error(err))
-			}
-			defer swInstaller.Stop()
-			logger.Info("software installer started")
+			logger.Info("software install/uninstall handlers registered with durable job dispatcher")
 
 			remoteMgr := remotecontrol.NewManager(natsClient.Conn(), logger, agent.Identity().TenantID, agent.Identity().AgentID)
 			if err := remoteMgr.Start(ctx); err != nil {

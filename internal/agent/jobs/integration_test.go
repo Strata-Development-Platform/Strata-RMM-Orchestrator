@@ -13,6 +13,9 @@ import (
 	"github.com/nats-io/nats.go"
 	"go.etcd.io/bbolt"
 	"go.uber.org/zap"
+
+	jsmsg "github.com/strata-rmm/strata-rmm-orchestrator/internal/messaging/jetstream"
+	"github.com/strata-rmm/strata-rmm-orchestrator/internal/testsupport"
 )
 
 func integrationNATS(t *testing.T) *nats.Conn {
@@ -21,11 +24,23 @@ func integrationNATS(t *testing.T) *nats.Conn {
 	if url == "" {
 		t.Fatal("TEST_NATS_URL is required")
 	}
-	nc, err := nats.Connect(url)
+	jetStreamURL, cleanup, err := testsupport.EnsureJetStreamURL(context.Background(), url)
+	if err != nil {
+		t.Fatalf("provision JetStream integration endpoint: %v", err)
+	}
+	t.Cleanup(cleanup)
+	nc, err := nats.Connect(jetStreamURL)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(nc.Close)
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatalf("JetStream is required for durable job integration: %v", err)
+	}
+	if err := jsmsg.NewStreamManager(js, jsmsg.Default(), zap.NewNop()).EnsureStreams(context.Background()); err != nil {
+		t.Fatalf("provision durable job streams: %v", err)
+	}
 	return nc
 }
 

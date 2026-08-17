@@ -17,6 +17,8 @@ import (
 	"go.uber.org/zap"
 
 	agentjobs "github.com/strata-rmm/strata-rmm-orchestrator/internal/agent/jobs"
+	jsmsg "github.com/strata-rmm/strata-rmm-orchestrator/internal/messaging/jetstream"
+	"github.com/strata-rmm/strata-rmm-orchestrator/internal/testsupport"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/postgres"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/timescale"
 )
@@ -37,6 +39,9 @@ func TestDurableJobRoundTripWithRealPostgresAndNATS(t *testing.T) {
 	if err := postgres.NewSchemaManager(rawDB).Apply(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	if err := postgres.ApplyDurabilitySchema(context.Background(), rawDB); err != nil {
+		t.Fatalf("apply production durability schema: %v", err)
+	}
 	if err := rawDB.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -48,12 +53,24 @@ func TestDurableJobRoundTripWithRealPostgresAndNATS(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	nc, err := nats.Connect(natsURL)
+	jetStreamURL, cleanupJetStream, err := testsupport.EnsureJetStreamURL(context.Background(), natsURL)
+	if err != nil {
+		t.Fatalf("provision JetStream integration endpoint: %v", err)
+	}
+	defer cleanupJetStream()
+	nc, err := nats.Connect(jetStreamURL)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer nc.Close()
 	logger := zap.NewNop()
+	js, err := nc.JetStream()
+	if err != nil {
+		t.Fatalf("JetStream is required for durable platform integration: %v", err)
+	}
+	if err := jsmsg.NewStreamManager(js, jsmsg.Default(), logger).EnsureStreams(context.Background()); err != nil {
+		t.Fatalf("provision durable platform streams: %v", err)
+	}
 
 	const (
 		mspID    = "10000000-0000-0000-0000-000000000001"
@@ -122,18 +139,8 @@ func TestDurableJobRoundTripWithRealPostgresAndNATS(t *testing.T) {
 		}
 	}()
 
-	// Wait for the asynchronous dispatcher instead of relying on a fixed startup
-	// sleep. The publisher polls every 200ms, but race-enabled CI runners can be
-	// heavily contended; keep this bounded while allowing scheduling jitter.
 	dispatchDeadline := time.Now().Add(15 * time.Second)
 	waitForJobDispatched(t, db.DB(), jobID, targetID, dispatchDeadline)
-
-	// Wait for the job target to transition from "dispatched" to "succeeded".
-	// The agent dispatcher must first receive the dispatch command, execute the
-	// handler, and then update the target status. The agent replays unacknowledged
-	// terminal results every 15 seconds, so allow one complete replay interval so
-	// a transient serializable-transaction conflict still exercises and proves the
-	// durable recovery path.
 	waitForTargetStatus(t, db.DB(), targetID, "succeeded")
 	if executions.Load() != 1 {
 		t.Fatalf("handler executed %d times, want 1", executions.Load())
@@ -167,9 +174,6 @@ func TestDurableJobRoundTripWithRealPostgresAndNATS(t *testing.T) {
 
 func waitForTargetStatus(t *testing.T, db *sql.DB, targetID, want string) {
 	t.Helper()
-	// The agent replays an unacknowledged terminal result every 15 seconds.
-	// Allow one complete replay interval so a transient serializable-transaction
-	// conflict still exercises and proves the durable recovery path.
 	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
 		var status string

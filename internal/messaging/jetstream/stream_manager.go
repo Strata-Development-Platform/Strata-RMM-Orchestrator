@@ -32,15 +32,12 @@ func (m *StreamManager) EnsureStreams(ctx context.Context) error {
 }
 
 func (m *StreamManager) ensureStream(ctx context.Context, sc *StreamConfig) error {
-	// Try to get existing stream info
 	info, err := m.js.StreamInfo(sc.Name)
 	if err == nil {
-		// Stream exists, verify subjects match
 		m.log.Info("jetstream stream exists", zap.String("stream", sc.Name), zap.Strings("subjects", info.Config.Subjects))
 		return nil
 	}
 
-	// Stream doesn't exist, create it
 	_, err = m.js.AddStream(&nats.StreamConfig{
 		Name:        sc.Name,
 		Subjects:    sc.Subjects,
@@ -55,7 +52,7 @@ func (m *StreamManager) ensureStream(ctx context.Context, sc *StreamConfig) erro
 	})
 	if err != nil {
 		m.log.Warn("jetstream stream add failed (may already exist)", zap.String("stream", sc.Name), zap.Error(err))
-		return nil // Stream may have been created by another node
+		return nil
 	}
 
 	m.log.Info("jetstream stream created", zap.String("stream", sc.Name), zap.Strings("subjects", sc.Subjects))
@@ -67,7 +64,9 @@ func (m *StreamManager) requiredStreams() []*StreamConfig {
 		m.cfg.StreamConfigFor(StreamMetrics, []string{SubjectMetrics}),
 		m.cfg.StreamConfigFor(StreamEvents, []string{SubjectEvents}),
 		m.cfg.StreamConfigFor(StreamHeartbeats, []string{SubjectHeartbeat}),
+		m.cfg.StreamConfigFor(StreamCommands, []string{SubjectCommands}),
 		m.cfg.StreamConfigFor(StreamCmdResults, []string{SubjectCmdResult, SubjectCmdAck}),
+		m.cfg.StreamConfigFor(StreamEndpointResults, []string{SubjectScriptResult, SubjectSoftwareResult}),
 		m.cfg.StreamConfigFor(StreamProbes, []string{SubjectProbeSNMP, SubjectProbeFlow}),
 		m.cfg.StreamConfigFor(StreamDiscovery, []string{SubjectProbeDiscovery}),
 		m.cfg.StreamConfigFor(StreamAgentSession, []string{"strata.agent.*"}),

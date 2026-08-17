@@ -2,6 +2,8 @@ package jobs
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -9,6 +11,8 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"go.uber.org/zap"
+
+	jsmsg "github.com/strata-rmm/strata-rmm-orchestrator/internal/messaging/jetstream"
 )
 
 type CommandHandler func(ctx context.Context, cmd *CommandEnvelope) (status string, exitCode int, result []byte, err error)
@@ -82,14 +86,22 @@ func NewJobDispatcher(nc *nats.Conn, ledger *ReceiptLedger, registry *HandlerReg
 	return &JobDispatcher{nc: nc, ledger: ledger, registry: registry, logger: logger, tenantID: tenantID, agentID: agentID, cancels: make(map[string]context.CancelFunc)}
 }
 
+func genericJobDurableName(tenantID, agentID string) string {
+	sum := sha256.Sum256([]byte(tenantID + "\x00" + agentID + "\x00generic-jobs"))
+	return "jobs_" + hex.EncodeToString(sum[:12])
+}
+
 func (d *JobDispatcher) Start(ctx context.Context) error {
 	runCtx, stop := context.WithCancel(ctx)
 	d.stop = stop
+
+	// Result receipts and cancellation requests are transient control messages.
+	// Command delivery itself is JetStream durable below so endpoint disconnects
+	// cannot lose queued work.
 	handlers := []struct {
 		subject string
 		handler nats.MsgHandler
 	}{
-		{fmt.Sprintf("tenant.%s.cmd.%s", d.tenantID, d.agentID), func(msg *nats.Msg) { d.handleCommand(runCtx, msg.Data) }},
 		{fmt.Sprintf("tenant.%s.agent.%s.result.ack", d.tenantID, d.agentID), func(msg *nats.Msg) { d.handleResultReceipt(msg.Data) }},
 		{fmt.Sprintf("tenant.%s.cmd.%s.cancel", d.tenantID, d.agentID), func(msg *nats.Msg) { d.handleCancellation(msg.Data) }},
 	}
@@ -101,6 +113,32 @@ func (d *JobDispatcher) Start(ctx context.Context) error {
 		}
 		d.subs = append(d.subs, sub)
 	}
+
+	js, err := d.nc.JetStream()
+	if err != nil {
+		_ = d.Stop()
+		return fmt.Errorf("generic job JetStream context: %w", err)
+	}
+	commandSubject := fmt.Sprintf("tenant.%s.cmd.%s", d.tenantID, d.agentID)
+	commandSub, err := js.Subscribe(commandSubject, func(msg *nats.Msg) {
+		d.wg.Add(1)
+		go func() {
+			defer d.wg.Done()
+			d.handleDurableCommand(runCtx, msg)
+		}()
+	},
+		nats.Durable(genericJobDurableName(d.tenantID, d.agentID)),
+		nats.ManualAck(),
+		nats.AckExplicit(),
+		nats.DeliverAll(),
+		nats.BindStream(jsmsg.StreamCommands),
+	)
+	if err != nil {
+		_ = d.Stop()
+		return fmt.Errorf("subscribe durable generic commands: %w", err)
+	}
+	d.subs = append(d.subs, commandSub)
+
 	if err := d.nc.Flush(); err != nil {
 		_ = d.Stop()
 		return fmt.Errorf("flush subscriptions: %w", err)
@@ -134,6 +172,8 @@ func (d *JobDispatcher) Stop() error {
 	return first
 }
 
+// handleCommand is retained as a direct package boundary for focused unit tests.
+// Production command delivery enters through handleDurableCommand.
 func (d *JobDispatcher) handleCommand(parent context.Context, data []byte) {
 	cmd, err := validateCommand(data, d.tenantID, d.agentID)
 	if err != nil {
@@ -172,6 +212,102 @@ func (d *JobDispatcher) handleCommand(parent context.Context, data []byte) {
 		defer d.wg.Done()
 		d.execute(parent, *cmd)
 	}()
+}
+
+func (d *JobDispatcher) handleDurableCommand(parent context.Context, msg *nats.Msg) {
+	cmd, err := validateCommand(msg.Data, d.tenantID, d.agentID)
+	if err != nil {
+		d.logger.Warn("terminating invalid durable command", zap.Error(err))
+		_ = msg.Term()
+		return
+	}
+
+	progressDone := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-progressDone:
+				return
+			case <-parent.Done():
+				return
+			case <-ticker.C:
+				_ = msg.InProgress()
+			}
+		}
+	}()
+	defer close(progressDone)
+
+	ackSubject := fmt.Sprintf("tenant.%s.agent.%s.ack", d.tenantID, d.agentID)
+	receipt, getErr := d.ledger.GetReceipt(cmd.EventID)
+	if getErr == nil {
+		if err := PublishAcknowledgement(d.nc, ackSubject, cmd.EventID, cmd.JobID, cmd.TargetID, cmd.MSPID, cmd.DeviceID, d.agentID, cmd.CorrelationID, cmd.Attempt, "duplicate"); err != nil {
+			d.logger.Error("publish duplicate acknowledgement", zap.Error(err))
+			_ = msg.Nak()
+			return
+		}
+		if len(receipt.ResultEnvelope) > 0 {
+			if !receipt.ResultAcked {
+				if err := d.nc.Publish(fmt.Sprintf("tenant.%s.agent.%s.result", d.tenantID, d.agentID), receipt.ResultEnvelope); err != nil {
+					d.logger.Error("republish duplicate result", zap.Error(err))
+					_ = msg.Nak()
+					return
+				}
+			}
+			_ = msg.Ack()
+			return
+		}
+
+		switch receipt.State {
+		case StateReceived:
+			d.execute(parent, *cmd)
+		case StateRunning:
+			d.mu.Lock()
+			_, active := d.cancels[cmd.EventID]
+			d.mu.Unlock()
+			if active {
+				_ = msg.InProgress()
+				return
+			}
+			// A running receipt with no in-process execution is an ambiguous crash
+			// boundary. Never repeat the endpoint side effect automatically.
+			d.publishTerminal(*cmd, StateFailed, -1, nil, "execution outcome unknown after agent restart; reconciliation required")
+		case StateCancelled:
+			d.publishTerminal(*cmd, StateCancelled, -1, nil, "command cancelled before execution")
+		default:
+			_ = msg.Nak()
+			return
+		}
+	} else {
+		receipt = &CommandReceipt{
+			EventID: cmd.EventID, JobID: cmd.JobID, TargetID: cmd.TargetID, MSPID: cmd.MSPID,
+			ClientID: cmd.ClientID, SiteID: cmd.SiteID, DeviceID: cmd.DeviceID, AgentID: d.agentID,
+			CorrelationID: cmd.CorrelationID, Attempt: cmd.Attempt, CommandType: cmd.CommandType,
+			ReceivedAt: time.Now().UTC().Format(time.RFC3339), State: StateReceived,
+		}
+		if err := d.ledger.RecordReceipt(receipt); err != nil {
+			d.logger.Error("persist durable command before acknowledgement", zap.Error(err))
+			_ = msg.Nak()
+			return
+		}
+		if err := PublishAcknowledgement(d.nc, ackSubject, cmd.EventID, cmd.JobID, cmd.TargetID, cmd.MSPID, cmd.DeviceID, d.agentID, cmd.CorrelationID, cmd.Attempt, "accepted"); err != nil {
+			d.logger.Error("publish durable command acknowledgement", zap.Error(err))
+			_ = msg.Nak()
+			return
+		}
+		d.execute(parent, *cmd)
+	}
+
+	terminal, err := d.ledger.GetReceipt(cmd.EventID)
+	if err != nil || len(terminal.ResultEnvelope) == 0 {
+		if err != nil {
+			d.logger.Error("read durable terminal receipt", zap.Error(err))
+		}
+		_ = msg.Nak()
+		return
+	}
+	_ = msg.Ack()
 }
 
 func validateCommand(data []byte, tenantID, agentID string) (*CommandEnvelope, error) {

@@ -9,6 +9,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/messaging/jetstream"
+	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/postgres"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/timescale"
 )
 
@@ -22,9 +23,23 @@ type IngestService struct {
 }
 
 func NewIngestService(nc *nats.Conn, tsdb *timescale.Client, logger *zap.Logger) (*IngestService, error) {
+	if tsdb == nil || tsdb.DB() == nil {
+		return nil, fmt.Errorf("database is required for ingestion startup")
+	}
+	// The historical relational registry is intentionally stable. Apply the
+	// additive durable patch/software bridge immediately after it and before any
+	// service can dispatch or consume durable work. Startup fails closed if this
+	// extension cannot be established.
+	if err := postgres.ApplyDurabilitySchema(context.Background(), tsdb.DB()); err != nil {
+		return nil, fmt.Errorf("apply durability schema: %w", err)
+	}
+
 	js, err := nc.JetStream()
 	if err != nil {
 		return nil, fmt.Errorf("create jetstream context: %w", err)
+	}
+	if err := jetstream.NewStreamManager(js, jetstream.Default(), logger).EnsureStreams(context.Background()); err != nil {
+		return nil, fmt.Errorf("ensure required jetstream streams: %w", err)
 	}
 	return &IngestService{nc: nc, js: js, tsdb: tsdb, logger: logger, batch: NewBatchBuffer(5 * time.Second)}, nil
 }

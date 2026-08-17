@@ -15,18 +15,29 @@ const (
 	SubjectAlerts         = "tenant.*.alerts"
 	SubjectConfig         = "tenant.*.config.*"
 	SubjectCmd            = "tenant.*.cmd.*"
+	// SubjectCommands captures both the base endpoint command subject and
+	// command-specific suffixes. Keeping SubjectCmd preserves the existing
+	// public subject contract while the stream wildcard provides durable
+	// offline delivery for endpoint command families.
+	SubjectCommands = "tenant.*.cmd.>"
 )
 
 // Stream names for JetStream streams.
 const (
-	StreamMetrics      = "STRATA_METRICS"
-	StreamEvents       = "STRATA_EVENTS"
-	StreamHeartbeats   = "STRATA_HEARTBEATS"
-	StreamCmdResults   = "STRATA_CMD_RESULTS"
-	StreamProbes       = "STRATA_PROBES"
-	StreamDiscovery    = "STRATA_DISCOVERY"
-	StreamAgentSession = "STRATA_AGENT_SESSION"
-	StreamIntegrations = "STRATA_INTEGRATIONS"
+	StreamMetrics         = "STRATA_METRICS"
+	StreamEvents          = "STRATA_EVENTS"
+	StreamHeartbeats      = "STRATA_HEARTBEATS"
+	StreamCommands        = "STRATA_COMMANDS"
+	StreamCmdResults      = "STRATA_CMD_RESULTS"
+	// StreamAgentResults is the semantic name used by the durable job protocol.
+	// It intentionally aliases the existing command-result stream so installs
+	// have one canonical stream for tenant.*.agent.*.result and *.ack subjects.
+	StreamAgentResults    = StreamCmdResults
+	StreamEndpointResults = "STRATA_ENDPOINT_RESULTS"
+	StreamProbes          = "STRATA_PROBES"
+	StreamDiscovery       = "STRATA_DISCOVERY"
+	StreamAgentSession    = "STRATA_AGENT_SESSION"
+	StreamIntegrations    = "STRATA_INTEGRATIONS"
 )
 
 // Consumer groups for pull/push consumers.
@@ -50,6 +61,10 @@ func ToStream(subject string) string {
 		return StreamEvents
 	case subjectContains(subject, ".heartbeat"):
 		return StreamHeartbeats
+	case subjectContains(subject, ".cmd."):
+		return StreamCommands
+	case subjectContains(subject, ".software.result"), subjectContains(subject, ".script.result"):
+		return StreamEndpointResults
 	case subjectContains(subject, ".result"), subjectContains(subject, ".ack"):
 		return StreamCmdResults
 	case subjectContains(subject, ".probe."):
