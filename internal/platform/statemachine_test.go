@@ -10,6 +10,7 @@ func TestJobStateTransitions(t *testing.T) {
 		{"pending", "cancelled"},
 		{"queued", "dispatched"},
 		{"dispatched", "running"},
+		{"dispatched", "succeeded"},
 		{"dispatched", "failed"},
 		{"running", "succeeded"},
 		{"running", "failed"},
