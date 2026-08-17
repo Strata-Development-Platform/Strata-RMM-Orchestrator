@@ -17,10 +17,14 @@ const (
 )
 
 // processAgentResultWithRetry applies a durable result using a bounded,
-// cancellation-aware serializable transaction. PostgreSQL is allowed to abort
-// serializable transactions when concurrent dispatcher reconciliation/outbox
-// work creates a dependency cycle; those aborts are safe to retry because the
-// inbox claim and target transition are idempotent and committed atomically.
+// cancellation-aware transaction. The transaction claims the result through
+// job_inbox's unique key and takes an explicit row lock on the authoritative
+// job target before validating and mutating it. READ COMMITTED is intentional:
+// on orchestrator restart the outbox publisher may legitimately re-check the
+// same target while a retained terminal result is being consumed. A
+// SERIALIZABLE snapshot can abort that row-lock acquisition even though the
+// operations are idempotent and correctly serialized by the row lock itself.
+// Deadlocks/serialization aborts are still retried defensively.
 func (d *Dispatcher) processAgentResultWithRetry(parent context.Context, subject string, data []byte) bool {
 	ctx, cancel := context.WithTimeout(parent, resultTransactionTimeout)
 	defer cancel()
@@ -48,7 +52,7 @@ func (d *Dispatcher) processAgentResultWithRetry(parent context.Context, subject
 			return false
 		}
 		if attempt == resultTransactionAttempts-1 {
-			d.logger.Warn("durable agent result serialization retry exhausted", zap.Error(err))
+			d.logger.Warn("durable agent result transaction retry exhausted", zap.Error(err))
 			return false
 		}
 
@@ -85,7 +89,7 @@ func (d *Dispatcher) processAgentResultOnce(ctx context.Context, subject string,
 		return false, nil
 	}
 
-	tx, err := d.db.DB().BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	tx, err := d.db.DB().BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return false, err
 	}
