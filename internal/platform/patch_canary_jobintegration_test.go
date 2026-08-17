@@ -120,8 +120,8 @@ func TestPatchCanaryTerminalGateAdvancesOrStopsBroadRollout(t *testing.T) {
 				max_devices, expires_at, correlation_id, scheduled_for, completed_at
 			) VALUES ($1, $2, $3, 'patch-integration', 'patch_install', $4,
 			          '{"patch_ids":["KB-INTEGRATION-1"]}'::jsonb, 2, 1,
-			          NOW() + INTERVAL '1 hour', $1::text, NOW(), NOW())
-		`, canaryJob, mspID, clientID, terminalStatus)
+			          NOW() + INTERVAL '1 hour', $5::text, NOW(), NOW())
+		`, canaryJob, mspID, clientID, terminalStatus, canaryJob)
 		mustExec(`
 			INSERT INTO job_targets (
 				id, job_id, device_id, agent_id, msp_id, status, attempt,
