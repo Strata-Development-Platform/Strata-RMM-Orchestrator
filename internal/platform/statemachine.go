@@ -24,7 +24,7 @@ var validStates = map[JobState]bool{
 var allowedTransitions = map[JobState]map[JobState]bool{
 	JobPending:    {JobQueued: true, JobCancelled: true, JobExpired: true},
 	JobQueued:     {JobDispatched: true, JobCancelled: true, JobExpired: true},
-	JobDispatched: {JobRunning: true, JobFailed: true, JobCancelled: true, JobExpired: true},
+	JobDispatched: {JobRunning: true, JobSucceeded: true, JobFailed: true, JobCancelled: true, JobExpired: true},
 	JobRunning:    {JobSucceeded: true, JobFailed: true, JobCancelled: true, JobExpired: true},
 }
 
