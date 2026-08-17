@@ -95,7 +95,10 @@ func (d *Dispatcher) processAgentResultOnce(ctx context.Context, subject string,
 	err = tx.QueryRowContext(ctx, `
 		INSERT INTO job_inbox (msp_id, message_id, job_id, target_id, event_type, payload)
 		VALUES ($1, $2, $3, $4, 'result', $5)
-		ON CONFLICT (msp_id, message_id) DO NOTHING RETURNING id::text
+		ON CONFLICT (msp_id, message_id) DO UPDATE
+		SET message_id = EXCLUDED.message_id
+		WHERE job_inbox.processed_at IS NULL
+		RETURNING id::text
 	`, res.MSPID, res.MessageID, res.JobID, res.TargetID, data).Scan(&inboxID)
 	if err == sql.ErrNoRows {
 		processed, verifyErr := d.resultProcessedContext(ctx, res.MSPID, res.MessageID)
