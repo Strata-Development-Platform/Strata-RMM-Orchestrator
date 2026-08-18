@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/lib/pq"
+	_ "github.com/strata-rmm/strata-rmm-orchestrator/internal/postgresdriver"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/auth"

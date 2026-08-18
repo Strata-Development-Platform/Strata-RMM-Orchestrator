@@ -11,7 +11,7 @@ import (
 	"os"
 	"testing"
 
-	_ "github.com/lib/pq"
+	_ "github.com/strata-rmm/strata-rmm-orchestrator/internal/postgresdriver"
 )
 
 func TestPostgresDeviceBrokerAuthoritativeScopeIsolation(t *testing.T) {

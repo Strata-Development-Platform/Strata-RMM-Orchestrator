@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/lib/pq"
+	_ "github.com/strata-rmm/strata-rmm-orchestrator/internal/postgresdriver"
 )
 
 const providerTestUserID = "67000000-0000-0000-0000-000000000001"

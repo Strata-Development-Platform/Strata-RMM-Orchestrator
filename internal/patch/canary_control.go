@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	"github.com/lib/pq"
 )
 
 var (
@@ -117,7 +115,7 @@ func (s *Store) PrepareCanaryRollout(ctx context.Context, deploymentID string, c
 		UPDATE patch_deployment_devices
 		SET rollout_group = 'canary'
 		WHERE deployment_id = $1 AND device_id = ANY($2)
-	`, deploymentID, pq.Array(canary)); err != nil {
+	`, deploymentID, canary); err != nil {
 		return nil, fmt.Errorf("mark canary rollout targets: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -223,7 +221,7 @@ func (s *Store) getResultGate(ctx context.Context, deploymentID string, devices 
 		WHERE pdd.deployment_id = $1
 		  AND pdd.device_id = ANY($2)
 		GROUP BY pdd.device_id
-	`, deploymentID, pq.Array(devices))
+	`, deploymentID, devices)
 	if err != nil {
 		return CanaryGate{}, fmt.Errorf("query patch result gate: %w", err)
 	}

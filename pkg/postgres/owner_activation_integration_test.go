@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/lib/pq"
+	_ "github.com/strata-rmm/strata-rmm-orchestrator/internal/postgresdriver"
 )
 
 func newOwnerMigrationDB(t *testing.T, through int) *sql.DB {

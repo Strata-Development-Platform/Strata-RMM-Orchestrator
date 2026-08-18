@@ -5,8 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
-
-	"github.com/lib/pq"
 )
 
 func canManageMSPAtSelectedScope(authorization AuthorizationResult, mspID string) bool {
@@ -298,7 +296,7 @@ func (s *APIServer) ValidateDeviceAncestry(
 	rows, err := dbx.QueryContext(ctx, `
 		SELECT id, msp_id::text, COALESCE(client_id::text,''), COALESCE(site_id::text,'')
 		FROM devices WHERE id = ANY($1::uuid[]) AND msp_id = $2::uuid
-	`, pq.Array(unique), authorizedMSPID)
+	`, unique, authorizedMSPID)
 	if err != nil {
 		return nil, err
 	}

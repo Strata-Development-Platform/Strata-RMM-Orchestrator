@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/lib/pq"
 )
 
 // handleCreateDeviceGroupV2 is the replacement for handleCreateDeviceGroup that supports Smart Groups.
@@ -132,7 +131,7 @@ func (s *APIServer) handleCreateDeviceGroup(w http.ResponseWriter, r *http.Reque
 	_, err := s.requestDB(r).ExecContext(r.Context(), `
 		INSERT INTO device_groups (id, msp_id, client_id, name, description, member_ids)
 		VALUES ($1, $2, $3, $4, $5, $6)
-	`, id, mspID, clientID, req.Name, req.Description, pq.StringArray(req.DeviceIDs))
+	`, id, mspID, clientID, req.Name, req.Description, req.DeviceIDs)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return

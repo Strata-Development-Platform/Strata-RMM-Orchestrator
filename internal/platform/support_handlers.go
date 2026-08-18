@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/lib/pq"
 )
 
 type createSupportGrantRequest struct {
@@ -53,7 +52,7 @@ func (s *APIServer) handleCreateSupportGrant(w http.ResponseWriter, r *http.Requ
 		SELECT $1, $2, m.id, $3, $4, $5, NOW(), $6, 'active', $7
 		FROM msp_tenants m
 		WHERE m.id = $8
-	`, grantID, req.PlatformUserID, req.Reason, req.TicketRef, approverID, expiresAt, pq.Array(req.Permissions), req.MSPID)
+	`, grantID, req.PlatformUserID, req.Reason, req.TicketRef, approverID, expiresAt, req.Permissions, req.MSPID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "support grant could not be created"})
 		return
