@@ -85,6 +85,15 @@ nfpms:
     bindir: /usr/local/bin
     dependencies:
       - curl
+    overrides:
+      deb:
+        dependencies:
+          - curl
+          - postgresql-client
+      rpm:
+        dependencies:
+          - curl
+          - postgresql
     scripts:
       postinstall: scripts/package-postinstall-orchestrator.sh
     contents:

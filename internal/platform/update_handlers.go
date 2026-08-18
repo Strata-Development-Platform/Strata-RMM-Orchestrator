@@ -171,32 +171,10 @@ func (s *APIServer) applyUpdate(ctx context.Context, release *update.Orchestrato
 		return
 	}
 
-	if err := s.updateMgr.updater.Apply(binaryPath); err != nil {
-		if s.updateMgr.dc != nil {
-			s.updateMgr.dc.TransitionTo(DeploymentStateRollingBack, "")
-		}
-		s.updateMgr.logger.Error("update apply failed", zap.Error(err))
-		rollbackErr := s.updateMgr.updater.Rollback()
-		if s.updateMgr.dc != nil {
-			if rollbackErr != nil {
-				s.updateMgr.dc.TransitionTo(DeploymentStateFailed, fmt.Sprintf("apply failed: %v; rollback failed: %v", err, rollbackErr))
-			} else {
-				s.updateMgr.dc.TransitionTo(DeploymentStateRolledBack, fmt.Sprintf("apply failed: %v", err))
-			}
-		}
-		updateMu.Lock()
-		if rollbackErr != nil {
-			s.updateMgr.status = "rollback_failed"
-		} else {
-			s.updateMgr.status = "rolled_back"
-		}
-		updateMu.Unlock()
-		return
-	}
-
-	// Do not claim post-upgrade success while the old process is still serving.
-	// The external finalizer owns restart, new-process health, schema rollback,
-	// and binary rollback.
+	// The running process deliberately does not replace its own executable.
+	// Until systemd accepts the transient finalizer, the currently running and
+	// on-disk binary remains the known-good version. The finalizer becomes the
+	// sole owner of stop -> swap -> candidate start -> restore/rollback.
 	if s.updateMgr.dc != nil {
 		s.updateMgr.dc.RecordEvent(DeploymentEvent{
 			ID:              fmt.Sprintf("deploy-%d", time.Now().Unix()),
@@ -208,28 +186,23 @@ func (s *APIServer) applyUpdate(ctx context.Context, release *update.Orchestrato
 	updateMu.Lock()
 	s.updateMgr.status = "restart_pending"
 	updateMu.Unlock()
-	s.updateMgr.logger.Info("verified update staged; handing restart to external finalizer",
+	s.updateMgr.logger.Info("verified update and PostgreSQL recovery point staged; handing mutation ownership to external finalizer",
 		zap.String("version", release.Version),
 		zap.Int("source_schema", preflight.SourceSchemaVersion),
 		zap.Int("target_schema", preflight.TargetSchemaVersion),
 	)
 
-	if err := s.updateMgr.updater.TriggerRestartWithSchema(preflight.SourceSchemaVersion, preflight.TargetSchemaVersion); err != nil {
-		s.updateMgr.logger.Error("external upgrade finalizer launch failed", zap.Error(err))
-		rollbackErr := s.updateMgr.updater.Rollback()
+	if err := s.updateMgr.updater.TriggerRestartWithSchema(binaryPath, preflight.SourceSchemaVersion, preflight.TargetSchemaVersion); err != nil {
+		// No binary or database mutation has occurred if the finalizer could not
+		// be launched. Keep the staged candidate and recovery handoff intact for
+		// operator inspection; a later upgrade is intentionally blocked until
+		// the unresolved recovery state is explicitly handled.
+		s.updateMgr.logger.Error("external upgrade finalizer launch failed; staged recovery state retained", zap.Error(err))
 		if s.updateMgr.dc != nil {
-			if rollbackErr != nil {
-				s.updateMgr.dc.TransitionTo(DeploymentStateFailed, fmt.Sprintf("finalizer launch failed: %v; rollback failed: %v", err, rollbackErr))
-			} else {
-				s.updateMgr.dc.TransitionTo(DeploymentStateRolledBack, fmt.Sprintf("finalizer launch failed: %v", err))
-			}
+			s.updateMgr.dc.TransitionTo(DeploymentStateFailed, fmt.Sprintf("finalizer launch failed before mutation: %v", err))
 		}
 		updateMu.Lock()
-		if rollbackErr != nil {
-			s.updateMgr.status = "rollback_failed"
-		} else {
-			s.updateMgr.status = "rolled_back"
-		}
+		s.updateMgr.status = "handoff_failed"
 		updateMu.Unlock()
 	}
 }
