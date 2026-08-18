@@ -1,9 +1,8 @@
 name: Temporary migrate libpq to pgx
 
 on:
-  push:
-    branches:
-      - agent/alpha-patch-transaction-safety
+  pull_request:
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: write
