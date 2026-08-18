@@ -1,0 +1,32 @@
+name: Temporary sync pq go.sum
+
+on:
+  push:
+    branches:
+      - agent/alpha-patch-transaction-safety
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/alpha-patch-transaction-safety
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - name: Generate canonical module checksum
+        run: go mod download github.com/lib/pq@v1.12.3
+      - name: Commit generated lockfile and remove temporary workflow
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/temp-sync-pq-gosum.yml
+          git add go.sum
+          git diff --cached --check
+          git commit -m 'security: sync lib/pq module checksums'
+          git push origin HEAD:agent/alpha-patch-transaction-safety
