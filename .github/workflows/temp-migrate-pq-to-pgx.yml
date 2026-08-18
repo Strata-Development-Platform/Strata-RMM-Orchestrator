@@ -45,14 +45,41 @@ jobs:
           }
           EOF
 
+          # Replace blank driver imports with the internal pgx registration shim.
           while IFS= read -r -d '' file; do
             sed -i 's#_ "github.com/lib/pq"#_ "github.com/strata-rmm/strata-rmm-orchestrator/internal/postgresdriver"#g' "$file"
           done < <(find . -name '*.go' -type f -print0)
 
-          # authorize.go used pq.Array solely to adapt []string. pgx/stdlib accepts
-          # slices through its NamedValueChecker and PostgreSQL performs the uuid[] cast.
+          # Replace lib/pq array adapters with native pgx database/sql values.
           sed -i '/^[[:space:]]*"github.com\/lib\/pq"[[:space:]]*$/d' internal/platform/authorize.go
           sed -i 's/pq\.Array(unique)/unique/g' internal/platform/authorize.go
+
+          sed -i '/^[[:space:]]*"github.com\/lib\/pq"[[:space:]]*$/d' internal/platform/support_handlers.go
+          sed -i 's/pq\.Array(req\.Permissions)/req.Permissions/g' internal/platform/support_handlers.go
+
+          sed -i '/^[[:space:]]*"github.com\/lib\/pq"[[:space:]]*$/d' internal/platform/smart_group_handlers.go
+          sed -i 's/var memberIDs pq\.StringArray/var memberIDs []string/g' internal/platform/smart_group_handlers.go
+          sed -i 's/memberIDs = pq\.StringArray(req\.DeviceIDs)/memberIDs = req.DeviceIDs/g' internal/platform/smart_group_handlers.go
+          sed -i 's/memberIDs = pq\.StringArray{}/memberIDs = []string{}/g' internal/platform/smart_group_handlers.go
+          sed -i 's/pq\.StringArray(req\.DeviceIDs)/req.DeviceIDs/g' internal/platform/smart_group_handlers.go
+
+          sed -i '/^[[:space:]]*"github.com\/lib\/pq"[[:space:]]*$/d' internal/platform/maintenance_handlers.go
+          sed -i 's/pq\.StringArray(req\.DeviceIDs)/req.DeviceIDs/g' internal/platform/maintenance_handlers.go
+
+          sed -i '/^[[:space:]]*"github.com\/lib\/pq"[[:space:]]*$/d' internal/patch/canary_control.go
+          sed -i 's/pq\.Array(canary)/canary/g' internal/patch/canary_control.go
+          sed -i 's/pq\.Array(devices)/devices/g' internal/patch/canary_control.go
+
+          # Translate retryable PostgreSQL errors from lib/pq to pgx/pgconn.
+          sed -i 's#"github.com/lib/pq"#"github.com/jackc/pgx/v5/pgconn"#g' internal/platform/result_retry.go
+          sed -i 's/var pqErr \*pq\.Error/var pgErr *pgconn.PgError/g' internal/platform/result_retry.go
+          sed -i 's/errors\.As(err, \&pqErr)/errors.As(err, \&pgErr)/g' internal/platform/result_retry.go
+          sed -i 's/pqErr\.Code/pgErr.Code/g' internal/platform/result_retry.go
+
+          sed -i 's#"github.com/lib/pq"#"github.com/jackc/pgx/v5/pgconn"#g' internal/platform/module_lifecycle_api.go
+          sed -i 's/var pqErr \*pq\.Error/var pgErr *pgconn.PgError/g' internal/platform/module_lifecycle_api.go
+          sed -i 's/errors\.As(err, \&pqErr)/errors.As(err, \&pgErr)/g' internal/platform/module_lifecycle_api.go
+          sed -i 's/pqErr\.Code/pgErr.Code/g' internal/platform/module_lifecycle_api.go
 
           if grep -R --line-number --include='*.go' 'github.com/lib/pq' . > /tmp/pq-remaining.txt; then
             echo 'Unmigrated lib/pq imports remain:'
@@ -76,7 +103,17 @@ jobs:
           go mod edit -droprequire github.com/lib/pq
           go get github.com/jackc/pgx/v5/stdlib@v5.10.0
           go mod tidy
-          gofmt -w internal/postgresdriver/driver.go internal/platform/authorize.go
+          gofmt -w \
+            internal/postgresdriver/driver.go \
+            internal/platform/authorize.go \
+            internal/platform/support_handlers.go \
+            internal/platform/result_retry.go \
+            internal/platform/smart_group_handlers.go \
+            internal/platform/module_lifecycle_api.go \
+            internal/platform/maintenance_handlers.go \
+            internal/patch/canary_control.go \
+            pkg/backup/postgres_component.go \
+            pkg/timescale/writer.go
 
           go test ./internal/platform ./pkg/backup ./pkg/timescale ./pkg/postgres ./internal/patch ./internal/inventory
           go vet ./internal/platform ./pkg/backup ./pkg/timescale ./pkg/postgres ./internal/patch ./internal/inventory
