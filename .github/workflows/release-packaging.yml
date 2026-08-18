@@ -61,7 +61,11 @@ jobs:
           grep -q 'COSIGN_COMMIT="11926fa5bbbbde47e88fc006b625a17769b743b2"' scripts/build-cosign-verifier.sh
           grep -q 'X_TEXT_VERSION="v0.39.0"' scripts/build-cosign-verifier.sh
           grep -q 'GRPC_VERSION="v1.82.1"' scripts/build-cosign-verifier.sh
-          grep -q 'systemctl restart' scripts/finalize-orchestrator-upgrade.sh
+          grep -q 'systemctl stop' scripts/finalize-orchestrator-upgrade.sh
+          grep -q 'mv "$BINARY_PATH" "$BACKUP_PATH"' scripts/finalize-orchestrator-upgrade.sh
+          grep -q 'mv "$STAGED_PATH" "$BINARY_PATH"' scripts/finalize-orchestrator-upgrade.sh
+          grep -q 'pg_restore' scripts/finalize-orchestrator-upgrade.sh
+          grep -q 'sha256sum "$DB_BACKUP_PATH"' scripts/finalize-orchestrator-upgrade.sh
           grep -q 'mv "$BACKUP_PATH" "$BINARY_PATH"' scripts/finalize-orchestrator-upgrade.sh
           sh scripts/test-finalize-orchestrator-upgrade.sh
       - name: Build version-matched web console
@@ -126,6 +130,7 @@ jobs:
             grep -q '/usr/local/bin/cosign' "$control_dir/postinst"
             grep -q '/usr/lib/strata-rmm/finalize-orchestrator-upgrade.sh' "$control_dir/postinst"
             grep -q 'Depends:.*curl' "$control_dir/control"
+            grep -q 'Depends:.*postgresql-client' "$control_dir/control"
             if grep -q 'install-cosign-verifier.sh' "$contents_file" "$control_dir/postinst"; then
               echo 'legacy network Cosign bootstrap must not be packaged' >&2
               exit 1
