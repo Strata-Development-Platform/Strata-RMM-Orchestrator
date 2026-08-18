@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	DefaultUpgradeBackupDir     = "/var/lib/strata-rmm/backups/upgrades"
-	DefaultUpgradeHandoffPath   = "/var/lib/strata-rmm/updates/database-backup.env"
+	DefaultUpgradeBackupDir   = "/var/lib/strata-rmm/backups/upgrades"
+	DefaultUpgradeHandoffPath = "/var/lib/strata-rmm/updates/database-backup.env"
 )
 
 type upgradeDatabaseBackup struct {
@@ -37,6 +37,12 @@ func createUpgradeDatabaseBackup(ctx context.Context, db *sql.DB, dsn, backupDir
 	if handoffPath == "" {
 		handoffPath = DefaultUpgradeHandoffPath
 	}
+	if _, err := os.Stat(handoffPath); err == nil {
+		return upgradeDatabaseBackup{}, fmt.Errorf("unresolved upgrade database recovery handoff already exists: operator recovery or cleanup is required")
+	} else if !os.IsNotExist(err) {
+		return upgradeDatabaseBackup{}, fmt.Errorf("inspect existing upgrade database recovery handoff: %w", err)
+	}
+
 	connection, err := verifiedUpgradeConnection(ctx, db, dsn)
 	if err != nil {
 		return upgradeDatabaseBackup{}, err
