@@ -11,7 +11,7 @@ HEALTH_URL="${STRATA_UPGRADE_HEALTH_URL:-http://127.0.0.1:8080/health}"
 ATTEMPTS="${STRATA_UPGRADE_HEALTH_ATTEMPTS:-30}"
 SLEEP_SECONDS="${STRATA_UPGRADE_HEALTH_INTERVAL:-2}"
 UPDATE_DIR="/var/lib/strata-rmm/updates"
-DB_BACKUP_DIR="/var/lib/strata-rmm/backups/upgrades"
+DB_BACKUP_DIR="${STRATA_UPGRADE_DB_BACKUP_DIR:-/var/lib/strata-rmm/backups/upgrades}"
 DB_HANDOFF="${STRATA_UPGRADE_DB_HANDOFF:-$UPDATE_DIR/database-backup.env}"
 
 log() {
