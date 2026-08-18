@@ -11,7 +11,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gosnmp/gosnmp v1.38.0
 	github.com/jung-kurt/gofpdf/v2 v2.17.3
-	github.com/lib/pq v1.10.9
+	github.com/lib/pq v1.12.3
 	github.com/minio/minio-go/v7 v7.2.1
 	github.com/nats-io/nats.go v1.39.0
 	github.com/shirou/gopsutil/v3 v3.24.5
