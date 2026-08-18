@@ -5,6 +5,7 @@ project_name: strata-rmm
 before:
   hooks:
     - go mod tidy
+    - sh scripts/build-cosign-verifier.sh
 
 builds:
   - id: agent
@@ -82,11 +83,27 @@ nfpms:
     license: Apache-2.0
     formats: [deb, rpm]
     bindir: /usr/local/bin
+    dependencies:
+      - curl
+    scripts:
+      postinstall: scripts/package-postinstall-orchestrator.sh
     contents:
       - src: deploy/strata-rmm.service
         dst: /usr/lib/systemd/system/strata-rmm.service
       - src: ui/dist
         dst: /usr/share/strata-rmm/ui
+      - src: build/cosign-verifier/cosign
+        dst: /usr/local/bin/cosign
+        file_info:
+          mode: 0755
+      - src: build/cosign-verifier/BUILD-PROVENANCE.txt
+        dst: /usr/share/strata-rmm/cosign-verifier-provenance.txt
+        file_info:
+          mode: 0644
+      - src: scripts/finalize-orchestrator-upgrade.sh
+        dst: /usr/lib/strata-rmm/finalize-orchestrator-upgrade.sh
+        file_info:
+          mode: 0755
 
   - id: agent-packages
     package_name: strata-rmm-agent
@@ -114,15 +131,17 @@ changelog:
   filters:
     exclude: ["^docs:", "^test:", "^ci:"]
 
+# Cosign v3 keyless bundles keep signature, certificate and transparency-log
+# material together. Every checksum-listed release artifact gets its own bundle.
 signs:
-  - artifacts: all
+  - cmd: cosign
+    artifacts: all
+    signature: "${artifact}.sigstore.json"
     args:
       - sign-blob
-      - "--output-signature=${signature}"
+      - "--bundle=${signature}"
       - "${artifact}"
-      - "--yes"
-    signature: "${artifact}.sig"
-    certificate: "${artifact}.pem"
+      - --yes
 
 sboms:
   - artifacts: archive

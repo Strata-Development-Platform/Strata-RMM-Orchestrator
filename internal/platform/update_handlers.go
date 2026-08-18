@@ -12,6 +12,7 @@ import (
 )
 
 type UpdateManager struct {
+	service *update.Service
 	updater *update.OrchestratorUpdater
 	status  string
 	version string
@@ -21,8 +22,10 @@ type UpdateManager struct {
 }
 
 func NewUpdateManager(currentVersion, owner, repo, apiAddr string, logger *zap.Logger) *UpdateManager {
+	updater := update.NewOrchestratorUpdater(currentVersion, owner, repo)
 	return &UpdateManager{
-		updater: update.NewOrchestratorUpdater(currentVersion, owner, repo),
+		service: update.NewService(updater, nil),
+		updater: updater,
 		status:  "idle",
 		version: currentVersion,
 		apiAddr: apiAddr,
@@ -35,29 +38,37 @@ func (m *UpdateManager) WithDeploymentController(dc *DeploymentController) *Upda
 	return m
 }
 
+func (m *UpdateManager) WithPreflight(preflight update.PreflightFunc) *UpdateManager {
+	m.service = update.NewService(m.updater, preflight)
+	return m
+}
+
 func (s *APIServer) handleUpdateCheck(w http.ResponseWriter, r *http.Request) {
 	if s.updateMgr == nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "update manager not available"})
 		return
 	}
 
-	release, err := s.updateMgr.updater.Check(r.Context())
+	plan, err := s.updateMgr.service.Plan(r.Context(), false)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
 
+	updateMu.Lock()
+	status := s.updateMgr.status
+	updateMu.Unlock()
 	resp := map[string]interface{}{
-		"current_version": s.updateMgr.version,
-		"status":          s.updateMgr.status,
-		"mode":            s.updateMgr.updater.DetectMode(),
+		"current_version":  plan.CurrentVersion,
+		"status":           status,
+		"mode":             plan.Mode,
+		"update_available": plan.Available,
 	}
-	if release != nil {
-		resp["update_available"] = true
-		resp["latest_version"] = release.Version
-		resp["changelog"] = release.Changelog
-	} else {
-		resp["update_available"] = false
+	if plan.Release != nil {
+		resp["latest_version"] = plan.Release.Version
+		resp["source_sha"] = plan.Release.SourceSHA
+		resp["schema_compatibility"] = plan.Release.SchemaCompatibility
+		resp["changelog"] = plan.Release.Changelog
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -71,85 +82,92 @@ func (s *APIServer) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	updateMu.Lock()
 	if s.updateMgr.status == "applying" {
+		updateMu.Unlock()
 		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "update already in progress"})
 		return
 	}
+	updateMu.Unlock()
 
-	mode := s.updateMgr.updater.DetectMode()
-	if mode != "baremetal" {
-		var instructions string
-		switch mode {
-		case "docker":
-			instructions = "docker compose pull && docker compose up -d"
-		case "kubernetes":
-			instructions = "helm upgrade strata-rmm ..."
-		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"mode":         mode,
-			"instructions": instructions,
-			"message":      fmt.Sprintf("Detected %s deployment. See instructions.", mode),
+	plan, err := s.updateMgr.service.Plan(r.Context(), false)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if !plan.Available || plan.Release == nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "no verified update is available"})
+		return
+	}
+	if plan.Mode != "baremetal" {
+		writeJSON(w, http.StatusConflict, map[string]interface{}{
+			"mode":    plan.Mode,
+			"message": "this deployment mode requires a digest-pinned promoted release update; mutable-tag instructions are intentionally disabled",
 		})
 		return
 	}
+	if s.db == nil || s.db.DB() == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "live database is unavailable for upgrade preflight"})
+		return
+	}
+
+	// CLI and HTTP bind the exact same fail-closed runtime prerequisite policy.
+	s.updateMgr.WithPreflight(update.NewRuntimePreflight(s.db.DB(), s.logger, update.DefaultUpgradeSnapshotDir))
 
 	updateMu.Lock()
 	s.updateMgr.status = "applying"
 	updateMu.Unlock()
 
-	go func() {
+	// Preserve request values while intentionally detaching cancellation. The
+	// handler returns immediately, but staging must be allowed to finish or fail
+	// under its own bounded timeout rather than being canceled mid-download.
+	upgradeParent := context.WithoutCancel(r.Context())
+	go func(parent context.Context) {
+		ctx, cancel := context.WithTimeout(parent, 30*time.Minute)
+		defer cancel()
 		defer func() {
 			updateMu.Lock()
-			s.updateMgr.status = "idle"
+			if s.updateMgr.status == "applying" {
+				s.updateMgr.status = "idle"
+			}
 			updateMu.Unlock()
 		}()
-		s.applyUpdate(r.Context())
-	}()
+		s.applyUpdate(ctx, plan.Release)
+	}(upgradeParent)
 
 	writeJSON(w, http.StatusAccepted, map[string]string{
 		"status":  "update_started",
-		"message": "Update in progress. Service will restart briefly.",
+		"message": "Verified update staging started.",
 	})
 }
 
-func (s *APIServer) applyUpdate(ctx context.Context) {
-	s.updateMgr.status = "applying"
-
-	if s.updateMgr.dc != nil {
-		s.updateMgr.dc.TransitionTo(DeploymentStateInProgress, "")
-		s.updateMgr.dc.RecordEvent(DeploymentEvent{
-			ID:      fmt.Sprintf("deploy-%d", time.Now().Unix()),
-			Version: s.updateMgr.version,
-			State:   DeploymentStateInProgress,
-		})
-	}
-
-	release, err := s.updateMgr.updater.Check(ctx)
-	if err != nil || release == nil {
-		if s.updateMgr.dc != nil {
-			s.updateMgr.dc.TransitionTo(DeploymentStateFailed, fmt.Sprintf("check failed: %v", err))
-		}
-		s.updateMgr.status = "idle"
+func (s *APIServer) applyUpdate(ctx context.Context, release *update.OrchestratorRelease) {
+	if release == nil {
+		updateMu.Lock()
+		s.updateMgr.status = "failed"
+		updateMu.Unlock()
 		return
 	}
 
 	if s.updateMgr.dc != nil {
-		prev := s.updateMgr.version
+		s.updateMgr.dc.TransitionTo(DeploymentStateInProgress, "")
 		s.updateMgr.dc.RecordEvent(DeploymentEvent{
 			ID:              fmt.Sprintf("deploy-%d", time.Now().Unix()),
 			Version:         release.Version,
-			PreviousVersion: prev,
+			PreviousVersion: s.updateMgr.version,
 			State:           DeploymentStateInProgress,
 		})
 	}
 
-	binaryPath, err := s.updateMgr.updater.Download(ctx, release)
+	binaryPath, preflight, err := s.updateMgr.service.Stage(ctx, release)
 	if err != nil {
 		if s.updateMgr.dc != nil {
-			s.updateMgr.dc.TransitionTo(DeploymentStateFailed, fmt.Sprintf("download failed: %v", err))
+			s.updateMgr.dc.TransitionTo(DeploymentStateFailed, fmt.Sprintf("preflight/stage failed: %v", err))
 		}
-		s.updateMgr.logger.Error("update download failed", zap.Error(err))
+		s.updateMgr.logger.Error("update preflight/stage failed", zap.Error(err))
+		updateMu.Lock()
 		s.updateMgr.status = "failed"
+		updateMu.Unlock()
 		return
 	}
 
@@ -166,47 +184,52 @@ func (s *APIServer) applyUpdate(ctx context.Context) {
 				s.updateMgr.dc.TransitionTo(DeploymentStateRolledBack, fmt.Sprintf("apply failed: %v", err))
 			}
 		}
+		updateMu.Lock()
 		if rollbackErr != nil {
 			s.updateMgr.status = "rollback_failed"
 		} else {
 			s.updateMgr.status = "rolled_back"
 		}
+		updateMu.Unlock()
 		return
 	}
 
-	healthURL := fmt.Sprintf("http://localhost%s/health", s.updateMgr.apiAddr)
-	if err := s.updateMgr.updater.Verify(ctx, healthURL); err != nil {
-		if s.updateMgr.dc != nil {
-			s.updateMgr.dc.TransitionTo(DeploymentStateRollingBack, "")
-		}
-		s.updateMgr.logger.Error("update verification failed, rolling back", zap.Error(err))
-		rollbackErr := s.updateMgr.updater.Rollback()
-		if s.updateMgr.dc != nil {
-			if rollbackErr != nil {
-				s.updateMgr.dc.TransitionTo(DeploymentStateFailed, fmt.Sprintf("verification failed: %v; rollback failed: %v", err, rollbackErr))
-			} else {
-				s.updateMgr.dc.TransitionTo(DeploymentStateRolledBack, fmt.Sprintf("verification failed: %v", err))
-			}
-		}
-		if rollbackErr != nil {
-			s.updateMgr.status = "rollback_failed"
-		} else {
-			s.updateMgr.status = "rolled_back"
-		}
-		return
-	}
-
+	// Do not claim post-upgrade success while the old process is still serving.
+	// The external finalizer owns restart, new-process health, schema rollback,
+	// and binary rollback.
 	if s.updateMgr.dc != nil {
-		s.updateMgr.dc.TransitionTo(DeploymentStateCompleted, "")
 		s.updateMgr.dc.RecordEvent(DeploymentEvent{
 			ID:              fmt.Sprintf("deploy-%d", time.Now().Unix()),
 			Version:         release.Version,
 			PreviousVersion: s.updateMgr.version,
-			State:           DeploymentStateCompleted,
+			State:           DeploymentStateInProgress,
 		})
 	}
+	updateMu.Lock()
+	s.updateMgr.status = "restart_pending"
+	updateMu.Unlock()
+	s.updateMgr.logger.Info("verified update staged; handing restart to external finalizer",
+		zap.String("version", release.Version),
+		zap.Int("source_schema", preflight.SourceSchemaVersion),
+		zap.Int("target_schema", preflight.TargetSchemaVersion),
+	)
 
-	s.updateMgr.logger.Info("update successful, restarting", zap.String("version", release.Version))
-	s.updateMgr.updater.Cleanup()
-	s.updateMgr.updater.TriggerRestart()
+	if err := s.updateMgr.updater.TriggerRestartWithSchema(preflight.SourceSchemaVersion, preflight.TargetSchemaVersion); err != nil {
+		s.updateMgr.logger.Error("external upgrade finalizer launch failed", zap.Error(err))
+		rollbackErr := s.updateMgr.updater.Rollback()
+		if s.updateMgr.dc != nil {
+			if rollbackErr != nil {
+				s.updateMgr.dc.TransitionTo(DeploymentStateFailed, fmt.Sprintf("finalizer launch failed: %v; rollback failed: %v", err, rollbackErr))
+			} else {
+				s.updateMgr.dc.TransitionTo(DeploymentStateRolledBack, fmt.Sprintf("finalizer launch failed: %v", err))
+			}
+		}
+		updateMu.Lock()
+		if rollbackErr != nil {
+			s.updateMgr.status = "rollback_failed"
+		} else {
+			s.updateMgr.status = "rolled_back"
+		}
+		updateMu.Unlock()
+	}
 }
