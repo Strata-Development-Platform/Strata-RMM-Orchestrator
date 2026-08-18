@@ -1,0 +1,89 @@
+name: Temporary migrate libpq to pgx
+
+on:
+  push:
+    branches:
+      - agent/alpha-patch-transaction-safety
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  migrate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/alpha-patch-transaction-safety
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - name: Migrate database/sql driver registration
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p internal/postgresdriver
+          cat > internal/postgresdriver/driver.go <<'EOF'
+          // Package postgresdriver registers pgx's database/sql adapter under the
+          // historical "postgres" driver name used throughout Strata RMM. Keeping
+          // the name stable lets the application migrate away from lib/pq without
+          // changing connection construction at every call site.
+          package postgresdriver
+
+          import (
+          	"database/sql"
+
+          	"github.com/jackc/pgx/v5/stdlib"
+          )
+
+          func init() {
+          	sql.Register("postgres", stdlib.GetDefaultDriver())
+          }
+          EOF
+
+          while IFS= read -r -d '' file; do
+            sed -i 's#_ "github.com/lib/pq"#_ "github.com/strata-rmm/strata-rmm-orchestrator/internal/postgresdriver"#g' "$file"
+          done < <(find . -name '*.go' -type f -print0)
+
+          # authorize.go used pq.Array solely to adapt []string. pgx/stdlib accepts
+          # slices through its NamedValueChecker and PostgreSQL performs the uuid[] cast.
+          sed -i '/^[[:space:]]*"github.com\/lib\/pq"[[:space:]]*$/d' internal/platform/authorize.go
+          sed -i 's/pq\.Array(unique)/unique/g' internal/platform/authorize.go
+
+          if grep -R --line-number --include='*.go' 'github.com/lib/pq' . > /tmp/pq-remaining.txt; then
+            printf 'Unmigrated lib/pq imports remain:\n\n```text\n' > /tmp/report.md
+            cat /tmp/pq-remaining.txt >> /tmp/report.md
+            printf '\n```\n' >> /tmp/report.md
+            gh pr comment 153 --body-file /tmp/report.md
+            exit 1
+          fi
+          if grep -R --line-number --include='*.go' -E '\bpq\.' . > /tmp/pq-api-remaining.txt; then
+            printf 'Unmigrated pq-specific API usage remains:\n\n```text\n' > /tmp/report.md
+            cat /tmp/pq-api-remaining.txt >> /tmp/report.md
+            printf '\n```\n' >> /tmp/report.md
+            gh pr comment 153 --body-file /tmp/report.md
+            exit 1
+          fi
+
+          go mod edit -droprequire github.com/lib/pq
+          go get github.com/jackc/pgx/v5/stdlib@v5.10.0
+          go mod tidy
+          gofmt -w internal/postgresdriver/driver.go internal/platform/authorize.go
+
+          go test ./internal/platform ./pkg/backup ./pkg/timescale ./pkg/postgres ./internal/patch ./internal/inventory
+          go vet ./internal/platform ./pkg/backup ./pkg/timescale ./pkg/postgres ./internal/patch ./internal/inventory
+
+      - name: Commit generated migration and remove temporary workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/temp-migrate-pq-to-pgx.yml
+          git add go.mod go.sum internal pkg
+          git diff --cached --check
+          git commit -m 'security: migrate PostgreSQL driver from libpq to pgx'
+          git push origin HEAD:agent/alpha-patch-transaction-safety
