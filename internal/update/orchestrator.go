@@ -9,11 +9,13 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/config"
+	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/timescale"
 )
 
 type OrchestratorUpdater struct {
@@ -23,6 +25,14 @@ type OrchestratorUpdater struct {
 	httpClient     *http.Client
 	currentExe     string
 	dataDir        string
+
+	// legacyCLIApply records the historical CLI Apply -> Verify -> Cleanup ->
+	// TriggerRestart sequence without allowing any of those in-process calls to
+	// mutate the installed binary. The finalizer remains the sole mutation owner.
+	legacyCLIApply  bool
+	stagedBinary    string
+	stagedRelease   *OrchestratorRelease
+	stagedPreflight *PreflightResult
 }
 
 type GitHubRelease struct {
@@ -260,25 +270,70 @@ func (u *OrchestratorUpdater) Download(ctx context.Context, release *Orchestrato
 		return "", fmt.Errorf("chmod: %w", err)
 	}
 
+	u.stagedBinary = binaryPath
+	u.stagedRelease = release
+	u.stagedPreflight = nil
+	u.legacyCLIApply = false
 	return binaryPath, nil
 }
 
+// Apply is retained for CLI/API compatibility, but it no longer replaces the
+// running executable. The crash-safe external finalizer owns every binary
+// mutation. A caller must have obtained binaryPath from Download on this updater.
 func (u *OrchestratorUpdater) Apply(binaryPath string) error {
-	backupPath := u.currentExe + ".bak"
-
-	if err := os.Rename(u.currentExe, backupPath); err != nil {
-		return fmt.Errorf("backup: %w", err)
+	if u.stagedRelease == nil || u.stagedBinary == "" || binaryPath != u.stagedBinary {
+		return fmt.Errorf("verified staged release is required before apply")
 	}
-
-	if err := os.Rename(binaryPath, u.currentExe); err != nil {
-		_ = os.Rename(backupPath, u.currentExe)
-		return fmt.Errorf("replace: %w", err)
+	updatesDir := filepath.Join(u.dataDir, "updates")
+	absBinary, err := filepath.Abs(binaryPath)
+	if err != nil {
+		return fmt.Errorf("resolve staged update binary: %w", err)
 	}
-
+	absUpdates, err := filepath.Abs(updatesDir)
+	if err != nil {
+		return fmt.Errorf("resolve update staging directory: %w", err)
+	}
+	if filepath.Dir(absBinary) != absUpdates {
+		return fmt.Errorf("staged update binary must remain inside the protected update directory")
+	}
+	if info, err := os.Stat(absBinary); err != nil || !info.Mode().IsRegular() || info.Mode()&0111 == 0 {
+		return fmt.Errorf("staged update binary is unavailable or not executable")
+	}
+	u.legacyCLIApply = true
 	return nil
 }
 
+// Verify preserves the historical CLI call sequence while moving its meaning to
+// the only safe pre-mutation operation available at this point: run the same
+// runtime preflight and row-level PostgreSQL backup used by the HTTP update path.
+// Post-start health verification is performed by the external finalizer.
 func (u *OrchestratorUpdater) Verify(ctx context.Context, healthURL string) error {
+	if u.legacyCLIApply {
+		if u.stagedRelease == nil || u.stagedBinary == "" {
+			return fmt.Errorf("staged release state is incomplete")
+		}
+		cfg, err := config.LoadOrchestratorConfig()
+		if err != nil {
+			return fmt.Errorf("load runtime configuration for update preflight: %w", err)
+		}
+		db, err := timescale.NewClient(ctx, cfg.DB.DSN, cfg.DB.ReplicaDSN)
+		if err != nil {
+			return fmt.Errorf("connect to database for update preflight: %w", err)
+		}
+		defer db.Close()
+
+		preflight := NewRuntimePreflight(db.DB(), nil, DefaultUpgradeBackupDir)
+		result, err := preflight(ctx, u.stagedRelease)
+		if err != nil {
+			return fmt.Errorf("run update preflight: %w", err)
+		}
+		if !result.Pass {
+			return fmt.Errorf("update preflight did not pass")
+		}
+		u.stagedPreflight = &result
+		return nil
+	}
+
 	for i := 0; i < 5; i++ {
 		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
 		resp, err := u.httpClient.Do(req)
@@ -320,6 +375,13 @@ func (u *OrchestratorUpdater) DetectMode() string {
 }
 
 func (u *OrchestratorUpdater) Cleanup() {
+	// The legacy CLI calls Cleanup immediately before TriggerRestart. Once a
+	// crash-safe staged update exists, cleanup belongs to the finalizer after
+	// candidate success or verified rollback; deleting it here would destroy the
+	// rollback point before mutation.
+	if u.legacyCLIApply {
+		return
+	}
 	failed := u.currentExe + ".failed"
 	_ = os.Remove(failed)
 	backup := u.currentExe + ".bak"
@@ -331,36 +393,16 @@ func (u *OrchestratorUpdater) CurrentVersion() string {
 	return u.currentVersion
 }
 
-// TriggerRestart delegates restart, post-restart health verification, and
-// automatic rollback to a transient systemd unit that survives this process.
-// The command returns only if systemd could not accept the finalizer. On
-// success this process exits and the finalizer becomes the source of truth for
-// whether the candidate is finalized or rolled back.
+// TriggerRestart preserves the legacy CLI entrypoint but requires a staged,
+// preflight-approved recovery transaction. It delegates to the same external
+// finalizer used by the HTTP/UI path; direct unbound restarts are rejected.
 func (u *OrchestratorUpdater) TriggerRestart() error {
-	mode := u.DetectMode()
-	if mode != "baremetal" {
-		return fmt.Errorf("%s deployment requires the digest-pinned promoted release workflow", mode)
+	if !u.legacyCLIApply || u.stagedRelease == nil || u.stagedBinary == "" || u.stagedPreflight == nil || !u.stagedPreflight.Pass {
+		return fmt.Errorf("restart requires a staged update with a verified PostgreSQL recovery point")
 	}
-
-	const finalizer = "/usr/lib/strata-rmm/finalize-orchestrator-upgrade.sh"
-	if info, err := os.Stat(finalizer); err != nil || info.Mode()&0111 == 0 {
-		return fmt.Errorf("upgrade finalizer is unavailable or not executable: %s", finalizer)
-	}
-
-	unit := fmt.Sprintf("strata-rmm-upgrade-finalize-%d", os.Getpid())
-	cmd := exec.Command(
-		"systemd-run",
-		"--unit="+unit,
-		"--collect",
-		"--property=Type=oneshot",
-		finalizer,
-		u.currentExe,
+	return u.TriggerRestartWithSchema(
+		u.stagedBinary,
+		u.stagedPreflight.SourceSchemaVersion,
+		u.stagedPreflight.TargetSchemaVersion,
 	)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("launch external upgrade finalizer: %w: %s", err, strings.TrimSpace(string(output)))
-	}
-
-	os.Exit(0)
-	return nil
 }
