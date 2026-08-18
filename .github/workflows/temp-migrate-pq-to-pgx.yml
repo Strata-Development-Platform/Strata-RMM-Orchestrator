@@ -13,6 +13,8 @@ jobs:
   migrate:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -53,17 +55,21 @@ jobs:
           sed -i 's/pq\.Array(unique)/unique/g' internal/platform/authorize.go
 
           if grep -R --line-number --include='*.go' 'github.com/lib/pq' . > /tmp/pq-remaining.txt; then
+            echo 'Unmigrated lib/pq imports remain:'
+            cat /tmp/pq-remaining.txt
             printf 'Unmigrated lib/pq imports remain:\n\n```text\n' > /tmp/report.md
             cat /tmp/pq-remaining.txt >> /tmp/report.md
             printf '\n```\n' >> /tmp/report.md
-            gh pr comment 153 --body-file /tmp/report.md
+            gh pr comment 153 --body-file /tmp/report.md || true
             exit 1
           fi
           if grep -R --line-number --include='*.go' -E '\bpq\.' . > /tmp/pq-api-remaining.txt; then
+            echo 'Unmigrated pq-specific API usage remains:'
+            cat /tmp/pq-api-remaining.txt
             printf 'Unmigrated pq-specific API usage remains:\n\n```text\n' > /tmp/report.md
             cat /tmp/pq-api-remaining.txt >> /tmp/report.md
             printf '\n```\n' >> /tmp/report.md
-            gh pr comment 153 --body-file /tmp/report.md
+            gh pr comment 153 --body-file /tmp/report.md || true
             exit 1
           fi
 
