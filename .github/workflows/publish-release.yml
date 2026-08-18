@@ -7,17 +7,110 @@ on:
       - "v[0-9]+.[0-9]+.[0-9]+-*"
 
 permissions:
+  actions: read
   contents: write
   id-token: write
   attestations: write
+  packages: write
 
 concurrency:
   group: release-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
+  qualify:
+    name: Qualify Exact Tagged SHA
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate immutable version tag and tested master head
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ "${GITHUB_REF_NAME}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]]
+          git fetch origin master --force
+          master_sha="$(git rev-parse origin/master)"
+          test "${GITHUB_SHA}" = "${master_sha}" || {
+            echo "release tag must point at the current master head: tag=${GITHUB_SHA} master=${master_sha}" >&2
+            exit 1
+          }
+
+          successful_ci_run="$(
+            gh api \
+              "/repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${GITHUB_SHA}&event=push&status=completed&per_page=20" \
+              --jq '.workflow_runs[] | select(.conclusion == "success") | .id' \
+              | head -n1
+          )"
+          test -n "${successful_ci_run}" || {
+            echo "release blocked: exact tagged SHA ${GITHUB_SHA} has no successful CI push run" >&2
+            exit 1
+          }
+          echo "qualified exact SHA ${GITHUB_SHA} with CI run ${successful_ci_run}"
+
+  docker:
+    name: Signed OCI Image
+    needs: qualify
+    runs-on: ubuntu-latest
+    environment: release
+    outputs:
+      image: ${{ steps.image.outputs.reference }}
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: sigstore/cosign-installer@v4.1.2
+        with:
+          cosign-release: v3.1.3
+      - name: Resolve canonical image reference
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          echo "reference=${image}" >> "$GITHUB_OUTPUT"
+      - name: Build and push immutable multi-architecture image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ steps.image.outputs.reference }}:${{ github.ref_name }}
+            ${{ steps.image.outputs.reference }}:sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+            org.opencontainers.image.revision=${{ github.sha }}
+      - name: Sign and verify immutable OCI digest
+        shell: bash
+        env:
+          IMAGE: ${{ steps.image.outputs.reference }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          [[ "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          cosign sign --yes "${IMAGE}@${DIGEST}"
+          cosign verify \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/publish-release.yml@refs/tags/${GITHUB_REF_NAME}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${IMAGE}@${DIGEST}"
+
   publish:
     name: Signed Release Packages
+    needs: [qualify, docker]
     runs-on: ubuntu-latest
     environment: release
     steps:
@@ -26,7 +119,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.25"
+          go-version: "1.26.6"
           cache: true
       - uses: actions/setup-node@v4
         with:
@@ -38,15 +131,11 @@ jobs:
         run: |
           npm ci
           npm run build
-      - name: Validate immutable version tag
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ "${GITHUB_REF_NAME}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]]
-          git merge-base --is-ancestor "${GITHUB_SHA}" origin/master
       - name: Test updater contract
         run: go test -count=1 -race ./internal/update
-      - uses: sigstore/cosign-installer@v3
+      - uses: sigstore/cosign-installer@v4.1.2
+        with:
+          cosign-release: v3.1.3
       - name: Publish signed packages, checksums, and release assets
         uses: goreleaser/goreleaser-action@v6
         with:
@@ -55,10 +144,47 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Attest native packages
+      - name: Generate and sign authoritative release manifest
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MINIMUM_UPGRADE_VERSION: ${{ vars.MINIMUM_UPGRADE_VERSION }}
+          OCI_IMAGE: ${{ needs.docker.outputs.image }}
+          OCI_DIGEST: ${{ needs.docker.outputs.digest }}
+        run: |
+          set -euo pipefail
+          test -n "${MINIMUM_UPGRADE_VERSION}" || { echo "release environment variable MINIMUM_UPGRADE_VERSION is required" >&2; exit 1; }
+          [[ "${OCI_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          schema="$(find migrations -maxdepth 1 -type f -name '*.up.sql' -printf '%f\n' | sort | tail -n1 | cut -d_ -f1)"
+          test -n "${schema}"
+          channel=stable
+          [[ "${GITHUB_REF_NAME}" == *-* ]] && channel=prerelease
+          python3 scripts/generate-release-manifest.py \
+            --version "${GITHUB_REF_NAME}" \
+            --source-sha "${GITHUB_SHA}" \
+            --minimum-upgrade-version "${MINIMUM_UPGRADE_VERSION}" \
+            --schema-compatibility "${schema}" \
+            --channel "${channel}" \
+            --oci-image "${OCI_IMAGE}" \
+            --oci-digest "${OCI_DIGEST}"
+          cosign sign-blob \
+            --bundle=dist/release-manifest.json.sigstore.json \
+            dist/release-manifest.json \
+            --yes
+          cosign verify-blob \
+            --bundle dist/release-manifest.json.sigstore.json \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/publish-release.yml@refs/tags/${GITHUB_REF_NAME}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            dist/release-manifest.json
+          gh release upload "${GITHUB_REF_NAME}" \
+            dist/release-manifest.json \
+            dist/release-manifest.json.sigstore.json \
+            --clobber
+      - name: Attest native packages and manifest
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: |
             dist/*.deb
             dist/*.rpm
             dist/strata-rmm-orchestrator-*
+            dist/release-manifest.json

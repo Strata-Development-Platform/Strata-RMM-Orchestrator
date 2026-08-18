@@ -34,8 +34,8 @@ func MigrationChecksum(version int32) (string, error) {
 }
 
 // PostgresVersionStore implements VersionStore with persistent storage in the
-// database.  It keeps a single row (key=version) for the current schema version
-// and an arbitrary key-value map for release checksums.
+// database. It keeps checksum evidence and a cached version marker, but
+// schema_migrations remains the authoritative source of the live schema.
 type PostgresVersionStore struct {
 	db       *sql.DB
 	logger   *zap.SugaredLogger
@@ -79,34 +79,41 @@ func (vs *PostgresVersionStore) GetVersion() (int32, error) {
 		return 0, err
 	}
 
+	// Normal orchestrator startup applies migrations through SchemaManager,
+	// which records schema_migrations but does not update the auxiliary version
+	// marker. Always derive the live version from immutable migration history so
+	// rollback after a failed candidate cannot be misled by a stale marker.
+	var migrationVersion int64
+	if err := vs.db.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(id), 0) FROM schema_migrations`,
+	).Scan(&migrationVersion); err != nil {
+		return 0, fmt.Errorf("read version from migration history: %w", err)
+	}
+	if migrationVersion > 2147483647 || migrationVersion < 0 {
+		return 0, fmt.Errorf("migration version %d out of range", migrationVersion)
+	}
+	authoritative := int32(migrationVersion)
+
 	var value string
 	err := vs.db.QueryRowContext(ctx,
 		`SELECT value FROM `+versionStoreTable+` WHERE key = 'version'`,
 	).Scan(&value)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			// Existing installations predate schema_version_store. Bootstrap
-			// their current version from immutable migration history without
-			// rewriting that history.
-			var migrationVersion int64
-			if err := vs.db.QueryRowContext(ctx,
-				`SELECT COALESCE(MAX(id), 0) FROM schema_migrations`,
-			).Scan(&migrationVersion); err != nil {
-				return 0, fmt.Errorf("bootstrap version from migration history: %w", err)
-			}
-			if migrationVersion > 2147483647 || migrationVersion < 0 {
-				return 0, fmt.Errorf("migration version %d out of range", migrationVersion)
-			}
-			return int32(migrationVersion), nil
+	if err == nil {
+		var stored int32
+		if _, scanErr := fmt.Sscanf(value, "%d", &stored); scanErr != nil {
+			return 0, fmt.Errorf("parse stored version %q: %w", value, scanErr)
 		}
-		return 0, fmt.Errorf("query version: %w", err)
+		if stored != authoritative && vs.logger != nil {
+			vs.logger.Warnw("schema version marker differs from migration history; using migration history",
+				"stored_version", stored,
+				"migration_version", authoritative,
+			)
+		}
+	} else if err != sql.ErrNoRows {
+		return 0, fmt.Errorf("query version marker: %w", err)
 	}
 
-	var v int32
-	if _, err := fmt.Sscanf(value, "%d", &v); err != nil {
-		return 0, fmt.Errorf("parse stored version %q: %w", value, err)
-	}
-	return v, nil
+	return authoritative, nil
 }
 
 func (vs *PostgresVersionStore) SetVersion(v int32) error {
