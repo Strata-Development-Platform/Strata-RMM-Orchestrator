@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"regexp"
 	"runtime"
@@ -16,8 +17,9 @@ import (
 )
 
 const (
-	operationTimeout = 30 * time.Second
-	maxCommandOutput = 64 * 1024
+	operationTimeout     = 30 * time.Second
+	maxCommandOutput     = 64 * 1024
+	patchMutationTimeout = 2 * time.Hour
 )
 
 type DeviceOperation struct {
@@ -75,14 +77,36 @@ func runOperationCommandWithTimeout(ctx context.Context, timeout time.Duration, 
 	}
 	commandCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	output, err := exec.CommandContext(commandCtx, name, args...).CombinedOutput()
+	return runOperationCommandContext(commandCtx, name, args...)
+}
+
+func runOperationCommandContext(ctx context.Context, name string, args ...string) (string, error) {
+	output, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
 	if len(output) > maxCommandOutput {
 		output = output[:maxCommandOutput]
 	}
-	if commandCtx.Err() != nil {
-		return string(output), fmt.Errorf("operation timed out or was cancelled: %w", commandCtx.Err())
+	if ctx.Err() != nil {
+		return string(output), fmt.Errorf("operation timed out or was cancelled: %w", ctx.Err())
 	}
 	return string(output), err
+}
+
+func beginPatchMutation(ctx context.Context) (context.Context, context.CancelFunc, error) {
+	return beginPatchMutationWithTimeout(ctx, patchMutationTimeout)
+}
+
+func beginPatchMutationWithTimeout(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	if timeout <= 0 {
+		return nil, nil, fmt.Errorf("invalid patch mutation timeout")
+	}
+	// Once an OS package transaction starts, routine dispatcher cancellation must
+	// not kill it mid-mutation. A separate safety ceiling still bounds a wedged
+	// package manager and turns loss of execution ownership into reconciliation.
+	mutationCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
+	return mutationCtx, cancel, nil
 }
 
 func rebootCommand(goos, reason string) (string, []string, error) {
@@ -286,9 +310,7 @@ func handlePatchScan(ctx context.Context, cmd *CommandEnvelope) (string, int, []
 
 	var patches []map[string]interface{}
 	if err := json.Unmarshal([]byte(output), &patches); err != nil {
-		patches = []map[string]interface{}{
-			{"raw_output": truncate(output, 4096)},
-		}
+		patches = []map[string]interface{}{{"raw_output": truncate(output, 4096)}}
 	}
 
 	result := OperationResult{
@@ -301,26 +323,51 @@ func handlePatchScan(ctx context.Context, cmd *CommandEnvelope) (string, int, []
 }
 
 func handlePatchInstall(ctx context.Context, cmd *CommandEnvelope) (string, int, []byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
-	defer cancel()
-
 	var payload patchPayload
 	if err := json.Unmarshal(cmd.Payload, &payload); err != nil {
 		return "failed", 1, marshalOperationResult(OperationResult{Action: "patch_install", Message: "invalid payload"}), nil
 	}
-
 	if len(payload.PatchIDs) == 0 {
 		return "failed", 1, marshalOperationResult(OperationResult{Action: "patch_install", Message: "no patch IDs provided"}), nil
 	}
+	if err := ctx.Err(); err != nil {
+		result := OperationResult{Action: "patch_install", Message: err.Error(), Data: map[string]interface{}{
+			"execution_state": "not_started",
+			"reboot_required": false,
+		}}
+		return "cancelled", 1, marshalOperationResult(result), nil
+	}
 
-	output, rebootReq, err := runPatchInstall(ctx, payload.PatchIDs)
+	mutationCtx, cancel, err := beginPatchMutation(ctx)
+	if err != nil {
+		result := OperationResult{Action: "patch_install", Message: err.Error(), Data: map[string]interface{}{
+			"execution_state": "not_started",
+			"reboot_required": false,
+		}}
+		return "cancelled", 1, marshalOperationResult(result), nil
+	}
+	defer cancel()
+
+	output, rebootReq, err := runPatchInstall(mutationCtx, payload.PatchIDs)
 	result := OperationResult{
 		Action: "patch_install",
 		Output: truncate(output, 4096),
-		Data:   map[string]bool{"reboot_required": rebootReq},
+		Data: map[string]interface{}{
+			"execution_state": "completed",
+			"reboot_required": rebootReq,
+		},
 	}
 	if err != nil {
 		result.Succeeded = false
+		if errors.Is(mutationCtx.Err(), context.DeadlineExceeded) {
+			result.Message = "patch transaction exceeded safety ceiling; endpoint state is indeterminate and must be reconciled before retry"
+			result.Data = map[string]interface{}{
+				"execution_state": "indeterminate",
+				"reboot_required": rebootReq,
+				"retry_safe":      false,
+			}
+			return "indeterminate", 2, marshalOperationResult(result), nil
+		}
 		result.Message = err.Error()
 		return "failed", 1, marshalOperationResult(result), nil
 	}
@@ -449,7 +496,7 @@ $Installer.Updates = $Updates
 $Result = $Installer.Install()
 [PSCustomObject]@{ ResultCode = [int]$Result.ResultCode; RebootRequired = [bool]$Result.RebootRequired } | ConvertTo-Json -Compress`, kbPattern)
 
-	output, runErr := runOperationCommandWithTimeout(ctx, 10*time.Minute, "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script)
+	output, runErr := runOperationCommandContext(ctx, "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script)
 	if runErr != nil {
 		return output, false, runErr
 	}
@@ -477,8 +524,41 @@ func runLinuxPatchInstall(ctx context.Context, patchIDs []string) (string, bool,
 		args = append([]string{"--non-interactive", "update"}, patchIDs...)
 		cmdName = "zypper"
 	}
-	output, err := runOperationCommandWithTimeout(ctx, 10*time.Minute, cmdName, args...)
-	return output, false, err
+	output, err := runOperationCommandContext(ctx, cmdName, args...)
+	if err != nil {
+		return output, false, err
+	}
+	return output, detectLinuxRebootRequired(ctx, pm), nil
+}
+
+func detectLinuxRebootRequired(ctx context.Context, pm string) bool {
+	marker := false
+	if _, err := os.Stat("/var/run/reboot-required"); err == nil {
+		marker = true
+	}
+	if marker {
+		return true
+	}
+	if pm != "dnf" && pm != "yum" {
+		return false
+	}
+	needsRestarting, err := exec.LookPath("needs-restarting")
+	if err != nil {
+		return false
+	}
+	_, err = runOperationCommandWithTimeout(ctx, 30*time.Second, needsRestarting, "-r")
+	if err == nil {
+		return false
+	}
+	var exitErr *exec.ExitError
+	return errors.As(err, &exitErr) && linuxRebootRequiredFromSignals(false, pm, exitErr.ExitCode())
+}
+
+func linuxRebootRequiredFromSignals(marker bool, pm string, needsRestartingExit int) bool {
+	if marker {
+		return true
+	}
+	return (pm == "dnf" || pm == "yum") && needsRestartingExit == 1
 }
 
 func detectPackageManager() string {
