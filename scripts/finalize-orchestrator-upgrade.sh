@@ -3,14 +3,15 @@ set -eu
 
 SERVICE_NAME="${STRATA_UPGRADE_SERVICE:-strata-rmm.service}"
 BINARY_PATH="${1:-/usr/local/bin/strata-orchestrator}"
-SOURCE_SCHEMA="${2:-}"
-TARGET_SCHEMA="${3:-}"
+STAGED_PATH="${2:-}"
+SOURCE_SCHEMA="${3:-}"
+TARGET_SCHEMA="${4:-}"
 BACKUP_PATH="${BINARY_PATH}.bak"
 FAILED_PATH="${BINARY_PATH}.failed"
 HEALTH_URL="${STRATA_UPGRADE_HEALTH_URL:-http://127.0.0.1:8080/health}"
 ATTEMPTS="${STRATA_UPGRADE_HEALTH_ATTEMPTS:-30}"
 SLEEP_SECONDS="${STRATA_UPGRADE_HEALTH_INTERVAL:-2}"
-UPDATE_DIR="/var/lib/strata-rmm/updates"
+UPDATE_DIR="${STRATA_UPGRADE_UPDATE_DIR:-/var/lib/strata-rmm/updates}"
 DB_BACKUP_DIR="${STRATA_UPGRADE_DB_BACKUP_DIR:-/var/lib/strata-rmm/backups/upgrades}"
 DB_HANDOFF="${STRATA_UPGRADE_DB_HANDOFF:-$UPDATE_DIR/database-backup.env}"
 
@@ -39,6 +40,26 @@ valid_schema_number() {
     ''|*[!0-9]*) return 1 ;;
     *) return 0 ;;
   esac
+}
+
+verify_staged_binary() {
+  case "$STAGED_PATH" in
+    "$UPDATE_DIR"/*) ;;
+    *) log "staged binary is outside the protected update directory"; return 1 ;;
+  esac
+  if [ ! -f "$STAGED_PATH" ] || [ ! -x "$STAGED_PATH" ]; then
+    log "staged candidate binary is missing or not executable"
+    return 1
+  fi
+  if [ ! -f "$BINARY_PATH" ] || [ ! -x "$BINARY_PATH" ]; then
+    log "current orchestrator binary is missing or not executable"
+    return 1
+  fi
+  if [ -e "$BACKUP_PATH" ]; then
+    log "rollback binary already exists; unresolved prior upgrade state must be handled first"
+    return 1
+  fi
+  return 0
 }
 
 load_and_verify_database_backup() {
@@ -111,36 +132,49 @@ restore_database_backup() {
   return 0
 }
 
-if [ ! -x "$BINARY_PATH" ]; then
-  log "candidate binary is missing or not executable: $BINARY_PATH"
-  exit 1
-fi
+restore_old_binary_after_swap_failure() {
+  if [ -f "$BACKUP_PATH" ] && [ ! -e "$BINARY_PATH" ]; then
+    mv "$BACKUP_PATH" "$BINARY_PATH" || return 1
+  fi
+  systemctl start "$SERVICE_NAME" || return 1
+  wait_for_health
+}
 
-if [ ! -f "$BACKUP_PATH" ]; then
-  log "rollback binary is missing: $BACKUP_PATH"
-  exit 1
-fi
-
-# A candidate is never started unless the exact pre-upgrade database backup is
-# already present and checksum-verified. This makes rollback capability a hard
-# prerequisite rather than a best-effort reaction after a failed restart.
-if ! load_and_verify_database_backup; then
-  log "upgrade refused because the row-level rollback backup is not trustworthy"
+# Nothing is mutated until both recovery assets and the staged executable have
+# been verified. A crash before this transient unit starts leaves the old
+# executable untouched; a later upgrade is blocked by the unresolved handoff.
+if ! verify_staged_binary || ! load_and_verify_database_backup; then
+  log "upgrade refused because the staged candidate or row-level rollback backup is not trustworthy"
   exit 3
 fi
 
-log "restarting $SERVICE_NAME into staged candidate"
-if ! systemctl restart "$SERVICE_NAME"; then
-  log "service restart command failed; beginning rollback"
-else
-  if wait_for_health; then
-    log "candidate became healthy; finalizing upgrade"
-    rm -f "$BACKUP_PATH" "$FAILED_PATH" "$DB_BACKUP_PATH" "$DB_HANDOFF"
-    rm -rf "$UPDATE_DIR"
-    exit 0
-  fi
-  log "candidate did not become healthy; beginning rollback"
+log "stopping $SERVICE_NAME before finalizer-owned binary swap"
+if ! systemctl stop "$SERVICE_NAME"; then
+  log "unable to stop current service; no binary or database mutation was performed"
+  exit 3
 fi
+
+if ! mv "$BINARY_PATH" "$BACKUP_PATH"; then
+  log "unable to preserve current binary; service remains stopped"
+  exit 3
+fi
+if ! mv "$STAGED_PATH" "$BINARY_PATH"; then
+  log "unable to promote staged candidate; restoring previous binary"
+  if restore_old_binary_after_swap_failure; then
+    exit 1
+  fi
+  log "failed to recover previous binary after candidate promotion failure"
+  exit 3
+fi
+
+log "starting $SERVICE_NAME into staged candidate"
+if systemctl start "$SERVICE_NAME" && wait_for_health; then
+  log "candidate became healthy; finalizing upgrade"
+  rm -f "$BACKUP_PATH" "$FAILED_PATH" "$DB_BACKUP_PATH" "$DB_HANDOFF"
+  rm -rf "$UPDATE_DIR"
+  exit 0
+fi
+log "candidate failed startup or health verification; beginning rollback"
 
 systemctl stop "$SERVICE_NAME" || true
 
