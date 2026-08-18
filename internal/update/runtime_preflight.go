@@ -7,17 +7,20 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/config"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/postgres"
 	"go.uber.org/zap"
 )
 
-const DefaultUpgradeSnapshotDir = "/var/lib/strata-rmm/backups/state"
+// DefaultUpgradeSnapshotDir is retained as a compatibility alias for callers
+// created before row-level upgrade backups replaced metadata-only snapshots.
+const DefaultUpgradeSnapshotDir = DefaultUpgradeBackupDir
 
 // NewRuntimePreflight returns the single fail-closed runtime prerequisite policy
 // shared by CLI and HTTP upgrade entrypoints.
-func NewRuntimePreflight(db *sql.DB, logger *zap.Logger, snapshotDir string) PreflightFunc {
-	if snapshotDir == "" {
-		snapshotDir = DefaultUpgradeSnapshotDir
+func NewRuntimePreflight(db *sql.DB, logger *zap.Logger, backupDir string) PreflightFunc {
+	if backupDir == "" {
+		backupDir = DefaultUpgradeBackupDir
 	}
 	if logger == nil {
 		logger = zap.NewNop()
@@ -69,13 +72,21 @@ func NewRuntimePreflight(db *sql.DB, logger *zap.Logger, snapshotDir string) Pre
 			return result, nil
 		}
 
-		preserver := postgres.NewStatePreserver(db, logger.Sugar(), snapshotDir)
-		snapshotID, snapshotErr := preserver.PreDeploySnapshot(ctx)
-		if snapshotErr != nil {
-			appendCheck("backup", false, fmt.Sprintf("pre-upgrade state snapshot failed: %v", snapshotErr))
+		cfg, cfgErr := config.LoadOrchestratorConfig()
+		if cfgErr != nil {
+			appendCheck("backup", false, fmt.Sprintf("cannot load active database configuration for upgrade backup: %v", cfgErr))
 			return result, nil
 		}
-		appendCheck("backup", true, fmt.Sprintf("pre-upgrade state snapshot created: %s", snapshotID))
+		databaseBackup, backupErr := createUpgradeDatabaseBackup(ctx, db, cfg.DB.DSN, backupDir, DefaultUpgradeHandoffPath)
+		if backupErr != nil {
+			appendCheck("backup", false, fmt.Sprintf("pre-upgrade PostgreSQL data backup failed: %v", backupErr))
+			return result, nil
+		}
+		appendCheck("backup", true, fmt.Sprintf("pre-upgrade PostgreSQL data backup created and bound to restart handoff: %d bytes sha256=%s", databaseBackup.Size, databaseBackup.SHA256))
+		logger.Info("row-level PostgreSQL upgrade backup ready",
+			zap.Int64("size_bytes", databaseBackup.Size),
+			zap.String("sha256", databaseBackup.SHA256),
+		)
 		return result, nil
 	}
 }
