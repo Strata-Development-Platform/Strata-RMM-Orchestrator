@@ -168,7 +168,7 @@ func (e DockerUpgradeExecutor) healthy(ctx context.Context) error {
 
 func (e DockerUpgradeExecutor) validate() error {
 	if e.Project == "" || !filepath.IsAbs(e.ComposeFile) || !filepath.IsAbs(e.EnvFile) || !filepath.IsAbs(e.JournalFile) {
-		return fmt.Errorf("Docker upgrade executor requires project and absolute Compose/env/journal paths")
+		return fmt.Errorf("docker upgrade executor requires project and absolute Compose/env/journal paths")
 	}
 	return nil
 }
