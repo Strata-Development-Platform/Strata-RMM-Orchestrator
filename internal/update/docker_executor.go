@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-var errComposeImageMissing = errors.New("Compose environment does not define STRATA_ORCHESTRATOR_IMAGE")
+var errComposeImageMissing = errors.New("compose environment does not define STRATA_ORCHESTRATOR_IMAGE")
 
 type DockerUpgradeExecutor struct {
 	ComposeFile   string
@@ -45,7 +45,7 @@ func (e DockerUpgradeExecutor) currentConfiguredImage() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("open Compose environment: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	const prefix = "STRATA_ORCHESTRATOR_IMAGE="
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
@@ -93,10 +93,10 @@ func replaceEnvImage(path, image string) error {
 		return err
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return fmt.Errorf("Compose environment must be a regular non-symlink file")
+		return fmt.Errorf("compose environment must be a regular non-symlink file")
 	}
 	if info.Mode().Perm()&0077 != 0 {
-		return fmt.Errorf("Compose environment permissions are too broad")
+		return fmt.Errorf("compose environment permissions are too broad")
 	}
 	payload, err := os.ReadFile(path)
 	if err != nil {
@@ -120,7 +120,7 @@ func replaceEnvImage(path, image string) error {
 		return err
 	}
 	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
+	defer func() { _ = os.Remove(tmpPath) }()
 	if err := tmp.Chmod(0600); err != nil {
 		_ = tmp.Close()
 		return err
@@ -143,7 +143,7 @@ func replaceEnvImage(path, image string) error {
 	if err != nil {
 		return err
 	}
-	defer d.Close()
+	defer func() { _ = d.Close() }()
 	return d.Sync()
 }
 
