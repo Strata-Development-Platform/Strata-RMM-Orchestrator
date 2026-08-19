@@ -43,7 +43,7 @@ func runDocker(ctx context.Context, args ...string) ([]byte, error) {
 func (e DockerUpgradeExecutor) currentConfiguredImage() (string, error) {
 	file, err := os.Open(e.EnvFile)
 	if err != nil {
-		return "", fmt.Errorf("open Compose environment: %w", err)
+		return "", fmt.Errorf("open compose environment: %w", err)
 	}
 	defer func() { _ = file.Close() }()
 	const prefix = "STRATA_ORCHESTRATOR_IMAGE="
@@ -59,7 +59,7 @@ func (e DockerUpgradeExecutor) currentConfiguredImage() (string, error) {
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return "", fmt.Errorf("read Compose environment: %w", err)
+		return "", fmt.Errorf("read compose environment: %w", err)
 	}
 	return "", errComposeImageMissing
 }
@@ -71,7 +71,7 @@ func (e DockerUpgradeExecutor) liveImage(ctx context.Context) (string, error) {
 	}
 	id := strings.TrimSpace(string(idBytes))
 	if id == "" {
-		return "", fmt.Errorf("orchestrator Compose container is not running")
+		return "", fmt.Errorf("orchestrator compose container is not running")
 	}
 	imageBytes, err := runDocker(ctx, "inspect", "--format", "{{.Config.Image}}", id)
 	if err != nil {
@@ -168,7 +168,7 @@ func (e DockerUpgradeExecutor) healthy(ctx context.Context) error {
 
 func (e DockerUpgradeExecutor) validate() error {
 	if e.Project == "" || !filepath.IsAbs(e.ComposeFile) || !filepath.IsAbs(e.EnvFile) || !filepath.IsAbs(e.JournalFile) {
-		return fmt.Errorf("docker upgrade executor requires project and absolute Compose/env/journal paths")
+		return fmt.Errorf("docker upgrade executor requires project and absolute compose/env/journal paths")
 	}
 	return nil
 }
@@ -181,12 +181,12 @@ func (e DockerUpgradeExecutor) Apply(ctx context.Context, candidate OCIReleaseCa
 		return err
 	}
 	if !preflight.Pass {
-		return fmt.Errorf("shared runtime preflight must pass before Docker apply")
+		return fmt.Errorf("shared runtime preflight must pass before docker apply")
 	}
 	if _, err := os.Lstat(e.JournalFile); err == nil {
-		return fmt.Errorf("unresolved Docker upgrade journal blocks competing apply")
+		return fmt.Errorf("unresolved docker upgrade journal blocks competing apply")
 	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("inspect Docker upgrade journal: %w", err)
+		return fmt.Errorf("inspect docker upgrade journal: %w", err)
 	}
 
 	configured, configuredErr := e.currentConfiguredImage()
@@ -198,7 +198,7 @@ func (e DockerUpgradeExecutor) Apply(ctx context.Context, candidate OCIReleaseCa
 		return err
 	}
 	if configuredErr == nil && configured != live {
-		return fmt.Errorf("live orchestrator image does not match protected Compose state")
+		return fmt.Errorf("live orchestrator image does not match protected compose state")
 	}
 	if configuredErr != nil {
 		// Installations created before the upgrade transaction persisted the
@@ -206,7 +206,7 @@ func (e DockerUpgradeExecutor) Apply(ctx context.Context, candidate OCIReleaseCa
 		// live digest into the protected env before any candidate mutation.
 		configured = live
 		if err := replaceEnvImage(e.EnvFile, configured); err != nil {
-			return fmt.Errorf("adopt live immutable image into protected Compose state: %w", err)
+			return fmt.Errorf("adopt live immutable image into protected compose state: %w", err)
 		}
 	}
 	if candidate.Image == configured {
@@ -264,7 +264,7 @@ func (e DockerUpgradeExecutor) Apply(ctx context.Context, candidate OCIReleaseCa
 		journal.State = DockerUpgradeRecoveryNeeded
 		journal.UpdatedAt = time.Now().UTC()
 		_ = WriteDockerUpgradeJournal(e.JournalFile, journal)
-		return fmt.Errorf("candidate failed and previous image could not be restored in Compose state: %w", err)
+		return fmt.Errorf("candidate failed and previous image could not be restored in compose state: %w", err)
 	}
 	if _, err := runDocker(ctx, e.composeArgs("up", "-d", "--no-deps", "orchestrator")...); err != nil {
 		journal.State = DockerUpgradeRecoveryNeeded
