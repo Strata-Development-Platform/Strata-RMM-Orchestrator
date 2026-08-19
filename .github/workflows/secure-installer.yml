@@ -12,6 +12,8 @@ on:
       - "cmd/orchestrator/bootstrap_admin*"
       - "pkg/config/**"
       - "pkg/postgres/bootstrap*"
+      - "internal/update/docker_*"
+      - "internal/update/oci*"
       - ".github/workflows/secure-installer.yml"
   workflow_dispatch:
 
@@ -34,6 +36,8 @@ jobs:
           grep -q -- '--https-mode' scripts/install-platform.sh
           grep -q 'ACME_CA_DIRECTORY' scripts/install-platform.sh
           grep -q 'validate_docker_replay_state' scripts/install-platform.sh
+          grep -q 'STRATA_ORCHESTRATOR_IMAGE' deploy/docker/docker-compose.install.yml
+          ! grep -A5 '^  orchestrator:' deploy/docker/docker-compose.install.yml | grep -q 'build:'
           ! grep -Eq 'curl[^|]*\|[[:space:]]*(sh|bash)|wget[^|]*\|[[:space:]]*(sh|bash)' scripts/install-platform.sh
       - name: Run ShellCheck
         uses: ludeeus/action-shellcheck@master
@@ -84,13 +88,17 @@ jobs:
   compose-preparation:
     name: Secure Compose Preparation and Replay
     runs-on: ubuntu-latest
+    env:
+      STRATA_ORCHESTRATOR_IMAGE: ghcr.io/strata-development-platform/strata-rmm-orchestrator@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
     steps:
       - uses: actions/checkout@v4
       - name: Generate protected installation material and render Compose
         run: |
           printf '%s' 'correct horse battery staple' > /tmp/bootstrap-password
           chmod 600 /tmp/bootstrap-password
-          sudo env STRATA_BOOTSTRAP_PASSWORD_FILE=/tmp/bootstrap-password \
+          sudo env \
+            STRATA_BOOTSTRAP_PASSWORD_FILE=/tmp/bootstrap-password \
+            STRATA_ORCHESTRATOR_IMAGE="$STRATA_ORCHESTRATOR_IMAGE" \
             bash ./scripts/install-platform.sh \
             --mode docker \
             --domain rmm.example.test \
@@ -103,11 +111,17 @@ jobs:
           sudo test -s deploy/docker/secrets/nats_server.crt
           sudo test -s deploy/docker/secrets/postgres_server.crt
           sudo grep -q 'acme-staging-v02.api.letsencrypt.org' deploy/docker/.install.env
-          sudo docker compose --env-file deploy/docker/.install.env -f deploy/docker/docker-compose.install.yml config --quiet
+          sudo env STRATA_ORCHESTRATOR_IMAGE="$STRATA_ORCHESTRATOR_IMAGE" \
+            docker compose --env-file deploy/docker/.install.env -f deploy/docker/docker-compose.install.yml config --quiet
+          rendered="$(sudo env STRATA_ORCHESTRATOR_IMAGE="$STRATA_ORCHESTRATOR_IMAGE" \
+            docker compose --env-file deploy/docker/.install.env -f deploy/docker/docker-compose.install.yml config --format json)"
+          test "$(jq -r '.services.orchestrator.image' <<<"$rendered")" = "$STRATA_ORCHESTRATOR_IMAGE"
+          test "$(jq -r '.services.orchestrator.build // empty' <<<"$rendered")" = ""
           sudo sh -c 'sha256sum deploy/docker/secrets/* deploy/docker/.install.env | sort' > /tmp/install-before.sha256
       - name: Prove replay preserves every credential and identity artifact
         run: |
-          sudo bash ./scripts/install-platform.sh \
+          sudo env STRATA_ORCHESTRATOR_IMAGE="$STRATA_ORCHESTRATOR_IMAGE" \
+            bash ./scripts/install-platform.sh \
             --mode docker \
             --domain rmm.example.test \
             --admin-email owner@example.test \
@@ -118,7 +132,8 @@ jobs:
       - name: Reject partial installation state without mutation
         run: |
           sudo mv deploy/docker/secrets/nats_token deploy/docker/secrets/nats_token.saved
-          if sudo bash ./scripts/install-platform.sh \
+          if sudo env STRATA_ORCHESTRATOR_IMAGE="$STRATA_ORCHESTRATOR_IMAGE" \
+            bash ./scripts/install-platform.sh \
             --mode docker \
             --domain rmm.example.test \
             --admin-email owner@example.test \
@@ -133,7 +148,8 @@ jobs:
           diff -u /tmp/install-before.sha256 /tmp/install-restored.sha256
       - name: Reject conflicting replay configuration
         run: |
-          if sudo bash ./scripts/install-platform.sh \
+          if sudo env STRATA_ORCHESTRATOR_IMAGE="$STRATA_ORCHESTRATOR_IMAGE" \
+            bash ./scripts/install-platform.sh \
             --mode docker \
             --domain other.example.test \
             --admin-email owner@example.test \
@@ -153,9 +169,12 @@ jobs:
             --env ACME_CA_DIRECTORY=https://acme-staging-v02.api.letsencrypt.org/directory \
             --volume "$PWD/ui/Caddyfile:/etc/caddy/Caddyfile:ro" \
             caddy:2.8.4-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
-      - name: Build orchestrator and web-console images
+      - name: Validate immutable orchestrator boundary and build web-console image
         run: |
-          sudo docker compose \
+          sudo env STRATA_ORCHESTRATOR_IMAGE="$STRATA_ORCHESTRATOR_IMAGE" \
+            docker compose --env-file deploy/docker/.install.env -f deploy/docker/docker-compose.install.yml config --quiet
+          sudo env STRATA_ORCHESTRATOR_IMAGE="$STRATA_ORCHESTRATOR_IMAGE" \
+            docker compose \
             --env-file deploy/docker/.install.env \
             -f deploy/docker/docker-compose.install.yml \
-            build orchestrator web
+            build web
