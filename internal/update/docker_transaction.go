@@ -23,23 +23,23 @@ const (
 )
 
 type DockerUpgradeJournal struct {
-	Schema                int                `json:"schema"`
-	TransactionID         string             `json:"transaction_id"`
-	State                 DockerUpgradeState `json:"state"`
-	CurrentVersion        string             `json:"current_version"`
-	CandidateVersion      string             `json:"candidate_version"`
-	CurrentSourceSHA      string             `json:"current_source_sha"`
-	CandidateSourceSHA    string             `json:"candidate_source_sha"`
-	CurrentImage          string             `json:"current_image"`
-	CandidateImage        string             `json:"candidate_image"`
-	ManifestSHA256        string             `json:"manifest_sha256"`
-	SourceSchemaVersion   int                `json:"source_schema_version"`
-	TargetSchemaVersion   int                `json:"target_schema_version"`
-	ComposeProject        string             `json:"compose_project"`
-	ComposeFile           string             `json:"compose_file"`
-	Attempt               int                `json:"attempt"`
-	CreatedAt             time.Time          `json:"created_at"`
-	UpdatedAt             time.Time          `json:"updated_at"`
+	Schema              int                `json:"schema"`
+	TransactionID       string             `json:"transaction_id"`
+	State               DockerUpgradeState `json:"state"`
+	CurrentVersion      string             `json:"current_version"`
+	CandidateVersion    string             `json:"candidate_version"`
+	CurrentSourceSHA    string             `json:"current_source_sha"`
+	CandidateSourceSHA  string             `json:"candidate_source_sha"`
+	CurrentImage        string             `json:"current_image"`
+	CandidateImage      string             `json:"candidate_image"`
+	ManifestSHA256      string             `json:"manifest_sha256"`
+	SourceSchemaVersion int                `json:"source_schema_version"`
+	TargetSchemaVersion int                `json:"target_schema_version"`
+	ComposeProject      string             `json:"compose_project"`
+	ComposeFile         string             `json:"compose_file"`
+	Attempt             int                `json:"attempt"`
+	CreatedAt           time.Time          `json:"created_at"`
+	UpdatedAt           time.Time          `json:"updated_at"`
 }
 
 func (j DockerUpgradeJournal) Validate() error {
@@ -121,7 +121,7 @@ func WriteDockerUpgradeJournal(path string, journal DockerUpgradeJournal) error 
 		return fmt.Errorf("create Docker upgrade journal temp file: %w", err)
 	}
 	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
+	defer func() { _ = os.Remove(tmpPath) }()
 	if err := tmp.Chmod(0600); err != nil {
 		_ = tmp.Close()
 		return fmt.Errorf("protect Docker upgrade journal temp file: %w", err)
@@ -144,7 +144,7 @@ func WriteDockerUpgradeJournal(path string, journal DockerUpgradeJournal) error 
 	if err != nil {
 		return fmt.Errorf("open Docker upgrade journal directory: %w", err)
 	}
-	defer d.Close()
+	defer func() { _ = d.Close() }()
 	if err := d.Sync(); err != nil {
 		return fmt.Errorf("sync Docker upgrade journal directory: %w", err)
 	}
