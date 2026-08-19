@@ -77,7 +77,10 @@ generate_certificate() {
   local name="$1" san="$2" secrets_dir="$3"
   openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out "$secrets_dir/${name}.key" >/dev/null 2>&1
   openssl req -new -key "$secrets_dir/${name}.key" -subj "/CN=$name" -out "$secrets_dir/${name}.csr"
-  openssl x509 -req -days 397 -sha256 -in "$secrets_dir/${name}.csr"     -CA "$secrets_dir/platform_ca.crt" -CAkey "$secrets_dir/platform_ca.key" -CAcreateserial     -extfile <(printf 'subjectAltName=%s\nextendedKeyUsage=serverAuth\n' "$san")     -out "$secrets_dir/${name}.crt"
+  openssl x509 -req -days 397 -sha256 -in "$secrets_dir/${name}.csr" \
+    -CA "$secrets_dir/platform_ca.crt" -CAkey "$secrets_dir/platform_ca.key" -CAcreateserial \
+    -extfile <(printf 'subjectAltName=%s\nextendedKeyUsage=serverAuth\n' "$san") \
+    -out "$secrets_dir/${name}.crt"
   rm -f "$secrets_dir/${name}.csr"
 }
 
@@ -136,34 +139,70 @@ wait_for_url_with_args() {
   return 1
 }
 
+validate_docker_replay_state() {
+  local secrets_dir="$1" install_env="$COMPOSE_DIR/.install.env"
+  local expected=(
+    postgres_password nats_token jwt_secret metrics_token
+    storage_access_key storage_secret_key timescale_dsn nats.conf
+    platform_ca.key platform_ca.crt
+    postgres_server.key postgres_server.crt
+    nats_server.key nats_server.crt
+  )
+  local present=0 name
+  for name in "${expected[@]}"; do
+    [[ -e "$secrets_dir/$name" ]] && ((present+=1))
+  done
+
+  if (( present == 0 )) && [[ ! -e "$install_env" ]]; then
+    printf '%s' fresh
+    return
+  fi
+  if (( present != ${#expected[@]} )) || [[ ! -f "$install_env" ]]; then
+    die "incomplete installation state detected in $secrets_dir; restore the missing installation material from backup before retrying"
+  fi
+
+  for name in "${expected[@]}"; do
+    validate_secret_file "$secrets_dir/$name"
+  done
+  validate_secret_file "$install_env"
+  grep -Fxq "STRATA_DOMAIN=$DOMAIN" "$install_env" || die "existing installation domain does not match --domain; explicit reconfiguration is required"
+  grep -Fxq "ACME_EMAIL=$ACME_EMAIL" "$install_env" || die "existing installation ACME email does not match --acme-email; explicit reconfiguration is required"
+  grep -Fxq "ACME_CA_DIRECTORY=$(acme_directory_url)" "$install_env" || die "existing installation ACME CA does not match --acme-ca; explicit reconfiguration is required"
+  printf '%s' replay
+}
+
 install_docker() {
   require_command docker; require_command openssl; require_command curl
   docker compose version >/dev/null 2>&1 || die "Docker Compose v2 is required"
 
   local secrets_dir="$COMPOSE_DIR/secrets"
   local admin_password="$secrets_dir/bootstrap_admin_password"
+  local install_state
   install -d -m 0700 "$secrets_dir"
-  [[ ! -e "$secrets_dir/postgres_password" ]] || die "installation secrets already exist; refusing to overwrite $secrets_dir"
+  install_state="$(validate_docker_replay_state "$secrets_dir")"
 
-  openssl rand -hex 32 > "$secrets_dir/postgres_password"
-  openssl rand -hex 32 > "$secrets_dir/nats_token"
-  openssl rand -hex 48 > "$secrets_dir/jwt_secret"
-  openssl rand -hex 32 > "$secrets_dir/metrics_token"
-  printf 'strata%s\n' "$(openssl rand -hex 8)" > "$secrets_dir/storage_access_key"
-  openssl rand -base64 36 | tr -d '\n' > "$secrets_dir/storage_secret_key"
-  printf '\n' >> "$secrets_dir/storage_secret_key"
-  prompt_admin_password "$admin_password"
+  if [[ "$install_state" == "fresh" ]]; then
+    openssl rand -hex 32 > "$secrets_dir/postgres_password"
+    openssl rand -hex 32 > "$secrets_dir/nats_token"
+    openssl rand -hex 48 > "$secrets_dir/jwt_secret"
+    openssl rand -hex 32 > "$secrets_dir/metrics_token"
+    printf 'strata%s\n' "$(openssl rand -hex 8)" > "$secrets_dir/storage_access_key"
+    openssl rand -base64 36 | tr -d '\n' > "$secrets_dir/storage_secret_key"
+    printf '\n' >> "$secrets_dir/storage_secret_key"
+    prompt_admin_password "$admin_password"
 
-  openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 -out "$secrets_dir/platform_ca.key" >/dev/null 2>&1
-  openssl req -x509 -new -sha256 -days 1825 -key "$secrets_dir/platform_ca.key"     -subj "/CN=Strata RMM Local Platform CA" -out "$secrets_dir/platform_ca.crt"
-  generate_certificate "postgres_server" "DNS:postgres" "$secrets_dir"
-  generate_certificate "nats_server" "DNS:nats,DNS:$DOMAIN" "$secrets_dir"
+    openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 -out "$secrets_dir/platform_ca.key" >/dev/null 2>&1
+    openssl req -x509 -new -sha256 -days 1825 -key "$secrets_dir/platform_ca.key" \
+      -subj "/CN=Strata RMM Local Platform CA" -out "$secrets_dir/platform_ca.crt"
+    generate_certificate "postgres_server" "DNS:postgres" "$secrets_dir"
+    generate_certificate "nats_server" "DNS:nats,DNS:$DOMAIN" "$secrets_dir"
 
-  local postgres_password nats_token
-  postgres_password="$(<"$secrets_dir/postgres_password")"
-  nats_token="$(<"$secrets_dir/nats_token")"
-  printf 'postgres://strata:%s@postgres:5432/strata_rmm?sslmode=verify-full&sslrootcert=/run/secrets/platform_ca\n'     "$postgres_password" > "$secrets_dir/timescale_dsn"
-  cat > "$secrets_dir/nats.conf" <<NATS
+    local postgres_password nats_token
+    postgres_password="$(<"$secrets_dir/postgres_password")"
+    nats_token="$(<"$secrets_dir/nats_token")"
+    printf 'postgres://strata:%s@postgres:5432/strata_rmm?sslmode=verify-full&sslrootcert=/run/secrets/platform_ca\n' \
+      "$postgres_password" > "$secrets_dir/timescale_dsn"
+    cat > "$secrets_dir/nats.conf" <<NATS
 port: 4222
 jetstream: enabled
 authorization { token: "$nats_token" }
@@ -174,26 +213,38 @@ tls {
   timeout: 5
 }
 NATS
-  unset postgres_password nats_token
-  chmod 0600 "$secrets_dir"/*
+    unset postgres_password nats_token
+    chmod 0600 "$secrets_dir"/*
 
-  [[ "$PREPARE_ONLY" == "true" ]] || require_domain_resolution
-  cat > "$COMPOSE_DIR/.install.env" <<ENV
+    cat > "$COMPOSE_DIR/.install.env" <<ENV
 STRATA_DOMAIN=$DOMAIN
 ACME_EMAIL=$ACME_EMAIL
 ACME_CA_DIRECTORY=$(acme_directory_url)
 ENV
-  chmod 0600 "$COMPOSE_DIR/.install.env"
+    chmod 0600 "$COMPOSE_DIR/.install.env"
+  else
+    [[ ! -e "$admin_password" ]] || validate_secret_file "$admin_password"
+    printf 'Existing Docker installation state validated; preserving credentials and endpoint identity.\n'
+  fi
 
+  [[ "$PREPARE_ONLY" == "true" ]] || require_domain_resolution
   local compose=(docker compose --env-file "$COMPOSE_DIR/.install.env" -f "$COMPOSE_DIR/docker-compose.install.yml")
   "${compose[@]}" config --quiet
   if [[ "$PREPARE_ONLY" == "true" ]]; then
     printf 'Docker installation configuration prepared and validated.\n'
     return
   fi
+
   "${compose[@]}" up -d postgres nats minio
-  "${compose[@]}" run --rm --no-deps     -v "$admin_password:/run/bootstrap/admin-password:ro"     orchestrator orchestrator bootstrap-admin --email "$ADMIN_EMAIL"     --tenant-name "$PLATFORM_NAME" --password-file /run/bootstrap/admin-password
-  rm -f "$admin_password"
+  if [[ -f "$admin_password" ]]; then
+    "${compose[@]}" run --rm --no-deps \
+      -v "$admin_password:/run/bootstrap/admin-password:ro" \
+      orchestrator orchestrator bootstrap-admin --email "$ADMIN_EMAIL" \
+      --tenant-name "$PLATFORM_NAME" --password-file /run/bootstrap/admin-password
+    rm -f "$admin_password"
+  else
+    printf 'Initial administrator bootstrap material is absent; preserving the existing administrator state.\n'
+  fi
 
   "${compose[@]}" up -d
   verify_public_https || die "public HTTPS readiness or certificate verification failed for $DOMAIN"
@@ -258,7 +309,10 @@ ENV
   chown root:strata-rmm /etc/strata-rmm/orchestrator.env
   chmod 0640 /etc/strata-rmm/orchestrator.env
 
-  runuser -u strata-rmm -- env STRATA_RUNTIME_MODE=production     TIMESCALE_DSN_FILE=/etc/strata-rmm/secrets/timescale_dsn     /usr/local/bin/strata-orchestrator orchestrator bootstrap-admin     --email "$ADMIN_EMAIL" --tenant-name "$PLATFORM_NAME" --password-file "$admin_password"
+  runuser -u strata-rmm -- env STRATA_RUNTIME_MODE=production \
+    TIMESCALE_DSN_FILE=/etc/strata-rmm/secrets/timescale_dsn \
+    /usr/local/bin/strata-orchestrator orchestrator bootstrap-admin \
+    --email "$ADMIN_EMAIL" --tenant-name "$PLATFORM_NAME" --password-file "$admin_password"
   rm -f "$admin_password"
 
   systemctl daemon-reload
