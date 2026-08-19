@@ -7,7 +7,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgconn"
 	"go.uber.org/zap"
 )
 
@@ -71,11 +71,11 @@ func (d *Dispatcher) processAgentResultWithRetry(parent context.Context, subject
 }
 
 func isRetryableResultTransactionError(err error) bool {
-	var pqErr *pq.Error
-	if !errors.As(err, &pqErr) {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
 		return false
 	}
-	return pqErr.Code == "40001" || pqErr.Code == "40P01"
+	return pgErr.Code == "40001" || pgErr.Code == "40P01"
 }
 
 func (d *Dispatcher) processAgentResultOnce(ctx context.Context, subject string, data []byte) (bool, error) {

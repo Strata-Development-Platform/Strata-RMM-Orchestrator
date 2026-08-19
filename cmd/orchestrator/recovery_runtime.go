@@ -13,8 +13,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
-	_ "github.com/lib/pq"
 
+	_ "github.com/strata-rmm/strata-rmm-orchestrator/internal/postgresdriver"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/backup"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/config"
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/postgres"

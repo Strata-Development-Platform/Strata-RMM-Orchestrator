@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/lib/pq"
 	"go.uber.org/zap"
 
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/groups"
@@ -38,11 +37,11 @@ func (s *APIServer) handleCreateDeviceGroupV2(w http.ResponseWriter, r *http.Req
 
 	isSmart := groups.IsSmartGroup(req.FilterExpression)
 
-	var memberIDs pq.StringArray
+	var memberIDs []string
 	if !isSmart {
-		memberIDs = pq.StringArray(req.DeviceIDs)
+		memberIDs = req.DeviceIDs
 		if len(req.DeviceIDs) == 0 {
-			memberIDs = pq.StringArray{}
+			memberIDs = []string{}
 		}
 	}
 
@@ -138,7 +137,7 @@ func (s *APIServer) handleUpdateDeviceGroup(w http.ResponseWriter, r *http.Reque
 		    member_ids = $5, member_count = $6, updated_at = NOW()
 		WHERE id = $7 AND msp_id = $8
 	`, req.Name, req.Description, req.FilterExpression, newIsSmart,
-		pq.StringArray(req.DeviceIDs), memberCount, groupID, mspID)
+		req.DeviceIDs, memberCount, groupID, mspID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return

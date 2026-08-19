@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	_ "github.com/lib/pq"
+	_ "github.com/strata-rmm/strata-rmm-orchestrator/internal/postgresdriver"
 )
 
 func TestJobMetricsAgainstPostgreSQL(t *testing.T) {

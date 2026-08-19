@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/strata-rmm/strata-rmm-orchestrator/internal/modules"
 )
@@ -385,11 +385,11 @@ func (s *APIServer) beginModuleLifecycleTransaction(ctx context.Context, actor s
 }
 
 func retryableModuleLifecycleTransaction(err error) bool {
-	var pqErr *pq.Error
-	if !errors.As(err, &pqErr) {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
 		return false
 	}
-	return pqErr.Code == "40001" || pqErr.Code == "40P01"
+	return pgErr.Code == "40001" || pgErr.Code == "40P01"
 }
 
 func (s *APIServer) invalidateModuleRuntimeRegistry() {

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/lib/pq"
+	_ "github.com/strata-rmm/strata-rmm-orchestrator/internal/postgresdriver"
 )
 
 type Client struct {

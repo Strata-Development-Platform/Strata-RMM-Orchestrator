@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/lib/pq"
+	_ "github.com/strata-rmm/strata-rmm-orchestrator/internal/postgresdriver"
 	"github.com/stretchr/testify/require"
 
 	"github.com/strata-rmm/strata-rmm-orchestrator/pkg/encrypt"

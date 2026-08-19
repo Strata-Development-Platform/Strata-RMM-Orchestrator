@@ -14,7 +14,7 @@ import (
 	"os/exec"
 	"strings"
 
-	_ "github.com/lib/pq"
+	_ "github.com/strata-rmm/strata-rmm-orchestrator/internal/postgresdriver"
 )
 
 // PostgreSQLRecovery performs a logical backup from one database and restores
