@@ -49,10 +49,8 @@ func TestDockerUpgradeReconcileRestoresEnvWhenLivePrevious(t *testing.T) {
 	if !strings.Contains(string(payload), "STRATA_ORCHESTRATOR_IMAGE="+previous) {
 		t.Fatalf("protected env did not converge to previous image: %s", payload)
 	}
-	got, err := ReadDockerUpgradeJournal(executor.JournalFile)
-	if err != nil { t.Fatal(err) }
-	if got.State != DockerUpgradeRolledBack {
-		t.Fatalf("journal state = %q, want rolled_back", got.State)
+	if _, err := os.Stat(executor.JournalFile); !os.IsNotExist(err) {
+		t.Fatalf("resolved rollback journal still present: %v", err)
 	}
 }
 
@@ -64,10 +62,8 @@ func TestDockerUpgradeReconcileCompletesInterruptedRollback(t *testing.T) {
 	if err := executor.Reconcile(t.Context()); err != nil {
 		t.Fatalf("Reconcile() error = %v", err)
 	}
-	got, err := ReadDockerUpgradeJournal(executor.JournalFile)
-	if err != nil { t.Fatal(err) }
-	if got.State != DockerUpgradeRolledBack {
-		t.Fatalf("journal state = %q, want rolled_back", got.State)
+	if _, err := os.Stat(executor.JournalFile); !os.IsNotExist(err) {
+		t.Fatalf("completed rollback journal still present: %v", err)
 	}
 }
 
