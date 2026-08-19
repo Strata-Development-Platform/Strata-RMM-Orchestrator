@@ -19,10 +19,10 @@ import (
 )
 
 var (
-	phonePattern  = regexp.MustCompile(`^[+0-9][0-9 ().xX+-]*$`)
-	localePattern = regexp.MustCompile(`^[A-Za-z]{2,3}(?:-[A-Za-z]{2}|-[0-9]{3})?$`)
+	phonePattern    = regexp.MustCompile(`^[+0-9][0-9 ().xX+-]*$`)
+	localePattern   = regexp.MustCompile(`^[A-Za-z]{2,3}(?:-[A-Za-z]{2}|-[0-9]{3})?$`)
 	hexColorPattern = regexp.MustCompile(`^#[0-9A-Fa-f]{6}$`)
-	isoCountries  = stringSet(`
+	isoCountries    = stringSet(`
 		AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ
 		CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR
 		GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO
@@ -237,15 +237,34 @@ func decodeStrictJSON(r *http.Request, destination interface{}) error {
 
 func normalizeProviderProfile(values postgres.ProviderBusinessProfileValues, requireHTTPS bool) (postgres.ProviderBusinessProfileValues, error) {
 	var err error
-	if values.LegalName, err = normalizeProfileText("legal_name", values.LegalName, 200, true); err != nil { return values, err }
-	if values.DisplayName, err = normalizeProfileText("display_name", values.DisplayName, 100, true); err != nil { return values, err }
-	if values.ContactName, err = normalizeProfileText("contact_name", values.ContactName, 150, true); err != nil { return values, err }
-	if values.SupportEmail, err = normalizeProfileEmail("support_email", values.SupportEmail); err != nil { return values, err }
-	if values.BillingEmail, err = normalizeProfileEmail("billing_email", values.BillingEmail); err != nil { return values, err }
-	if values.BusinessPhone, err = normalizeProfilePhone(values.BusinessPhone); err != nil { return values, err }
-	if values.WebsiteURL, err = normalizeProfileURLField("website_url", values.WebsiteURL, requireHTTPS, false); err != nil { return values, err }
+	if values.LegalName, err = normalizeProfileText("legal_name", values.LegalName, 200, true); err != nil {
+		return values, err
+	}
+	if values.DisplayName, err = normalizeProfileText("display_name", values.DisplayName, 100, true); err != nil {
+		return values, err
+	}
+	if values.ContactName, err = normalizeProfileText("contact_name", values.ContactName, 150, true); err != nil {
+		return values, err
+	}
+	if values.SupportEmail, err = normalizeProfileEmail("support_email", values.SupportEmail); err != nil {
+		return values, err
+	}
+	if values.BillingEmail, err = normalizeProfileEmail("billing_email", values.BillingEmail); err != nil {
+		return values, err
+	}
+	if values.BusinessPhone, err = normalizeProfilePhone(values.BusinessPhone); err != nil {
+		return values, err
+	}
+	if values.WebsiteURL, err = normalizeProfileURLField("website_url", values.WebsiteURL, requireHTTPS, false); err != nil {
+		return values, err
+	}
 
-	fields := []struct { name string; value *string; max int; required bool }{
+	fields := []struct {
+		name     string
+		value    *string
+		max      int
+		required bool
+	}{
 		{"address_line1", &values.AddressLine1, 200, true}, {"address_line2", &values.AddressLine2, 200, false},
 		{"city", &values.City, 100, true}, {"state_province", &values.StateProvince, 100, false},
 		{"postal_code", &values.PostalCode, 32, true}, {"tax_identifier", &values.TaxIdentifier, 100, false},
@@ -254,88 +273,155 @@ func normalizeProviderProfile(values postgres.ProviderBusinessProfileValues, req
 	}
 	for _, field := range fields {
 		*field.value, err = normalizeProfileText(field.name, *field.value, field.max, field.required)
-		if err != nil { return values, err }
+		if err != nil {
+			return values, err
+		}
 	}
 
 	values.CountryCode = strings.ToUpper(strings.TrimSpace(values.CountryCode))
-	if _, ok := isoCountries[values.CountryCode]; !ok { return values, fmt.Errorf("country_code must be a supported ISO 3166-1 alpha-2 code") }
+	if _, ok := isoCountries[values.CountryCode]; !ok {
+		return values, fmt.Errorf("country_code must be a supported ISO 3166-1 alpha-2 code")
+	}
 	values.DefaultCurrency = strings.ToUpper(strings.TrimSpace(values.DefaultCurrency))
-	if _, ok := isoCurrencies[values.DefaultCurrency]; !ok { return values, fmt.Errorf("default_currency must be a supported ISO 4217 code") }
+	if _, ok := isoCurrencies[values.DefaultCurrency]; !ok {
+		return values, fmt.Errorf("default_currency must be a supported ISO 4217 code")
+	}
 	values.DefaultTimezone = strings.TrimSpace(values.DefaultTimezone)
-	if err := validatePlainText("default_timezone", values.DefaultTimezone, 64); err != nil { return values, err }
-	if values.DefaultTimezone == "" { return values, fmt.Errorf("default_timezone is required") }
-	if _, err := time.LoadLocation(values.DefaultTimezone); err != nil || values.DefaultTimezone == "Local" { return values, fmt.Errorf("default_timezone must be a valid IANA timezone") }
+	if err := validatePlainText("default_timezone", values.DefaultTimezone, 64); err != nil {
+		return values, err
+	}
+	if values.DefaultTimezone == "" {
+		return values, fmt.Errorf("default_timezone is required")
+	}
+	if _, err := time.LoadLocation(values.DefaultTimezone); err != nil || values.DefaultTimezone == "Local" {
+		return values, fmt.Errorf("default_timezone must be a valid IANA timezone")
+	}
 	values.DefaultLocale = strings.TrimSpace(values.DefaultLocale)
-	if !localePattern.MatchString(values.DefaultLocale) { return values, fmt.Errorf("default_locale must be a valid language or language-region tag") }
+	if !localePattern.MatchString(values.DefaultLocale) {
+		return values, fmt.Errorf("default_locale must be a valid language or language-region tag")
+	}
 	localeParts := strings.Split(values.DefaultLocale, "-")
 	localeParts[0] = strings.ToLower(localeParts[0])
-	if len(localeParts) == 2 && len(localeParts[1]) == 2 { localeParts[1] = strings.ToUpper(localeParts[1]) }
+	if len(localeParts) == 2 && len(localeParts[1]) == 2 {
+		localeParts[1] = strings.ToUpper(localeParts[1])
+	}
 	values.DefaultLocale = strings.Join(localeParts, "-")
 
 	values.BrandLightColor = strings.ToUpper(strings.TrimSpace(values.BrandLightColor))
-	if !hexColorPattern.MatchString(values.BrandLightColor) { return values, fmt.Errorf("brand_light_color must be a #RRGGBB color") }
+	if !hexColorPattern.MatchString(values.BrandLightColor) {
+		return values, fmt.Errorf("brand_light_color must be a #RRGGBB color")
+	}
 	values.BrandDarkColor = strings.ToUpper(strings.TrimSpace(values.BrandDarkColor))
-	if !hexColorPattern.MatchString(values.BrandDarkColor) { return values, fmt.Errorf("brand_dark_color must be a #RRGGBB color") }
+	if !hexColorPattern.MatchString(values.BrandDarkColor) {
+		return values, fmt.Errorf("brand_dark_color must be a #RRGGBB color")
+	}
 
-	for _, target := range []struct { name string; value *string; required bool }{
+	for _, target := range []struct {
+		name     string
+		value    *string
+		required bool
+	}{
 		{"logo_light_url", &values.LogoLightURL, false}, {"logo_dark_url", &values.LogoDarkURL, false},
 		{"favicon_url", &values.FaviconURL, false}, {"terms_url", &values.TermsURL, true},
 		{"privacy_url", &values.PrivacyURL, true}, {"support_url", &values.SupportURL, false},
 	} {
 		*target.value, err = normalizeProfileURLField(target.name, *target.value, true, target.required)
-		if err != nil { return values, err }
+		if err != nil {
+			return values, err
+		}
 	}
 	return values, nil
 }
 
 func normalizeProfileText(field, value string, max int, required bool) (string, error) {
 	value = strings.TrimSpace(value)
-	if required && value == "" { return "", fmt.Errorf("%s is required", field) }
-	if err := validatePlainText(field, value, max); err != nil { return "", err }
+	if required && value == "" {
+		return "", fmt.Errorf("%s is required", field)
+	}
+	if err := validatePlainText(field, value, max); err != nil {
+		return "", err
+	}
 	return value, nil
 }
 
 func validatePlainText(field, value string, max int) error {
-	if !utf8.ValidString(value) { return fmt.Errorf("%s must be valid UTF-8", field) }
-	if utf8.RuneCountInString(value) > max { return fmt.Errorf("%s must be %d characters or fewer", field, max) }
-	for _, character := range value { if unicode.IsControl(character) { return fmt.Errorf("%s must not contain control characters", field) } }
+	if !utf8.ValidString(value) {
+		return fmt.Errorf("%s must be valid UTF-8", field)
+	}
+	if utf8.RuneCountInString(value) > max {
+		return fmt.Errorf("%s must be %d characters or fewer", field, max)
+	}
+	for _, character := range value {
+		if unicode.IsControl(character) {
+			return fmt.Errorf("%s must not contain control characters", field)
+		}
+	}
 	return nil
 }
 
 func normalizeProfileEmail(field, value string) (string, error) {
 	value = strings.ToLower(strings.TrimSpace(value))
-	if err := validatePlainText(field, value, 254); err != nil { return "", err }
+	if err := validatePlainText(field, value, 254); err != nil {
+		return "", err
+	}
 	address, err := mail.ParseAddress(value)
-	if value == "" || err != nil || !strings.EqualFold(address.Address, value) { return "", fmt.Errorf("%s must be a valid email address", field) }
+	if value == "" || err != nil || !strings.EqualFold(address.Address, value) {
+		return "", fmt.Errorf("%s must be a valid email address", field)
+	}
 	return value, nil
 }
 
 func normalizeProfilePhone(value string) (string, error) {
 	value = strings.TrimSpace(value)
-	if err := validatePlainText("business_phone", value, 32); err != nil { return "", err }
+	if err := validatePlainText("business_phone", value, 32); err != nil {
+		return "", err
+	}
 	digits := 0
-	for _, character := range value { if character >= '0' && character <= '9' { digits++ } }
-	if !phonePattern.MatchString(value) || digits < 7 { return "", fmt.Errorf("business_phone must be a valid phone number") }
+	for _, character := range value {
+		if character >= '0' && character <= '9' {
+			digits++
+		}
+	}
+	if !phonePattern.MatchString(value) || digits < 7 {
+		return "", fmt.Errorf("business_phone must be a valid phone number")
+	}
 	return value, nil
 }
 
 func normalizeProfileURLField(field, value string, requireHTTPS, required bool) (string, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		if required { return "", fmt.Errorf("%s is required", field) }
+		if required {
+			return "", fmt.Errorf("%s is required", field)
+		}
 		return "", nil
 	}
-	if err := validatePlainText(field, value, 2048); err != nil { return "", err }
+	if err := validatePlainText(field, value, 2048); err != nil {
+		return "", err
+	}
 	parsed, err := url.Parse(value)
-	if err != nil || parsed.Host == "" || parsed.Opaque != "" || parsed.User != nil { return "", fmt.Errorf("%s must be an absolute HTTP(S) URL without credentials", field) }
+	if err != nil || parsed.Host == "" || parsed.Opaque != "" || parsed.User != nil {
+		return "", fmt.Errorf("%s must be an absolute HTTP(S) URL without credentials", field)
+	}
 	parsed.Scheme = strings.ToLower(parsed.Scheme)
-	if parsed.Scheme != "http" && parsed.Scheme != "https" { return "", fmt.Errorf("%s must use HTTP(S)", field) }
-	if requireHTTPS && parsed.Scheme != "https" { return "", fmt.Errorf("%s must use HTTPS", field) }
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", fmt.Errorf("%s must use HTTP(S)", field)
+	}
+	if requireHTTPS && parsed.Scheme != "https" {
+		if field == "website_url" {
+			return "", fmt.Errorf("website_url must use HTTPS in production")
+		}
+		return "", fmt.Errorf("%s must use HTTPS", field)
+	}
 	parsed.Host = strings.ToLower(parsed.Host)
 	decodedPath, err := url.PathUnescape(parsed.EscapedPath())
-	if err != nil || validatePlainText(field, decodedPath, 2048) != nil { return "", fmt.Errorf("%s contains invalid escaped characters", field) }
+	if err != nil || validatePlainText(field, decodedPath, 2048) != nil {
+		return "", fmt.Errorf("%s contains invalid escaped characters", field)
+	}
 	decodedQuery, err := url.QueryUnescape(parsed.RawQuery)
-	if err != nil || validatePlainText(field, decodedQuery, 2048) != nil { return "", fmt.Errorf("%s contains invalid escaped characters", field) }
+	if err != nil || validatePlainText(field, decodedQuery, 2048) != nil {
+		return "", fmt.Errorf("%s contains invalid escaped characters", field)
+	}
 	return parsed.String(), nil
 }
 
@@ -354,7 +440,10 @@ func (patch providerProfilePatch) empty() bool {
 }
 
 func (patch providerProfilePatch) apply(values postgres.ProviderBusinessProfileValues) postgres.ProviderBusinessProfileValues {
-	assignments := []struct { input *string; target *string }{
+	assignments := []struct {
+		input  *string
+		target *string
+	}{
 		{patch.LegalName, &values.LegalName}, {patch.DisplayName, &values.DisplayName}, {patch.ContactName, &values.ContactName},
 		{patch.SupportEmail, &values.SupportEmail}, {patch.BillingEmail, &values.BillingEmail}, {patch.BusinessPhone, &values.BusinessPhone},
 		{patch.WebsiteURL, &values.WebsiteURL}, {patch.AddressLine1, &values.AddressLine1}, {patch.AddressLine2, &values.AddressLine2},
@@ -365,7 +454,13 @@ func (patch providerProfilePatch) apply(values postgres.ProviderBusinessProfileV
 		{patch.BrandDarkColor, &values.BrandDarkColor}, {patch.TermsURL, &values.TermsURL}, {patch.PrivacyURL, &values.PrivacyURL},
 		{patch.SupportURL, &values.SupportURL}, {patch.PublicSaaSHeadline, &values.PublicSaaSHeadline}, {patch.PublicSaaSDescription, &values.PublicSaaSDescription},
 	}
-	for _, assignment := range assignments { if assignment.input != nil { *assignment.target = *assignment.input } }
-	if patch.PublicSaaSEnabled != nil { values.PublicSaaSEnabled = *patch.PublicSaaSEnabled }
+	for _, assignment := range assignments {
+		if assignment.input != nil {
+			*assignment.target = *assignment.input
+		}
+	}
+	if patch.PublicSaaSEnabled != nil {
+		values.PublicSaaSEnabled = *patch.PublicSaaSEnabled
+	}
 	return values
 }

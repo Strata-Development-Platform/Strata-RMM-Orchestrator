@@ -34,6 +34,17 @@ const setupValues = {
   default_locale: 'en-US',
   default_currency: 'USD',
   tax_identifier: 'US-12-3456789',
+  logo_light_url: 'https://northstar.example/logo-light.svg',
+  logo_dark_url: 'https://northstar.example/logo-dark.svg',
+  favicon_url: 'https://northstar.example/favicon.svg',
+  brand_light_color: '#2563EB',
+  brand_dark_color: '#60A5FA',
+  terms_url: 'https://northstar.example/terms',
+  privacy_url: 'https://northstar.example/privacy',
+  support_url: 'https://northstar.example/support',
+  public_saas_enabled: true,
+  public_saas_headline: 'Reliable endpoint operations',
+  public_saas_description: 'Secure remote monitoring and management for modern service providers.',
 };
 
 type ProviderProfile = typeof setupValues & {
@@ -43,6 +54,8 @@ type ProviderProfile = typeof setupValues & {
   setup_completed_at: string;
   setup_completed_by: string;
   updated_at: string;
+  setup_contract_version: number;
+  outbound_email_status: 'configured' | 'not_configured';
 };
 
 type OwnerApiState = {
@@ -125,6 +138,8 @@ async function installApi(page: Page, state: OwnerApiState) {
         setup_completed_at: '2026-08-01T12:00:00Z',
         setup_completed_by: platformOwner.user_id,
         updated_at: '2026-08-01T12:00:00Z',
+        setup_contract_version: 2,
+        outbound_email_status: 'configured',
       };
       return json(route, state.profile);
     }
@@ -185,6 +200,21 @@ async function completeWizard(page: Page) {
   await page.getByLabel(/Default currency/).selectOption(setupValues.default_currency);
   await page.getByLabel(/Tax identifier/).fill(setupValues.tax_identifier);
   await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page.getByRole('heading', { name: 'Brand' })).toBeVisible();
+
+  await page.getByLabel(/Light-mode logo URL/).fill(setupValues.logo_light_url);
+  await page.getByLabel(/Dark-mode logo URL/).fill(setupValues.logo_dark_url);
+  await page.getByLabel(/Favicon URL/).fill(setupValues.favicon_url);
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page.getByRole('heading', { name: 'Publication' })).toBeVisible();
+
+  await page.getByLabel(/Terms of service URL/).fill(setupValues.terms_url);
+  await page.getByLabel(/Privacy policy URL/).fill(setupValues.privacy_url);
+  await page.getByLabel(/Support URL/).fill(setupValues.support_url);
+  await page.getByLabel(/Enable the provider-owned public SaaS site/).check();
+  await page.getByLabel(/Public SaaS headline/).fill(setupValues.public_saas_headline);
+  await page.getByLabel(/Public SaaS description/).fill(setupValues.public_saas_description);
+  await page.getByRole('button', { name: 'Continue' }).click();
   await expect(page.getByRole('heading', { name: 'Review' })).toBeVisible();
 }
 
@@ -204,10 +234,12 @@ test('platform owner completes first-login setup, returns without repetition, an
   await expect(page).toHaveURL(/\/provider\/setup$/);
   await expect(page.getByRole('heading', { name: 'Set up your provider business profile' })).toBeVisible();
   const progress = page.getByRole('list', { name: 'Setup progress' });
-  await expect(progress.getByRole('listitem')).toHaveCount(4);
+  await expect(progress.getByRole('listitem')).toHaveCount(6);
   await expect(progress).toContainText('Business');
   await expect(progress).toContainText('Contact');
   await expect(progress).toContainText('Regional Defaults');
+  await expect(progress).toContainText('Brand');
+  await expect(progress).toContainText('Publication');
   await expect(progress).toContainText('Review');
   await expect(progress.locator('[aria-current="step"]')).toContainText('Business');
 

@@ -1,12 +1,14 @@
 import { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Building2, Check, ChevronLeft, ChevronRight, ClipboardCheck, Globe2, LogOut, UserRound } from 'lucide-react';
+import { Building2, Check, ChevronLeft, ChevronRight, ClipboardCheck, Globe2, LogOut, Palette, ScrollText, UserRound } from 'lucide-react';
 import { api } from '@/api/client';
 import { ProductAttribution } from '@/components/layout/ProductAttribution';
 import { ThemeToggle } from '@/components/shared/ThemeToggle';
 import {
   BusinessFields,
+  BrandFields,
   ContactFields,
+  PublicationFields,
   ProfileErrorSummary,
   RegionalFields,
 } from '@/components/provider/ProviderProfileFields';
@@ -14,9 +16,11 @@ import { useAuth } from '@/hooks/useAuth';
 import { useWorkspace } from '@/hooks/useWorkspace';
 import {
   BUSINESS_FIELDS,
+  BRAND_FIELDS,
   CONTACT_FIELDS,
   EMPTY_PROVIDER_PROFILE,
   PROVIDER_FIELD_LABELS,
+  PUBLICATION_FIELDS,
   REGIONAL_FIELDS,
   TIMEZONE_OPTIONS,
   firstErrorStep,
@@ -31,6 +35,8 @@ const steps = [
   { name: 'Business', description: 'Business identity', icon: Building2 },
   { name: 'Contact', description: 'Support and billing', icon: UserRound },
   { name: 'Regional Defaults', description: 'Address and locale', icon: Globe2 },
+  { name: 'Brand', description: 'Provider-owned identity', icon: Palette },
+  { name: 'Publication', description: 'Legal and public SaaS', icon: ScrollText },
   { name: 'Review', description: 'Confirm and finish', icon: ClipboardCheck },
 ];
 
@@ -83,7 +89,7 @@ export default function ProviderSetupPage() {
     window.requestAnimationFrame(() => errorSummaryRef.current?.focus());
   };
 
-  const handleChange = (field: ProviderProfileField, value: string) => {
+  const handleChange = (field: ProviderProfileField, value: string | boolean) => {
     setValues(current => ({ ...current, [field]: value }));
     setErrors(current => {
       if (!current[field]) return current;
@@ -94,7 +100,15 @@ export default function ProviderSetupPage() {
     setSubmissionError('');
   };
 
-  const stepFields = step === 0 ? BUSINESS_FIELDS : step === 1 ? CONTACT_FIELDS : REGIONAL_FIELDS;
+  const stepFields = step === 0
+    ? BUSINESS_FIELDS
+    : step === 1
+      ? CONTACT_FIELDS
+      : step === 2
+        ? REGIONAL_FIELDS
+        : step === 3
+          ? BRAND_FIELDS
+          : PUBLICATION_FIELDS;
 
   const continueToNextStep = () => {
     const nextErrors = validateProviderProfile(values, stepFields);
@@ -203,11 +217,15 @@ export default function ProviderSetupPage() {
             {step === 0 && <BusinessFields values={values} errors={errors} onChange={handleChange} disabled={submitting} />}
             {step === 1 && <ContactFields values={values} errors={errors} onChange={handleChange} disabled={submitting} />}
             {step === 2 && <RegionalFields values={values} errors={errors} onChange={handleChange} disabled={submitting} />}
-            {step === 3 && (
+            {step === 3 && <BrandFields values={values} errors={errors} onChange={handleChange} disabled={submitting} />}
+            {step === 4 && <PublicationFields values={values} errors={errors} onChange={handleChange} disabled={submitting} />}
+            {step === 5 && (
               <div className="space-y-4">
                 <ReviewGroup title="Business" fields={BUSINESS_FIELDS} values={values} onEdit={() => setStep(0)} />
                 <ReviewGroup title="Contact" fields={CONTACT_FIELDS} values={values} onEdit={() => setStep(1)} />
                 <ReviewGroup title="Regional defaults" fields={REGIONAL_FIELDS} values={values} onEdit={() => setStep(2)} />
+                <ReviewGroup title="Brand" fields={BRAND_FIELDS} values={values} onEdit={() => setStep(3)} />
+                <ReviewGroup title="Publication" fields={PUBLICATION_FIELDS} values={values} onEdit={() => setStep(4)} />
                 <p className="rounded-lg bg-blue-50 p-4 text-sm leading-6 text-blue-900 dark:bg-blue-950/40 dark:text-blue-200">Completing setup records who completed the provider profile and when. Those completion details remain unchanged by later profile edits.</p>
               </div>
             )}

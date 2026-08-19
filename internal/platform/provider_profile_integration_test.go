@@ -264,6 +264,9 @@ func providerSetupJSON(displayName string) string {
 		"business_phone":"+14155550123","website_url":"https://provider.example.test",
 		"address_line1":"1 Main Street","city":"Test City","state_province":"CA",
 		"postal_code":"94105","country_code":"US","default_timezone":"UTC",
-		"default_locale":"en-US","default_currency":"USD"
+		"default_locale":"en-US","default_currency":"USD",
+		"brand_light_color":"#2563EB","brand_dark_color":"#60A5FA",
+		"terms_url":"https://provider.example.test/terms",
+		"privacy_url":"https://provider.example.test/privacy"
 	}`, displayName)
 }

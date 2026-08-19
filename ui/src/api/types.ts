@@ -178,15 +178,38 @@ export type ProviderBusinessProfileValues = {
   default_locale: string;
   default_currency: string;
   tax_identifier: string;
+  logo_light_url: string;
+  logo_dark_url: string;
+  favicon_url: string;
+  brand_light_color: string;
+  brand_dark_color: string;
+  terms_url: string;
+  privacy_url: string;
+  support_url: string;
+  public_saas_enabled: boolean;
+  public_saas_headline: string;
+  public_saas_description: string;
 };
 
-type OptionalProviderBusinessProfileFields = 'website_url' | 'address_line2' | 'state_province' | 'tax_identifier';
+type OptionalProviderBusinessProfileFields =
+  | 'website_url'
+  | 'address_line2'
+  | 'state_province'
+  | 'tax_identifier'
+  | 'logo_light_url'
+  | 'logo_dark_url'
+  | 'favicon_url'
+  | 'support_url'
+  | 'public_saas_headline'
+  | 'public_saas_description';
 
 export type ProviderBusinessProfile = Omit<ProviderBusinessProfileValues, OptionalProviderBusinessProfileFields> &
   Partial<Pick<ProviderBusinessProfileValues, OptionalProviderBusinessProfileFields>> & {
   id: string;
   slug: string;
   setup_complete: boolean;
+  setup_contract_version: number;
+  outbound_email_status: 'configured' | 'not_configured';
   setup_completed_at?: string;
   setup_completed_by?: string;
   updated_at: string;

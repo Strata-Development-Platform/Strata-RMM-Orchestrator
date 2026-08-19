@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	SingletonPlatformID                  = "00000000-0000-0000-0000-000000000001"
+	SingletonPlatformID                 = "00000000-0000-0000-0000-000000000001"
 	CurrentProviderSetupContractVersion = 2
 )
 
@@ -249,7 +249,7 @@ func UpdateProviderBusinessProfile(ctx context.Context, tx *sql.Tx, actorUserID 
 func providerProfileUpdateSQL(completing bool) string {
 	completion := ""
 	if completing {
-		completion = ", setup_completed_at = NOW(), setup_completed_by = $29::uuid, setup_contract_version = 2"
+		completion = ", setup_completed_at = NOW(), setup_completed_by = $29::uuid, setup_contract_version = $30"
 	}
 	return `
 		UPDATE platforms SET
@@ -282,7 +282,7 @@ func providerProfileUpdateArgs(values ProviderBusinessProfileValues, actorUserID
 		values.PublicSaaSEnabled, values.PublicSaaSHeadline, values.PublicSaaSDescription,
 	}
 	if completing {
-		args = append(args, actorUserID)
+		args = append(args, actorUserID, CurrentProviderSetupContractVersion)
 	}
 	return args
 }

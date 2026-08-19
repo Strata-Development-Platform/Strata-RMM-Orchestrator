@@ -377,6 +377,8 @@ func providerIntegrationValues() ProviderBusinessProfileValues {
 		AddressLine1: "1 Main Street", City: "Test City", StateProvince: "CA",
 		PostalCode: "94105", CountryCode: "US", DefaultTimezone: "UTC",
 		DefaultLocale: "en-US", DefaultCurrency: "USD", TaxIdentifier: "tax-reference",
+		BrandLightColor: "#2563EB", BrandDarkColor: "#60A5FA",
+		TermsURL: "https://example.test/terms", PrivacyURL: "https://example.test/privacy",
 	}
 }
 

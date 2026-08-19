@@ -13,6 +13,8 @@ const validProfile = {
   address_line1: '100 Market Street',
   city: 'San Francisco',
   postal_code: '94105',
+  terms_url: 'https://example.test/terms',
+  privacy_url: 'https://example.test/privacy',
 };
 
 describe('provider profile validation', () => {
@@ -31,6 +33,8 @@ describe('provider profile validation', () => {
       default_timezone: 'Local',
       default_locale: 'english_US',
       default_currency: 'ZZZ',
+      brand_light_color: 'blue',
+      terms_url: 'http://example.test/terms',
     }, undefined, true);
 
     expect(errors.support_email).toMatch(/valid email/);
@@ -41,5 +45,7 @@ describe('provider profile validation', () => {
     expect(errors.default_timezone).toMatch(/IANA timezone/);
     expect(errors.default_locale).toMatch(/language or language-region/);
     expect(errors.default_currency).toMatch(/ISO 4217/);
+    expect(errors.brand_light_color).toMatch(/#RRGGBB/);
+    expect(errors.terms_url).toMatch(/absolute HTTPS URL/);
   });
 });
