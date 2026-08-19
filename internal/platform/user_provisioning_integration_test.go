@@ -48,8 +48,10 @@ func TestScopedMembershipReplacementPreservesUnmanagedAndSerializes(t *testing.T
 			args: []interface{}{actorID, tenantID, targetID},
 		},
 		{
-			query: `UPDATE platforms SET setup_completed_at = NOW(), setup_completed_by = $1 WHERE id = $2`,
-			args:  []interface{}{actorID, postgres.SingletonPlatformID},
+			query: `UPDATE platforms
+				SET setup_completed_at = NOW(), setup_completed_by = $1, setup_contract_version = $2
+				WHERE id = $3`,
+			args: []interface{}{actorID, postgres.CurrentProviderSetupContractVersion, postgres.SingletonPlatformID},
 		},
 		{
 			query: `INSERT INTO memberships (user_id, scope_type, scope_id, role, status) VALUES
