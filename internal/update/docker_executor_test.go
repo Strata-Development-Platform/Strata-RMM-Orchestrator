@@ -24,7 +24,6 @@ if [ "$1" = "pull" ]; then
 fi
 if [ "$1" != "compose" ]; then exit 9; fi
 envfile=""
-prev=""
 while [ "$#" -gt 0 ]; do
   if [ "$1" = "--env-file" ]; then envfile="$2"; shift 2; continue; fi
   if [ "$1" = "ps" ]; then printf 'container123\n'; exit 0; fi
@@ -88,6 +87,22 @@ func TestDockerUpgradeExecutorSuccessCommitsImmutableCandidate(t *testing.T) {
 	}
 	if _, err := os.Stat(executor.JournalFile); !os.IsNotExist(err) {
 		t.Fatalf("successful transaction journal still present: %v", err)
+	}
+}
+
+func TestDockerUpgradeExecutorAdoptsInstalledImmutableImageState(t *testing.T) {
+	executor, candidate, preflight, previous, envFile := dockerExecutorFixture(t)
+	if err := os.WriteFile(envFile, []byte("STRATA_DOMAIN=rmm.example.test\n"), 0600); err != nil { t.Fatal(err) }
+	if err := executor.Apply(t.Context(), candidate, preflight, "1.9.9", strings.Repeat("1", 40), strings.Repeat("c", 64)); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	payload, err := os.ReadFile(envFile)
+	if err != nil { t.Fatal(err) }
+	if !strings.Contains(string(payload), "STRATA_ORCHESTRATOR_IMAGE="+candidate.Image) {
+		t.Fatalf("candidate image was not persisted after adoption: %s", payload)
+	}
+	if strings.Contains(string(payload), "STRATA_ORCHESTRATOR_IMAGE="+previous) {
+		t.Fatalf("previous image remained duplicated after adoption: %s", payload)
 	}
 }
 
