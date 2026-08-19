@@ -44,21 +44,21 @@ type DockerUpgradeJournal struct {
 
 func (j DockerUpgradeJournal) Validate() error {
 	if j.Schema != 1 {
-		return fmt.Errorf("unsupported Docker upgrade journal schema %d", j.Schema)
+		return fmt.Errorf("unsupported docker upgrade journal schema %d", j.Schema)
 	}
 	if strings.TrimSpace(j.TransactionID) == "" {
-		return fmt.Errorf("Docker upgrade journal transaction_id is required")
+		return fmt.Errorf("docker upgrade journal transaction_id is required")
 	}
 	switch j.State {
 	case DockerUpgradePrepared, DockerUpgradePulled, DockerUpgradeApplying, DockerUpgradeVerifying, DockerUpgradeRollback, DockerUpgradeRolledBack, DockerUpgradeComplete, DockerUpgradeRecoveryNeeded:
 	default:
-		return fmt.Errorf("invalid Docker upgrade journal state %q", j.State)
+		return fmt.Errorf("invalid docker upgrade journal state %q", j.State)
 	}
 	if !isImmutableOCIReference(j.CurrentImage) || !isImmutableOCIReference(j.CandidateImage) {
-		return fmt.Errorf("Docker upgrade journal images must be immutable repository@sha256 references")
+		return fmt.Errorf("docker upgrade journal images must be immutable repository@sha256 references")
 	}
 	if j.CurrentImage == j.CandidateImage {
-		return fmt.Errorf("Docker upgrade candidate must differ from current image")
+		return fmt.Errorf("docker upgrade candidate must differ from current image")
 	}
 	if len(j.CandidateSourceSHA) != 40 || !isHex(j.CandidateSourceSHA) {
 		return fmt.Errorf("candidate source SHA must be a full git SHA")
@@ -67,16 +67,16 @@ func (j DockerUpgradeJournal) Validate() error {
 		return fmt.Errorf("manifest SHA-256 is invalid")
 	}
 	if strings.TrimSpace(j.ComposeProject) == "" || strings.TrimSpace(j.ComposeFile) == "" {
-		return fmt.Errorf("Compose project and file identity are required")
+		return fmt.Errorf("compose project and file identity are required")
 	}
 	if !filepath.IsAbs(j.ComposeFile) {
-		return fmt.Errorf("Compose file must be an absolute path")
+		return fmt.Errorf("compose file must be an absolute path")
 	}
 	if j.Attempt < 0 || j.Attempt > 10 {
-		return fmt.Errorf("Docker upgrade reconciliation attempt is out of bounds")
+		return fmt.Errorf("docker upgrade reconciliation attempt is out of bounds")
 	}
 	if j.CreatedAt.IsZero() || j.UpdatedAt.IsZero() || j.UpdatedAt.Before(j.CreatedAt) {
-		return fmt.Errorf("Docker upgrade journal timestamps are invalid")
+		return fmt.Errorf("docker upgrade journal timestamps are invalid")
 	}
 	return nil
 }
@@ -98,55 +98,55 @@ func WriteDockerUpgradeJournal(path string, journal DockerUpgradeJournal) error 
 	}
 	clean := filepath.Clean(path)
 	if clean != path || !filepath.IsAbs(path) {
-		return fmt.Errorf("Docker upgrade journal path must be a clean absolute path")
+		return fmt.Errorf("docker upgrade journal path must be a clean absolute path")
 	}
 	dir := filepath.Dir(path)
 	info, err := os.Lstat(path)
 	if err == nil && info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("Docker upgrade journal path must not be a symlink")
+		return fmt.Errorf("docker upgrade journal path must not be a symlink")
 	}
 	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("inspect Docker upgrade journal: %w", err)
+		return fmt.Errorf("inspect docker upgrade journal: %w", err)
 	}
 	if err := os.MkdirAll(dir, 0700); err != nil {
-		return fmt.Errorf("create Docker upgrade journal directory: %w", err)
+		return fmt.Errorf("create docker upgrade journal directory: %w", err)
 	}
 	payload, err := json.MarshalIndent(journal, "", "  ")
 	if err != nil {
-		return fmt.Errorf("encode Docker upgrade journal: %w", err)
+		return fmt.Errorf("encode docker upgrade journal: %w", err)
 	}
 	payload = append(payload, '\n')
 	tmp, err := os.CreateTemp(dir, ".docker-upgrade-*.tmp")
 	if err != nil {
-		return fmt.Errorf("create Docker upgrade journal temp file: %w", err)
+		return fmt.Errorf("create docker upgrade journal temp file: %w", err)
 	}
 	tmpPath := tmp.Name()
 	defer func() { _ = os.Remove(tmpPath) }()
 	if err := tmp.Chmod(0600); err != nil {
 		_ = tmp.Close()
-		return fmt.Errorf("protect Docker upgrade journal temp file: %w", err)
+		return fmt.Errorf("protect docker upgrade journal temp file: %w", err)
 	}
 	if _, err := tmp.Write(payload); err != nil {
 		_ = tmp.Close()
-		return fmt.Errorf("write Docker upgrade journal: %w", err)
+		return fmt.Errorf("write docker upgrade journal: %w", err)
 	}
 	if err := tmp.Sync(); err != nil {
 		_ = tmp.Close()
-		return fmt.Errorf("sync Docker upgrade journal: %w", err)
+		return fmt.Errorf("sync docker upgrade journal: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close Docker upgrade journal: %w", err)
+		return fmt.Errorf("close docker upgrade journal: %w", err)
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("commit Docker upgrade journal: %w", err)
+		return fmt.Errorf("commit docker upgrade journal: %w", err)
 	}
 	d, err := os.Open(dir)
 	if err != nil {
-		return fmt.Errorf("open Docker upgrade journal directory: %w", err)
+		return fmt.Errorf("open docker upgrade journal directory: %w", err)
 	}
 	defer func() { _ = d.Close() }()
 	if err := d.Sync(); err != nil {
-		return fmt.Errorf("sync Docker upgrade journal directory: %w", err)
+		return fmt.Errorf("sync docker upgrade journal directory: %w", err)
 	}
 	return nil
 }
@@ -157,10 +157,10 @@ func ReadDockerUpgradeJournal(path string) (DockerUpgradeJournal, error) {
 		return DockerUpgradeJournal{}, err
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		return DockerUpgradeJournal{}, fmt.Errorf("Docker upgrade journal must not be a symlink")
+		return DockerUpgradeJournal{}, fmt.Errorf("docker upgrade journal must not be a symlink")
 	}
 	if info.Mode().Perm()&0077 != 0 {
-		return DockerUpgradeJournal{}, fmt.Errorf("Docker upgrade journal permissions are too broad")
+		return DockerUpgradeJournal{}, fmt.Errorf("docker upgrade journal permissions are too broad")
 	}
 	payload, err := os.ReadFile(path)
 	if err != nil {
@@ -168,7 +168,7 @@ func ReadDockerUpgradeJournal(path string) (DockerUpgradeJournal, error) {
 	}
 	var journal DockerUpgradeJournal
 	if err := json.Unmarshal(payload, &journal); err != nil {
-		return DockerUpgradeJournal{}, fmt.Errorf("decode Docker upgrade journal: %w", err)
+		return DockerUpgradeJournal{}, fmt.Errorf("decode docker upgrade journal: %w", err)
 	}
 	if err := journal.Validate(); err != nil {
 		return DockerUpgradeJournal{}, err
