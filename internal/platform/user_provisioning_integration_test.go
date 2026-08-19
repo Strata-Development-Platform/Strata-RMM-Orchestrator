@@ -49,7 +49,10 @@ func TestScopedMembershipReplacementPreservesUnmanagedAndSerializes(t *testing.T
 		},
 		{
 			query: `UPDATE platforms
-				SET setup_completed_at = NOW(), setup_completed_by = $1, setup_contract_version = $2
+				SET setup_completed_at = NOW(), setup_completed_by = $1, setup_contract_version = $2,
+					provider_brand_light_color = '#2563EB', provider_brand_dark_color = '#60A5FA',
+					provider_terms_url = 'https://provider.example.test/terms',
+					provider_privacy_url = 'https://provider.example.test/privacy'
 				WHERE id = $3`,
 			args: []interface{}{actorID, postgres.CurrentProviderSetupContractVersion, postgres.SingletonPlatformID},
 		},
