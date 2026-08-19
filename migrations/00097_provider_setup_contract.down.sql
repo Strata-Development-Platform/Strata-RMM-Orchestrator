@@ -1,0 +1,16 @@
+ALTER TABLE platforms
+    DROP CONSTRAINT IF EXISTS platforms_setup_contract_version_positive,
+    DROP CONSTRAINT IF EXISTS platforms_provider_brand_dark_color_format,
+    DROP CONSTRAINT IF EXISTS platforms_provider_brand_light_color_format,
+    DROP COLUMN IF EXISTS setup_contract_version,
+    DROP COLUMN IF EXISTS public_saas_description,
+    DROP COLUMN IF EXISTS public_saas_headline,
+    DROP COLUMN IF EXISTS public_saas_enabled,
+    DROP COLUMN IF EXISTS provider_support_url,
+    DROP COLUMN IF EXISTS provider_privacy_url,
+    DROP COLUMN IF EXISTS provider_terms_url,
+    DROP COLUMN IF EXISTS provider_brand_dark_color,
+    DROP COLUMN IF EXISTS provider_brand_light_color,
+    DROP COLUMN IF EXISTS provider_favicon_url,
+    DROP COLUMN IF EXISTS provider_logo_dark_url,
+    DROP COLUMN IF EXISTS provider_logo_light_url;
