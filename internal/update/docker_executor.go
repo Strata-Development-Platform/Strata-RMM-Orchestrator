@@ -3,6 +3,7 @@ package update
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,11 +12,13 @@ import (
 	"time"
 )
 
+var errComposeImageMissing = errors.New("Compose environment does not define STRATA_ORCHESTRATOR_IMAGE")
+
 type DockerUpgradeExecutor struct {
-	ComposeFile string
-	EnvFile     string
-	Project     string
-	JournalFile string
+	ComposeFile   string
+	EnvFile       string
+	Project       string
+	JournalFile   string
 	HealthTimeout time.Duration
 }
 
@@ -58,7 +61,7 @@ func (e DockerUpgradeExecutor) currentConfiguredImage() (string, error) {
 	if err := scanner.Err(); err != nil {
 		return "", fmt.Errorf("read Compose environment: %w", err)
 	}
-	return "", fmt.Errorf("Compose environment does not define STRATA_ORCHESTRATOR_IMAGE")
+	return "", errComposeImageMissing
 }
 
 func (e DockerUpgradeExecutor) liveImage(ctx context.Context) (string, error) {
@@ -109,7 +112,7 @@ func replaceEnvImage(path, image string) error {
 		}
 	}
 	if !found {
-		return fmt.Errorf("Compose environment does not define STRATA_ORCHESTRATOR_IMAGE")
+		lines = append(lines, prefix+image)
 	}
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".install-env-*.tmp")
@@ -185,20 +188,31 @@ func (e DockerUpgradeExecutor) Apply(ctx context.Context, candidate OCIReleaseCa
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("inspect Docker upgrade journal: %w", err)
 	}
-	configured, err := e.currentConfiguredImage()
-	if err != nil {
-		return err
+
+	configured, configuredErr := e.currentConfiguredImage()
+	if configuredErr != nil && !errors.Is(configuredErr, errComposeImageMissing) {
+		return configuredErr
 	}
 	live, err := e.liveImage(ctx)
 	if err != nil {
 		return err
 	}
-	if configured != live {
+	if configuredErr == nil && configured != live {
 		return fmt.Errorf("live orchestrator image does not match protected Compose state")
+	}
+	if configuredErr != nil {
+		// Installations created before the upgrade transaction persisted the
+		// immutable image only in the running Compose container. Adopt that exact
+		// live digest into the protected env before any candidate mutation.
+		configured = live
+		if err := replaceEnvImage(e.EnvFile, configured); err != nil {
+			return fmt.Errorf("adopt live immutable image into protected Compose state: %w", err)
+		}
 	}
 	if candidate.Image == configured {
 		return fmt.Errorf("candidate image is already deployed")
 	}
+
 	now := time.Now().UTC()
 	journal := DockerUpgradeJournal{
 		Schema: 1, TransactionID: fmt.Sprintf("docker-%d", now.UnixNano()), State: DockerUpgradePrepared,
