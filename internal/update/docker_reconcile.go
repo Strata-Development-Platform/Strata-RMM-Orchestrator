@@ -62,7 +62,7 @@ func (e DockerUpgradeExecutor) Reconcile(ctx context.Context) error {
 			_ = set(DockerUpgradeRecoveryNeeded)
 			return fmt.Errorf("previous docker release is live but not healthy: %w", err)
 		}
-		return set(DockerUpgradeRolledBack)
+		return e.finishResolvedRollback(&journal)
 	case configured == journal.CandidateImage && live == journal.CurrentImage:
 		// Crash after protected env mutation but before candidate start. The live
 		// release is still the known-good previous digest, so restore env state.
@@ -74,7 +74,7 @@ func (e DockerUpgradeExecutor) Reconcile(ctx context.Context) error {
 			_ = set(DockerUpgradeRecoveryNeeded)
 			return err
 		}
-		return set(DockerUpgradeRolledBack)
+		return e.finishResolvedRollback(&journal)
 	case configured == journal.CurrentImage && live == journal.CandidateImage:
 		// Crash during rollback after env restoration but before Compose replaced
 		// the candidate. Complete rollback to the already-persisted prior digest.
@@ -113,7 +113,5 @@ func rollbackRetainedDockerUpgrade(ctx context.Context, e DockerUpgradeExecutor,
 		_ = WriteDockerUpgradeJournal(e.JournalFile, *journal)
 		return fmt.Errorf("previous immutable docker release did not recover: %w", err)
 	}
-	journal.State = DockerUpgradeRolledBack
-	journal.UpdatedAt = time.Now().UTC()
-	return WriteDockerUpgradeJournal(e.JournalFile, *journal)
+	return e.finishResolvedRollback(journal)
 }
