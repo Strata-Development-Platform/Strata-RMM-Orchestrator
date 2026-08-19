@@ -4,7 +4,10 @@ import (
 	"net/http"
 )
 
-const setupRequiredCode = "provider_setup_required"
+const (
+	setupRequiredCode               = "provider_setup_required"
+	currentProviderSetupContractVer = 2
+)
 
 type setupGateRoute struct {
 	method string
@@ -48,10 +51,10 @@ func (s *APIServer) enforceProviderSetupGate(w http.ResponseWriter, r *http.Requ
 	}
 	var setupComplete bool
 	if err := s.db.DB().QueryRowContext(r.Context(), `
-		SELECT setup_completed_at IS NOT NULL
+		SELECT setup_completed_at IS NOT NULL AND setup_contract_version >= $2
 		FROM platforms
 		WHERE id = $1
-	`, authorization.Selected.PlatformID).Scan(&setupComplete); err != nil {
+	`, authorization.Selected.PlatformID, currentProviderSetupContractVer).Scan(&setupComplete); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
 			"error": "provider setup status unavailable",
 			"code":  "provider_setup_status_unavailable",
