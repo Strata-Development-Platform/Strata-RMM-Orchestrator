@@ -33,6 +33,7 @@ jobs:
           grep -q -- '--prepare-only' scripts/install-platform.sh
           grep -q -- '--https-mode' scripts/install-platform.sh
           grep -q 'ACME_CA_DIRECTORY' scripts/install-platform.sh
+          grep -q 'validate_docker_replay_state' scripts/install-platform.sh
           ! grep -Eq 'curl[^|]*\|[[:space:]]*(sh|bash)|wget[^|]*\|[[:space:]]*(sh|bash)' scripts/install-platform.sh
       - name: Run ShellCheck
         uses: ludeeus/action-shellcheck@master
@@ -81,7 +82,7 @@ jobs:
         run: go test -tags=dbintegration -count=1 -race ./pkg/postgres -run TestBootstrapInitialAdminExactlyOnce -v
 
   compose-preparation:
-    name: Secure Compose Preparation
+    name: Secure Compose Preparation and Replay
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -103,6 +104,49 @@ jobs:
           sudo test -s deploy/docker/secrets/postgres_server.crt
           sudo grep -q 'acme-staging-v02.api.letsencrypt.org' deploy/docker/.install.env
           sudo docker compose --env-file deploy/docker/.install.env -f deploy/docker/docker-compose.install.yml config --quiet
+          sudo sh -c 'sha256sum deploy/docker/secrets/* deploy/docker/.install.env | sort' > /tmp/install-before.sha256
+      - name: Prove replay preserves every credential and identity artifact
+        run: |
+          sudo bash ./scripts/install-platform.sh \
+            --mode docker \
+            --domain rmm.example.test \
+            --admin-email owner@example.test \
+            --acme-ca staging \
+            --prepare-only
+          sudo sh -c 'sha256sum deploy/docker/secrets/* deploy/docker/.install.env | sort' > /tmp/install-after.sha256
+          diff -u /tmp/install-before.sha256 /tmp/install-after.sha256
+      - name: Reject partial installation state without mutation
+        run: |
+          sudo mv deploy/docker/secrets/nats_token deploy/docker/secrets/nats_token.saved
+          if sudo bash ./scripts/install-platform.sh \
+            --mode docker \
+            --domain rmm.example.test \
+            --admin-email owner@example.test \
+            --acme-ca staging \
+            --prepare-only >/tmp/partial.out 2>&1; then
+            echo 'partial installation state unexpectedly succeeded' >&2
+            exit 1
+          fi
+          grep -q 'incomplete installation state detected' /tmp/partial.out
+          sudo mv deploy/docker/secrets/nats_token.saved deploy/docker/secrets/nats_token
+          sudo sh -c 'sha256sum deploy/docker/secrets/* deploy/docker/.install.env | sort' > /tmp/install-restored.sha256
+          diff -u /tmp/install-before.sha256 /tmp/install-restored.sha256
+      - name: Reject conflicting replay configuration
+        run: |
+          if sudo bash ./scripts/install-platform.sh \
+            --mode docker \
+            --domain other.example.test \
+            --admin-email owner@example.test \
+            --acme-ca staging \
+            --prepare-only >/tmp/conflict.out 2>&1; then
+            echo 'conflicting replay configuration unexpectedly succeeded' >&2
+            exit 1
+          fi
+          grep -q 'existing installation domain does not match' /tmp/conflict.out
+          sudo sh -c 'sha256sum deploy/docker/secrets/* deploy/docker/.install.env | sort' > /tmp/install-conflict.sha256
+          diff -u /tmp/install-before.sha256 /tmp/install-conflict.sha256
+      - name: Validate Caddy configuration
+        run: |
           sudo docker run --rm \
             --env STRATA_DOMAIN=rmm.example.test \
             --env ACME_EMAIL=owner@example.test \
