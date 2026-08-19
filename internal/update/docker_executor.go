@@ -173,6 +173,18 @@ func (e DockerUpgradeExecutor) validate() error {
 	return nil
 }
 
+func (e DockerUpgradeExecutor) finishResolvedRollback(journal *DockerUpgradeJournal) error {
+	journal.State = DockerUpgradeRolledBack
+	journal.UpdatedAt = time.Now().UTC()
+	if err := WriteDockerUpgradeJournal(e.JournalFile, *journal); err != nil {
+		return err
+	}
+	if err := os.Remove(e.JournalFile); err != nil {
+		return fmt.Errorf("remove resolved docker upgrade journal: %w", err)
+	}
+	return nil
+}
+
 // Apply performs the mutation after the caller has completed the shared runtime
 // preflight and OCI Sigstore verification. The previous immutable digest is
 // retained until candidate health is durably confirmed.
@@ -231,6 +243,9 @@ func (e DockerUpgradeExecutor) Apply(ctx context.Context, candidate OCIReleaseCa
 		return WriteDockerUpgradeJournal(e.JournalFile, journal)
 	}
 	if _, err := runDocker(ctx, "pull", candidate.Image); err != nil {
+		if finishErr := e.finishResolvedRollback(&journal); finishErr != nil {
+			return fmt.Errorf("pull candidate failed and transaction cleanup failed: %v; %w", finishErr, err)
+		}
 		return err
 	}
 	if err := setState(DockerUpgradePulled); err != nil {
@@ -240,7 +255,15 @@ func (e DockerUpgradeExecutor) Apply(ctx context.Context, candidate OCIReleaseCa
 		return err
 	}
 	if _, err := runDocker(ctx, e.composeArgs("config", "--quiet")...); err != nil {
-		_ = replaceEnvImage(e.EnvFile, configured)
+		if restoreErr := replaceEnvImage(e.EnvFile, configured); restoreErr != nil {
+			journal.State = DockerUpgradeRecoveryNeeded
+			journal.UpdatedAt = time.Now().UTC()
+			_ = WriteDockerUpgradeJournal(e.JournalFile, journal)
+			return fmt.Errorf("compose validation failed and previous image state could not be restored: %v; %w", restoreErr, err)
+		}
+		if finishErr := e.finishResolvedRollback(&journal); finishErr != nil {
+			return fmt.Errorf("compose validation failed and transaction cleanup failed: %v; %w", finishErr, err)
+		}
 		return err
 	}
 	if err := setState(DockerUpgradeApplying); err != nil {
@@ -278,7 +301,7 @@ func (e DockerUpgradeExecutor) Apply(ctx context.Context, candidate OCIReleaseCa
 		_ = WriteDockerUpgradeJournal(e.JournalFile, journal)
 		return fmt.Errorf("candidate failed and previous image health could not be verified: %w", err)
 	}
-	if err := setState(DockerUpgradeRolledBack); err != nil {
+	if err := e.finishResolvedRollback(&journal); err != nil {
 		return err
 	}
 	return fmt.Errorf("candidate failed; previous immutable image was restored")
