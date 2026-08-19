@@ -38,7 +38,7 @@ func (m ReleaseManifest) OCICandidate(currentVersion, expectedRepository string)
 	image := m.OCIImages[0]
 	platform := "linux/" + runtime.GOARCH
 	if runtime.GOOS != "linux" {
-		return OCIReleaseCandidate{}, false, fmt.Errorf("Docker promoted-release apply is supported only on linux hosts")
+		return OCIReleaseCandidate{}, false, fmt.Errorf("docker promoted-release apply is supported only on linux hosts")
 	}
 	found := false
 	for _, value := range image.Platforms {
