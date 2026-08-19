@@ -19,7 +19,7 @@ func (e DockerUpgradeExecutor) Reconcile(ctx context.Context) error {
 		return err
 	}
 	if journal.ComposeProject != e.Project || journal.ComposeFile != e.ComposeFile {
-		return fmt.Errorf("Docker upgrade journal does not match this Compose deployment")
+		return fmt.Errorf("docker upgrade journal does not match this Compose deployment")
 	}
 	journal.Attempt++
 	journal.UpdatedAt = time.Now().UTC()
@@ -85,7 +85,7 @@ func (e DockerUpgradeExecutor) Reconcile(ctx context.Context) error {
 		return rollbackRetainedDockerUpgrade(ctx, e, &journal)
 	default:
 		_ = set(DockerUpgradeRecoveryNeeded)
-		return fmt.Errorf("Docker upgrade live/configured images do not match retained transaction")
+		return fmt.Errorf("docker upgrade live/configured images do not match retained transaction")
 	}
 }
 
