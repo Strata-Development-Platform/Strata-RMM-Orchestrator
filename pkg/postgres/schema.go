@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 51856)
-Total output lines: 4743
-
 package postgres
 
 import (
@@ -1921,7 +1918,1028 @@ func Migrations() []Migration {
 					UNIQUE(request_id, approver_user_id)
 				);
 
-				ALTER TABLE endpoint_appro…11856 tokens truncated…app_setting('app.msp_id'))
+				ALTER TABLE endpoint_approval_policies ENABLE ROW LEVEL SECURITY;
+				ALTER TABLE endpoint_approval_requests ENABLE ROW LEVEL SECURITY;
+				ALTER TABLE endpoint_approval_decisions ENABLE ROW LEVEL SECURITY;
+
+				CREATE POLICY tenant_scope ON endpoint_approval_policies
+					USING (app_is_platform_admin() OR msp_id = safe_msp_id() OR support_access_allowed(msp_id))
+					WITH CHECK (app_is_platform_admin() OR msp_id = safe_msp_id());
+				CREATE POLICY tenant_scope ON endpoint_approval_requests
+					USING (app_is_platform_admin() OR msp_id = safe_msp_id() OR support_access_allowed(msp_id))
+					WITH CHECK (app_is_platform_admin() OR msp_id = safe_msp_id());
+				CREATE POLICY tenant_scope ON endpoint_approval_decisions
+					USING (app_is_platform_admin() OR msp_id = safe_msp_id() OR support_access_allowed(msp_id))
+					WITH CHECK (app_is_platform_admin() OR msp_id = safe_msp_id());
+
+				ALTER TABLE endpoint_approval_policies FORCE ROW LEVEL SECURITY;
+				ALTER TABLE endpoint_approval_requests FORCE ROW LEVEL SECURITY;
+				ALTER TABLE endpoint_approval_decisions FORCE ROW LEVEL SECURITY;
+
+				CREATE INDEX IF NOT EXISTS idx_approval_requests_msp_status ON endpoint_approval_requests(msp_id, status);
+				CREATE INDEX IF NOT EXISTS idx_approval_requests_requester ON endpoint_approval_requests(requester_user_id);
+				CREATE INDEX IF NOT EXISTS idx_approval_decisions_request ON endpoint_approval_decisions(request_id);
+			`,
+			Down: `
+				DROP TABLE IF EXISTS endpoint_approval_decisions CASCADE;
+				DROP TABLE IF EXISTS endpoint_approval_requests CASCADE;
+				DROP TABLE IF EXISTS endpoint_approval_policies CASCADE;
+			`,
+		},
+		{
+			ID:   56,
+			Name: "create_agent_capabilities",
+			Up: `
+				CREATE TABLE IF NOT EXISTS agent_capabilities (
+					id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					device_id          UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+					msp_id             UUID NOT NULL REFERENCES msp_tenants(id) ON DELETE CASCADE,
+					agent_version      TEXT NOT NULL DEFAULT '',
+					protocol_version   INT NOT NULL DEFAULT 1,
+					os                 TEXT NOT NULL DEFAULT '',
+					arch               TEXT NOT NULL DEFAULT '',
+					supported_job_types TEXT[] NOT NULL DEFAULT '{}',
+					features           JSONB NOT NULL DEFAULT '{}',
+					inventory_schema   INT NOT NULL DEFAULT 1,
+					last_updated       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					UNIQUE(device_id)
+				);
+				CREATE INDEX IF NOT EXISTS idx_agent_capabilities_msp ON agent_capabilities(msp_id);
+
+				ALTER TABLE agent_capabilities ENABLE ROW LEVEL SECURITY;
+				CREATE POLICY tenant_scope ON agent_capabilities
+					USING (app_is_platform_admin() OR msp_id = safe_msp_id() OR support_access_allowed(msp_id))
+					WITH CHECK (app_is_platform_admin() OR msp_id = safe_msp_id());
+				ALTER TABLE agent_capabilities FORCE ROW LEVEL SECURITY;
+			`,
+			Down: `DROP TABLE IF EXISTS agent_capabilities CASCADE;`,
+		},
+		{
+			ID:   57,
+			Name: "create_endpoint_audit_evidence",
+			Up: `
+				CREATE TABLE IF NOT EXISTS endpoint_audit_evidence (
+					id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					msp_id              UUID NOT NULL REFERENCES msp_tenants(id) ON DELETE CASCADE,
+					client_id           UUID REFERENCES client_organizations(id) ON DELETE SET NULL,
+					site_id             UUID REFERENCES sites(id) ON DELETE SET NULL,
+					device_id           UUID REFERENCES devices(id) ON DELETE SET NULL,
+					actor_user_id       TEXT NOT NULL DEFAULT '',
+					actor_role          TEXT NOT NULL DEFAULT '',
+					support_grant_id    TEXT,
+					request_source      TEXT NOT NULL DEFAULT 'api',
+					normalized_ip       TEXT,
+					action              TEXT NOT NULL,
+					targets             JSONB NOT NULL DEFAULT '[]',
+					reason              TEXT NOT NULL DEFAULT '',
+					request_hash        TEXT NOT NULL DEFAULT '',
+					idempotency_key     TEXT,
+					policy_snapshot     JSONB NOT NULL DEFAULT '{}',
+					approval_state      TEXT NOT NULL DEFAULT 'none',
+					approval_decisions  JSONB NOT NULL DEFAULT '[]',
+					job_id              TEXT,
+					target_id           TEXT,
+					correlation_id      TEXT,
+					schedule_at         TIMESTAMPTZ,
+					maintenance_window  JSONB,
+					state_transition    TEXT NOT NULL DEFAULT '',
+					agent_receipt_at    TIMESTAMPTZ,
+					execution_started_at TIMESTAMPTZ,
+					execution_result    JSONB,
+					exit_code           INT,
+					result_summary      TEXT NOT NULL DEFAULT '',
+					failure_reason      TEXT NOT NULL DEFAULT '',
+					created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+
+				CREATE INDEX IF NOT EXISTS idx_endpoint_audit_msp_time ON endpoint_audit_evidence(msp_id, created_at DESC);
+				CREATE INDEX IF NOT EXISTS idx_endpoint_audit_device ON endpoint_audit_evidence(device_id);
+				CREATE INDEX IF NOT EXISTS idx_endpoint_audit_job ON endpoint_audit_evidence(job_id);
+				CREATE INDEX IF NOT EXISTS idx_endpoint_audit_correlation ON endpoint_audit_evidence(correlation_id);
+
+				ALTER TABLE endpoint_audit_evidence ENABLE ROW LEVEL SECURITY;
+
+				CREATE POLICY tenant_scope ON endpoint_audit_evidence
+					USING (app_is_platform_admin() OR msp_id = safe_msp_id() OR support_access_allowed(msp_id))
+					WITH CHECK (false);
+
+				CREATE POLICY insert_endpoint_audit_evidence ON endpoint_audit_evidence
+					FOR INSERT
+					WITH CHECK (app_is_platform_admin() OR msp_id = safe_msp_id() OR support_access_allowed(msp_id));
+
+				ALTER TABLE endpoint_audit_evidence FORCE ROW LEVEL SECURITY;
+			`,
+			Down: `DROP TABLE IF EXISTS endpoint_audit_evidence CASCADE;`,
+		},
+		{
+			ID:   58,
+			Name: "enhance_maintenance_windows",
+			Up: `
+				ALTER TABLE maintenance_windows ADD COLUMN IF NOT EXISTS msp_id UUID REFERENCES msp_tenants(id) ON DELETE CASCADE;
+				ALTER TABLE maintenance_windows ADD COLUMN IF NOT EXISTS client_id UUID REFERENCES client_organizations(id) ON DELETE CASCADE;
+				ALTER TABLE maintenance_windows ADD COLUMN IF NOT EXISTS site_id UUID REFERENCES sites(id) ON DELETE CASCADE;
+				ALTER TABLE maintenance_windows ADD COLUMN IF NOT EXISTS device_group_id UUID REFERENCES device_groups(id) ON DELETE CASCADE;
+				ALTER TABLE maintenance_windows ADD COLUMN IF NOT EXISTS device_id UUID REFERENCES devices(id) ON DELETE CASCADE;
+				ALTER TABLE maintenance_windows ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT 'UTC';
+				ALTER TABLE maintenance_windows ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+				ALTER TABLE maintenance_windows ADD COLUMN IF NOT EXISTS is_recurring BOOLEAN NOT NULL DEFAULT false;
+				ALTER TABLE maintenance_windows ADD COLUMN IF NOT EXISTS recurrence_rule TEXT;
+				ALTER TABLE maintenance_windows ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
+
+				CREATE INDEX IF NOT EXISTS idx_mw_msp ON maintenance_windows(msp_id) WHERE msp_id IS NOT NULL;
+				CREATE INDEX IF NOT EXISTS idx_mw_client ON maintenance_windows(client_id) WHERE client_id IS NOT NULL;
+				CREATE INDEX IF NOT EXISTS idx_mw_site ON maintenance_windows(site_id) WHERE site_id IS NOT NULL;
+				CREATE INDEX IF NOT EXISTS idx_mw_device ON maintenance_windows(device_id) WHERE device_id IS NOT NULL;
+			`,
+			Down: `
+				DROP INDEX IF EXISTS idx_mw_msp;
+				DROP INDEX IF EXISTS idx_mw_client;
+				DROP INDEX IF EXISTS idx_mw_site;
+				DROP INDEX IF EXISTS idx_mw_device;
+				ALTER TABLE maintenance_windows DROP COLUMN IF EXISTS msp_id;
+				ALTER TABLE maintenance_windows DROP COLUMN IF EXISTS client_id;
+				ALTER TABLE maintenance_windows DROP COLUMN IF EXISTS site_id;
+				ALTER TABLE maintenance_windows DROP COLUMN IF EXISTS device_group_id;
+				ALTER TABLE maintenance_windows DROP COLUMN IF EXISTS device_id;
+				ALTER TABLE maintenance_windows DROP COLUMN IF EXISTS timezone;
+				ALTER TABLE maintenance_windows DROP COLUMN IF EXISTS expires_at;
+				ALTER TABLE maintenance_windows DROP COLUMN IF EXISTS is_recurring;
+				ALTER TABLE maintenance_windows DROP COLUMN IF EXISTS recurrence_rule;
+				ALTER TABLE maintenance_windows DROP COLUMN IF EXISTS description;
+			`,
+		},
+		{
+			ID:   59,
+			Name: "create_inventory_results",
+			Up: `
+				CREATE TABLE IF NOT EXISTS inventory_results (
+					id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					device_id         UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+					msp_id            UUID NOT NULL REFERENCES msp_tenants(id) ON DELETE CASCADE,
+					job_id            UUID REFERENCES jobs(id) ON DELETE SET NULL,
+					target_id         UUID REFERENCES job_targets(id) ON DELETE SET NULL,
+					correlation_id    TEXT,
+					schema_version    INT NOT NULL DEFAULT 1,
+					payload           JSONB NOT NULL DEFAULT '{}',
+					payload_hash      TEXT NOT NULL DEFAULT '',
+					collection_time   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					received_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					is_stale          BOOLEAN NOT NULL DEFAULT false,
+					is_failure        BOOLEAN NOT NULL DEFAULT false,
+					failure_message   TEXT NOT NULL DEFAULT '',
+					accepted          BOOLEAN NOT NULL DEFAULT false,
+					created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+
+				CREATE INDEX IF NOT EXISTS idx_inventory_results_device ON inventory_results(device_id, received_at DESC);
+				CREATE INDEX IF NOT EXISTS idx_inventory_results_msp ON inventory_results(msp_id);
+				CREATE INDEX IF NOT EXISTS idx_inventory_results_job ON inventory_results(job_id);
+				CREATE INDEX IF NOT EXISTS idx_inventory_results_correlation ON inventory_results(correlation_id);
+
+				ALTER TABLE inventory_results ENABLE ROW LEVEL SECURITY;
+				CREATE POLICY tenant_scope ON inventory_results
+					USING (app_is_platform_admin() OR msp_id = safe_msp_id() OR support_access_allowed(msp_id))
+					WITH CHECK (app_is_platform_admin() OR msp_id = safe_msp_id());
+				ALTER TABLE inventory_results FORCE ROW LEVEL SECURITY;
+			`,
+			Down: `DROP TABLE IF EXISTS inventory_results CASCADE;`,
+		},
+		{
+			ID:   60,
+			Name: "add_offline_queue_device_fields",
+			Up: `
+				ALTER TABLE devices ADD COLUMN IF NOT EXISTS offline_queue_enabled BOOLEAN NOT NULL DEFAULT false;
+				ALTER TABLE devices ADD COLUMN IF NOT EXISTS last_capability_update TIMESTAMPTZ;
+				ALTER TABLE devices ADD COLUMN IF NOT EXISTS inventory_last_success TIMESTAMPTZ;
+				ALTER TABLE devices ADD COLUMN IF NOT EXISTS inventory_fresh BOOLEAN NOT NULL DEFAULT false;
+
+				ALTER TABLE jobs ADD COLUMN IF NOT EXISTS approval_request_id UUID REFERENCES endpoint_approval_requests(id) ON DELETE SET NULL;
+				ALTER TABLE job_targets ADD COLUMN IF NOT EXISTS approval_status TEXT NOT NULL DEFAULT 'none' CHECK (approval_status IN ('none','pending','approved','rejected','cancelled','expired'));
+				ALTER TABLE job_targets ADD COLUMN IF NOT EXISTS offline_at TIMESTAMPTZ;
+				ALTER TABLE job_targets ADD COLUMN IF NOT EXISTS reconnect_at TIMESTAMPTZ;
+			`,
+			Down: `
+				ALTER TABLE devices DROP COLUMN IF EXISTS offline_queue_enabled;
+				ALTER TABLE devices DROP COLUMN IF EXISTS last_capability_update;
+				ALTER TABLE devices DROP COLUMN IF EXISTS inventory_last_success;
+				ALTER TABLE devices DROP COLUMN IF EXISTS inventory_fresh;
+				ALTER TABLE jobs DROP COLUMN IF EXISTS approval_request_id;
+				ALTER TABLE job_targets DROP COLUMN IF EXISTS approval_status;
+				ALTER TABLE job_targets DROP COLUMN IF EXISTS offline_at;
+				ALTER TABLE job_targets DROP COLUMN IF EXISTS reconnect_at;
+			`,
+		},
+		{
+			ID:   61,
+			Name: "harden_phase7_approval_inventory_audit",
+			Up: `
+				ALTER TABLE endpoint_approval_requests
+					ADD COLUMN IF NOT EXISTS operation_payload JSONB NOT NULL DEFAULT '{}';
+
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_approval_request_unique
+					ON jobs(approval_request_id) WHERE approval_request_id IS NOT NULL;
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_approval_requests_idempotency
+					ON endpoint_approval_requests(msp_id, idempotency_key)
+					WHERE idempotency_key IS NOT NULL;
+
+				DROP POLICY IF EXISTS tenant_scope ON endpoint_audit_evidence;
+				DROP POLICY IF EXISTS endpoint_audit_select ON endpoint_audit_evidence;
+				CREATE POLICY endpoint_audit_select ON endpoint_audit_evidence
+					FOR SELECT
+					USING (app_is_platform_admin() OR msp_id = safe_msp_id() OR support_access_allowed(msp_id));
+
+				DROP POLICY IF EXISTS insert_endpoint_audit_evidence ON endpoint_audit_evidence;
+				CREATE POLICY insert_endpoint_audit_evidence ON endpoint_audit_evidence
+					FOR INSERT
+					WITH CHECK (app_is_platform_admin() OR msp_id = safe_msp_id() OR support_access_allowed(msp_id));
+			`,
+			Down: `
+				DROP POLICY IF EXISTS endpoint_audit_select ON endpoint_audit_evidence;
+				CREATE POLICY tenant_scope ON endpoint_audit_evidence
+					USING (app_is_platform_admin() OR msp_id = safe_msp_id() OR support_access_allowed(msp_id))
+					WITH CHECK (false);
+				DROP INDEX IF EXISTS idx_approval_requests_idempotency;
+				DROP INDEX IF EXISTS idx_jobs_approval_request_unique;
+				ALTER TABLE endpoint_approval_requests DROP COLUMN IF EXISTS operation_payload;
+			`,
+		},
+		{
+			ID:   62,
+			Name: "add_waiting_status_to_job_targets",
+			Up: `
+				ALTER TABLE job_targets DROP CONSTRAINT IF EXISTS job_targets_status_check;
+				ALTER TABLE job_targets ADD CONSTRAINT job_targets_status_check
+					CHECK (status IN ('pending','queued','dispatched','acknowledged','running','succeeded','failed','cancelled','expired','waiting'));
+			`,
+			Down: `
+				ALTER TABLE job_targets DROP CONSTRAINT IF EXISTS job_targets_status_check;
+				ALTER TABLE job_targets ADD CONSTRAINT job_targets_status_check
+					CHECK (status IN ('pending','queued','dispatched','acknowledged','running','succeeded','failed','cancelled','expired'));
+			`,
+		},
+		{
+			ID:   63,
+			Name: "add_backup_recovery_tables",
+			Up: `
+				CREATE TABLE IF NOT EXISTS backup_records (
+					id                  TEXT PRIMARY KEY,
+					database_type       TEXT NOT NULL DEFAULT 'postgresql',
+					version             TEXT NOT NULL DEFAULT '1.0.0',
+					table_count         INT DEFAULT 0,
+					row_estimate        BIGINT DEFAULT 0,
+					data_size           BIGINT NOT NULL DEFAULT 0,
+					compression         TEXT NOT NULL DEFAULT 'gzip',
+					encryption_scheme   TEXT NOT NULL DEFAULT 'aes-256-gcm',
+					key_reference       TEXT,
+					integrity_digest    TEXT NOT NULL,
+					status              TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'completed', 'failed', 'corrupted')),
+					error_message       TEXT,
+					created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					completed_at        TIMESTAMPTZ,
+					restored_at         TIMESTAMPTZ
+				);
+				CREATE INDEX IF NOT EXISTS idx_backup_records_status ON backup_records(status);
+				CREATE INDEX IF NOT EXISTS idx_backup_records_created ON backup_records(created_at DESC);
+				CREATE INDEX IF NOT EXISTS idx_backup_records_digest ON backup_records(integrity_digest);
+
+				CREATE TABLE IF NOT EXISTS recovery_operations (
+					id              BIGSERIAL PRIMARY KEY,
+					recovery_id     TEXT NOT NULL UNIQUE,
+					operation       TEXT NOT NULL,
+					phase           TEXT NOT NULL DEFAULT 'unknown',
+					state           TEXT NOT NULL DEFAULT 'idle',
+					status          TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running', 'completed', 'failed', 'released')),
+					started_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					completed_at    TIMESTAMPTZ,
+					error_message   TEXT
+				);
+				CREATE INDEX IF NOT EXISTS idx_recovery_ops_recovery_id ON recovery_operations(recovery_id);
+				CREATE INDEX IF NOT EXISTS idx_recovery_ops_operation ON recovery_operations(operation);
+				CREATE INDEX IF NOT EXISTS idx_recovery_ops_status ON recovery_operations(status);
+
+				CREATE TABLE IF NOT EXISTS backup_audit_log (
+					id              BIGSERIAL PRIMARY KEY,
+					backup_id       TEXT,
+					recovery_id     TEXT,
+					action          TEXT NOT NULL CHECK (action IN ('backup_created', 'backup_verified', 'backup_deleted', 'restore_started', 'restore_completed', 'restore_failed', 'rollback_executed')),
+					details         JSONB DEFAULT '{}',
+					performed_by    TEXT,
+					timestamp       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+				CREATE INDEX IF NOT EXISTS idx_backup_audit_backup_id ON backup_audit_log(backup_id);
+				CREATE INDEX IF NOT EXISTS idx_backup_audit_recovery_id ON backup_audit_log(recovery_id);
+				CREATE INDEX IF NOT EXISTS idx_backup_audit_timestamp ON backup_audit_log(timestamp DESC);
+			`,
+			Down: `
+				DROP TABLE IF EXISTS backup_audit_log;
+				DROP TABLE IF EXISTS recovery_operations;
+				DROP TABLE IF EXISTS backup_records;
+			`,
+		},
+		{
+			ID:   64,
+			Name: "add_recovery_state_enum",
+			Up: `
+				-- Create enum type with idempotent check using pg_type catalog
+				DO $$ BEGIN
+				    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'recovery_state_enum') THEN
+				        CREATE TYPE recovery_state_enum AS ENUM (
+				            'idle', 'discovery', 'preflight', 'quiesce',
+				            'backup_database', 'backup_jetstream', 'backup_object_storage', 'verify_integrity',
+				            'pre_restore_validation', 'restore_database', 'restore_jetstream', 'restore_object_storage',
+				            'post_restore_validation', 'health_check', 'verification',
+				            'rpo_validation', 'rto_validation',
+				            'rollback', 'cleanup', 'completed'
+				        );
+				    END IF;
+				END $$;
+
+				ALTER TABLE recovery_operations ADD COLUMN IF NOT EXISTS recovery_state recovery_state_enum DEFAULT 'idle'::recovery_state_enum;
+				CREATE INDEX IF NOT EXISTS idx_recovery_ops_state ON recovery_operations(recovery_state);
+
+				-- FK references primary key (id), not recovery_id
+				ALTER TABLE backup_records ADD COLUMN IF NOT EXISTS recovery_id BIGINT REFERENCES recovery_operations(id) ON DELETE SET NULL;
+				CREATE INDEX IF NOT EXISTS idx_backup_records_recovery_id ON backup_records(recovery_id);
+			`,
+			Down: `
+				ALTER TABLE backup_records DROP COLUMN IF EXISTS recovery_id;
+				ALTER TABLE recovery_operations DROP COLUMN IF EXISTS recovery_state;
+				DROP TYPE IF EXISTS recovery_state_enum;
+			`,
+		},
+		{
+			ID:   65,
+			Name: "add_recovery_mutation_gate",
+			Up: `
+				CREATE TABLE IF NOT EXISTS recovery_mutation_gate (
+					singleton     BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+					quiesced      BOOLEAN NOT NULL DEFAULT FALSE,
+					operation_id  TEXT,
+					updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+				);
+				INSERT INTO recovery_mutation_gate (singleton, quiesced)
+				VALUES (TRUE, FALSE)
+				ON CONFLICT (singleton) DO NOTHING;
+
+				CREATE OR REPLACE FUNCTION enforce_recovery_mutation_gate()
+				RETURNS trigger
+				LANGUAGE plpgsql
+				AS $$
+				DECLARE
+					is_quiesced BOOLEAN;
+				BEGIN
+					IF NOT pg_try_advisory_xact_lock_shared(6004514643731632718) THEN
+						RAISE EXCEPTION 'mutations are unavailable during a recovery operation'
+							USING ERRCODE = '55006';
+					END IF;
+					SELECT quiesced INTO is_quiesced
+					FROM recovery_mutation_gate
+					WHERE singleton = TRUE;
+					IF COALESCE(is_quiesced, TRUE) THEN
+						RAISE EXCEPTION 'mutations are unavailable during a recovery operation'
+							USING ERRCODE = '55006';
+					END IF;
+					RETURN NULL;
+				END;
+				$$;
+
+				DO $$
+				DECLARE
+					table_record RECORD;
+				BEGIN
+					FOR table_record IN
+						SELECT tablename
+						FROM pg_tables
+						WHERE schemaname = 'public'
+						  AND tablename NOT IN ('recovery_mutation_gate', 'schema_migrations')
+					LOOP
+						EXECUTE format(
+							'DROP TRIGGER IF EXISTS recovery_mutation_gate_trigger ON %I',
+							table_record.tablename
+						);
+						EXECUTE format(
+							'CREATE TRIGGER recovery_mutation_gate_trigger
+							 BEFORE INSERT OR UPDATE OR DELETE ON %I
+							 FOR EACH STATEMENT EXECUTE FUNCTION enforce_recovery_mutation_gate()',
+							table_record.tablename
+						);
+					END LOOP;
+				END
+				$$;
+			`,
+			Down: `
+				DROP FUNCTION IF EXISTS enforce_recovery_mutation_gate() CASCADE;
+				DROP TABLE IF EXISTS recovery_mutation_gate;
+			`,
+		},
+		{
+			ID:   66,
+			Name: "add_msp_lifecycle_controls",
+			Up: `
+				ALTER TABLE plan_entitlements
+					ADD COLUMN IF NOT EXISTS grace_period_ends_at TIMESTAMPTZ;
+
+				CREATE TABLE IF NOT EXISTS msp_offboarding (
+					id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					msp_id                UUID NOT NULL UNIQUE REFERENCES msp_tenants(id) ON DELETE RESTRICT,
+					state                 TEXT NOT NULL DEFAULT 'requested'
+						CHECK (state IN ('requested', 'access_revoked', 'retained', 'deletion_approved')),
+					reason                TEXT NOT NULL,
+					requested_by          TEXT NOT NULL,
+					requested_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					access_revoked_at     TIMESTAMPTZ,
+					retention_until       TIMESTAMPTZ NOT NULL,
+					deletion_approved_by  TEXT,
+					deletion_approved_at  TIMESTAMPTZ,
+					updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					CHECK (retention_until >= requested_at),
+					CHECK (
+						(state <> 'deletion_approved')
+						OR (deletion_approved_by IS NOT NULL AND deletion_approved_at IS NOT NULL)
+					)
+				);
+				CREATE INDEX IF NOT EXISTS idx_msp_offboarding_state_retention
+					ON msp_offboarding(state, retention_until);
+
+				ALTER TABLE msp_offboarding ENABLE ROW LEVEL SECURITY;
+				DROP POLICY IF EXISTS platform_only ON msp_offboarding;
+				CREATE POLICY platform_only ON msp_offboarding
+					USING (app_is_platform_admin())
+					WITH CHECK (app_is_platform_admin());
+				ALTER TABLE msp_offboarding FORCE ROW LEVEL SECURITY;
+
+				DROP TRIGGER IF EXISTS recovery_mutation_gate_trigger ON msp_offboarding;
+				CREATE TRIGGER recovery_mutation_gate_trigger
+					BEFORE INSERT OR UPDATE OR DELETE ON msp_offboarding
+					FOR EACH STATEMENT EXECUTE FUNCTION enforce_recovery_mutation_gate();
+			`,
+			Down: `
+				DROP TABLE IF EXISTS msp_offboarding;
+				ALTER TABLE plan_entitlements DROP COLUMN IF EXISTS grace_period_ends_at;
+			`,
+		},
+		{
+			ID:   67,
+			Name: "add_provider_business_profile",
+			Up: `
+				ALTER TABLE platforms
+					ADD COLUMN IF NOT EXISTS legal_name TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS display_name TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS contact_name TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS support_email TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS billing_email TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS business_phone TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS website_url TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS address_line1 TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS address_line2 TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS city TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS state_province TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS postal_code TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS country_code TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS default_timezone TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS default_locale TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS default_currency TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS tax_identifier TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS setup_completed_at TIMESTAMPTZ,
+					ADD COLUMN IF NOT EXISTS setup_completed_by UUID REFERENCES users(id) ON DELETE SET NULL,
+					ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+				-- The migration transaction is trusted platform maintenance. Establish the
+				-- same fail-closed RLS role used by authenticated platform requests before
+				-- repairing installs created by the local bootstrap command.
+				SELECT set_config('app.role', 'platform_admin', true);
+
+				INSERT INTO memberships (
+					user_id, role, scope_type, scope_id, created_by, status
+				)
+				SELECT DISTINCT
+					a.user_id::text,
+					'platform_owner',
+					'platform',
+					'00000000-0000-0000-0000-000000000001',
+					a.user_id::text,
+					'active'
+				FROM audit_log a
+				JOIN users u ON u.id = a.user_id
+				WHERE a.action = 'platform.bootstrap_admin'
+				  AND a.user_id IS NOT NULL
+				ON CONFLICT (user_id, scope_type, scope_id, role)
+					WHERE status = 'active'
+				DO NOTHING;
+
+				CREATE OR REPLACE FUNCTION prevent_control_plane_audit_mutation()
+				RETURNS trigger
+				LANGUAGE plpgsql
+				AS $$
+				BEGIN
+					RAISE EXCEPTION 'control plane audit records are immutable'
+						USING ERRCODE = '55000';
+				END;
+				$$;
+
+				DROP TRIGGER IF EXISTS control_plane_audit_immutable ON control_plane_audit;
+				CREATE TRIGGER control_plane_audit_immutable
+					BEFORE UPDATE OR DELETE ON control_plane_audit
+					FOR EACH ROW EXECUTE FUNCTION prevent_control_plane_audit_mutation();
+			`,
+			Down: `
+				DROP TRIGGER IF EXISTS control_plane_audit_immutable ON control_plane_audit;
+				DROP FUNCTION IF EXISTS prevent_control_plane_audit_mutation();
+				ALTER TABLE platforms
+					DROP COLUMN IF EXISTS legal_name,
+					DROP COLUMN IF EXISTS display_name,
+					DROP COLUMN IF EXISTS contact_name,
+					DROP COLUMN IF EXISTS support_email,
+					DROP COLUMN IF EXISTS billing_email,
+					DROP COLUMN IF EXISTS business_phone,
+					DROP COLUMN IF EXISTS website_url,
+					DROP COLUMN IF EXISTS address_line1,
+					DROP COLUMN IF EXISTS address_line2,
+					DROP COLUMN IF EXISTS city,
+					DROP COLUMN IF EXISTS state_province,
+					DROP COLUMN IF EXISTS postal_code,
+					DROP COLUMN IF EXISTS country_code,
+					DROP COLUMN IF EXISTS default_timezone,
+					DROP COLUMN IF EXISTS default_locale,
+					DROP COLUMN IF EXISTS default_currency,
+					DROP COLUMN IF EXISTS tax_identifier,
+					DROP COLUMN IF EXISTS setup_completed_at,
+					DROP COLUMN IF EXISTS setup_completed_by,
+					DROP COLUMN IF EXISTS updated_at;
+			`,
+		},
+		{
+			ID:   68,
+			Name: "add_msp_owner_activation",
+			Up: `
+				ALTER TABLE users
+					ADD COLUMN IF NOT EXISTS normalized_email TEXT
+						GENERATED ALWAYS AS (lower(btrim(email))) STORED,
+					ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ;
+
+				DO $$
+				DECLARE
+					duplicate_report TEXT;
+				BEGIN
+					SELECT string_agg(normalized_email || ' (' || duplicate_count || ')', ', ' ORDER BY normalized_email)
+					INTO duplicate_report
+					FROM (
+						SELECT normalized_email, COUNT(*) AS duplicate_count
+						FROM users
+						GROUP BY normalized_email
+						HAVING COUNT(*) > 1
+					) duplicates;
+					IF duplicate_report IS NOT NULL THEN
+						RAISE EXCEPTION 'migration 68 cannot enforce global normalized email uniqueness; duplicates: %', duplicate_report
+							USING ERRCODE = '23505';
+					END IF;
+					IF EXISTS (SELECT 1 FROM users WHERE normalized_email = '') THEN
+						RAISE EXCEPTION 'migration 68 cannot normalize blank user email addresses'
+							USING ERRCODE = '23514';
+					END IF;
+				END
+				$$;
+
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_users_normalized_email_unique
+					ON users(normalized_email);
+				ALTER TABLE users DROP CONSTRAINT IF EXISTS users_normalized_email_nonempty;
+				ALTER TABLE users ADD CONSTRAINT users_normalized_email_nonempty
+					CHECK (normalized_email <> '');
+				UPDATE users
+				SET email_verified_at = COALESCE(email_verified_at, created_at)
+				WHERE is_active = TRUE;
+				ALTER TABLE users ALTER COLUMN tenant_id DROP NOT NULL;
+
+				ALTER TABLE msp_tenants
+					ADD COLUMN IF NOT EXISTS onboarding_status TEXT NOT NULL DEFAULT 'active';
+				UPDATE msp_tenants SET onboarding_status = 'active';
+				ALTER TABLE msp_tenants DROP CONSTRAINT IF EXISTS msp_tenants_onboarding_status_check;
+				ALTER TABLE msp_tenants ADD CONSTRAINT msp_tenants_onboarding_status_check
+					CHECK (onboarding_status IN ('pending_owner', 'active'));
+
+				CREATE TABLE IF NOT EXISTS account_invitations (
+					id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					msp_id           UUID NOT NULL REFERENCES msp_tenants(id) ON DELETE CASCADE,
+					email_normalized TEXT NOT NULL CHECK (
+						email_normalized = lower(btrim(email_normalized))
+						AND email_normalized <> ''
+						AND length(email_normalized) <= 320
+					),
+					purpose          TEXT NOT NULL DEFAULT 'msp_owner_activation'
+						CHECK (purpose = 'msp_owner_activation'),
+					token_hash       CHAR(64) NOT NULL UNIQUE
+						CHECK (token_hash ~ '^[0-9a-f]{64}$'),
+					created_by       UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+					expires_at       TIMESTAMPTZ NOT NULL,
+					accepted_at      TIMESTAMPTZ,
+					revoked_at       TIMESTAMPTZ,
+					created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					delivery_status  TEXT NOT NULL DEFAULT 'pending'
+						CHECK (delivery_status IN ('pending', 'delivered', 'failed', 'unconfigured')),
+					delivered_at     TIMESTAMPTZ,
+					CHECK (expires_at > created_at),
+					CHECK (accepted_at IS NULL OR revoked_at IS NULL),
+					CHECK ((delivery_status = 'delivered') = (delivered_at IS NOT NULL))
+				);
+				CREATE INDEX IF NOT EXISTS idx_account_invitations_msp_created
+					ON account_invitations(msp_id, created_at DESC);
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_account_invitations_one_unconsumed_msp
+					ON account_invitations(msp_id)
+					WHERE accepted_at IS NULL AND revoked_at IS NULL;
+
+				ALTER TABLE account_invitations ENABLE ROW LEVEL SECURITY;
+				DROP POLICY IF EXISTS account_invitation_access ON account_invitations;
+				CREATE POLICY account_invitation_access ON account_invitations
+					USING (
+						app_is_platform_admin()
+						OR token_hash = safe_app_setting('app.invitation_hash')
+					)
+					WITH CHECK (
+						app_is_platform_admin()
+						OR token_hash = safe_app_setting('app.invitation_hash')
+					);
+				ALTER TABLE account_invitations FORCE ROW LEVEL SECURITY;
+
+				DROP POLICY IF EXISTS tenant_isolation_users ON users;
+				DROP POLICY IF EXISTS identity_scope ON users;
+				CREATE POLICY identity_scope ON users
+					USING (
+						app_is_platform_admin()
+						OR id::text = safe_app_setting('app.user_id')
+						OR tenant_id::text = safe_app_setting('app.tenant_id')
+						OR normalized_email = safe_app_setting('app.login_email')
+						OR EXISTS (
+							SELECT 1 FROM account_invitations invitation
+							WHERE invitation.token_hash = safe_app_setting('app.invitation_hash')
+							  AND invitation.email_normalized = users.normalized_email
+							  AND invitation.accepted_at IS NULL
+							  AND invitation.revoked_at IS NULL
+							  AND invitation.expires_at > statement_timestamp()
+						)
+					)
+					WITH CHECK (
+						app_is_platform_admin()
+						OR id::text = safe_app_setting('app.user_id')
+						OR tenant_id::text = safe_app_setting('app.tenant_id')
+						OR EXISTS (
+							SELECT 1 FROM account_invitations invitation
+							WHERE invitation.token_hash = safe_app_setting('app.invitation_hash')
+							  AND invitation.email_normalized = users.normalized_email
+							  AND invitation.accepted_at IS NULL
+							  AND invitation.revoked_at IS NULL
+							  AND invitation.expires_at > statement_timestamp()
+						)
+					);
+				ALTER TABLE users FORCE ROW LEVEL SECURITY;
+
+				DROP TRIGGER IF EXISTS recovery_mutation_gate_trigger ON account_invitations;
+				CREATE TRIGGER recovery_mutation_gate_trigger
+					BEFORE INSERT OR UPDATE OR DELETE ON account_invitations
+					FOR EACH STATEMENT EXECUTE FUNCTION enforce_recovery_mutation_gate();
+			`,
+			Down: `
+				SELECT set_config('app.role', 'platform_admin', true);
+				UPDATE plan_entitlements entitlement
+				SET status = 'active', updated_at = NOW()
+				FROM msp_tenants msp
+				WHERE entitlement.msp_id = msp.id
+				  AND msp.onboarding_status = 'pending_owner';
+				UPDATE msp_tenants
+				SET is_active = TRUE
+				WHERE onboarding_status = 'pending_owner';
+
+				ALTER TABLE users NO FORCE ROW LEVEL SECURITY;
+				DROP POLICY IF EXISTS identity_scope ON users;
+				DROP TABLE IF EXISTS account_invitations;
+				CREATE POLICY tenant_isolation_users ON users
+					USING (tenant_id = current_setting('app.tenant_id')::UUID);
+
+				DO $$
+				BEGIN
+					IF EXISTS (SELECT 1 FROM users WHERE tenant_id IS NULL) THEN
+						RAISE EXCEPTION 'cannot rollback migration 68 while tenant-neutral user identities exist';
+					END IF;
+				END
+				$$;
+				ALTER TABLE users ALTER COLUMN tenant_id SET NOT NULL;
+				ALTER TABLE users DROP CONSTRAINT IF EXISTS users_normalized_email_nonempty;
+				DROP INDEX IF EXISTS idx_users_normalized_email_unique;
+				ALTER TABLE users
+					DROP COLUMN IF EXISTS normalized_email,
+					DROP COLUMN IF EXISTS email_verified_at;
+				ALTER TABLE msp_tenants
+					DROP CONSTRAINT IF EXISTS msp_tenants_onboarding_status_check,
+					DROP COLUMN IF EXISTS onboarding_status;
+			`,
+		},
+		{
+			ID:   69,
+			Name: "enforce_scope_bound_authorization",
+			Up: `
+				-- This migration transaction is trusted maintenance under the legacy
+				-- policy long enough to inspect every existing membership. The function
+				-- is hardened below before the transaction commits.
+				SELECT set_config('app.role', 'platform_admin', true);
+
+				-- Memberships are the sole authorization source. Legacy users.role and
+				-- user_tenant_access are deliberately not used to create authority.
+				CREATE TABLE IF NOT EXISTS authorization_migration_issues (
+					id          BIGSERIAL PRIMARY KEY,
+					issue_type  TEXT NOT NULL,
+					user_id     TEXT NOT NULL DEFAULT '',
+					scope_type  TEXT NOT NULL DEFAULT '',
+					scope_id    TEXT NOT NULL DEFAULT '',
+					role        TEXT NOT NULL DEFAULT '',
+					details     JSONB NOT NULL DEFAULT '{}'::jsonb,
+					detected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+					UNIQUE(issue_type, user_id, scope_type, scope_id, role)
+				);
+
+				INSERT INTO authorization_migration_issues (issue_type, user_id, scope_type, scope_id, role, details)
+				SELECT 'invalid_membership', mb.user_id, mb.scope_type, mb.scope_id, mb.role,
+				       jsonb_build_object('status', mb.status, 'reason', 'illegal role/scope or unverified target')
+				FROM memberships mb
+				LEFT JOIN users u ON u.id::text = mb.user_id
+				LEFT JOIN platforms p ON mb.scope_type = 'platform' AND p.id::text = mb.scope_id
+				LEFT JOIN msp_tenants m ON mb.scope_type = 'msp' AND m.id::text = mb.scope_id
+				LEFT JOIN client_organizations c ON mb.scope_type = 'client' AND c.id::text = mb.scope_id
+				LEFT JOIN sites s ON mb.scope_type = 'site' AND s.id::text = mb.scope_id
+				WHERE u.id IS NULL
+				   OR (mb.scope_type = 'platform' AND (
+					p.id IS NULL OR mb.scope_id <> '00000000-0000-0000-0000-000000000001'
+					OR mb.role NOT IN ('platform_owner','platform_admin','platform_support','platform_billing','platform_security_auditor','platform_viewer')
+				   ))
+				   OR (mb.scope_type = 'msp' AND (m.id IS NULL OR mb.role NOT IN ('msp_owner','msp_admin','msp_technician','msp_viewer')))
+				   OR (mb.scope_type = 'client' AND (c.id IS NULL OR mb.role NOT IN ('client_admin','client_viewer')))
+				   OR (mb.scope_type = 'site' AND (s.id IS NULL OR mb.role NOT IN ('client_admin','client_viewer')))
+				ON CONFLICT (issue_type, user_id, scope_type, scope_id, role) DO NOTHING;
+
+				INSERT INTO authorization_migration_issues (issue_type, user_id, details)
+				SELECT 'legacy_role_without_membership', u.id::text,
+				       jsonb_build_object('legacy_role', u.role, 'disposition', 'compatibility_mirror_only')
+				FROM users u
+				WHERE NOT EXISTS (SELECT 1 FROM memberships mb WHERE mb.user_id = u.id::text)
+				ON CONFLICT (issue_type, user_id, scope_type, scope_id, role) DO NOTHING;
+
+				INSERT INTO authorization_migration_issues (issue_type, user_id, scope_id, details)
+				SELECT 'legacy_tenant_access_without_membership', uta.user_id::text, uta.tenant_id::text,
+				       jsonb_build_object('disposition', 'compatibility_mirror_only')
+				FROM user_tenant_access uta
+				WHERE NOT EXISTS (
+					SELECT 1 FROM memberships mb
+					WHERE mb.user_id = uta.user_id::text
+					  AND mb.status = 'active'
+					  AND (
+						(mb.scope_type = 'client' AND mb.scope_id = uta.tenant_id::text)
+						OR (mb.scope_type = 'site' AND EXISTS (
+							SELECT 1 FROM sites child_site
+							WHERE child_site.id::text = mb.scope_id AND child_site.client_id = uta.tenant_id
+						))
+					  )
+				)
+				ON CONFLICT (issue_type, user_id, scope_type, scope_id, role) DO NOTHING;
+
+				ALTER TABLE memberships DROP CONSTRAINT IF EXISTS memberships_role_scope_check;
+				ALTER TABLE memberships ADD CONSTRAINT memberships_role_scope_check CHECK (
+					(scope_type = 'platform' AND scope_id = '00000000-0000-0000-0000-000000000001'
+					 AND role IN ('platform_owner','platform_admin','platform_support','platform_billing','platform_security_auditor','platform_viewer'))
+					OR (scope_type = 'msp' AND role IN ('msp_owner','msp_admin','msp_technician','msp_viewer'))
+					OR (scope_type IN ('client','site') AND role IN ('client_admin','client_viewer'))
+				) NOT VALID;
+
+				CREATE OR REPLACE FUNCTION app_is_trusted_runtime()
+				RETURNS boolean
+				LANGUAGE SQL STABLE
+				AS $$
+					SELECT session_user = pg_get_userbyid(
+						(SELECT relowner FROM pg_class WHERE oid = 'public.memberships'::regclass)
+					)
+				$$;
+
+				CREATE OR REPLACE FUNCTION app_is_platform_admin()
+				RETURNS boolean
+				LANGUAGE SQL STABLE SECURITY DEFINER
+				SET search_path = pg_catalog, public
+				AS $$
+					SELECT public.app_is_trusted_runtime()
+					   AND COALESCE(public.safe_app_setting('app.role') = 'platform_admin', false)
+					   AND COALESCE(public.safe_app_setting('app.scope_type'), 'platform') = 'platform'
+					   AND public.safe_app_setting('app.msp_id') IS NULL
+					   AND public.safe_app_setting('app.client_id') IS NULL
+					   AND public.safe_app_setting('app.site_id') IS NULL
+					   AND EXISTS (
+						SELECT 1
+						FROM public.memberships mb
+						JOIN public.users u ON u.id::text = mb.user_id
+						WHERE mb.user_id = public.safe_app_setting('app.user_id')
+						  AND u.is_active = true AND u.email_verified_at IS NOT NULL
+						  AND mb.scope_type = 'platform'
+						  AND mb.scope_id = '00000000-0000-0000-0000-000000000001'
+						  AND mb.role IN ('platform_owner','platform_admin')
+						  AND mb.status = 'active'
+						  AND (mb.expires_at IS NULL OR mb.expires_at > statement_timestamp())
+					   )
+				$$;
+
+				-- Bootstrap is deliberately narrower than platform administration. It is
+				-- available only to the table-owning application runtime and disappears
+				-- as soon as the first authoritative platform membership is created.
+				CREATE OR REPLACE FUNCTION app_is_initial_bootstrap()
+				RETURNS boolean
+				LANGUAGE SQL STABLE SECURITY DEFINER
+				SET search_path = pg_catalog, public
+				AS $$
+					SELECT public.app_is_trusted_runtime()
+					   AND COALESCE(public.safe_app_setting('app.initial_bootstrap') = 'true', false)
+					   AND NOT EXISTS (
+						SELECT 1 FROM public.memberships mb
+						WHERE mb.scope_type = 'platform'
+						  AND mb.scope_id = '00000000-0000-0000-0000-000000000001'
+						  AND mb.role IN ('platform_owner','platform_admin')
+						  AND mb.status = 'active'
+						  AND (mb.expires_at IS NULL OR mb.expires_at > statement_timestamp())
+					   )
+				$$;
+
+				-- The bootstrap command needs one idempotency check even after bootstrap
+				-- RLS has closed. This helper exposes only the count, never user records.
+				CREATE OR REPLACE FUNCTION app_bootstrap_user_count()
+				RETURNS bigint
+				LANGUAGE SQL STABLE SECURITY DEFINER
+				SET search_path = pg_catalog, public
+				AS $$
+					SELECT COUNT(*) FROM public.users
+				$$;
+
+				CREATE OR REPLACE FUNCTION app_scope_is_authorized()
+				RETURNS boolean
+				LANGUAGE SQL STABLE SECURITY DEFINER
+				SET search_path = pg_catalog, public
+				AS $$
+					SELECT public.app_is_trusted_runtime()
+					AND CASE public.safe_app_setting('app.scope_type')
+						WHEN 'platform' THEN
+							public.safe_app_setting('app.msp_id') IS NULL
+							AND public.safe_app_setting('app.client_id') IS NULL
+							AND public.safe_app_setting('app.site_id') IS NULL
+						WHEN 'msp' THEN
+							public.safe_app_setting('app.client_id') IS NULL
+							AND public.safe_app_setting('app.site_id') IS NULL
+							AND EXISTS (
+								SELECT 1 FROM public.msp_tenants m
+								WHERE m.id::text = public.safe_app_setting('app.msp_id')
+								  AND m.is_active = true AND m.onboarding_status = 'active'
+							)
+						WHEN 'client' THEN
+							public.safe_app_setting('app.site_id') IS NULL
+							AND EXISTS (
+								SELECT 1 FROM public.client_organizations c
+								JOIN public.msp_tenants m ON m.id = c.msp_id
+								WHERE c.id::text = public.safe_app_setting('app.client_id')
+								  AND c.msp_id::text = public.safe_app_setting('app.msp_id')
+								  AND c.is_active = true AND m.is_active = true
+								  AND m.onboarding_status = 'active'
+							)
+						WHEN 'site' THEN EXISTS (
+							SELECT 1 FROM public.sites s
+							JOIN public.client_organizations c ON c.id = s.client_id
+							JOIN public.msp_tenants m ON m.id = c.msp_id
+							WHERE s.id::text = public.safe_app_setting('app.site_id')
+							  AND s.client_id::text = public.safe_app_setting('app.client_id')
+							  AND c.msp_id::text = public.safe_app_setting('app.msp_id')
+							  AND s.is_active = true AND c.is_active = true
+							  AND m.is_active = true AND m.onboarding_status = 'active'
+						)
+						ELSE false
+					END
+					AND EXISTS (
+						SELECT 1
+						FROM public.memberships mb
+						JOIN public.users u ON u.id::text = mb.user_id
+						WHERE mb.user_id = public.safe_app_setting('app.user_id')
+						  AND u.is_active = true AND u.email_verified_at IS NOT NULL
+						  AND mb.status = 'active'
+						  AND (mb.expires_at IS NULL OR mb.expires_at > statement_timestamp())
+						  AND (
+							(public.safe_app_setting('app.scope_type') = 'platform'
+							 AND mb.scope_type = 'platform'
+							 AND mb.scope_id = '00000000-0000-0000-0000-000000000001'
+							 AND mb.role IN ('platform_owner','platform_admin','platform_support','platform_billing','platform_security_auditor','platform_viewer'))
+							OR (public.safe_app_setting('app.scope_type') = 'msp' AND (
+								(mb.scope_type = 'platform' AND mb.scope_id = '00000000-0000-0000-0000-000000000001'
+								 AND mb.role IN ('platform_owner','platform_admin','platform_support','platform_billing','platform_security_auditor','platform_viewer'))
+								OR (mb.scope_type = 'msp' AND mb.scope_id = public.safe_app_setting('app.msp_id')
+								 AND mb.role IN ('msp_owner','msp_admin','msp_technician','msp_viewer'))
+							))
+							OR (public.safe_app_setting('app.scope_type') = 'client' AND (
+								(mb.scope_type = 'platform' AND mb.scope_id = '00000000-0000-0000-0000-000000000001'
+								 AND mb.role IN ('platform_owner','platform_admin','platform_support','platform_billing','platform_security_auditor','platform_viewer'))
+								OR (mb.scope_type = 'msp' AND mb.scope_id = public.safe_app_setting('app.msp_id')
+								 AND mb.role IN ('msp_owner','msp_admin','msp_technician','msp_viewer'))
+								OR (mb.scope_type = 'client' AND mb.scope_id = public.safe_app_setting('app.client_id')
+								 AND mb.role IN ('client_admin','client_viewer'))
+							))
+							OR (public.safe_app_setting('app.scope_type') = 'site' AND (
+								(mb.scope_type = 'platform' AND mb.scope_id = '00000000-0000-0000-0000-000000000001'
+								 AND mb.role IN ('platform_owner','platform_admin','platform_support','platform_billing','platform_security_auditor','platform_viewer'))
+								OR (mb.scope_type = 'msp' AND mb.scope_id = public.safe_app_setting('app.msp_id')
+								 AND mb.role IN ('msp_owner','msp_admin','msp_technician','msp_viewer'))
+								OR (mb.scope_type = 'client' AND mb.scope_id = public.safe_app_setting('app.client_id')
+								 AND mb.role IN ('client_admin','client_viewer'))
+								OR (mb.scope_type = 'site' AND mb.scope_id = public.safe_app_setting('app.site_id')
+								 AND mb.role IN ('client_admin','client_viewer'))
+							))
+						  )
+					)
+				$$;
+
+				CREATE OR REPLACE FUNCTION app_actor_can_manage_scope()
+				RETURNS boolean
+				LANGUAGE SQL STABLE SECURITY DEFINER
+				SET search_path = pg_catalog, public
+				AS $$
+					SELECT public.app_scope_is_authorized() AND EXISTS (
+						SELECT 1
+						FROM public.memberships mb
+						WHERE mb.user_id = public.safe_app_setting('app.user_id')
+						  AND mb.status = 'active'
+						  AND (mb.expires_at IS NULL OR mb.expires_at > statement_timestamp())
+						  AND (
+							(public.safe_app_setting('app.scope_type') IN ('platform','msp','client','site')
+							 AND mb.scope_type = 'platform'
+							 AND mb.scope_id = '00000000-0000-0000-0000-000000000001'
+							 AND mb.role IN ('platform_owner','platform_admin'))
+							OR (public.safe_app_setting('app.scope_type') IN ('msp','client','site')
+							 AND mb.scope_type = 'msp'
+							 AND mb.scope_id = public.safe_app_setting('app.msp_id')
+							 AND mb.role IN ('msp_owner','msp_admin'))
+							OR (public.safe_app_setting('app.scope_type') IN ('client','site')
+							 AND mb.scope_type = 'client'
+							 AND mb.scope_id = public.safe_app_setting('app.client_id')
+							 AND mb.role = 'client_admin')
+							OR (public.safe_app_setting('app.scope_type') = 'site'
+							 AND mb.scope_type = 'site'
+							 AND mb.scope_id = public.safe_app_setting('app.site_id')
+							 AND mb.role = 'client_admin')
+						  )
+					)
+				$$;
+
+				CREATE OR REPLACE FUNCTION app_may_manage_membership(target_scope_type text, target_scope_id text)
+				RETURNS boolean
+				LANGUAGE SQL STABLE SECURITY DEFINER
+				SET search_path = pg_catalog, public
+				AS $$
+					SELECT public.app_is_trusted_runtime()
+					   AND COALESCE(public.safe_app_setting('app.scope_manager') = 'true', false)
+					   AND public.app_actor_can_manage_scope()
+					   AND CASE public.safe_app_setting('app.scope_type')
+						WHEN 'platform' THEN true
+						WHEN 'msp' THEN
+							(target_scope_type = 'msp' AND target_scope_id = public.safe_app_setting('app.msp_id'))
+							OR (target_scope_type = 'client' AND EXISTS (
+								SELECT 1 FROM public.client_organizations c
+								WHERE c.id::text = target_scope_id
+								  AND c.msp_id::text = public.safe_app_setting('app.msp_id')
+								  AND c.is_active = true
+							))
+							OR (target_scope_type = 'site' AND EXISTS (
+								SELECT 1 FROM public.sites s
+								JOIN public.client_organizations c ON c.id = s.client_id
+								WHERE s.id::text = target_scope_id
+								  AND c.msp_id::text = public.safe_app_setting('app.msp_id')
+								  AND s.is_active = true AND c.is_active = true
+							))
+						WHEN 'client' THEN
+							(target_scope_type = 'client' AND target_scope_id = public.safe_app_setting('app.client_id'))
+							OR (target_scope_type = 'site' AND EXISTS (
+								SELECT 1 FROM public.sites s
+								WHERE s.id::text = target_scope_id
+								  AND s.client_id::text = public.safe_app_setting('app.client_id')
+								  AND s.is_active = true
+							))
+						WHEN 'site' THEN target_scope_type = 'site'
+							AND target_scope_id = public.safe_app_setting('app.site_id')
+						ELSE false
+					   END
+				$$;
+
+				CREATE OR REPLACE FUNCTION app_is_scope_manager()
+				RETURNS boolean
+				LANGUAGE SQL STABLE
+				AS $$
+					SELECT app_actor_can_manage_scope()
+					   AND COALESCE(safe_app_setting('app.scope_manager') = 'true', false)
+				$$;
+
+				DROP POLICY IF EXISTS tenant_scope ON client_organizations;
+				CREATE POLICY tenant_scope ON client_organizations
+					USING (
+						app_is_platform_admin()
+						OR (app_scope_is_authorized() AND (
+							(safe_app_setting('app.scope_type') = 'msp' AND msp_id::text = safe_app_setting('app.msp_id'))
 							OR (safe_app_setting('app.scope_type') IN ('client','site') AND id::text = safe_app_setting('app.client_id'))
 						))
 						OR support_access_allowed(msp_id)
