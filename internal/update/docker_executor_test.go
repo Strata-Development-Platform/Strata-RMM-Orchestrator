@@ -106,7 +106,7 @@ func TestDockerUpgradeExecutorAdoptsInstalledImmutableImageState(t *testing.T) {
 	}
 }
 
-func TestDockerUpgradeExecutorCandidateFailureRestoresPreviousDigest(t *testing.T) {
+func TestDockerUpgradeExecutorCandidateFailureRestoresPreviousDigestAndAllowsRetry(t *testing.T) {
 	executor, candidate, preflight, previous, envFile := dockerExecutorFixture(t)
 	t.Setenv("FAKE_DOCKER_FAIL_IMAGE", candidate.Image)
 	err := executor.Apply(t.Context(), candidate, preflight, "1.9.9", strings.Repeat("1", 40), strings.Repeat("c", 64))
@@ -118,10 +118,19 @@ func TestDockerUpgradeExecutorCandidateFailureRestoresPreviousDigest(t *testing.
 	if !strings.Contains(string(payload), "STRATA_ORCHESTRATOR_IMAGE="+previous) {
 		t.Fatalf("previous image was not restored: %s", payload)
 	}
-	journal, readErr := ReadDockerUpgradeJournal(executor.JournalFile)
-	if readErr != nil { t.Fatal(readErr) }
-	if journal.State != DockerUpgradeRolledBack {
-		t.Fatalf("journal state = %q, want %q", journal.State, DockerUpgradeRolledBack)
+	if _, statErr := os.Stat(executor.JournalFile); !os.IsNotExist(statErr) {
+		t.Fatalf("resolved rollback journal still blocks upgrades: %v", statErr)
+	}
+
+	t.Setenv("FAKE_DOCKER_FAIL_IMAGE", "")
+	retry := candidate
+	retry.Version = "1.10.1"
+	retry.SourceSHA = strings.Repeat("3", 40)
+	retry.Digest = "sha256:" + strings.Repeat("c", 64)
+	retry.Image = retry.Reference + "@" + retry.Digest
+	retry.ReleaseTag = "v1.10.1"
+	if err := executor.Apply(t.Context(), retry, preflight, "1.9.9", strings.Repeat("1", 40), strings.Repeat("d", 64)); err != nil {
+		t.Fatalf("retry Apply() after resolved rollback error = %v", err)
 	}
 }
 
