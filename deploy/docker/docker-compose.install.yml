@@ -64,9 +64,7 @@ services:
     networks: [backend]
 
   orchestrator:
-    build:
-      context: ../..
-      dockerfile: Dockerfile
+    image: ${STRATA_ORCHESTRATOR_IMAGE:?STRATA_ORCHESTRATOR_IMAGE must be an immutable repository@sha256 digest}
     restart: unless-stopped
     command: ["orchestrator"]
     environment:
