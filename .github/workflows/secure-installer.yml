@@ -173,7 +173,8 @@ jobs:
         run: |
           sudo env STRATA_ORCHESTRATOR_IMAGE="$STRATA_ORCHESTRATOR_IMAGE" \
             docker compose --env-file deploy/docker/.install.env -f deploy/docker/docker-compose.install.yml config --quiet
-          sudo docker compose \
+          sudo env STRATA_ORCHESTRATOR_IMAGE="$STRATA_ORCHESTRATOR_IMAGE" \
+            docker compose \
             --env-file deploy/docker/.install.env \
             -f deploy/docker/docker-compose.install.yml \
             build web
