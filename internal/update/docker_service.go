@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 )
 
@@ -22,16 +23,18 @@ type DockerPlan struct {
 
 func (u *OrchestratorUpdater) checkOCI(ctx context.Context, expectedRepository string) (*OCIReleaseCandidate, string, error) {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", u.owner, u.repo)
-	req, err := newGitHubRequest(ctx, url)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("create request: %w", err)
 	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "StrataRMM/1.0")
 	resp, err := u.httpClient.Do(req)
 	if err != nil {
 		return nil, "", fmt.Errorf("github api: %w", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return nil, "", fmt.Errorf("github api returned %d", resp.StatusCode)
 	}
 	var release GitHubRelease
@@ -73,24 +76,6 @@ func (u *OrchestratorUpdater) checkOCI(ctx context.Context, expectedRepository s
 	}
 	digest := sha256.Sum256(manifestBytes)
 	return &candidate, hex.EncodeToString(digest[:]), nil
-}
-
-func newGitHubRequest(ctx context.Context, url string) (*httpRequest, error) {
-	return makeHTTPRequest(ctx, url)
-}
-
-// The indirection below keeps Docker discovery using the same headers as native
-// discovery without exporting HTTP details from the update package.
-type httpRequest = http.Request
-
-func makeHTTPRequest(ctx context.Context, url string) (*http.Request, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "StrataRMM/1.0")
-	return req, nil
 }
 
 func (s *Service) PlanDocker(ctx context.Context, expectedRepository string, includePreflight bool) (*DockerPlan, error) {
