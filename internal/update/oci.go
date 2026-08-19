@@ -93,7 +93,7 @@ func (u *OrchestratorUpdater) VerifyOCICandidate(ctx context.Context, candidate 
 	)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("OCI Sigstore verification failed: %w: %s", err, string(output))
+		return fmt.Errorf("oci Sigstore verification failed: %w: %s", err, string(output))
 	}
 	return nil
 }
