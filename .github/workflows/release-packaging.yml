@@ -8,6 +8,7 @@ on:
       - ".github/workflows/release-packaging.yml"
       - "Dockerfile"
       - "deploy/*.service"
+      - "docs/UPGRADE.md"
       - "scripts/install-platform.sh"
       - "scripts/install-cosign-verifier.sh"
       - "scripts/build-cosign-verifier.sh"
@@ -31,6 +32,26 @@ jobs:
         with:
           go-version: "1.26.6"
           cache: true
+      - name: Reject unsafe upgrade guidance
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -En '^[[:space:]]*docker[[:space:]]+pull[[:space:]]+[^[:space:]]*:latest([[:space:]]|$)' docs/UPGRADE.md; then
+            echo 'mutable :latest Docker pull must not be published as upgrade guidance' >&2
+            exit 1
+          fi
+          if grep -En '^[[:space:]]*(cp|install)[[:space:]].*(strata|orchestrator).*(/opt/|/usr/local/bin/)' docs/UPGRADE.md; then
+            echo 'manual orchestrator binary replacement must not be published as supported upgrade guidance' >&2
+            exit 1
+          fi
+          if grep -En '^[[:space:]]*psql[[:space:]].*(-f|--file)[[:space:]].*migrations/.*\.sql' docs/UPGRADE.md; then
+            echo 'manual migration-file application must not be published as supported upgrade guidance' >&2
+            exit 1
+          fi
+          ! grep -Fq 'supports zero-downtime upgrades' docs/UPGRADE.md
+          grep -Fq 'Automatic/in-app upgrade of a Docker Compose deployment is **not yet a supported pre-beta path**.' docs/UPGRADE.md
+          grep -Fq 'release-manifest.json' docs/UPGRADE.md
+          grep -Fq 'Sigstore' docs/UPGRADE.md
       - name: Test semantic version and checksum policy
         run: go test -count=1 -race ./internal/update
 
