@@ -19,7 +19,7 @@ func (e DockerUpgradeExecutor) Reconcile(ctx context.Context) error {
 		return err
 	}
 	if journal.ComposeProject != e.Project || journal.ComposeFile != e.ComposeFile {
-		return fmt.Errorf("docker upgrade journal does not match this Compose deployment")
+		return fmt.Errorf("docker upgrade journal does not match this compose deployment")
 	}
 	journal.Attempt++
 	journal.UpdatedAt = time.Now().UTC()
@@ -60,7 +60,7 @@ func (e DockerUpgradeExecutor) Reconcile(ctx context.Context) error {
 	case configured == journal.CurrentImage && live == journal.CurrentImage:
 		if err := e.healthy(ctx); err != nil {
 			_ = set(DockerUpgradeRecoveryNeeded)
-			return fmt.Errorf("previous Docker release is live but not healthy: %w", err)
+			return fmt.Errorf("previous docker release is live but not healthy: %w", err)
 		}
 		return set(DockerUpgradeRolledBack)
 	case configured == journal.CandidateImage && live == journal.CurrentImage:
@@ -99,19 +99,19 @@ func rollbackRetainedDockerUpgrade(ctx context.Context, e DockerUpgradeExecutor,
 		journal.State = DockerUpgradeRecoveryNeeded
 		journal.UpdatedAt = time.Now().UTC()
 		_ = WriteDockerUpgradeJournal(e.JournalFile, *journal)
-		return fmt.Errorf("restore previous Compose image: %w", err)
+		return fmt.Errorf("restore previous compose image: %w", err)
 	}
 	if _, err := runDocker(ctx, e.composeArgs("up", "-d", "--no-deps", "orchestrator")...); err != nil {
 		journal.State = DockerUpgradeRecoveryNeeded
 		journal.UpdatedAt = time.Now().UTC()
 		_ = WriteDockerUpgradeJournal(e.JournalFile, *journal)
-		return fmt.Errorf("restart previous immutable Docker release: %w", err)
+		return fmt.Errorf("restart previous immutable docker release: %w", err)
 	}
 	if err := e.healthy(ctx); err != nil {
 		journal.State = DockerUpgradeRecoveryNeeded
 		journal.UpdatedAt = time.Now().UTC()
 		_ = WriteDockerUpgradeJournal(e.JournalFile, *journal)
-		return fmt.Errorf("previous immutable Docker release did not recover: %w", err)
+		return fmt.Errorf("previous immutable docker release did not recover: %w", err)
 	}
 	journal.State = DockerUpgradeRolledBack
 	journal.UpdatedAt = time.Now().UTC()
