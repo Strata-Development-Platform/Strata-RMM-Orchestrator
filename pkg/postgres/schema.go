@@ -4382,6 +4382,115 @@ DROP POLICY IF EXISTS "platform_admin_topology_edges" ON topology_edges;
 				DROP TABLE IF EXISTS smart_group_script_bindings;
 			`,
 		},
+		{
+			ID:   96,
+			Name: "extend_patch_deployment_status_lifecycle",
+			Up: `
+				ALTER TABLE patch_deployments
+					DROP CONSTRAINT IF EXISTS patch_deployments_status_check;
+
+				ALTER TABLE patch_deployments
+					ADD CONSTRAINT patch_deployments_status_check
+					CHECK (status IN (
+						'pending', 'approved', 'canary', 'deploying', 'installed',
+						'completed', 'failed', 'reboot_required', 'cancelled'
+					));
+			`,
+			Down: `
+				DO $$
+				BEGIN
+					IF EXISTS (
+						SELECT 1 FROM patch_deployments
+						WHERE status NOT IN ('pending', 'approved', 'deploying', 'installed', 'failed')
+					) THEN
+						RAISE EXCEPTION 'cannot restore legacy patch_deployments status constraint while extended lifecycle states exist';
+					END IF;
+				END $$;
+
+				ALTER TABLE patch_deployments
+					DROP CONSTRAINT IF EXISTS patch_deployments_status_check;
+
+				ALTER TABLE patch_deployments
+					ADD CONSTRAINT patch_deployments_status_check
+					CHECK (status IN ('pending', 'approved', 'deploying', 'installed', 'failed'));
+			`,
+		},
+		{
+			ID:   97,
+			Name: "complete_provider_setup_contract_v2",
+			Up: `
+				ALTER TABLE platforms
+					ADD COLUMN IF NOT EXISTS provider_logo_light_url TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS provider_logo_dark_url TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS provider_favicon_url TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS provider_brand_light_color TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS provider_brand_dark_color TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS provider_terms_url TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS provider_privacy_url TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS provider_support_url TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS public_saas_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+					ADD COLUMN IF NOT EXISTS public_saas_headline TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS public_saas_description TEXT NOT NULL DEFAULT '',
+					ADD COLUMN IF NOT EXISTS setup_contract_version INTEGER NOT NULL DEFAULT 1;
+
+				ALTER TABLE platforms
+					ADD CONSTRAINT platforms_provider_brand_light_color_format
+						CHECK (provider_brand_light_color = '' OR provider_brand_light_color ~ '^#[0-9A-Fa-f]{6}$'),
+					ADD CONSTRAINT platforms_provider_brand_dark_color_format
+						CHECK (provider_brand_dark_color = '' OR provider_brand_dark_color ~ '^#[0-9A-Fa-f]{6}$'),
+					ADD CONSTRAINT platforms_provider_terms_url_https
+						CHECK (provider_terms_url = '' OR provider_terms_url ~ '^https://[^[:space:]]+$'),
+					ADD CONSTRAINT platforms_provider_privacy_url_https
+						CHECK (provider_privacy_url = '' OR provider_privacy_url ~ '^https://[^[:space:]]+$'),
+					ADD CONSTRAINT platforms_provider_support_url_https
+						CHECK (provider_support_url = '' OR provider_support_url ~ '^https://[^[:space:]]+$'),
+					ADD CONSTRAINT platforms_provider_logo_light_url_https
+						CHECK (provider_logo_light_url = '' OR provider_logo_light_url ~ '^https://[^[:space:]]+$'),
+					ADD CONSTRAINT platforms_provider_logo_dark_url_https
+						CHECK (provider_logo_dark_url = '' OR provider_logo_dark_url ~ '^https://[^[:space:]]+$'),
+					ADD CONSTRAINT platforms_provider_favicon_url_https
+						CHECK (provider_favicon_url = '' OR provider_favicon_url ~ '^https://[^[:space:]]+$'),
+					ADD CONSTRAINT platforms_setup_contract_version_positive
+						CHECK (setup_contract_version >= 1),
+					ADD CONSTRAINT platforms_setup_contract_v2_required_fields
+						CHECK (
+							setup_contract_version < 2 OR (
+								provider_brand_light_color <> '' AND
+								provider_brand_dark_color <> '' AND
+								provider_terms_url <> '' AND
+								provider_privacy_url <> ''
+							)
+						);
+
+				COMMENT ON COLUMN platforms.setup_contract_version IS
+					'Authoritative first-login provider setup contract version. Current pre-beta contract is version 2.';
+			`,
+			Down: `
+				ALTER TABLE platforms
+					DROP CONSTRAINT IF EXISTS platforms_setup_contract_v2_required_fields,
+					DROP CONSTRAINT IF EXISTS platforms_setup_contract_version_positive,
+					DROP CONSTRAINT IF EXISTS platforms_provider_favicon_url_https,
+					DROP CONSTRAINT IF EXISTS platforms_provider_logo_dark_url_https,
+					DROP CONSTRAINT IF EXISTS platforms_provider_logo_light_url_https,
+					DROP CONSTRAINT IF EXISTS platforms_provider_support_url_https,
+					DROP CONSTRAINT IF EXISTS platforms_provider_privacy_url_https,
+					DROP CONSTRAINT IF EXISTS platforms_provider_terms_url_https,
+					DROP CONSTRAINT IF EXISTS platforms_provider_brand_dark_color_format,
+					DROP CONSTRAINT IF EXISTS platforms_provider_brand_light_color_format,
+					DROP COLUMN IF EXISTS setup_contract_version,
+					DROP COLUMN IF EXISTS public_saas_description,
+					DROP COLUMN IF EXISTS public_saas_headline,
+					DROP COLUMN IF EXISTS public_saas_enabled,
+					DROP COLUMN IF EXISTS provider_support_url,
+					DROP COLUMN IF EXISTS provider_privacy_url,
+					DROP COLUMN IF EXISTS provider_terms_url,
+					DROP COLUMN IF EXISTS provider_brand_dark_color,
+					DROP COLUMN IF EXISTS provider_brand_light_color,
+					DROP COLUMN IF EXISTS provider_favicon_url,
+					DROP COLUMN IF EXISTS provider_logo_dark_url,
+					DROP COLUMN IF EXISTS provider_logo_light_url;
+			`,
+		},
 	}
 }
 

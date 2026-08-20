@@ -16,9 +16,11 @@ import {
   type ProviderProfileField,
 } from '@/lib/providerProfile';
 import {
+  BrandFields,
   BusinessFields,
   ContactFields,
   ProfileErrorSummary,
+  PublicationFields,
   RegionalFields,
 } from '@/components/provider/ProviderProfileFields';
 
@@ -42,6 +44,17 @@ function valuesFromProfile(profile: ProviderBusinessProfile): ProviderBusinessPr
     default_locale: profile.default_locale,
     default_currency: profile.default_currency,
     tax_identifier: profile.tax_identifier ?? '',
+    logo_light_url: profile.logo_light_url ?? '',
+    logo_dark_url: profile.logo_dark_url ?? '',
+    favicon_url: profile.favicon_url ?? '',
+    brand_light_color: profile.brand_light_color,
+    brand_dark_color: profile.brand_dark_color,
+    terms_url: profile.terms_url,
+    privacy_url: profile.privacy_url,
+    support_url: profile.support_url ?? '',
+    public_saas_enabled: profile.public_saas_enabled,
+    public_saas_headline: profile.public_saas_headline ?? '',
+    public_saas_description: profile.public_saas_description ?? '',
   };
 }
 
@@ -95,7 +108,7 @@ export function ProviderBusinessSettings() {
   const normalizedOriginal = normalizeProviderProfile(originalValues);
   const dirty = ALL_PROVIDER_FIELDS.some(field => normalizedValues[field] !== normalizedOriginal[field]);
 
-  const handleChange = (field: ProviderProfileField, value: string) => {
+  const handleChange = (field: ProviderProfileField, value: string | boolean) => {
     setValues(current => ({ ...current, [field]: value }));
     setErrors(current => {
       if (!current[field]) return current;
@@ -121,7 +134,9 @@ export function ProviderBusinessSettings() {
 
     const patch: ProviderBusinessProfilePatch = {};
     for (const field of ALL_PROVIDER_FIELDS) {
-      if (normalizedValues[field] !== normalizedOriginal[field]) patch[field] = normalizedValues[field];
+      if (normalizedValues[field] !== normalizedOriginal[field]) {
+        Object.assign(patch, { [field]: normalizedValues[field] });
+      }
     }
 
     setSaving(true);
@@ -197,10 +212,19 @@ export function ProviderBusinessSettings() {
                 <h3 className="mb-4 text-base font-semibold text-slate-900 dark:text-white">Regional defaults</h3>
                 <RegionalFields values={values} errors={errors} onChange={handleChange} disabled={saving} idPrefix="settings-provider" />
               </div>
+              <div className="border-t border-slate-200 pt-8 dark:border-slate-800">
+                <h3 className="mb-4 text-base font-semibold text-slate-900 dark:text-white">Provider brand</h3>
+                <BrandFields values={values} errors={errors} onChange={handleChange} disabled={saving} idPrefix="settings-provider" />
+              </div>
+              <div className="border-t border-slate-200 pt-8 dark:border-slate-800">
+                <h3 className="mb-4 text-base font-semibold text-slate-900 dark:text-white">Legal and public SaaS</h3>
+                <PublicationFields values={values} errors={errors} onChange={handleChange} disabled={saving} idPrefix="settings-provider" />
+              </div>
             </fieldset>
 
             <div className="rounded-lg bg-slate-50 p-4 text-sm text-slate-600 dark:bg-slate-950/60 dark:text-slate-400">
               <p><span className="font-medium text-slate-800 dark:text-slate-200">Setup completed:</span> {readableDate(profile.setup_completed_at)}</p>
+              <p className="mt-1"><span className="font-medium text-slate-800 dark:text-slate-200">Setup contract:</span> v{profile.setup_contract_version} · Outbound email {profile.outbound_email_status === 'configured' ? 'configured' : 'not configured'}</p>
               <p className="mt-1">Saving records changed field names in the provider audit trail. Setup completion time and actor are immutable.</p>
             </div>
           </div>

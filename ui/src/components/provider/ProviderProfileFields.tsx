@@ -14,7 +14,7 @@ import {
 type FieldsProps = {
   values: ProviderBusinessProfileValues;
   errors: ProviderProfileErrors;
-  onChange: (field: ProviderProfileField, value: string) => void;
+  onChange: (field: ProviderProfileField, value: string | boolean) => void;
   disabled?: boolean;
   idPrefix?: string;
 };
@@ -140,6 +140,58 @@ export function RegionalFields({ values, errors, onChange, disabled = false, idP
       <FormField field="tax_identifier" errors={errors} idPrefix={idPrefix} helper="Optional. Stored as business profile data and never used as a credential.">
         <input {...inputA11y('tax_identifier', errors, idPrefix, true)} className={inputClass} value={values.tax_identifier} onChange={event => onChange('tax_identifier', event.target.value)} disabled={disabled} maxLength={100} autoComplete="off" />
       </FormField>
+    </div>
+  );
+}
+
+export function BrandFields({ values, errors, onChange, disabled = false, idPrefix = 'provider' }: FieldsProps) {
+  return (
+    <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+      {(['logo_light_url', 'logo_dark_url', 'favicon_url'] as const).map(field => (
+        <div key={field} className={field === 'favicon_url' ? '' : 'md:col-span-2'}>
+          <FormField field={field} errors={errors} idPrefix={idPrefix} helper="Optional. Use an absolute HTTPS URL.">
+            <input {...inputA11y(field, errors, idPrefix, true)} className={inputClass} type="url" value={values[field]} onChange={event => onChange(field, event.target.value)} disabled={disabled} maxLength={2048} placeholder="https://example.com/brand.svg" />
+          </FormField>
+        </div>
+      ))}
+      {(['brand_light_color', 'brand_dark_color'] as const).map(field => (
+        <FormField key={field} field={field} errors={errors} idPrefix={idPrefix} required helper="Required #RRGGBB color used for provider-owned surfaces.">
+          <div className="flex gap-2">
+            <input aria-label={`${PROVIDER_FIELD_LABELS[field]} picker`} className="h-10 w-12 cursor-pointer rounded border border-slate-300 bg-white p-1 dark:border-slate-700 dark:bg-slate-950" type="color" value={values[field]} onChange={event => onChange(field, event.target.value)} disabled={disabled} />
+            <input {...inputA11y(field, errors, idPrefix, true)} className={inputClass} value={values[field]} onChange={event => onChange(field, event.target.value)} disabled={disabled} maxLength={7} placeholder="#2563EB" />
+          </div>
+        </FormField>
+      ))}
+    </div>
+  );
+}
+
+export function PublicationFields({ values, errors, onChange, disabled = false, idPrefix = 'provider' }: FieldsProps) {
+  return (
+    <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+      {(['terms_url', 'privacy_url', 'support_url'] as const).map(field => (
+        <div key={field} className={field === 'support_url' ? 'md:col-span-2' : ''}>
+          <FormField field={field} errors={errors} idPrefix={idPrefix} required={field !== 'support_url'} helper="Use an absolute HTTPS URL.">
+            <input {...inputA11y(field, errors, idPrefix, true)} className={inputClass} type="url" value={values[field]} onChange={event => onChange(field, event.target.value)} disabled={disabled} maxLength={2048} placeholder="https://example.com/legal" />
+          </FormField>
+        </div>
+      ))}
+      <div className="md:col-span-2 rounded-lg border border-slate-200 p-4 dark:border-slate-800">
+        <label className="flex items-start gap-3 text-sm font-medium text-slate-700 dark:text-slate-300">
+          <input id={`${idPrefix}-public_saas_enabled`} type="checkbox" checked={values.public_saas_enabled} onChange={event => onChange('public_saas_enabled', event.target.checked)} disabled={disabled} className="mt-0.5 h-4 w-4 rounded border-slate-300 text-blue-600" />
+          <span>Enable the provider-owned public SaaS site after setup</span>
+        </label>
+      </div>
+      <div className="md:col-span-2">
+        <FormField field="public_saas_headline" errors={errors} idPrefix={idPrefix} helper="Optional public headline; enabling publication does not require one.">
+          <input {...inputA11y('public_saas_headline', errors, idPrefix, true)} className={inputClass} value={values.public_saas_headline} onChange={event => onChange('public_saas_headline', event.target.value)} disabled={disabled} maxLength={160} />
+        </FormField>
+      </div>
+      <div className="md:col-span-2">
+        <FormField field="public_saas_description" errors={errors} idPrefix={idPrefix}>
+          <textarea {...inputA11y('public_saas_description', errors, idPrefix)} className={`${inputClass} min-h-28`} value={values.public_saas_description} onChange={event => onChange('public_saas_description', event.target.value)} disabled={disabled} maxLength={2000} />
+        </FormField>
+      </div>
     </div>
   );
 }

@@ -33,6 +33,29 @@ func TestMigration67ProviderProfileContract(t *testing.T) {
 	}
 }
 
+func TestMigration97ProviderSetupContractV2(t *testing.T) {
+	var migration Migration
+	for _, candidate := range Migrations() {
+		if candidate.ID == 97 {
+			migration = candidate
+			break
+		}
+	}
+	if migration.ID != 97 {
+		t.Fatal("migration 97 is missing")
+	}
+	for _, fragment := range []string{
+		"provider_brand_light_color",
+		"provider_terms_url_https",
+		"setup_contract_version",
+		"platforms_setup_contract_v2_required_fields",
+	} {
+		if !strings.Contains(migration.Up, fragment) {
+			t.Errorf("migration 97 missing %q", fragment)
+		}
+	}
+}
+
 func TestChangedProviderFieldsAreSortedAndContainNoValues(t *testing.T) {
 	before := ProviderBusinessProfileValues{DisplayName: "Old", TaxIdentifier: "sensitive-old"}
 	after := before

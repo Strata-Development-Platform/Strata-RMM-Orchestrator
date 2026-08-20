@@ -21,6 +21,17 @@ export const EMPTY_PROVIDER_PROFILE: ProviderBusinessProfileValues = {
   default_locale: 'en-US',
   default_currency: 'USD',
   tax_identifier: '',
+  logo_light_url: '',
+  logo_dark_url: '',
+  favicon_url: '',
+  brand_light_color: '#2563EB',
+  brand_dark_color: '#60A5FA',
+  terms_url: '',
+  privacy_url: '',
+  support_url: '',
+  public_saas_enabled: false,
+  public_saas_headline: '',
+  public_saas_description: '',
 };
 
 export const BUSINESS_FIELDS: ProviderProfileField[] = ['legal_name', 'display_name'];
@@ -29,7 +40,16 @@ export const REGIONAL_FIELDS: ProviderProfileField[] = [
   'website_url', 'address_line1', 'address_line2', 'city', 'state_province', 'postal_code',
   'country_code', 'default_timezone', 'default_locale', 'default_currency', 'tax_identifier',
 ];
-export const ALL_PROVIDER_FIELDS: ProviderProfileField[] = [...BUSINESS_FIELDS, ...CONTACT_FIELDS, ...REGIONAL_FIELDS];
+export const BRAND_FIELDS: ProviderProfileField[] = [
+  'logo_light_url', 'logo_dark_url', 'favicon_url', 'brand_light_color', 'brand_dark_color',
+];
+export const PUBLICATION_FIELDS: ProviderProfileField[] = [
+  'terms_url', 'privacy_url', 'support_url', 'public_saas_enabled',
+  'public_saas_headline', 'public_saas_description',
+];
+export const ALL_PROVIDER_FIELDS: ProviderProfileField[] = [
+  ...BUSINESS_FIELDS, ...CONTACT_FIELDS, ...REGIONAL_FIELDS, ...BRAND_FIELDS, ...PUBLICATION_FIELDS,
+];
 
 export const PROVIDER_FIELD_LABELS: Record<ProviderProfileField, string> = {
   legal_name: 'Legal business name',
@@ -49,12 +69,24 @@ export const PROVIDER_FIELD_LABELS: Record<ProviderProfileField, string> = {
   default_locale: 'Default locale',
   default_currency: 'Default currency',
   tax_identifier: 'Tax identifier',
+  logo_light_url: 'Light-mode logo URL',
+  logo_dark_url: 'Dark-mode logo URL',
+  favicon_url: 'Favicon URL',
+  brand_light_color: 'Light-mode brand color',
+  brand_dark_color: 'Dark-mode brand color',
+  terms_url: 'Terms of service URL',
+  privacy_url: 'Privacy policy URL',
+  support_url: 'Support URL',
+  public_saas_enabled: 'Enable public SaaS site',
+  public_saas_headline: 'Public SaaS headline',
+  public_saas_description: 'Public SaaS description',
 };
 
 const REQUIRED_FIELDS = new Set<ProviderProfileField>([
   'legal_name', 'display_name', 'contact_name', 'support_email', 'billing_email',
   'business_phone', 'address_line1', 'city', 'postal_code', 'country_code',
   'default_timezone', 'default_locale', 'default_currency',
+  'brand_light_color', 'brand_dark_color', 'terms_url', 'privacy_url',
 ]);
 
 const MAX_LENGTHS: Partial<Record<ProviderProfileField, number>> = {
@@ -72,6 +104,16 @@ const MAX_LENGTHS: Partial<Record<ProviderProfileField, number>> = {
   postal_code: 32,
   default_timezone: 64,
   tax_identifier: 100,
+  logo_light_url: 2048,
+  logo_dark_url: 2048,
+  favicon_url: 2048,
+  brand_light_color: 7,
+  brand_dark_color: 7,
+  terms_url: 2048,
+  privacy_url: 2048,
+  support_url: 2048,
+  public_saas_headline: 160,
+  public_saas_description: 2000,
 };
 
 export const COUNTRY_CODES = `
@@ -160,7 +202,8 @@ export function validateProviderProfile(
   const selectedFields = new Set(fields);
 
   for (const field of fields) {
-    const message = validateText(field, values[field]);
+    const value = values[field];
+    const message = validateText(field, typeof value === 'boolean' ? String(value) : value);
     if (message) errors[field] = message;
   }
 
@@ -198,6 +241,24 @@ export function validateProviderProfile(
     }
   }
 
+  for (const field of ['logo_light_url', 'logo_dark_url', 'favicon_url', 'terms_url', 'privacy_url', 'support_url'] as const) {
+    if (!selectedFields.has(field) || errors[field] || !values[field].trim()) continue;
+    try {
+      const parsed = new URL(values[field].trim());
+      if (parsed.protocol !== 'https:' || !parsed.host || parsed.username || parsed.password) {
+        errors[field] = `${PROVIDER_FIELD_LABELS[field]} must be an absolute HTTPS URL without credentials.`;
+      }
+    } catch {
+      errors[field] = `${PROVIDER_FIELD_LABELS[field]} must be an absolute HTTPS URL without credentials.`;
+    }
+  }
+
+  for (const field of ['brand_light_color', 'brand_dark_color'] as const) {
+    if (selectedFields.has(field) && !errors[field] && !/^#[0-9A-Fa-f]{6}$/.test(values[field].trim())) {
+      errors[field] = `${PROVIDER_FIELD_LABELS[field]} must use #RRGGBB format.`;
+    }
+  }
+
   if (selectedFields.has('country_code') && !errors.country_code && !COUNTRY_CODES.includes(values.country_code.toUpperCase())) {
     errors.country_code = 'Country must be a supported ISO 3166-1 country.';
   }
@@ -215,7 +276,7 @@ export function validateProviderProfile(
 
 export function normalizeProviderProfile(values: ProviderBusinessProfileValues): ProviderBusinessProfileValues {
   const normalized = Object.fromEntries(
-    Object.entries(values).map(([key, value]) => [key, value.trim()]),
+    Object.entries(values).map(([key, value]) => [key, typeof value === 'string' ? value.trim() : value]),
   ) as ProviderBusinessProfileValues;
   normalized.support_email = normalized.support_email.toLowerCase();
   normalized.billing_email = normalized.billing_email.toLowerCase();
@@ -225,6 +286,8 @@ export function normalizeProviderProfile(values: ProviderBusinessProfileValues):
   localeParts[0] = localeParts[0].toLowerCase();
   if (localeParts[1]?.length === 2) localeParts[1] = localeParts[1].toUpperCase();
   normalized.default_locale = localeParts.join('-');
+  normalized.brand_light_color = normalized.brand_light_color.toUpperCase();
+  normalized.brand_dark_color = normalized.brand_dark_color.toUpperCase();
   return normalized;
 }
 
@@ -232,5 +295,7 @@ export function firstErrorStep(errors: ProviderProfileErrors) {
   const fields = Object.keys(errors) as ProviderProfileField[];
   if (fields.some(field => BUSINESS_FIELDS.includes(field))) return 0;
   if (fields.some(field => CONTACT_FIELDS.includes(field))) return 1;
-  return 2;
+  if (fields.some(field => REGIONAL_FIELDS.includes(field))) return 2;
+  if (fields.some(field => BRAND_FIELDS.includes(field))) return 3;
+  return 4;
 }

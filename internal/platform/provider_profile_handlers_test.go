@@ -14,23 +14,34 @@ import (
 
 func validProviderProfileValues() postgres.ProviderBusinessProfileValues {
 	return postgres.ProviderBusinessProfileValues{
-		LegalName:       "  Example Provider LLC  ",
-		DisplayName:     " Example Provider ",
-		ContactName:     " Ada Operator ",
-		SupportEmail:    " SUPPORT@EXAMPLE.COM ",
-		BillingEmail:    " BILLING@EXAMPLE.COM ",
-		BusinessPhone:   " +1 (415) 555-0123 ",
-		WebsiteURL:      "https://Example.COM/support",
-		AddressLine1:    " 1 Main Street ",
-		AddressLine2:    " Suite 200 ",
-		City:            " San Francisco ",
-		StateProvince:   " CA ",
-		PostalCode:      " 94105 ",
-		CountryCode:     " us ",
-		DefaultTimezone: " America/Los_Angeles ",
-		DefaultLocale:   " en-us ",
-		DefaultCurrency: " usd ",
-		TaxIdentifier:   " TAX-REFERENCE ",
+		LegalName:             "  Example Provider LLC  ",
+		DisplayName:           " Example Provider ",
+		ContactName:           " Ada Operator ",
+		SupportEmail:          " SUPPORT@EXAMPLE.COM ",
+		BillingEmail:          " BILLING@EXAMPLE.COM ",
+		BusinessPhone:         " +1 (415) 555-0123 ",
+		WebsiteURL:            "https://Example.COM/support",
+		AddressLine1:          " 1 Main Street ",
+		AddressLine2:          " Suite 200 ",
+		City:                  " San Francisco ",
+		StateProvince:         " CA ",
+		PostalCode:            " 94105 ",
+		CountryCode:           " us ",
+		DefaultTimezone:       " America/Los_Angeles ",
+		DefaultLocale:         " en-us ",
+		DefaultCurrency:       " usd ",
+		TaxIdentifier:         " TAX-REFERENCE ",
+		LogoLightURL:          "https://Example.COM/logo-light.svg",
+		LogoDarkURL:           "https://Example.COM/logo-dark.svg",
+		FaviconURL:            "https://Example.COM/favicon.svg",
+		BrandLightColor:       " #2563eb ",
+		BrandDarkColor:        " #60a5fa ",
+		TermsURL:              "https://Example.COM/terms",
+		PrivacyURL:            "https://Example.COM/privacy",
+		SupportURL:            "https://Example.COM/support",
+		PublicSaaSEnabled:     true,
+		PublicSaaSHeadline:    " Reliable RMM ",
+		PublicSaaSDescription: " Secure endpoint operations. ",
 	}
 }
 
@@ -50,6 +61,9 @@ func TestNormalizeProviderProfile(t *testing.T) {
 	}
 	if got.WebsiteURL != "https://example.com/support" {
 		t.Fatalf("website URL = %q", got.WebsiteURL)
+	}
+	if got.BrandLightColor != "#2563EB" || got.BrandDarkColor != "#60A5FA" {
+		t.Fatalf("brand colors were not normalized: %+v", got)
 	}
 }
 
@@ -71,6 +85,9 @@ func TestNormalizeProviderProfileRejectsInvalidInput(t *testing.T) {
 		{name: "timezone", mutate: func(v *postgres.ProviderBusinessProfileValues) { v.DefaultTimezone = "Mars/Olympus" }, wantErr: "valid IANA timezone"},
 		{name: "locale", mutate: func(v *postgres.ProviderBusinessProfileValues) { v.DefaultLocale = "not_a_locale" }, wantErr: "language or language-region"},
 		{name: "control character", mutate: func(v *postgres.ProviderBusinessProfileValues) { v.AddressLine1 = "1 Main\nStreet" }, wantErr: "control characters"},
+		{name: "brand color", mutate: func(v *postgres.ProviderBusinessProfileValues) { v.BrandLightColor = "blue" }, wantErr: "#RRGGBB"},
+		{name: "required terms", mutate: func(v *postgres.ProviderBusinessProfileValues) { v.TermsURL = "" }, wantErr: "terms_url is required"},
+		{name: "HTTPS privacy", mutate: func(v *postgres.ProviderBusinessProfileValues) { v.PrivacyURL = "http://example.com/privacy" }, wantErr: "privacy_url must use HTTPS"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -100,6 +117,8 @@ func TestProviderProfileStrictJSONRejectsProtectedAndUnknownFields(t *testing.T)
 		`{"setup_completed_at":"2026-01-01T00:00:00Z"}`,
 		`{"platform_owner":"attacker"}`,
 		`{"subscription_state":"active"}`,
+		`{"smtp_password":"secret"}`,
+		`{"smtp_host":"mail.example.test"}`,
 		`{"display_name":"one"}{"display_name":"two"}`,
 	} {
 		req := httptest.NewRequest(http.MethodPatch, "/api/v2/platform/provider/profile", strings.NewReader(body))
@@ -111,7 +130,7 @@ func TestProviderProfileStrictJSONRejectsProtectedAndUnknownFields(t *testing.T)
 }
 
 func TestProviderHandlersRejectUnauthorizedAndScopedActors(t *testing.T) {
-	validBody := `{"legal_name":"Example","display_name":"Example","contact_name":"Ada","support_email":"support@example.com","billing_email":"billing@example.com","business_phone":"+14155550123","address_line1":"1 Main","city":"City","postal_code":"12345","country_code":"US","default_timezone":"UTC","default_locale":"en-US","default_currency":"USD"}`
+	validBody := `{"legal_name":"Example","display_name":"Example","contact_name":"Ada","support_email":"support@example.com","billing_email":"billing@example.com","business_phone":"+14155550123","address_line1":"1 Main","city":"City","postal_code":"12345","country_code":"US","default_timezone":"UTC","default_locale":"en-US","default_currency":"USD","brand_light_color":"#2563EB","brand_dark_color":"#60A5FA","terms_url":"https://example.com/terms","privacy_url":"https://example.com/privacy"}`
 	tests := []struct {
 		name   string
 		roles  string

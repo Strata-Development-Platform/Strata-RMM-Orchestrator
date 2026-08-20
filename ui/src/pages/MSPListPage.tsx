@@ -84,9 +84,9 @@ export default function MSPListPage() {
     void reload();
   }, []);
 
-  const focusCreateError = () => {
-    window.requestAnimationFrame(() => createErrorRef.current?.focus());
-  };
+  useEffect(() => {
+    if (creationError || hasCreateErrors) createErrorRef.current?.focus();
+  }, [creationError, hasCreateErrors]);
 
   const handleCreate = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -120,7 +120,6 @@ export default function MSPListPage() {
     setCreateErrors(nextErrors);
     setCreationError('');
     if (Object.keys(nextErrors).length > 0) {
-      focusCreateError();
       return;
     }
 
@@ -136,7 +135,6 @@ export default function MSPListPage() {
       await reload();
     } catch (caught) {
       setCreationError(createErrorMessage(caught));
-      focusCreateError();
     } finally {
       setCreating(false);
     }

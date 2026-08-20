@@ -68,6 +68,19 @@ const providerProfile: ProviderBusinessProfile = {
   default_locale: 'en-US',
   default_currency: 'USD',
   tax_identifier: '',
+  logo_light_url: '',
+  logo_dark_url: '',
+  favicon_url: '',
+  brand_light_color: '#2563EB',
+  brand_dark_color: '#60A5FA',
+  terms_url: 'https://example.test/terms',
+  privacy_url: 'https://example.test/privacy',
+  support_url: '',
+  public_saas_enabled: false,
+  public_saas_headline: '',
+  public_saas_description: '',
+  setup_contract_version: 2,
+  outbound_email_status: 'configured',
   setup_complete: true,
   setup_completed_at: '2026-07-31T12:00:00Z',
   setup_completed_by: providerUser.user_id,
@@ -117,10 +130,24 @@ async function fillRegional(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('button', { name: /Continue/ }));
 }
 
+async function fillBrand(user: ReturnType<typeof userEvent.setup>) {
+  expect(document.getElementById('provider-brand_light_color')).toHaveValue('#2563EB');
+  expect(document.getElementById('provider-brand_dark_color')).toHaveValue('#60A5FA');
+  await user.click(screen.getByRole('button', { name: /Continue/ }));
+}
+
+async function fillPublication(user: ReturnType<typeof userEvent.setup>) {
+  await user.type(screen.getByLabelText(/Terms of service URL/), 'https://example.test/terms');
+  await user.type(screen.getByLabelText(/Privacy policy URL/), 'https://example.test/privacy');
+  await user.click(screen.getByRole('button', { name: /Continue/ }));
+}
+
 async function advanceToReview(user: ReturnType<typeof userEvent.setup>) {
   await fillBusiness(user);
   await fillContact(user);
   await fillRegional(user);
+  await fillBrand(user);
+  await fillPublication(user);
   await screen.findByRole('heading', { name: 'Review' });
 }
 
@@ -211,7 +238,7 @@ describe('provider setup wizard', () => {
     expect(screen.getByLabelText(/Display name/)).toHaveValue('Example Provider');
   });
 
-  it('shows Review without submitting when Regional Defaults continues', async () => {
+  it('shows Review without submitting after the required provider contract fields', async () => {
     installApi();
     const complete = vi.spyOn(api, 'completeProviderSetup').mockResolvedValue(providerProfile);
     const user = userEvent.setup();
