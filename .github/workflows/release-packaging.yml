@@ -6,10 +6,14 @@ on:
     paths:
       - ".goreleaser.yml"
       - ".github/workflows/release-packaging.yml"
+      - ".github/workflows/publish-release.yml"
       - "Dockerfile"
+      - "main.go"
+      - "cmd/orchestrator/docker_update_host*"
       - "deploy/*.service"
       - "docs/UPGRADE.md"
       - "scripts/install-platform.sh"
+      - "scripts/update-docker-platform.sh"
       - "scripts/install-cosign-verifier.sh"
       - "scripts/build-cosign-verifier.sh"
       - "scripts/finalize-orchestrator-upgrade.sh"
@@ -49,11 +53,18 @@ jobs:
             exit 1
           fi
           ! grep -Fq 'supports zero-downtime upgrades' docs/UPGRADE.md
-          grep -Fq 'Automatic/in-app upgrade of a Docker Compose deployment is **not yet a supported pre-beta path**.' docs/UPGRADE.md
+          grep -Fq 'Automatic/in-app Docker mutation is intentionally **not** performed by the web-facing orchestrator.' docs/UPGRADE.md
+          grep -Fq 'sudo ./scripts/update-docker-platform.sh' docs/UPGRADE.md
           grep -Fq 'release-manifest.json' docs/UPGRADE.md
           grep -Fq 'Sigstore' docs/UPGRADE.md
+          grep -Fq 'NewProductCommand' main.go
+          grep -Fq 'NewDockerUpdateHostCommand' main.go
+          grep -Fq 'PlanDocker' cmd/orchestrator/docker_update_host.go
+          grep -Fq 'VerifyOCICandidate' cmd/orchestrator/docker_update_host.go
+          ! grep -Fq 'docker compose pull && docker compose up -d' cmd/orchestrator/docker_update_host.go
+          ! grep -Fq 'helm upgrade' cmd/orchestrator/docker_update_host.go
       - name: Test semantic version and checksum policy
-        run: go test -count=1 -race ./internal/update
+        run: go test -count=1 -race ./internal/update ./cmd/orchestrator
 
   snapshot-packages:
     name: Snapshot Packages
@@ -79,6 +90,7 @@ jobs:
           sh -n scripts/finalize-orchestrator-upgrade.sh
           sh -n scripts/test-finalize-orchestrator-upgrade.sh
           sh -n scripts/package-postinstall-orchestrator.sh
+          bash -n scripts/update-docker-platform.sh
           grep -q 'COSIGN_COMMIT="11926fa5bbbbde47e88fc006b625a17769b743b2"' scripts/build-cosign-verifier.sh
           grep -q 'X_TEXT_VERSION="v0.39.0"' scripts/build-cosign-verifier.sh
           grep -q 'GRPC_VERSION="v1.82.1"' scripts/build-cosign-verifier.sh
