@@ -1,6 +1,6 @@
 # Strata RMM — Upgrade Reference
 
-**Last updated:** 2026-08-19
+**Last updated:** 2026-08-20
 
 This document describes only upgrade behavior currently enforced by the repository. It intentionally does not provide manual shortcuts around release provenance, compatibility checks, database recovery, or health validation.
 
@@ -31,26 +31,26 @@ An operator should not manually run migration SQL as part of a normal upgrade. S
 
 ## Docker Compose status
 
-Automatic/in-app upgrade of a Docker Compose deployment is **not yet a supported pre-beta path**. The API intentionally refuses container-mode apply until the platform has a digest-pinned promoted-release transaction with retained previous-digest rollback.
+Automatic/in-app upgrade of a Docker Compose deployment is **not yet a supported pre-beta path**. The web-facing orchestrator intentionally does not receive Docker-socket or equivalent host-root access merely to expose an update button.
 
-Do not use mutable image tags as an upgrade mechanism. Do not treat a local rebuild of the repository checkout as promoted-release provenance. Until the Docker lifecycle tracked by Issue #156 is implemented and validated, use a representative test environment for development-only redeployments and do not claim them as accepted production upgrades.
+The repository does contain the privileged host-side Docker promoted-release transaction implemented by PR #158. That transaction:
 
-The required future Docker path is:
+1. selects the authoritative OCI candidate from the verified signed release manifest;
+2. requires an immutable `repository@sha256:<digest>` reference and verifies candidate Sigstore provenance;
+3. reuses the authoritative semantic-version compatibility and runtime preflight policy;
+4. reconciles the live image with protected Compose state before mutation;
+5. records crash-safe transaction state in a protected journal;
+6. rolls out the immutable candidate and validates readiness;
+7. restores the exact retained previous digest if candidate health cannot be accepted; and
+8. reconciles interrupted/replayed states rather than blindly reapplying destructive work.
 
-1. select the authoritative OCI image digest from the verified signed release manifest;
-2. verify candidate image provenance/signature;
-3. retain both current and candidate image digests in protected transaction state;
-4. run the same compatibility and runtime preflight policy used by the native update service;
-5. roll out the immutable candidate digest;
-6. validate readiness and application health;
-7. restore the retained previous digest on failure;
-8. reconcile an interrupted/replayed transaction without blindly reapplying it.
+Those transaction primitives are implemented and tested, but the legacy `orchestrator update` deployment-mode branch is **not yet an accepted Docker operator entrypoint**. Issue #162 tracks wiring a privileged host-side command to the verified transaction and removing the legacy manual Docker/Kubernetes guidance. Until #162 is closed and exact-head evidence is retained, do not treat a CLI log message, manual Compose pull/redeploy, local repository rebuild, or mutable image tag as a supported Docker upgrade procedure.
 
-Those steps are requirements, not instructions for manual execution today.
+A promoted Docker installation must remain pinned to immutable image provenance. Do not mount the host Docker socket into the web-facing orchestrator to work around the missing operator entrypoint.
 
 ## Kubernetes status
 
-The built-in automatic updater does not currently apply Kubernetes releases. An externally managed Kubernetes deployment must not be represented as a supported Strata RMM automatic upgrade unless its own immutable-digest, provenance, compatibility, rollback, and evidence process has been separately proven.
+The built-in automatic updater does not currently apply Kubernetes releases. An externally managed Kubernetes deployment must not be represented as a supported Strata RMM automatic upgrade unless its own immutable-digest, provenance, compatibility, rollback, and evidence process has been separately proven. Generic `helm upgrade` guidance is not a substitute for that lifecycle.
 
 ## Pre-upgrade operator checks
 
@@ -63,27 +63,36 @@ Before initiating a supported native update:
 - confirm no unresolved prior upgrade/recovery handoff remains;
 - plan a maintenance window appropriate to the environment.
 
-The runtime preflight remains authoritative even when these operator checks appear satisfactory.
+For Docker validation work, additionally preserve the protected Compose environment and transaction journal and confirm the running image is an immutable digest reference. These checks do not convert the still-unwired operator entrypoint into an accepted production upgrade path.
+
+The runtime preflight remains authoritative even when operator checks appear satisfactory.
 
 ## Post-upgrade acceptance
 
-An update is not accepted merely because a new binary starts. The supported lifecycle requires the candidate to pass the configured readiness/health validation after mutation. If acceptance fails, the finalizer owns rollback to the known-good state.
+An update is not accepted merely because a new binary or container starts. Native lifecycle acceptance requires the candidate to pass configured readiness/health validation after mutation. The Docker transaction machinery likewise treats candidate health as an acceptance boundary and retains/restores the previous digest when a candidate cannot be accepted.
 
-For hosted internal-alpha promotion, retain the exact source SHA/release identity, timestamps, expected and observed results, relevant sanitized logs, recovery/rollback evidence, and cleanup status required by Issue #15.
+For hosted internal-alpha promotion, retain the exact source SHA/release identity, timestamps, expected and observed results, relevant sanitized logs, recovery/rollback evidence, and cleanup status required by Issue #15. Code presence and unit tests do not replace representative-host evidence.
 
 ## Recovery and rollback boundaries
 
 For native updates, use the state retained by the verified update service and external finalizer. Do not overwrite backup binaries, remove staged recovery metadata, or manually advance/rewind schema state while a recovery handoff is unresolved.
 
-Docker Compose automatic rollback remains unaccepted until the digest-pinned transaction in Issue #156 is implemented. Kubernetes automatic rollback remains outside the built-in updater's current support claim.
+For Docker transaction testing, do not delete or edit an unresolved protected journal to force another attempt. The #158 executor/reconciler is designed to compare protected state with the live immutable image and either complete or fail closed. A supported operator command for that transaction remains tracked by Issue #162.
+
+Kubernetes automatic rollback remains outside the built-in updater's current support claim.
 
 ## Prohibited shortcuts
 
 The following are not supported upgrade procedures:
 
 - pulling or deploying a mutable container tag as the authoritative candidate;
+- running a generic `docker compose pull` / `docker compose up -d` sequence as promoted-release provenance;
+- rebuilding the orchestrator image locally and treating it as a promoted release;
+- mounting the Docker socket into the web-facing orchestrator to gain update privileges;
 - manually replacing the running orchestrator binary outside the verified update service;
 - applying migration files manually to force an unsupported source version forward;
+- treating generic Helm guidance as an accepted Kubernetes upgrade lifecycle;
+- deleting protected transaction/recovery state to bypass reconciliation;
 - ignoring a failed manifest, signature, digest, checksum, compatibility, preflight, or health check;
 - repeatedly rerunning a failed destructive upgrade until it happens to pass.
 
