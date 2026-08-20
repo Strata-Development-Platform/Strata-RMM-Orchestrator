@@ -1,0 +1,83 @@
+name: Docker Host Update Gate
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - "Dockerfile"
+      - "main.go"
+      - "cmd/orchestrator/docker_update_host*"
+      - "internal/update/docker_*"
+      - "internal/update/oci*"
+      - "scripts/update-docker-platform.sh"
+      - "deploy/docker/docker-compose.install.yml"
+      - ".github/workflows/publish-release.yml"
+      - ".github/workflows/docker-host-update.yml"
+      - "docs/UPGRADE.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    name: Verified Docker Host Update Contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.6"
+          cache: true
+      - name: Test host updater and transaction packages
+        run: go test -count=1 -race ./cmd/orchestrator ./internal/update
+      - name: Validate wrapper and privilege boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/update-docker-platform.sh
+          shellcheck -S error scripts/update-docker-platform.sh
+          grep -q 'NewProductCommand' main.go
+          grep -q 'NewDockerUpdateHostCommand' main.go
+          grep -q 'PlanDocker' cmd/orchestrator/docker_update_host.go
+          grep -q 'VerifyOCICandidate' cmd/orchestrator/docker_update_host.go
+          grep -q 'Reconcile(ctx)' cmd/orchestrator/docker_update_host.go
+          grep -q 'DockerUpgradeExecutor' cmd/orchestrator/docker_update_host.go
+          grep -q '/var/run/docker.sock:/var/run/docker.sock' scripts/update-docker-platform.sh
+          ! grep -A45 '^  orchestrator:' deploy/docker/docker-compose.install.yml | grep -q '/var/run/docker.sock'
+          ! grep -q 'docker compose pull && docker compose up -d' cmd/orchestrator/docker_update_host.go
+          ! grep -q 'helm upgrade' cmd/orchestrator/docker_update_host.go
+      - name: Build release-identified updater image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build \
+            --build-arg STRATA_VERSION=v9.8.7-test \
+            --build-arg STRATA_COMMIT=0123456789abcdef0123456789abcdef01234567 \
+            --build-arg STRATA_BUILD_DATE=2026-08-20T00:00:00Z \
+            -t strata-rmm-host-update:test .
+          version_json="$(docker run --rm --entrypoint strata-rmm strata-rmm-host-update:test version --output=json)"
+          test "$(jq -r '.version' <<<"$version_json")" = 'v9.8.7-test'
+          test "$(jq -r '.commit' <<<"$version_json")" = '0123456789abcdef0123456789abcdef01234567'
+          docker run --rm --entrypoint docker strata-rmm-host-update:test --version
+          docker run --rm --entrypoint docker strata-rmm-host-update:test compose version
+          docker run --rm --entrypoint cosign strata-rmm-host-update:test version
+          docker run --rm --entrypoint pg_dump strata-rmm-host-update:test --version
+      - name: Validate immutable production Compose boundary
+        shell: bash
+        env:
+          STRATA_ORCHESTRATOR_IMAGE: ghcr.io/strata-development-platform/strata-rmm-orchestrator@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          STRATA_DOMAIN: rmm.example.test
+          ACME_EMAIL: owner@example.test
+          ACME_CA_DIRECTORY: https://acme-staging-v02.api.letsencrypt.org/directory
+        run: |
+          set -euo pipefail
+          tmp_env="$(mktemp)"
+          trap 'rm -f "$tmp_env"' EXIT
+          printf 'STRATA_ORCHESTRATOR_IMAGE=%s\nSTRATA_DOMAIN=%s\nACME_EMAIL=%s\nACME_CA_DIRECTORY=%s\n' \
+            "$STRATA_ORCHESTRATOR_IMAGE" "$STRATA_DOMAIN" "$ACME_EMAIL" "$ACME_CA_DIRECTORY" > "$tmp_env"
+          chmod 600 "$tmp_env"
+          docker compose --env-file "$tmp_env" -f deploy/docker/docker-compose.install.yml config --quiet
+          rendered="$(docker compose --env-file "$tmp_env" -f deploy/docker/docker-compose.install.yml config --format json)"
+          test "$(jq -r '.services.orchestrator.image' <<<"$rendered")" = "$STRATA_ORCHESTRATOR_IMAGE"
+          test "$(jq -r '.services.orchestrator.volumes[]?.source // empty' <<<"$rendered" | grep -c docker.sock || true)" = 0
