@@ -32,8 +32,8 @@ func NewProductCommand(ctx context.Context, version, commit string, logger *zap.
 	return cmd
 }
 
-// NewVerifiedUpdateCommand preserves the supported native update lifecycle and
-// fails closed for deployment modes that require an external privileged owner.
+// NewVerifiedUpdateCommand preserves one authoritative native staging policy
+// and fails closed for deployment modes that require an external privileged owner.
 func NewVerifiedUpdateCommand(ctx context.Context, version string, logger *zap.Logger) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "update",
@@ -41,44 +41,51 @@ func NewVerifiedUpdateCommand(ctx context.Context, version string, logger *zap.L
 		RunE: func(cmd *cobra.Command, args []string) error {
 			checkOnly, _ := cmd.Flags().GetBool("check")
 			updater := update.NewOrchestratorUpdater(version, "Strata-Development-Platform", "Strata-RMM-Orchestrator")
+			service := update.NewService(updater, nil)
 			logger.Info("checking for updates", zap.String("current", version))
-			release, err := updater.Check(ctx)
+			plan, err := service.Plan(ctx, false)
 			if err != nil {
 				return fmt.Errorf("check failed: %w", err)
 			}
-			if release == nil {
+			if !plan.Available || plan.Release == nil {
 				logger.Info("already up to date", zap.String("version", version))
 				return nil
 			}
-			logger.Info("update available", zap.String("current", version), zap.String("latest", release.Version))
+			logger.Info("update available", zap.String("current", version), zap.String("latest", plan.Release.Version))
 			if checkOnly {
 				return nil
 			}
-			mode := updater.DetectMode()
-			logger.Info("deployment mode", zap.String("mode", mode))
-			switch mode {
+			logger.Info("deployment mode", zap.String("mode", plan.Mode))
+			switch plan.Mode {
 			case "docker":
 				return fmt.Errorf("docker apply is refused inside the service container; use the verified privileged host-side docker updater")
 			case "kubernetes":
 				return fmt.Errorf("kubernetes automatic apply is unsupported; no generic Helm bypass is accepted")
 			case "baremetal":
 			default:
-				return fmt.Errorf("unsupported deployment mode %q", mode)
+				return fmt.Errorf("unsupported deployment mode %q", plan.Mode)
 			}
-			binaryPath, err := updater.Download(ctx, release)
+
+			cfg, err := config.LoadOrchestratorConfig()
 			if err != nil {
-				return fmt.Errorf("download failed: %w", err)
+				return fmt.Errorf("load runtime configuration for native update: %w", err)
 			}
-			if err := updater.Apply(binaryPath); err != nil {
-				return fmt.Errorf("stage failed: %w", err)
+			db, err := timescale.NewClient(ctx, cfg.DB.DSN, cfg.DB.ReplicaDSN)
+			if err != nil {
+				return fmt.Errorf("connect to database for native update: %w", err)
 			}
-			healthURL := "http://localhost:8080/health"
-			if err := updater.Verify(ctx, healthURL); err != nil {
-				return fmt.Errorf("verification/preflight failed: %w", err)
+			defer db.Close()
+			service = update.NewService(updater, update.NewRuntimePreflight(db.DB(), logger, update.DefaultUpgradeSnapshotDir))
+			binaryPath, preflight, err := service.Stage(ctx, plan.Release)
+			if err != nil {
+				return fmt.Errorf("verified native preflight/stage failed: %w", err)
 			}
-			updater.Cleanup()
-			logger.Info("verified native update staged; handing off to external finalizer")
-			return updater.TriggerRestart()
+			logger.Info("verified native update and recovery point staged; handing mutation ownership to external finalizer",
+				zap.String("version", plan.Release.Version),
+				zap.Int("source_schema", preflight.SourceSchemaVersion),
+				zap.Int("target_schema", preflight.TargetSchemaVersion),
+			)
+			return updater.TriggerRestartWithSchema(binaryPath, preflight.SourceSchemaVersion, preflight.TargetSchemaVersion)
 		},
 	}
 	cmd.Flags().Bool("check", false, "Only check for updates, don't apply")
