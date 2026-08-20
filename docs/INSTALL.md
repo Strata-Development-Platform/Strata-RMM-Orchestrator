@@ -87,19 +87,20 @@ sign-in, the web console reads the server-owned setup status and redirects the
 administrator to `/provider/setup` until the provider business profile is
 complete.
 
-Complete all four wizard stages:
+Complete the six-step setup contract:
 
-1. enter the legal and display names;
-2. enter the primary, support, billing, and telephone contacts;
-3. enter the address and regional defaults;
-4. review the complete profile, then explicitly select **Complete setup**.
+1. **Business** — enter the legal and display names and business identity fields;
+2. **Contact** — enter the primary contact plus support, billing, telephone, and website details;
+3. **Regional Defaults** — enter the business address, ISO country/currency values, IANA timezone, and locale;
+4. **Brand** — review or set the provider-global light/dark brand colors and optional light/dark logo and favicon HTTPS references;
+5. **Publication** — provide the required HTTPS terms and privacy links, optional support/public-site metadata, and review the non-secret outbound-email readiness status;
+6. **Review** — review the complete provider-global profile, then explicitly select **Complete setup**.
 
-The Continue control on Regional Defaults only opens Review; it does not submit
-the profile. Completion is accepted only after server-side authorization and
-validation. The profile, immutable completion actor/time, and
-`provider.setup_completed` audit event are committed together. A successful
-completion returns the administrator to the provider dashboard, and later
-sign-ins do not repeat the wizard.
+The server, not the browser, decides whether setup is complete. Required fields include the legal/display identity, primary contact, support and billing email, business phone, core address fields, country, currency, timezone, locale, both brand colors, and HTTPS terms/privacy links. Secondary address/state, tax identifier, logo/favicon references, support URL, and public SaaS publication metadata may remain empty. Optional publication fields do not weaken the required completion contract.
+
+Outbound-email readiness is exposed only as derived, non-secret setup status. SMTP credentials and other secret material are not stored in or returned with the browser-readable provider profile. MSP customer branding is a separate tenant-scoped record and cannot satisfy or mutate this singleton provider-global setup state.
+
+Completion is accepted only after server-side authorization and validation. The profile, immutable completion actor/time, setup contract version, and `provider.setup_completed` audit event are committed together. A successful completion returns the administrator to the provider dashboard, and later sign-ins do not repeat the wizard.
 
 If setup is interrupted before completion, sign in again and complete the
 wizard. Unsaved wizard values are browser state and must be re-entered after a
