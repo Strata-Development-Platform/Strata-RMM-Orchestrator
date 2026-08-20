@@ -1,10 +1,30 @@
 package orchestrator
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"go.uber.org/zap"
 )
+
+func TestNewProductCommandReplacesLegacyUpdateChild(t *testing.T) {
+	cmd := NewProductCommand(context.Background(), "1.2.3", "deadbeef", zap.NewNop())
+	updates := 0
+	for _, child := range cmd.Commands() {
+		if child.Name() != "update" {
+			continue
+		}
+		updates++
+		if child.Short != "Check and apply orchestrator updates" {
+			t.Fatalf("unexpected shipped update child: %q", child.Short)
+		}
+	}
+	if updates != 1 {
+		t.Fatalf("shipped product must expose exactly one update command, got %d", updates)
+	}
+}
 
 func TestValidateDockerHostUpdatePaths(t *testing.T) {
 	dir := t.TempDir()
