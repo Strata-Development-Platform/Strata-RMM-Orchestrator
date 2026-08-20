@@ -18,7 +18,7 @@ import (
 
 const defaultDockerOCIRepository = "ghcr.io/strata-development-platform/strata-rmm-orchestrator"
 
-func newDockerUpdateHostCommand(ctx context.Context, version, commit string, logger *zap.Logger) *cobra.Command {
+func NewDockerUpdateHostCommand(ctx context.Context, version, commit string, logger *zap.Logger) *cobra.Command {
 	var composeFile, envFile, journalFile, project, repository string
 
 	cmd := &cobra.Command{
