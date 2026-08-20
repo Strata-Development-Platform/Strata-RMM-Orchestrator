@@ -67,7 +67,7 @@ Components:
 	rootCmd.AddCommand(
 		versionCmd,
 		agent.NewCommand(ctx, logger),
-		orchestrator.NewCommand(ctx, version, commit, logger),
+		orchestrator.NewProductCommand(ctx, version, commit, logger),
 		orchestrator.NewDockerUpdateHostCommand(ctx, version, commit, logger),
 		probe.NewCommand(ctx, logger),
 		resiliencecmd.NewCommand(ctx),
