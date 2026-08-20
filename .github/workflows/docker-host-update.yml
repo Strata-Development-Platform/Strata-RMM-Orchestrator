@@ -15,6 +15,7 @@ on:
       - ".github/workflows/docker-host-update.yml"
       - "docs/UPGRADE.md"
       - "docs/ROLLBACK.md"
+      - "docs/DEPLOYMENT.md"
   workflow_dispatch:
 
 permissions:
@@ -50,7 +51,7 @@ jobs:
           ! grep -A45 '^  orchestrator:' deploy/docker/docker-compose.install.yml | grep -q '/var/run/docker.sock'
           ! grep -q 'docker compose pull && docker compose up -d' cmd/orchestrator/docker_update_host.go
           ! grep -q 'helm upgrade' cmd/orchestrator/docker_update_host.go
-      - name: Reject obsolete rollback guidance
+      - name: Reject obsolete deployment and rollback guidance
         shell: bash
         run: |
           set -euo pipefail
@@ -59,6 +60,11 @@ jobs:
           grep -Fq 'sudo ./scripts/update-docker-platform.sh' docs/ROLLBACK.md
           grep -Fq 'strata-rmm.service' docs/ROLLBACK.md
           grep -Fq 'repository@sha256:<digest>' docs/ROLLBACK.md
+          ! grep -Eq 'timescale/timescaledb:latest|minio/minio:latest|tag:[[:space:]]*latest|systemctl (enable|start|status) strata([^.-]|$)|/usr/local/bin/strata([^/-]|$)|/opt/strata|helm install strata deploy/helm/strata/' docs/DEPLOYMENT.md
+          ! grep -Eq 'Kubernetes \(Helm\).*✅ Complete|Windows service.*✅ Complete' docs/DEPLOYMENT.md
+          grep -Fq 'scripts/install-platform.sh --mode docker' docs/DEPLOYMENT.md
+          grep -Fq 'scripts/install-platform.sh --mode native' docs/DEPLOYMENT.md
+          grep -Fq 'Not an accepted automatic lifecycle' docs/DEPLOYMENT.md
       - name: Build release-identified updater image
         shell: bash
         run: |
