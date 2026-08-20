@@ -14,6 +14,7 @@ on:
       - ".github/workflows/publish-release.yml"
       - ".github/workflows/docker-host-update.yml"
       - "docs/UPGRADE.md"
+      - "docs/ROLLBACK.md"
   workflow_dispatch:
 
 permissions:
@@ -31,7 +32,7 @@ jobs:
           cache: true
       - name: Test host updater and transaction packages
         run: go test -count=1 -race ./cmd/orchestrator ./internal/update
-      - name: Validate wrapper and privilege boundary
+      - name: Validate updater policy and privilege boundary
         shell: bash
         run: |
           set -euo pipefail
@@ -41,12 +42,23 @@ jobs:
           grep -q 'NewDockerUpdateHostCommand' main.go
           grep -q 'PlanDocker' cmd/orchestrator/docker_update_host.go
           grep -q 'VerifyOCICandidate' cmd/orchestrator/docker_update_host.go
+          grep -q 'NewRuntimePreflight' cmd/orchestrator/docker_update_host.go
+          grep -q 'TriggerRestartWithSchema' cmd/orchestrator/docker_update_host.go
           grep -q 'Reconcile(ctx)' cmd/orchestrator/docker_update_host.go
           grep -q 'DockerUpgradeExecutor' cmd/orchestrator/docker_update_host.go
           grep -q '/var/run/docker.sock:/var/run/docker.sock' scripts/update-docker-platform.sh
           ! grep -A45 '^  orchestrator:' deploy/docker/docker-compose.install.yml | grep -q '/var/run/docker.sock'
           ! grep -q 'docker compose pull && docker compose up -d' cmd/orchestrator/docker_update_host.go
           ! grep -q 'helm upgrade' cmd/orchestrator/docker_update_host.go
+      - name: Reject obsolete rollback guidance
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! grep -Eq 'docker pull strata-rmm/orchestrator|docker-compose up -d --force-recreate|systemctl (stop|start|status) strata([^.-]|$)|/opt/strata|\.down\.sql|helm rollback strata' docs/ROLLBACK.md
+          ! grep -Fq 'automatic rollback on canary failure' docs/ROLLBACK.md
+          grep -Fq 'sudo ./scripts/update-docker-platform.sh' docs/ROLLBACK.md
+          grep -Fq 'strata-rmm.service' docs/ROLLBACK.md
+          grep -Fq 'repository@sha256:<digest>' docs/ROLLBACK.md
       - name: Build release-identified updater image
         shell: bash
         run: |
