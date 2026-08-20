@@ -18,6 +18,73 @@ import (
 
 const defaultDockerOCIRepository = "ghcr.io/strata-development-platform/strata-rmm-orchestrator"
 
+// NewProductCommand assembles the shipped orchestrator command with the verified
+// update entrypoint. The historical NewCommand remains available to narrow unit
+// tests, but its legacy update child is removed from the product command tree.
+func NewProductCommand(ctx context.Context, version, commit string, logger *zap.Logger) *cobra.Command {
+	cmd := NewCommand(ctx, version, commit, logger)
+	for _, child := range cmd.Commands() {
+		if child.Name() == "update" {
+			cmd.RemoveCommand(child)
+		}
+	}
+	cmd.AddCommand(NewVerifiedUpdateCommand(ctx, version, logger))
+	return cmd
+}
+
+// NewVerifiedUpdateCommand preserves the supported native update lifecycle and
+// fails closed for deployment modes that require an external privileged owner.
+func NewVerifiedUpdateCommand(ctx context.Context, version string, logger *zap.Logger) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "update",
+		Short: "Check and apply orchestrator updates",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			checkOnly, _ := cmd.Flags().GetBool("check")
+			updater := update.NewOrchestratorUpdater(version, "Strata-Development-Platform", "Strata-RMM-Orchestrator")
+			logger.Info("checking for updates", zap.String("current", version))
+			release, err := updater.Check(ctx)
+			if err != nil {
+				return fmt.Errorf("check failed: %w", err)
+			}
+			if release == nil {
+				logger.Info("already up to date", zap.String("version", version))
+				return nil
+			}
+			logger.Info("update available", zap.String("current", version), zap.String("latest", release.Version))
+			if checkOnly {
+				return nil
+			}
+			mode := updater.DetectMode()
+			logger.Info("deployment mode", zap.String("mode", mode))
+			switch mode {
+			case "docker":
+				return fmt.Errorf("docker apply is refused inside the service container; use the verified privileged host-side docker updater")
+			case "kubernetes":
+				return fmt.Errorf("kubernetes automatic apply is unsupported; no generic Helm bypass is accepted")
+			case "baremetal":
+			default:
+				return fmt.Errorf("unsupported deployment mode %q", mode)
+			}
+			binaryPath, err := updater.Download(ctx, release)
+			if err != nil {
+				return fmt.Errorf("download failed: %w", err)
+			}
+			if err := updater.Apply(binaryPath); err != nil {
+				return fmt.Errorf("stage failed: %w", err)
+			}
+			healthURL := "http://localhost:8080/health"
+			if err := updater.Verify(ctx, healthURL); err != nil {
+				return fmt.Errorf("verification/preflight failed: %w", err)
+			}
+			updater.Cleanup()
+			logger.Info("verified native update staged; handing off to external finalizer")
+			return updater.TriggerRestart()
+		},
+	}
+	cmd.Flags().Bool("check", false, "Only check for updates, don't apply")
+	return cmd
+}
+
 func NewDockerUpdateHostCommand(ctx context.Context, version, commit string, logger *zap.Logger) *cobra.Command {
 	var composeFile, envFile, journalFile, project, repository string
 
