@@ -6,7 +6,16 @@ COSIGN_COMMIT="11926fa5bbbbde47e88fc006b625a17769b743b2"
 X_TEXT_VERSION="v0.39.0"
 GRPC_VERSION="v1.82.1"
 OUT_DIR="${1:-build/cosign-verifier}"
-OUT_PATH="${OUT_DIR}/cosign"
+
+# Resolve the output path before changing into the disposable source checkout.
+# $OLDPWD changes when `cd "$repo"` runs and is therefore not a safe anchor for
+# an absolute /tmp output: it can redirect the artifact into the temporary tree
+# that the cleanup trap deletes.
+case "$OUT_DIR" in
+  /*) OUTPUT_DIR="$OUT_DIR" ;;
+  *) OUTPUT_DIR="$(pwd)/$OUT_DIR" ;;
+esac
+OUT_PATH="${OUTPUT_DIR}/cosign"
 
 case "$(go env GOVERSION)" in
   go1.26.6|go1.26.[7-9]*|go1.2[7-9].*) ;;
@@ -44,8 +53,8 @@ go mod edit \
   -require="google.golang.org/grpc@${GRPC_VERSION}"
 go mod tidy
 
-mkdir -p "$OLDPWD/$OUT_DIR"
-CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o "$OLDPWD/$OUT_PATH" ./cmd/cosign
+mkdir -p "$OUTPUT_DIR"
+CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o "$OUT_PATH" ./cmd/cosign
 
-"$OLDPWD/$OUT_PATH" version >&2
-printf '%s\n' "$COSIGN_VERSION source=$COSIGN_COMMIT x/text=$X_TEXT_VERSION grpc=$GRPC_VERSION" > "$OLDPWD/$OUT_DIR/BUILD-PROVENANCE.txt"
+"$OUT_PATH" version >&2
+printf '%s\n' "$COSIGN_VERSION source=$COSIGN_COMMIT x/text=$X_TEXT_VERSION grpc=$GRPC_VERSION" > "$OUTPUT_DIR/BUILD-PROVENANCE.txt"
