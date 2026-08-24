@@ -6,7 +6,7 @@ This document describes only upgrade behavior currently enforced by the reposito
 
 ## Supported automatic update path
 
-The built-in authenticated update flow currently supports **native/bare-metal orchestrator deployments only**.
+The built-in authenticated/in-process update flow currently supports **native/bare-metal orchestrator deployments only**. Docker Compose uses the separate privileged host-side transaction documented below. Kubernetes automatic apply remains unsupported.
 
 The update service uses GitHub release metadata for discovery, but release metadata is not a trust anchor. Before an update can be staged, Strata RMM requires all of the following:
 
@@ -14,12 +14,11 @@ The update service uses GitHub release metadata for discovery, but release metad
 - Sigstore identity bound to this repository's protected `publish-release.yml` workflow and the candidate release tag;
 - a release tag that matches the version in the verified manifest;
 - valid semantic-version ordering and the manifest's `minimum_upgrade_version` policy;
-- a platform-specific orchestrator artifact declared by the verified manifest;
-- the exact artifact size and SHA-256 declared by the manifest;
-- successful artifact Sigstore verification;
+- a platform-specific artifact or OCI digest declared by the verified manifest;
+- exact signed artifact metadata and successful Sigstore verification;
 - the shared runtime preflight, including schema compatibility and a usable pre-upgrade PostgreSQL recovery point.
 
-If any required manifest, signature, checksum, compatibility, preflight, or provenance check is missing or invalid, the upgrade fails closed.
+If any required manifest, signature, checksum/digest, compatibility, preflight, or provenance check is missing or invalid, the upgrade fails closed.
 
 ## Native/bare-metal lifecycle
 
@@ -29,24 +28,38 @@ After a candidate is verified and staged, an external upgrade finalizer owns the
 
 An operator should not manually run migration SQL as part of a normal upgrade. Schema changes and recovery are part of the controlled lifecycle. A failed automatic upgrade should be investigated from the retained update/recovery evidence rather than bypassed with ad-hoc database mutation.
 
-## Docker Compose status
+## Docker Compose host-side lifecycle
 
-Automatic/in-app upgrade of a Docker Compose deployment is **not yet a supported pre-beta path**. The web-facing orchestrator intentionally does not receive Docker-socket or equivalent host-root access merely to expose an update button.
+Automatic/in-app Docker mutation is intentionally **not** performed by the web-facing orchestrator. The long-running service has no Docker-socket or equivalent host-root access. Docker upgrades are owned by a separate root-only, one-shot host utility.
 
-The repository does contain the privileged host-side Docker promoted-release transaction implemented by PR #158. That transaction:
+For a Docker installation whose current immutable release contains the host updater utility, run from the verified release checkout that owns the installed Compose bundle:
 
-1. selects the authoritative OCI candidate from the verified signed release manifest;
-2. requires an immutable `repository@sha256:<digest>` reference and verifies candidate Sigstore provenance;
-3. reuses the authoritative semantic-version compatibility and runtime preflight policy;
-4. reconciles the live image with protected Compose state before mutation;
-5. records crash-safe transaction state in a protected journal;
-6. rolls out the immutable candidate and validates readiness;
-7. restores the exact retained previous digest if candidate health cannot be accepted; and
-8. reconciles interrupted/replayed states rather than blindly reapplying destructive work.
+```bash
+sudo ./scripts/update-docker-platform.sh
+```
 
-Those transaction primitives are implemented and tested, but the legacy `orchestrator update` deployment-mode branch is **not yet an accepted Docker operator entrypoint**. Issue #162 tracks wiring a privileged host-side command to the verified transaction and removing the legacy manual Docker/Kubernetes guidance. Until #162 is closed and exact-head evidence is retained, do not treat a CLI log message, manual Compose pull/redeploy, local repository rebuild, or mutable image tag as a supported Docker upgrade procedure.
+The wrapper validates the protected Compose files, root-only environment state, Docker socket, canonical OCI repository, and current immutable image. It mounts the Docker socket only into a transient utility container and invokes `docker-update-host`; the normal orchestrator container remains unchanged and unprivileged with respect to the host Docker daemon.
 
-A promoted Docker installation must remain pinned to immutable image provenance. Do not mount the host Docker socket into the web-facing orchestrator to work around the missing operator entrypoint.
+The host-side transaction:
+
+1. reconciles any retained crash journal before allowing a new mutation;
+2. selects the authoritative OCI candidate from the verified signed release manifest;
+3. requires an immutable `repository@sha256:<digest>` reference and verifies candidate Sigstore provenance against the protected release workflow and release tag;
+4. reuses the authoritative semantic-version compatibility and runtime preflight policy, including a PostgreSQL recovery point;
+5. reconciles the live image with protected Compose state before mutation;
+6. records current/candidate identity in a protected, crash-safe transaction journal;
+7. pulls and rolls out only the exact immutable candidate digest;
+8. validates orchestrator readiness after rollout;
+9. restores the exact retained previous digest when candidate health cannot be accepted; and
+10. preserves fail-closed recovery state when rollback cannot be proven.
+
+The shipped `orchestrator update` command refuses Docker apply from inside the service container and directs control to this privileged boundary. It also refuses Kubernetes apply rather than printing generic Helm instructions.
+
+### Upgrade boundary for older Docker releases
+
+Do not infer backward upgrade support for a Docker image that predates the host updater utility. The wrapper can adopt a missing protected image variable only when it can prove the live container already uses the expected immutable repository and digest, but the current image must also contain the one-shot updater command and its pinned verification/runtime dependencies. If it does not, treat that installation as outside the supported automatic Docker source range and use a controlled fresh/redeployment exercise with retained data and explicit evidence rather than inventing a manual pull/redeploy shortcut.
+
+A promoted Docker installation must remain pinned to immutable image provenance. Never mount the host Docker socket into the web-facing orchestrator to bypass this boundary.
 
 ## Kubernetes status
 
@@ -54,7 +67,7 @@ The built-in automatic updater does not currently apply Kubernetes releases. An 
 
 ## Pre-upgrade operator checks
 
-Before initiating a supported native update:
+Before initiating a supported update:
 
 - confirm the current installation is healthy;
 - confirm the update/recovery storage locations have sufficient capacity;
@@ -63,13 +76,11 @@ Before initiating a supported native update:
 - confirm no unresolved prior upgrade/recovery handoff remains;
 - plan a maintenance window appropriate to the environment.
 
-For Docker validation work, additionally preserve the protected Compose environment and transaction journal and confirm the running image is an immutable digest reference. These checks do not convert the still-unwired operator entrypoint into an accepted production upgrade path.
-
-The runtime preflight remains authoritative even when operator checks appear satisfactory.
+For Docker, additionally confirm the current orchestrator is running from an immutable digest and preserve the protected Compose environment and transaction journal. The host wrapper and runtime preflight remain authoritative even when operator checks appear satisfactory.
 
 ## Post-upgrade acceptance
 
-An update is not accepted merely because a new binary or container starts. Native lifecycle acceptance requires the candidate to pass configured readiness/health validation after mutation. The Docker transaction machinery likewise treats candidate health as an acceptance boundary and retains/restores the previous digest when a candidate cannot be accepted.
+An update is not accepted merely because a new binary or container starts. Native lifecycle acceptance requires the candidate to pass configured readiness/health validation after mutation. The Docker transaction likewise treats candidate readiness as an acceptance boundary and restores the previous immutable digest when the candidate cannot be accepted.
 
 For hosted internal-alpha promotion, retain the exact source SHA/release identity, timestamps, expected and observed results, relevant sanitized logs, recovery/rollback evidence, and cleanup status required by Issue #15. Code presence and unit tests do not replace representative-host evidence.
 
@@ -77,7 +88,7 @@ For hosted internal-alpha promotion, retain the exact source SHA/release identit
 
 For native updates, use the state retained by the verified update service and external finalizer. Do not overwrite backup binaries, remove staged recovery metadata, or manually advance/rewind schema state while a recovery handoff is unresolved.
 
-For Docker transaction testing, do not delete or edit an unresolved protected journal to force another attempt. The #158 executor/reconciler is designed to compare protected state with the live immutable image and either complete or fail closed. A supported operator command for that transaction remains tracked by Issue #162.
+For Docker, do not delete or edit an unresolved protected journal to force another attempt. Re-run the supported host wrapper: the executor/reconciler compares protected state with the live immutable image and either resolves the prior transaction or fails closed. After a successful reconciliation, run the wrapper again to evaluate a new release.
 
 Kubernetes automatic rollback remains outside the built-in updater's current support claim.
 
