@@ -147,13 +147,14 @@ func (s *APIServer) handleListScripts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *APIServer) handleGetScript(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.PathValue("tenantID")
 	scriptID := r.PathValue("scriptID")
 	var script Script
 	var createdBy sql.NullString
 	err := s.requestDB(r).QueryRowContext(r.Context(), `
 		SELECT id, tenant_id, name, description, language, content, parameters, timeout_sec, is_public, created_by, created_at, updated_at
-		FROM scripts WHERE id = $1
-	`, scriptID).Scan(
+		FROM scripts WHERE id = $1 AND (tenant_id = $2 OR is_public = TRUE)
+	`, scriptID, tenantID).Scan(
 		&script.ID, &script.TenantID, &script.Name, &script.Description, &script.Language,
 		&script.Content, &script.Parameters, &script.TimeoutSec, &script.IsPublic,
 		&createdBy, &script.CreatedAt, &script.UpdatedAt,
@@ -169,10 +170,20 @@ func (s *APIServer) handleGetScript(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *APIServer) handleDeleteScript(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.PathValue("tenantID")
 	scriptID := r.PathValue("scriptID")
-	_, err := s.requestDB(r).ExecContext(r.Context(), `DELETE FROM scripts WHERE id = $1`, scriptID)
+	result, err := s.requestDB(r).ExecContext(r.Context(), `DELETE FROM scripts WHERE id = $1 AND tenant_id = $2`, scriptID, tenantID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "checking script deletion"})
+		return
+	}
+	if rowsAffected == 0 {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "script not found"})
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
