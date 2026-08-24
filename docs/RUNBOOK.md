@@ -54,7 +54,7 @@ When the platform is degraded:
 
 Never paste tokens, DSNs with passwords, invitation tokens, enrollment credentials, SMTP credentials, object-storage keys, recovery keys, or raw secret-file contents into incident notes.
 
-## Strata API down
+### Strata API Down
 
 1. Confirm the independent liveness and readiness probes from the deployment's documented health endpoint.
 2. Check orchestrator process/container state and the last termination reason.
@@ -64,35 +64,35 @@ Never paste tokens, DSNs with passwords, invitation tokens, enrollment credentia
 
 Do not restart repeatedly without first preserving the failure evidence needed to distinguish process failure from dependency/readiness failure.
 
-## Strata API high error rate
+### Strata API High Error Rate
 
 1. Identify affected matched route patterns and status-code families from the observability dashboard. Route labels must not contain raw tenant/resource IDs.
 2. Correlate onset with deployments, dependency alerts, and authentication/authorization changes.
 3. Inspect sanitized structured logs using deployment/correlation identifiers rather than copying request secrets or raw credentials.
 4. If rollback is required, use `ROLLBACK.md`; never bypass signed artifacts, schema compatibility, or production validation to reduce the error rate.
 
-## Strata API high p95 latency
+### Strata API High P95 Latency
 
 1. Compare request rate, in-flight requests, and p95 latency over the same window.
 2. Check PostgreSQL pool saturation/slow operations, NATS state, object-storage latency, CPU, memory, and container/service throttling.
 3. Identify the matched route family without introducing raw-path/resource-ID metric labels.
 4. Scale or roll back only through the documented deployment lifecycle, then verify readiness plus the applicable synthetic/login/authenticated checks.
 
-## Strata job metrics collection failed
+### Strata Job Metrics Collection Failed
 
 1. Check database status in application readiness.
 2. Verify the job-metrics collector has database connectivity and the expected migration state.
 3. Treat missing job telemetry as loss of operational visibility, not proof that queues are empty.
 4. Restore metrics collection and confirm fresh samples before closing the incident.
 
-## Strata oldest job stalled
+### Strata Oldest Job Stalled
 
 1. Check dispatcher readiness, NATS/JetStream connectivity, queue depth, and active recovery/quiesce state.
 2. Inspect the affected job and targets through authorized APIs/log correlation rather than direct state mutation.
 3. Do not manually mark jobs successful or delete durable inbox/outbox/command records.
 4. Restore the failed dependency or dispatcher and verify the oldest-job age returns toward steady state without duplicate destructive execution.
 
-## Strata job failures
+### Strata Job Failures
 
 1. Separate failed, expired, retry-exhausted, and ambiguous/unknown outcomes and inspect only sanitized failure categories.
 2. Check retry count, next retry time, agent reconnect state, approval state, maintenance-window state, and job expiry.
