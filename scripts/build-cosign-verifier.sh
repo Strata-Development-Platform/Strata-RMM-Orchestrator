@@ -4,6 +4,7 @@ set -eu
 COSIGN_VERSION="v3.1.3"
 COSIGN_COMMIT="11926fa5bbbbde47e88fc006b625a17769b743b2"
 X_TEXT_VERSION="v0.39.0"
+X_MOD_VERSION="v0.40.0"
 GRPC_VERSION="v1.82.1"
 OUT_DIR="${1:-build/cosign-verifier}"
 
@@ -44,12 +45,13 @@ if [ "$actual_commit" != "$COSIGN_COMMIT" ]; then
   exit 1
 fi
 
-# Preserve upstream 3.1.3 behavior while overriding only dependencies with
-# fixes required by the current HIGH-severity vulnerability gate. The source
-# tree is disposable, so tidy the patched module before compiling to ensure
-# go.sum covers the complete transitive graph selected by these overrides.
+# Preserve upstream behavior while overriding only dependencies with fixes
+# required by the current HIGH-severity vulnerability gate. The source tree is
+# disposable, so tidy the patched module before compiling to ensure go.sum
+# covers the complete transitive graph selected by these overrides.
 go mod edit \
   -require="golang.org/x/text@${X_TEXT_VERSION}" \
+  -require="golang.org/x/mod@${X_MOD_VERSION}" \
   -require="google.golang.org/grpc@${GRPC_VERSION}"
 go mod tidy
 
@@ -57,4 +59,4 @@ mkdir -p "$OUTPUT_DIR"
 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o "$OUT_PATH" ./cmd/cosign
 
 "$OUT_PATH" version >&2
-printf '%s\n' "$COSIGN_VERSION source=$COSIGN_COMMIT x/text=$X_TEXT_VERSION grpc=$GRPC_VERSION" > "$OUTPUT_DIR/BUILD-PROVENANCE.txt"
+printf '%s\n' "$COSIGN_VERSION source=$COSIGN_COMMIT x/text=$X_TEXT_VERSION x/mod=$X_MOD_VERSION grpc=$GRPC_VERSION" > "$OUTPUT_DIR/BUILD-PROVENANCE.txt"
