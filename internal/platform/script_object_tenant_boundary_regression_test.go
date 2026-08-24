@@ -54,7 +54,7 @@ func TestDeleteScriptRequiresOwningTenantAndDetectsNoop(t *testing.T) {
 		}
 	}
 
-	if strings.Contains(handler, "DELETE FROM scripts WHERE id = $1`" ) {
+	if strings.Contains(handler, "DELETE FROM scripts WHERE id = $1`") {
 		t.Fatal("DELETE script handler must not retain an unscoped script-id-only delete")
 	}
 }
