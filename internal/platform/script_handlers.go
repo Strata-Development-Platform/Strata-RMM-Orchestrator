@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -177,7 +178,19 @@ func (s *APIServer) handleDeleteScript(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
+type durableScriptTarget struct {
+	DeviceID string
+	AgentID  string
+	MSPID    string
+	ClientID string
+}
+
+// handleRunScript records both the script execution view and the generic job
+// dispatch intent in the request-scoped SQL transaction. Broker publication is
+// exclusively owned by Dispatcher after commit, so a process exit cannot leave
+// a committed script execution without a recoverable dispatch record.
 func (s *APIServer) handleRunScript(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.PathValue("tenantID")
 	scriptID := r.PathValue("scriptID")
 	var req struct {
 		DeviceIDs  []string        `json:"device_ids"`
@@ -189,11 +202,14 @@ func (s *APIServer) handleRunScript(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var script Script
-	var tenantID string
 	err := s.requestDB(r).QueryRowContext(r.Context(), `
-		SELECT id, tenant_id, name, language, content, timeout_sec
-		FROM scripts WHERE id = $1
-	`, scriptID).Scan(&script.ID, &tenantID, &script.Name, &script.Language, &script.Content, &script.TimeoutSec)
+		SELECT id, tenant_id, name, language, content, timeout_sec, is_public
+		FROM scripts
+		WHERE id = $1 AND (tenant_id = $2 OR is_public = TRUE)
+	`, scriptID, tenantID).Scan(
+		&script.ID, &script.TenantID, &script.Name, &script.Language,
+		&script.Content, &script.TimeoutSec, &script.IsPublic,
+	)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "script not found"})
 		return
@@ -204,43 +220,122 @@ func (s *APIServer) handleRunScript(w http.ResponseWriter, r *http.Request) {
 		params = json.RawMessage("{}")
 	}
 
-	var executions []map[string]interface{}
+	// Normalize target IDs before any state is written. The tenant in the URL is
+	// authoritative; public scripts may be shared, but their owner tenant must
+	// never become the execution/dispatch tenant.
+	seen := make(map[string]struct{}, len(req.DeviceIDs))
+	targets := make([]durableScriptTarget, 0, len(req.DeviceIDs))
+	db := s.requestDB(r)
 	for _, deviceID := range req.DeviceIDs {
-		execID := uuid.New().String()
-
-		_, err := s.requestDB(r).ExecContext(r.Context(), `
-			INSERT INTO script_executions (id, script_id, tenant_id, device_id, status, parameters)
-			VALUES ($1, $2, $3, $4, 'pending', $5)
-		`, execID, scriptID, tenantID, deviceID, params)
-		if err != nil {
-			s.logger.Warn("create execution record", zap.Error(err))
+		if deviceID == "" {
 			continue
 		}
+		if _, duplicate := seen[deviceID]; duplicate {
+			continue
+		}
+		seen[deviceID] = struct{}{}
 
-		cmdPayload, _ := json.Marshal(map[string]interface{}{
+		var target durableScriptTarget
+		target.DeviceID = deviceID
+		if err := db.QueryRowContext(r.Context(), `
+			SELECT agent_id::text, msp_id::text, client_id::text
+			FROM devices
+			WHERE id::text = $1 AND tenant_id = $2
+			  AND is_active = TRUE AND status <> 'disabled'
+			  AND agent_id IS NOT NULL AND msp_id IS NOT NULL AND client_id IS NOT NULL
+		`, deviceID, tenantID).Scan(&target.AgentID, &target.MSPID, &target.ClientID); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "one or more devices are unavailable or outside the authorized tenant"})
+			return
+		}
+		targets = append(targets, target)
+	}
+	if len(targets) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "device_ids required"})
+		return
+	}
+
+	executions := make([]map[string]interface{}, 0, len(targets))
+	for _, target := range targets {
+		execID := uuid.New().String()
+		jobID := uuid.New().String()
+		targetID := uuid.New().String()
+		correlationID := uuid.New().String()
+		scheduledFor := time.Now().UTC()
+		expiresAt := scheduledFor.Add(72 * time.Hour)
+
+		commandPayload := map[string]interface{}{
 			"type":         "script_exec",
 			"execution_id": execID,
 			"language":     script.Language,
 			"content":      script.Content,
 			"parameters":   params,
 			"timeout":      script.TimeoutSec,
-		})
+		}
+		payloadJSON, err := json.Marshal(commandPayload)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "encoding script command"})
+			return
+		}
+		requestHash := fmt.Sprintf("%x", sha256.Sum256(payloadJSON))
 
-		subject := fmt.Sprintf("tenant.%s.cmd.%s", tenantID, deviceID)
-		if err := s.nats.Publish(subject, cmdPayload); err != nil {
-			s.logger.Warn("publish script command", zap.Error(err))
-			if _, updateErr := s.requestDB(r).ExecContext(
-				r.Context(),
-				`UPDATE script_executions SET status = 'failed', stderr = 'NATS publish failed' WHERE id = $1`,
-				execID,
-			); updateErr != nil {
-				s.logger.Error("mark script execution failed", zap.Error(updateErr))
-			}
+		if _, err := db.ExecContext(r.Context(), `
+			INSERT INTO script_executions (id, script_id, tenant_id, device_id, status, parameters)
+			VALUES ($1, $2, $3, $4, 'pending', $5)
+		`, execID, scriptID, tenantID, target.DeviceID, params); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "creating script execution"})
+			return
+		}
+
+		if _, err := db.ExecContext(r.Context(), `
+			INSERT INTO jobs (id, msp_id, client_id, created_by, type, status, priority,
+			                  payload, max_retries, max_devices, expires_at,
+			                  correlation_id, scheduled_for, request_hash)
+			VALUES ($1, $2, $3, 'script-api', 'script_exec', 'queued', 0, $4, 3, 1, $5, $6, $7, $8)
+		`, jobID, target.MSPID, target.ClientID, payloadJSON, expiresAt, correlationID, scheduledFor, requestHash); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "creating durable script job"})
+			return
+		}
+
+		if _, err := db.ExecContext(r.Context(), `
+			INSERT INTO job_targets (id, job_id, device_id, agent_id, msp_id, status)
+			VALUES ($1, $2, $3, $4, $5, 'queued')
+		`, targetID, jobID, target.DeviceID, target.AgentID, target.MSPID); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "creating durable script target"})
+			return
+		}
+
+		outboxPayload, err := json.Marshal(map[string]interface{}{
+			"schema_version": 1,
+			"event_id":       fmt.Sprintf("%s:%s:%d", jobID, targetID, 1),
+			"job_id":         jobID,
+			"target_id":      targetID,
+			"msp_id":         target.MSPID,
+			"client_id":      target.ClientID,
+			"device_id":      target.DeviceID,
+			"agent_id":       target.AgentID,
+			"correlation_id": correlationID,
+			"attempt":        1,
+			"issued_at":      scheduledFor.Format(time.RFC3339),
+			"expires_at":     expiresAt.Format(time.RFC3339),
+			"command_type":   "script_exec",
+			"payload":        commandPayload,
+		})
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "encoding script dispatch event"})
+			return
+		}
+		if _, err := db.ExecContext(r.Context(), `
+			INSERT INTO job_outbox (id, msp_id, aggregate_id, event_type, payload, available_at)
+			VALUES (gen_random_uuid(), $1, $2, 'job.dispatch', $3, $4)
+		`, target.MSPID, jobID, outboxPayload, scheduledFor); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "creating durable script dispatch event"})
+			return
 		}
 
 		executions = append(executions, map[string]interface{}{
 			"execution_id": execID,
-			"device_id":    deviceID,
+			"job_id":       jobID,
+			"device_id":    target.DeviceID,
 			"status":       "pending",
 		})
 	}
@@ -249,6 +344,7 @@ func (s *APIServer) handleRunScript(w http.ResponseWriter, r *http.Request) {
 		"script":     script.Name,
 		"executions": executions,
 		"count":      len(executions),
+		"durable":    true,
 	})
 }
 
