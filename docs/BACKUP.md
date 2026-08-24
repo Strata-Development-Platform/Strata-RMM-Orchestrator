@@ -1,216 +1,105 @@
 # Strata RMM — Backup Reference
 
-**Version:** 2026-08-08
-**Last Updated:** 2026-08-08
+**Last Updated:** 2026-08-24
 
----
+This document describes the host-level backup interface implemented by the orchestrator. It does not replace hosted recovery evidence required by Issue #15.
 
-## 1. Backup Overview
+## Backup command
 
-Strata provides encrypted database backup with AES-256-GCM encryption. Backups support filesystem and S3-compatible storage repositories.
+Run backup operations only on the orchestrator host (or through an authenticated administrative shell). The supported command is:
 
----
+```bash
+strata-rmm backup [--database-type postgresql|timescaledb] [--dry-run] [--timeout 2h]
+```
 
-## 2. Backup Configuration
+`backup` creates one encrypted recovery set containing the configured PostgreSQL/TimescaleDB database, NATS JetStream state, and configured object-storage data. The engine acquires the recovery advisory lock, quiesces mutation/dispatch activity, captures component data, encrypts artifacts with AES-256-GCM, records SHA-256 integrity data, publishes the set to the configured repository, and resumes service activity.
 
-### 2.1 Required Variables
+Use `--dry-run` before a scheduled or manual backup to validate configuration and runtime prerequisites without creating a backup:
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `STRATA_BACKUP_ENABLED` | Yes (if backup enabled) | `true` to enable backup engine |
-| `STRATA_BACKUP_ENVIRONMENT_ID` | Yes (if backup enabled) | Unique environment identifier |
-| `STRATA_BACKUP_KEY_PROVIDER_PATH` | Yes (if backup enabled) | Path to encryption key provider file |
+```bash
+strata-rmm backup --dry-run
+```
 
-### 2.2 Repository Configuration
+A successful real backup writes the backup manifest as JSON to stdout. Do not redirect that output to an insecure shared location if the manifest is operationally sensitive.
 
-**Filesystem Repository:**
+## Required configuration
+
+The recovery runtime requires:
+
+- `STRATA_BACKUP_ENVIRONMENT_ID`
+- `STRATA_BACKUP_KEY_PROVIDER_PATH`
+- an active recovery key in that provider
+- the normal source database/NATS/storage configuration
+- a configured backup repository
+
+Initialize the first recovery key once with:
+
+```bash
+strata-rmm recovery key-init
+```
+
+The key-provider file is security-sensitive and must remain root-controlled. Do not copy key material into documentation, shell history, issue comments, or CI output.
+
+### Filesystem repository
+
 ```bash
 STRATA_BACKUP_REPOSITORY_TYPE=filesystem
-STRATA_BACKUP_DIRECTORY=/var/backups/strata
+STRATA_BACKUP_DIRECTORY=/var/lib/strata-rmm/backups
 ```
 
-**S3 Repository:**
+The configured directory must be writable by the host-level backup process and protected from untrusted users.
+
+### S3-compatible repository
+
 ```bash
 STRATA_BACKUP_REPOSITORY_TYPE=s3
-STRATA_BACKUP_EXTERNAL_BUCKET=strata-backups
-STRATA_BACKUP_EXTERNAL_REGION=us-east-1
-STRATA_BACKUP_EXTERNAL_ENDPOINT=https://s3.amazonaws.com
-STRATA_BACKUP_EXTERNAL_ACCESS_KEY=AKIA...
-STRATA_BACKUP_EXTERNAL_SECRET_KEY=wJalr...
+STRATA_BACKUP_EXTERNAL_BUCKET=strata-rmm-backups
+STRATA_BACKUP_EXTERNAL_REGION=example-region
+STRATA_BACKUP_EXTERNAL_ENDPOINT=https://object-storage.example.invalid
+STRATA_BACKUP_EXTERNAL_ACCESS_KEY_FILE=/run/secrets/backup-access-key
+STRATA_BACKUP_EXTERNAL_SECRET_KEY_FILE=/run/secrets/backup-secret-key
 ```
 
-### 2.3 Optional Settings
+Use the supported `_FILE` secret inputs. Do not place real access keys directly in documentation, Compose files, command lines, or shell history.
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `STRATA_BACKUP_DATABASE_TYPE` | `timescaledb` | `postgresql` or `timescaledb` |
-| `STRATA_BACKUP_ENCRYPTION_SCHEME` | `aes-256-gcm` | Only `aes-256-gcm` allowed |
+## Encryption and integrity
 
----
+Recovery sets use AES-256-GCM with per-artifact nonces and SHA-256 integrity metadata. The configured key provider supplies the active encryption key. Backup verification uses the same repository and key provider used by the recovery engine.
 
-## 3. Encryption
-
-### 3.1 Algorithm
-
-- **Scheme:** AES-256-GCM (Galois/Counter Mode)
-- **Key derivation:** Key provider file (operator-provided)
-- **IV:** Random per backup, stored with encrypted data
-- **Authentication:** GCM tag for integrity verification
-
-### 3.2 Key Provider
-
-The key provider file contains the encryption key material. Format:
-```
-[encryption]
-key = <base64-encoded-32-byte-key>
-```
-
-**Security:** File must be:
-- Absolute path
-- Canonical (no traversal)
-- Regular file
-- Max 16 KiB
-- Not empty
-
----
-
-## 4. Backup Process
-
-### 4.1 Engine
-
-`pkg/backup/engine.go` orchestrates the backup:
-
-1. **Quiesce** — Graceful service shutdown
-2. **Snapshot** — Database backup (pg_dump/pg_basebackup)
-3. **Encrypt** — AES-256-GCM encryption
-4. **Upload** — Repository storage (filesystem or S3)
-5. **Resume** — Service restart
-
-### 4.2 Components
-
-| Component | Description |
-|-----------|-------------|
-| Coordinator | Manages backup lifecycle |
-| Quiescer | Graceful shutdown/resume |
-| PostgresComponent | PostgreSQL-specific backup logic |
-| OfflineQuiescer | Offline backup mode |
-
----
-
-## 5. Recovery
-
-### 5.1 Recovery Configuration
-
-| Variable | Description |
-|----------|-------------|
-| `STRATA_RECOVERY_STORAGE_BACKEND` | `local`, `minio`, `s3` |
-| `STRATA_RECOVERY_STORAGE_BUCKET` | Storage bucket name |
-| `STRATA_RECOVERY_STORAGE_REGION` | Storage region |
-| `STRATA_RECOVERY_STORAGE_ENDPOINT` | Custom endpoint |
-| `STRATA_RECOVERY_STORAGE_ACCESS_KEY` | Access key |
-| `STRATA_RECOVERY_STORAGE_SECRET_KEY` | Secret key |
-| `STRATA_RECOVERY_STORAGE_USE_SSL` | Use SSL for storage |
-| `STRATA_RECOVERY_NATS_URL` | NATS URL for recovery |
-| `STRATA_RECOVERY_NATS_TOKEN` | NATS token |
-| `STRATA_RECOVERY_NATS_TLS_CA` | NATS CA certificate |
-| `STRATA_RECOVERY_NATS_TLS_CERT` | NATS client certificate |
-| `STRATA_RECOVERY_NATS_TLS_KEY` | NATS client key |
-
-### 5.2 Recovery Process
-
-1. **Download** — Retrieve encrypted backup from storage
-2. **Decrypt** — AES-256-GCM decryption
-3. **Restore** — Database restore (pg_restore)
-4. **Verify** — Integrity check
-
----
-
-## 6. Scheduling
-
-Backups are triggered via the backup engine. For automated scheduling, integrate with cron/systemd timer:
+Verify an existing set before relying on it:
 
 ```bash
-# Example: Daily backup at 2am
-0 2 * * * /usr/local/bin/strata backup run
+strata-rmm recovery verify --backup-id <backup-id>
 ```
 
----
-
-## 7. Retention
-
-Configure retention policies based on compliance requirements:
-
-| Policy | Duration |
-|--------|----------|
-| Daily backups | 7 days |
-| Weekly backups | 4 weeks |
-| Monthly backups | 12 months |
-
-**Note:** Retention cleanup must be implemented by the operator.
-
----
-
-## 8. Verification
-
-### 8.1 Post-Backup Verification
+List available sets with:
 
 ```bash
-# Check backup exists
-ls -la /var/backups/strata/
-
-# Verify encryption
-# (decrypt and compare with original)
+strata-rmm recovery status
 ```
 
-### 8.2 Recovery Testing
+## Scheduling
 
-**Recommended:** Test recovery quarterly:
+The application does not install a backup scheduler. Use a root-controlled systemd timer or equivalent host scheduler that invokes the real command directly, for example:
 
-1. Create test environment
-2. Restore backup to test environment
-3. Verify data integrity
-4. Document results
+```text
+/usr/local/bin/strata-rmm backup --timeout 2h
+```
 
----
+Do not invent a `backup run` subcommand; it is not part of the CLI.
 
-## 9. Security
+Scheduling, retention, and off-site replication remain operator policy. Retention automation must never remove the only verified recovery set required by the organization's RPO policy.
 
-### 9.1 Key Management
+## Production transport requirements
 
-- Store key provider file in secure location (K8s Secret, HashiCorp Vault)
-- Rotate keys periodically
-- Never commit keys to version control
+Production backup uses the configured source database, NATS, and object-storage transports. Existing production validation remains authoritative. In particular, production database connections must not disable TLS, and production NATS must satisfy the platform TLS/authentication policy.
 
-### 9.2 Storage Security
+## Failure behavior
 
-- Use encrypted storage (S3 SSE-KMS, encrypted filesystem)
-- Restrict access to backup storage
-- Enable access logging
+A backup failure is not success evidence. Preserve the sanitized error and do not delete the last known-good verified recovery set. If quiescing or component capture fails, investigate the failed component and rerun `backup --dry-run` before attempting another backup.
 
----
+Do not manually substitute `pg_dump`, ad-hoc JetStream copies, or object-store copies as evidence that the integrated Strata recovery set succeeded. Those may be useful emergency diagnostics, but they are outside the supported backup transaction and do not satisfy the integrated recovery contract.
 
-## 10. Troubleshooting
+## Recovery testing
 
-### 10.1 Common Issues
-
-| Issue | Cause | Solution |
-|-------|-------|----------|
-| Backup fails | Key provider missing | Verify `STRATA_BACKUP_KEY_PROVIDER_PATH` |
-| Backup fails | Storage connection error | Check `STRATA_BACKUP_EXTERNAL_*` variables |
-| Backup fails | Disk full | Increase backup directory space |
-| Recovery fails | Wrong key | Verify key provider matches backup |
-| Recovery fails | Storage access denied | Check storage credentials |
-
----
-
-## 11. Limitations
-
-- **Encryption:** Only `aes-256-gcm` supported
-- **Database:** Only PostgreSQL/TimescaleDB
-- **Repository:** Filesystem or S3-compatible only
-- **No incremental:** Full backup only
-- **No compression:** Compress externally if needed
-
----
-
-*Last Updated: 2026-08-08*
+Use `docs/RESTORE.md` for the supported restore workflow. A source-level successful backup or verification does not prove RPO/RTO. The timestamped isolated restore drill and RPO/RTO evidence remain part of hosted internal-alpha validation in Issue #15.

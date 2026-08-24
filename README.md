@@ -1,287 +1,116 @@
 # Strata RMM
 
-Strata RMM Community Edition is open-source under
-[AGPL-3.0-or-later](LICENSE). Commercial white-label deployments are available
-only under a separately executed Enterprise License. See
-[LICENSING.md](LICENSING.md) and [TRADEMARKS.md](TRADEMARKS.md).
+Strata RMM Community Edition is open source under [AGPL-3.0-or-later](LICENSE). Commercial white-label deployments require a separately executed Enterprise License. See [LICENSING.md](LICENSING.md) and [TRADEMARKS.md](TRADEMARKS.md).
 
-A horizontally-scalable, multi-tenant Remote Monitoring & Management platform with cross-platform agents (Go), supporting both SaaS and self-hosted deployments. Built to match the capabilities of Kaseya VSA, Datto RMM, and NinjaRMM.
+Strata RMM is a multi-tenant Remote Monitoring & Management platform written primarily in Go, with a React/TypeScript web console, PostgreSQL/TimescaleDB, NATS JetStream, and object storage.
 
-## Quick Start
+## Pre-beta support boundary
+
+This repository is still in pre-beta hardening. Code presence is not the same as a supported or hosted-accepted feature.
+
+Current promoted lifecycle work is limited to:
+
+- **Orchestrator host:** supported Linux native/systemd installation and single-host Docker Compose installation through the documented secure installer/release path.
+- **Endpoint evidence baseline:** Linux AMD64 and Windows AMD64 are the minimum hosted validation matrix for Issue #15. Other endpoint architectures/platforms must not be treated as accepted until representative evidence exists.
+- **Kubernetes/Helm/KOTS, air-gapped, and multi-region:** source assets may exist, but these are **not accepted pre-beta deployment paths** and must not be used as a substitute for the supported native/Docker lifecycle.
+
+Use [docs/FEATURE_COMPLETENESS_MATRIX.md](docs/FEATURE_COMPLETENESS_MATRIX.md) for feature status and [docs/index.md](docs/index.md) for the documentation map.
+
+## Installation
+
+Do not deploy production from a source checkout or mutable image tag. Use the secure installer and immutable promoted-release artifacts described in:
+
+- [docs/INSTALL.md](docs/INSTALL.md)
+- [docs/UPGRADE.md](docs/UPGRADE.md)
+- [docs/ROLLBACK.md](docs/ROLLBACK.md)
+
+The installer is responsible for production preflight, secrets, TLS prerequisites, bootstrap, immutable artifact selection, and repeatable native/Docker setup.
+
+## Local development
+
+The repository contains a development Compose topology. It uses development-oriented dependency settings and must not be copied into production configuration.
 
 ```bash
-# Docker (recommended local-development topology)
 git clone https://github.com/Strata-Development-Platform/Strata-RMM-Orchestrator.git
 cd Strata-RMM-Orchestrator
-export JWT_SECRET="$(openssl rand -hex 32)"
-export STRATA_METRICS_TOKEN="$(openssl rand -hex 32)"
-export POSTGRES_PASSWORD="$(openssl rand -hex 24)"
-export MINIO_ROOT_PASSWORD="$(openssl rand -hex 24)"
-export GRAFANA_ADMIN_PASSWORD="$(openssl rand -hex 24)"
-export STRATA_METRICS_TOKEN_FILE="$(mktemp)"
-printf '%s' "$STRATA_METRICS_TOKEN" > "$STRATA_METRICS_TOKEN_FILE"
-chmod 600 "$STRATA_METRICS_TOKEN_FILE"
-docker compose -f deploy/docker/docker-compose.yml up -d
-
-# Verify
-curl http://localhost:8080/health/live
+make dev
 ```
 
-This Compose topology is for local development; its dependency credentials and
-unencrypted transports are not production settings. Start with the
-[documentation index](docs/index.md), or follow the
-[installation guide](docs/INSTALL.md) for production preflight, TLS,
-authentication, bootstrap, and supported deployment guidance.
+See the Makefile and development documentation for local prerequisites. Never treat local `docker compose up`, mutable tags, generated dev users, or plaintext development transports as production deployment guidance.
 
 ## Architecture
 
-```
-┌──────────────────────────────────────────────────────────┐
-│                   Strata RMM Platform                     │
-├──────────────────────────────────────────────────────────┤
-│  Agent (Go) ──NATS──► Orchestrator ──► TimescaleDB      │
-│    │                        │              │             │
-│    │                    PostgreSQL (RLS)  Grafana       │
-│    │                        │                          │
-│    │                    MinIO / S3 (recordings)         │
-│    │                        │                          │
-│  Probe (SNMP/Flow) ──NATS──┘                            │
-└──────────────────────────────────────────────────────────┘
+```text
+Endpoint Agent ── NATS/TLS ──> Orchestrator ──> PostgreSQL/TimescaleDB
+       │                            │
+       │                            ├──> Object storage
+       │                            └──> Alerting / jobs / policy / audit
+       └── local durable queue
 ```
 
-- **Agent**: Cross-platform Go binary (Windows/Linux/macOS), ~15MB, BBolt offline queue
-- **Orchestrator**: Go stdlib `net/http`, NATS consumer, TimescaleDB batch writer, alerting, patching, scripting, remote control
-- **NATS**: Message bus with tenant subject isolation (`tenant.{id}.*`)
-- **TimescaleDB**: Hypertables with compression + continuous aggregates for metrics
-- **PostgreSQL**: Row-Level Security for multi-tenant data isolation
-- **MinIO/S3**: Object storage for session recordings and PDF reports
+Core controls include scoped enrollment, tenant-aware authorization, PostgreSQL row-level isolation, NATS subject isolation, durable command/result handling, audit evidence, monitoring/alerting, patch/software workflows, backup/recovery, and verified release/update machinery.
 
-## CLI Commands
+## Host-level CLI
 
-| Command | Description |
-|---------|-------------|
-| `strata-rmm version` | Print version info (`--output=json`) |
-| `strata-rmm agent --enrollment-token X` | Securely enroll and start the monitoring agent |
-| `strata-rmm orchestrator` | Platform services |
-| `strata-rmm orchestrator update` | Self-update orchestrator |
-| `strata-rmm probe` | Network probe (SNMP, flow) |
+The shipped binary exposes host/operator commands in addition to service modes. Relevant lifecycle commands include:
 
-## Features
+| Command | Purpose |
+| --- | --- |
+| `strata-rmm version` | Print build/release identity |
+| `strata-rmm orchestrator` | Run platform services |
+| `strata-rmm orchestrator update` | Verified native update flow; unsupported modes fail closed |
+| `strata-rmm backup` | Create an encrypted integrated recovery set |
+| `strata-rmm recovery ...` | Preflight, status, verify, key initialization, and isolated restore |
+| `strata-rmm probe` | Network probe service |
 
-This section summarizes the intended product surface and includes capabilities
-that are partial or environment-dependent. Consult the
-[feature completeness matrix](docs/FEATURE_COMPLETENESS_MATRIX.md) before using
-it as release or acceptance evidence.
+Docker upgrades use the documented privileged **host-side** updater. The long-running web-facing orchestrator is intentionally not granted Docker-socket/root-equivalent access.
 
-**Agent Management**
-- Cross-platform (Windows MSI, Linux systemd, macOS binary)
-- Deployment ID onboarding — one ID per customer, auto-registers on first check-in
-- Agent auto-update with staged rollout, canary %, rollback, cosign verification
-- ECDSA P256 identity + JWT authentication
+## Recovery
 
-**Remote Monitoring**
-- CPU: percent, cores, load average (1/5/15)
-- Memory: total/used/available/percent, swap
-- Disk: per-partition total/used/free/percent, I/O counters
-- Network: per-interface bytes/packets/errors
-- System: uptime, hostname, OS, platform version
-- Process: top CPU/memory consumers
-- Software inventory (dpkg/Win32_Product)
-- 60s collection interval (configurable)
+Use the integrated recovery engine rather than manual database replacement:
 
-**Alerting Engine**
-- Threshold rules (GT/GTE/LT/LTE/EQ/NEQ)
-- Heartbeat monitoring with configurable timeout
-- Alert state machine: OK → Firing → Resolved
-- Cooldowns to prevent alert storms
-- Auto-resolution on metric recovery
-- Notifications: Slack, webhook, email, Teams, PagerDuty
+- [docs/BACKUP.md](docs/BACKUP.md)
+- [docs/RESTORE.md](docs/RESTORE.md)
 
-**Remote Access**
-- Built-in remote control (agent-side screen capture + input injection)
-- NATS-relayed RDP/SSH/VNC tunnels
-- Session recording with SHA256 verification
-- Presigned URL playback with MFA gate
-- Configurable retention (default 90d)
+A green source test or successful dry run does not satisfy hosted RPO/RTO evidence. Hosted recovery acceptance remains tracked in Issue #15.
 
-**Scripting Engine**
-- PowerShell, Bash, Python, Batch execution
-- Parameter interpolation (`{{param}}` syntax)
-- Timeout enforcement, stdout/stderr capture
-- Execution history with full output viewer
-- Run on-demand or scheduled
+## Operations and configuration
 
-**Patch Management**
-- Windows OS updates (PowerShell/WU API)
-- Linux OS updates (apt/dnf/zypper/pacman)
-- Patch policies with approval modes (auto/manual)
-- Deployment scheduling with device targeting
-- Patch compliance tracking per device
+- [docs/CONFIGURATION.md](docs/CONFIGURATION.md)
+- [docs/RUNBOOK.md](docs/RUNBOOK.md)
+- [docs/SECURITY.md](docs/SECURITY.md)
+- [docs/INTERNAL_ALPHA_AGENT.md](docs/INTERNAL_ALPHA_AGENT.md)
 
-**Software Deployment**
-- Package library: MSI, EXE, DEB, RPM, AppImage
-- SHA256 checksum verification
-- Silent install with custom arguments
-- Per-device deployment status tracking
-- Install and uninstall support
+Production secrets must be supplied through protected files/secret mechanisms where supported. Do not put secrets in command arguments, repository files, documentation examples, browser-readable profile records, or CI artifacts.
 
-**Third-Party Patching**
-- 10 pre-configured apps: Chrome, Firefox, Adobe Reader, 7-Zip, VLC, Teams, Zoom, Notepad++, LibreOffice
-- Auto-version discovery from vendor APIs
-- Auto-creates deployable packages
-- 24h automatic sync cycle
+## Development and testing
 
-**Vulnerability Management**
-- CVE correlation against software inventory
-- OSV.dev batch API (17 tracked packages)
-- Optional NVD API sync
-- Auto-remediation on version updates
-- Manual resolve/ignore workflow
-- Per-device vulnerability state tracking
+Repository CI includes Go tests/race checks, frontend checks, security scanning, release packaging, recovery/resilience/observability gates, and internal-alpha source contracts. Exact-head green CI is required for merge but does not replace representative-host evidence.
 
-**Network Monitoring (SNMP)**
-- SNMP v1/v2c/v3 polling
-- Network device discovery (ARP/SNMP)
-- NetFlow v9/IPFIX/sFlow collection
-- Interface status and bandwidth tracking
-- Standalone probe binary
-
-**Security & Compliance**
-- Multi-factor authentication (TOTP/RFC 6238)
-- Row-Level Security for all tables
-- NATS subject isolation per tenant
-- Per-tenant AES-256-GCM encryption keys
-- Immutable audit log
-- Rate limiting per endpoint
-- Security headers (CSP, nosniff, X-Frame-Options)
-- Request body size limits (10MB)
-- Cosign keyless signing for releases
-- SPDX SBOM for all artifacts
-
-**Reporting**
-- PDF report generation with executive summary
-- Configurable sections: alerts, CVEs, patches
-- Scheduled delivery (daily/weekly/monthly)
-- On-demand generation
-- Storage to MinIO/S3
-
-**Web UI**
-- Dark mode with theme toggle
-- Platform overview dashboard
-- Priority issues widget
-- Per-customer drill-down (devices, alerts, CVEs, recordings, settings)
-- User management with tenant scoping
-- Script library with execution history
-- Software package library + deployment
-- Third-party patching management
-- Report schedules + generated reports
-- MFA enrollment flow
-- Collapsible sidebar with icons
-- Toast notifications, skeleton loaders
-- Responsive design
-
-**Administration**
-- User authentication (email/password + JWT)
-- RBAC: admin, technician, viewer roles
-- Team/tenant scoping for users
-- Customer onboarding with deployment ID
-- Orchestrator self-update from GitHub
-- User management with create/scope/delete
-- Audit log with access review
-- Platform overview with aggregate stats
-
-**Deployment Options**
-- Docker Compose (recommended for single-server)
-- Bare metal Linux (systemd service)
-- Kubernetes (Helm chart)
-- KOTS (self-hosted marketplace)
-- Air-gapped deployments
-- Multi-region support
-
-## API
-
-The platform exposes 60+ REST endpoints. Key categories:
-- Auth: login, me, MFA enrollment
-- Platform: overview, customers, update
-- Admin: users, customers, update
-- Alerts: active, history, rules CRUD, acknowledge
-- Vulnerabilities: per-device, per-tenant, summary, resolve/ignore
-- CVE: stats, sync, packages, package detail
-- Scripts: CRUD, run, executions, result detail
-- Software: packages CRUD, deployments CRUD
-- Third-party: apps list, sync, packages
-- Recordings: list, playback, delete
-- Keys: CRUD, rotate, revoke
-- Access: audit log, users, permissions
-- Remote: session start/stop
-
-## Project Structure
-
-```
-├── cmd/                    # CLI commands
-│   ├── agent/              # Agent startup + update + scripts + software + remote
-│   ├── probe/              # SNMP/flow network probe
-│   └── orchestrator/       # Platform services + update
-├── internal/
-│   ├── agent/              # Agent core, collectors, comms, update, scripts, software, remote
-│   ├── alerting/           # Alert engine + notifications
-│   ├── inventory/          # Device CRUD, CVE sync, vulnerability, third-party
-│   ├── monitoring/         # Metrics/events/heartbeat ingestion
-│   ├── patch/              # Patch management + executors
-│   ├── platform/           # API server + all route handlers
-│   ├── probe/              # SNMP, flow, discovery
-│   ├── remote/             # Tunnel relay, recording, cleanup
-│   ├── reporting/          # PDF report engine
-│   └── update/             # Agent + orchestrator update clients
-├── pkg/
-│   ├── auth/               # JWT, enrollment, TOTP/MFA, rate limiting
-│   ├── encrypt/            # Per-tenant AES-256-GCM keys
-│   ├── postgres/           # Schema migrations (1-24)
-│   ├── storage/            # Backend interface: MinIO, S3, Local, Mock
-│   └── timescale/          # TimescaleDB client + migrations
-├── deploy/
-│   ├── docker/             # Docker Compose (NATS, TimescaleDB, MinIO, Grafana)
-│   ├── helm/               # K8s Helm chart + AgentUpdateChannel CRD
-│   ├── grafana/            # Provisioned dashboards
-│   └── kots/               # KOTS integration config
-├── docs/
-│   ├── ARCHITECTURE.md     # Architecture plan
-│   ├── INSTALL.md          # Installation guide
-│   ├── RUNBOOK.md          # Operations runbook
-│   ├── SECURITY.md         # Security architecture
-│   └── SOC2.md             # SOC 2 compliance evidence
-├── scripts/
-│   ├── install.sh          # Linux agent installer
-│   ├── build-msi.sh        # Windows MSI builder
-│   ├── smoke_test.sh       # End-to-end smoke test
-│   └── loadtest.sh         # Performance load test
-├── ui/                     # React 18 + TypeScript + Tailwind web UI
-└── .github/workflows/      # CI + release pipelines
-```
-
-## Development
+Common development targets include:
 
 ```bash
-# Prerequisites: Go 1.25+, Docker, Node 20+
-make build              # Build all binaries
-make test               # Run all tests
-make lint               # Go vet
-make coverage           # Test coverage report
-make dev                # Start services + orchestrator
-make smoke-test         # Run end-to-end smoke test
+make build
+make test
+make lint
+make coverage
 ```
 
-## Deployment
+Refer to current CI workflows and Makefile targets rather than historical command lists when validating a release candidate.
 
-| Method | Docs |
-|--------|------|
-| Docker Compose | `docker compose up -d` |
-| Bare Metal Linux | `docs/INSTALL.md` |
-| Kubernetes Helm | `deploy/helm/strata-rmm/` |
-| KOTS | `deploy/kots/` |
+## Project structure
 
-See [docs/INSTALL.md](docs/INSTALL.md) for detailed instructions.
+```text
+cmd/                 CLI entrypoints
+internal/            application and endpoint implementation
+pkg/                 shared auth/config/storage/recovery packages
+deploy/              deployment assets (not all are accepted support paths)
+docs/                operator, security, acceptance, and architecture docs
+scripts/             installers, packaging, and validation helpers
+ui/                  React/TypeScript web console
+.github/workflows/   CI, security, release, and Phase 8 gates
+```
 
 ## License
 
-See [LICENSE](LICENSE) file.
+See [LICENSE](LICENSE).
