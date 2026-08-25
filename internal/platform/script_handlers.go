@@ -407,6 +407,7 @@ func (s *APIServer) handleScriptExecutions(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *APIServer) handleGetExecution(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.PathValue("tenantID")
 	execID := r.PathValue("execID")
 	var exec ScriptExecution
 	var scriptID, triggeredBy sql.NullString
@@ -417,8 +418,8 @@ func (s *APIServer) handleGetExecution(w http.ResponseWriter, r *http.Request) {
 
 	err := s.requestDB(r).QueryRowContext(r.Context(), `
 		SELECT id, script_id, tenant_id, device_id, triggered_by, status, stdout, stderr, exit_code, duration_ms, parameters, started_at, completed_at, created_at
-		FROM script_executions WHERE id = $1
-	`, execID).Scan(
+		FROM script_executions WHERE id = $1 AND tenant_id = $2
+	`, execID, tenantID).Scan(
 		&exec.ID, &scriptID, &exec.TenantID, &exec.DeviceID, &triggeredBy,
 		&exec.Status, &exec.Stdout, &exec.Stderr, &exitCode, &dur,
 		&params, &startedNull, &completedNull, &exec.CreatedAt,
