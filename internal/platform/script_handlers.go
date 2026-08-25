@@ -130,19 +130,19 @@ func (s *APIServer) handleListScripts(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(&id, &name, &desc, &lang, &params, &timeout, &isPublic, &createdBy, &createdAt, &updatedAt); err != nil {
 			continue
 		}
-		script := map[string]interface{}{
+		s := map[string]interface{}{
 			"id": id, "name": name, "description": desc, "language": lang,
 			"timeout_sec": timeout, "is_public": isPublic, "created_at": createdAt, "updated_at": updatedAt,
 		}
 		if createdBy.Valid {
-			script["created_by"] = createdBy.String
+			s["created_by"] = createdBy.String
 		}
 		if len(params) > 0 {
 			var p interface{}
 			json.Unmarshal(params, &p)
-			script["parameters"] = p
+			s["parameters"] = p
 		}
-		scripts = append(scripts, script)
+		scripts = append(scripts, s)
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"scripts": scripts})
 }
@@ -232,6 +232,9 @@ func (s *APIServer) handleRunScript(w http.ResponseWriter, r *http.Request) {
 		params = json.RawMessage("{}")
 	}
 
+	// Normalize target IDs before any state is written. The tenant in the URL is
+	// authoritative; public scripts may be shared, but their owner tenant must
+	// never become the execution/dispatch tenant.
 	seen := make(map[string]struct{}, len(req.DeviceIDs))
 	targets := make([]durableScriptTarget, 0, len(req.DeviceIDs))
 	db := s.requestDB(r)
@@ -487,10 +490,59 @@ func (s *APIServer) handleScriptResultNATS(msg *nats.Msg) {
 	if result.Type != "script_result" || result.ExecutionID == "" || result.DeviceID == "" {
 		return
 	}
-	if result.Status != "success" && result.Status != "failed" && result.Status != "succeeded" {
+	if result.Status != "success" && result.Status != "failed" && result.Status != "timeout" {
 		return
 	}
 	if result.DurationMs < 0 {
+		return
+	}
+
+	if result.ScheduleID != "" {
+		var existingStatus string
+		err := s.db.DB().QueryRow(`
+			SELECT sde.status
+			FROM schedule_device_executions sde
+			JOIN schedules sched ON sched.id = sde.schedule_id
+			JOIN devices d ON d.id::text = sde.device_id::text AND d.tenant_id = sched.tenant_id
+			WHERE sde.id::text = $1
+			  AND sde.schedule_id::text = $2
+			  AND sched.tenant_id::text = $3
+			  AND sde.device_id::text = $4
+			  AND d.agent_id::text = $5
+			  AND d.is_active = TRUE
+			  AND d.status <> 'disabled'
+		`, result.ExecutionID, result.ScheduleID, tenantID, result.DeviceID, agentID).Scan(&existingStatus)
+		if err != nil {
+			s.logger.Warn("scheduled script result did not match an authorized execution",
+				zap.String("tenant_id", tenantID), zap.String("agent_id", agentID),
+				zap.String("device_id", result.DeviceID), zap.String("schedule_id", result.ScheduleID),
+				zap.String("execution_id", result.ExecutionID))
+			return
+		}
+		if existingStatus != "pending" && existingStatus != "running" && existingStatus != result.Status {
+			s.logger.Warn("reject conflicting terminal scheduled script result",
+				zap.String("tenant_id", tenantID), zap.String("agent_id", agentID),
+				zap.String("execution_id", result.ExecutionID), zap.String("existing_status", existingStatus),
+				zap.String("result_status", result.Status))
+			return
+		}
+
+		so := NewScheduleOrchestrator(s.nats, s.db.DB(), s.logger)
+		if err := so.ProcessScheduleDeviceResult(map[string]interface{}{
+			"execution_id": result.ExecutionID,
+			"schedule_id":  result.ScheduleID,
+			"device_id":    result.DeviceID,
+			"status":       result.Status,
+			"stdout":       result.Stdout,
+			"stderr":       result.Stderr,
+			"exit_code":    result.ExitCode,
+			"duration_ms":  result.DurationMs,
+		}); err != nil {
+			s.logger.Error("process schedule device result",
+				zap.String("schedule_id", result.ScheduleID),
+				zap.String("device_id", result.DeviceID),
+				zap.Error(err))
+		}
 		return
 	}
 
@@ -507,10 +559,10 @@ func (s *APIServer) handleScriptResultNATS(msg *nats.Msg) {
 		SET status = $1, stdout = $2, stderr = $3, exit_code = $4, duration_ms = $5, completed_at = $6
 		FROM devices AS d
 		WHERE se.id = $7
-		  AND se.tenant_id = $8
+		  AND se.tenant_id::text = $8
 		  AND se.device_id::text = $9
 		  AND d.id::text = se.device_id::text
-		  AND d.tenant_id = se.tenant_id
+		  AND d.tenant_id::text = se.tenant_id::text
 		  AND d.agent_id::text = $10
 		  AND d.is_active = TRUE
 		  AND d.status <> 'disabled'
@@ -531,9 +583,9 @@ func (s *APIServer) handleScriptResultNATS(msg *nats.Msg) {
 		err := tx.QueryRow(`
 			SELECT se.status
 			FROM script_executions se
-			JOIN devices d ON d.id::text = se.device_id::text AND d.tenant_id = se.tenant_id
+			JOIN devices d ON d.id::text = se.device_id::text AND d.tenant_id::text = se.tenant_id::text
 			WHERE se.id = $1
-			  AND se.tenant_id = $2
+			  AND se.tenant_id::text = $2
 			  AND se.device_id::text = $3
 			  AND d.agent_id::text = $4
 		`, result.ExecutionID, tenantID, result.DeviceID, agentID).Scan(&existingStatus)
@@ -552,43 +604,7 @@ func (s *APIServer) handleScriptResultNATS(msg *nats.Msg) {
 		}
 	}
 
-	if result.ScheduleID != "" {
-		var scheduleTenant string
-		err := tx.QueryRow(`
-			SELECT s.tenant_id::text
-			FROM schedule_device_executions sde
-			JOIN schedules s ON s.id = sde.schedule_id
-			WHERE sde.id = $1 AND sde.schedule_id::text = $2 AND sde.device_id::text = $3
-		`, result.ExecutionID, result.ScheduleID, result.DeviceID).Scan(&scheduleTenant)
-		if err != nil || scheduleTenant != tenantID {
-			s.logger.Warn("reject unauthorized scheduled script result",
-				zap.String("tenant_id", tenantID), zap.String("agent_id", agentID),
-				zap.String("schedule_id", result.ScheduleID), zap.String("execution_id", result.ExecutionID))
-			return
-		}
-	}
-
 	if err := tx.Commit(); err != nil {
 		s.logger.Error("commit script result", zap.Error(err))
-		return
-	}
-
-	if result.ScheduleID != "" {
-		so := NewScheduleOrchestrator(s.nats, s.db.DB(), s.logger)
-		if err := so.ProcessScheduleDeviceResult(map[string]interface{}{
-			"execution_id": result.ExecutionID,
-			"schedule_id":  result.ScheduleID,
-			"device_id":    result.DeviceID,
-			"status":       result.Status,
-			"stdout":       result.Stdout,
-			"stderr":       result.Stderr,
-			"exit_code":    result.ExitCode,
-			"duration_ms":  result.DurationMs,
-		}); err != nil {
-			s.logger.Error("process schedule device result",
-				zap.String("schedule_id", result.ScheduleID),
-				zap.String("device_id", result.DeviceID),
-				zap.Error(err))
-		}
 	}
 }
