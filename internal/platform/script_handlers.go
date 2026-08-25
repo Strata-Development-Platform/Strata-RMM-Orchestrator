@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -454,7 +455,24 @@ func (s *APIServer) handleGetExecution(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, exec)
 }
 
+func parseScriptResultSubject(subject string) (tenantID, agentID string, ok bool) {
+	parts := strings.Split(subject, ".")
+	if len(parts) != 6 || parts[0] != "tenant" || parts[2] != "agent" || parts[4] != "script" || parts[5] != "result" {
+		return "", "", false
+	}
+	if parts[1] == "" || parts[3] == "" || strings.ContainsAny(parts[1], "*> ") || strings.ContainsAny(parts[3], "*> ") {
+		return "", "", false
+	}
+	return parts[1], parts[3], true
+}
+
 func (s *APIServer) handleScriptResultNATS(msg *nats.Msg) {
+	tenantID, agentID, ok := parseScriptResultSubject(msg.Subject)
+	if !ok {
+		s.logger.Warn("reject malformed script result subject", zap.String("subject", msg.Subject))
+		return
+	}
+
 	var result struct {
 		Type        string `json:"type"`
 		ExecutionID string `json:"execution_id"`
@@ -469,21 +487,46 @@ func (s *APIServer) handleScriptResultNATS(msg *nats.Msg) {
 	if err := json.Unmarshal(msg.Data, &result); err != nil {
 		return
 	}
-	if result.Type != "script_result" || result.ExecutionID == "" {
+	if result.Type != "script_result" || result.ExecutionID == "" || result.DeviceID == "" {
+		return
+	}
+	if result.Status != "success" && result.Status != "failed" && result.Status != "timeout" {
+		return
+	}
+	if result.DurationMs < 0 {
 		return
 	}
 
-	now := time.Now()
-	_, err := s.db.DB().Exec(`
-		UPDATE script_executions
-		SET status = $1, stdout = $2, stderr = $3, exit_code = $4, duration_ms = $5, completed_at = $6
-		WHERE id = $7 AND status = 'running'
-	`, result.Status, result.Stdout, result.Stderr, result.ExitCode, result.DurationMs, now, result.ExecutionID)
-	if err != nil {
-		s.logger.Error("update script execution", zap.Error(err))
-	}
-
 	if result.ScheduleID != "" {
+		var existingStatus string
+		err := s.db.DB().QueryRow(`
+			SELECT sde.status
+			FROM schedule_device_executions sde
+			JOIN schedules sched ON sched.id = sde.schedule_id
+			JOIN devices d ON d.id::text = sde.device_id::text AND d.tenant_id = sched.tenant_id
+			WHERE sde.id::text = $1
+			  AND sde.schedule_id::text = $2
+			  AND sched.tenant_id::text = $3
+			  AND sde.device_id::text = $4
+			  AND d.agent_id::text = $5
+			  AND d.is_active = TRUE
+			  AND d.status <> 'disabled'
+		`, result.ExecutionID, result.ScheduleID, tenantID, result.DeviceID, agentID).Scan(&existingStatus)
+		if err != nil {
+			s.logger.Warn("scheduled script result did not match an authorized execution",
+				zap.String("tenant_id", tenantID), zap.String("agent_id", agentID),
+				zap.String("device_id", result.DeviceID), zap.String("schedule_id", result.ScheduleID),
+				zap.String("execution_id", result.ExecutionID))
+			return
+		}
+		if existingStatus != "pending" && existingStatus != "running" && existingStatus != result.Status {
+			s.logger.Warn("reject conflicting terminal scheduled script result",
+				zap.String("tenant_id", tenantID), zap.String("agent_id", agentID),
+				zap.String("execution_id", result.ExecutionID), zap.String("existing_status", existingStatus),
+				zap.String("result_status", result.Status))
+			return
+		}
+
 		so := NewScheduleOrchestrator(s.nats, s.db.DB(), s.logger)
 		if err := so.ProcessScheduleDeviceResult(map[string]interface{}{
 			"execution_id": result.ExecutionID,
@@ -500,5 +543,68 @@ func (s *APIServer) handleScriptResultNATS(msg *nats.Msg) {
 				zap.String("device_id", result.DeviceID),
 				zap.Error(err))
 		}
+		return
+	}
+
+	tx, err := s.db.DB().Begin()
+	if err != nil {
+		s.logger.Error("begin script result transaction", zap.Error(err))
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	now := time.Now()
+	res, err := tx.Exec(`
+		UPDATE script_executions AS se
+		SET status = $1, stdout = $2, stderr = $3, exit_code = $4, duration_ms = $5, completed_at = $6
+		FROM devices AS d
+		WHERE se.id = $7
+		  AND se.tenant_id::text = $8
+		  AND se.device_id::text = $9
+		  AND d.id::text = se.device_id::text
+		  AND d.tenant_id::text = se.tenant_id::text
+		  AND d.agent_id::text = $10
+		  AND d.is_active = TRUE
+		  AND d.status <> 'disabled'
+		  AND se.status = 'running'
+	`, result.Status, result.Stdout, result.Stderr, result.ExitCode, result.DurationMs, now,
+		result.ExecutionID, tenantID, result.DeviceID, agentID)
+	if err != nil {
+		s.logger.Error("update script execution", zap.Error(err))
+		return
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		s.logger.Error("inspect script execution update", zap.Error(err))
+		return
+	}
+	if rows == 0 {
+		var existingStatus string
+		err := tx.QueryRow(`
+			SELECT se.status
+			FROM script_executions se
+			JOIN devices d ON d.id::text = se.device_id::text AND d.tenant_id::text = se.tenant_id::text
+			WHERE se.id = $1
+			  AND se.tenant_id::text = $2
+			  AND se.device_id::text = $3
+			  AND d.agent_id::text = $4
+		`, result.ExecutionID, tenantID, result.DeviceID, agentID).Scan(&existingStatus)
+		if err != nil {
+			s.logger.Warn("script result did not match an authorized execution",
+				zap.String("tenant_id", tenantID), zap.String("agent_id", agentID),
+				zap.String("device_id", result.DeviceID), zap.String("execution_id", result.ExecutionID))
+			return
+		}
+		if existingStatus != result.Status {
+			s.logger.Warn("reject conflicting terminal script result",
+				zap.String("tenant_id", tenantID), zap.String("agent_id", agentID),
+				zap.String("execution_id", result.ExecutionID), zap.String("existing_status", existingStatus),
+				zap.String("result_status", result.Status))
+			return
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		s.logger.Error("commit script result", zap.Error(err))
 	}
 }
