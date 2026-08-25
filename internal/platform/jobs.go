@@ -71,7 +71,6 @@ func (s *APIServer) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 	}
 	requestHash := fmt.Sprintf("%x", sha256.Sum256(fingerprintJSON))
 
-	// Check tenant-scoped idempotency and reject key reuse with a different request.
 	if req.IdempotencyKey != "" {
 		var existingID string
 		var existingStatus string
@@ -121,7 +120,6 @@ func (s *APIServer) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create targets and outbox entries
 	for _, deviceID := range req.DeviceIDs {
 		var agentID string
 		if err := db.QueryRowContext(r.Context(), `
@@ -142,7 +140,6 @@ func (s *APIServer) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Write outbox entry for each target
 		outboxPayload, err := json.Marshal(map[string]interface{}{
 			"job_id":         id,
 			"target_id":      targetID,
@@ -518,6 +515,21 @@ func NewScheduleOrchestrator(nc *nats.Conn, db *sql.DB, logger *zap.Logger) *Sch
 	return &ScheduleOrchestrator{nc: nc, db: db, logger: logger}
 }
 
+const resetScheduleExecutionOnConflict = `
+	ON CONFLICT (schedule_id, device_id) DO UPDATE SET
+		id = EXCLUDED.id,
+		status = 'pending',
+		retry_count = 0,
+		stdout = NULL,
+		stderr = NULL,
+		exit_code = NULL,
+		duration_ms = NULL,
+		started_at = NULL,
+		completed_at = NULL,
+		next_retry_at = NULL,
+		last_retry_at = NULL
+`
+
 func (so *ScheduleOrchestrator) ExecuteSchedule(scheduleID string) error {
 	db := so.db
 
@@ -556,7 +568,6 @@ func (so *ScheduleOrchestrator) ExecuteSchedule(scheduleID string) error {
 	if err := json.Unmarshal(devices, &deviceIDs); err != nil {
 		return fmt.Errorf("failed to parse device list: %w", err)
 	}
-
 	if len(deviceIDs) == 0 {
 		return fmt.Errorf("no devices to execute schedule on")
 	}
@@ -567,7 +578,6 @@ func (so *ScheduleOrchestrator) ExecuteSchedule(scheduleID string) error {
 		Content  string `json:"content"`
 		Timeout  int    `json:"timeout_sec"`
 	}
-
 	err = db.QueryRowContext(context.Background(), `
 		SELECT name, language, content, timeout_sec FROM scripts WHERE id = $1
 	`, schedule.ScriptID).Scan(&script.Name, &script.Language, &script.Content, &script.Timeout)
@@ -577,14 +587,10 @@ func (so *ScheduleOrchestrator) ExecuteSchedule(scheduleID string) error {
 
 	for _, deviceID := range deviceIDs {
 		execID := uuid.New().String()
-
-		_, err := db.ExecContext(context.Background(), `
+		query := `
 			INSERT INTO schedule_device_executions (id, schedule_id, device_id, status)
-			VALUES ($1, $2, $3, 'pending')
-			ON CONFLICT (schedule_id, device_id) DO UPDATE SET status = 'pending',
-			           retry_count = 0, started_at = NULL, completed_at = NULL
-		`, execID, schedule.ID, deviceID)
-		if err != nil {
+			VALUES ($1, $2, $3, 'pending')` + resetScheduleExecutionOnConflict
+		if _, err := db.ExecContext(context.Background(), query, execID, schedule.ID, deviceID); err != nil {
 			so.logger.Warn("create schedule execution", zap.Error(err))
 			continue
 		}
@@ -605,7 +611,7 @@ func (so *ScheduleOrchestrator) ExecuteSchedule(scheduleID string) error {
 		subject := fmt.Sprintf("tenant.%s.cmd.%s", schedule.TenantID, deviceID)
 		if err := so.nc.Publish(subject, cmdPayload); err != nil {
 			so.logger.Warn("publish schedule command", zap.Error(err))
-			db.ExecContext(context.Background(), `
+			_, _ = db.ExecContext(context.Background(), `
 				UPDATE schedule_device_executions SET status = 'failed', stderr = 'NATS publish failed'
 				WHERE id = $1
 			`, execID)
@@ -619,7 +625,6 @@ func (so *ScheduleOrchestrator) ExecuteSchedule(scheduleID string) error {
 	if err != nil {
 		so.logger.Warn("update schedule status", zap.Error(err))
 	}
-
 	return nil
 }
 
@@ -646,7 +651,6 @@ func (so *ScheduleOrchestrator) ExecuteScheduleDevice(ctx context.Context, sched
 	if err != nil {
 		return fmt.Errorf("schedule not found or not active: %w", err)
 	}
-
 	if len(params) > 0 {
 		schedule.ScheduleParams = params
 	}
@@ -657,7 +661,6 @@ func (so *ScheduleOrchestrator) ExecuteScheduleDevice(ctx context.Context, sched
 		Content  string `json:"content"`
 		Timeout  int    `json:"timeout_sec"`
 	}
-
 	err = so.db.QueryRowContext(ctx, `
 		SELECT name, language, content, timeout_sec FROM scripts WHERE id = $1
 	`, schedule.ScriptID).Scan(&script.Name, &script.Language, &script.Content, &script.Timeout)
@@ -666,14 +669,10 @@ func (so *ScheduleOrchestrator) ExecuteScheduleDevice(ctx context.Context, sched
 	}
 
 	execID := uuid.New().String()
-
-	_, err = so.db.ExecContext(ctx, `
+	query := `
 		INSERT INTO schedule_device_executions (id, schedule_id, device_id, status)
-		VALUES ($1, $2, $3, 'pending')
-		ON CONFLICT (schedule_id, device_id) DO UPDATE SET status = 'pending',
-		           retry_count = 0, started_at = NULL, completed_at = NULL
-	`, execID, schedule.ID, deviceID)
-	if err != nil {
+		VALUES ($1, $2, $3, 'pending')` + resetScheduleExecutionOnConflict
+	if _, err = so.db.ExecContext(ctx, query, execID, schedule.ID, deviceID); err != nil {
 		so.logger.Warn("create schedule execution", zap.Error(err))
 		return fmt.Errorf("failed to create execution: %w", err)
 	}
@@ -707,7 +706,6 @@ func (so *ScheduleOrchestrator) ExecuteScheduleDevice(ctx context.Context, sched
 	if err != nil {
 		so.logger.Warn("update schedule status", zap.Error(err))
 	}
-
 	return nil
 }
 
@@ -717,7 +715,6 @@ func (so *ScheduleOrchestrator) ProcessScheduleDeviceResult(result map[string]in
 		return fmt.Errorf("invalid execution_id")
 	}
 
-	_, _ = result["schedule_id"].(string)
 	deviceID, _ := result["device_id"].(string)
 	status, _ := result["status"].(string)
 	stdout, _ := result["stdout"].(string)
@@ -726,15 +723,21 @@ func (so *ScheduleOrchestrator) ProcessScheduleDeviceResult(result map[string]in
 	durationMs, _ := result["duration_ms"].(int64)
 
 	now := time.Now()
-	_, err := so.db.ExecContext(context.Background(), `
+	res, err := so.db.ExecContext(context.Background(), `
 		UPDATE schedule_device_executions SET status = $1, stdout = $2, stderr = $3,
 		           exit_code = $4, duration_ms = $5, completed_at = $6,
 		           last_retry_at = CASE WHEN $7 THEN NOW() ELSE last_retry_at END
 		WHERE id = $8
-	`, status, stdout, stderr, exitCode, durationMs, now,
-		status == "failed", execID)
+	`, status, stdout, stderr, exitCode, durationMs, now, status == "failed", execID)
 	if err != nil {
 		return fmt.Errorf("update execution: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("inspect execution update: %w", err)
+	}
+	if affected == 0 {
+		return fmt.Errorf("execution is stale or unknown")
 	}
 
 	var scheduleID2 string
@@ -752,7 +755,6 @@ func (so *ScheduleOrchestrator) ProcessScheduleDeviceResult(result map[string]in
 	if err != nil {
 		return fmt.Errorf("get schedule status: %w", err)
 	}
-
 	if schedStatus != "running" && schedStatus != "active" {
 		return nil
 	}
@@ -760,15 +762,20 @@ func (so *ScheduleOrchestrator) ProcessScheduleDeviceResult(result map[string]in
 	var maxRetries, retryCount int
 	var execStatus string
 	err = so.db.QueryRowContext(context.Background(), `
-		SELECT status, retry_count FROM schedule_device_executions WHERE id = $1
-	`, execID).Scan(&execStatus, &retryCount)
+		SELECT sde.status, sde.retry_count, s.max_retries
+		FROM schedule_device_executions sde
+		JOIN schedules s ON s.id = sde.schedule_id
+		WHERE sde.id = $1
+	`, execID).Scan(&execStatus, &retryCount, &maxRetries)
 	if err != nil {
 		return fmt.Errorf("get execution status: %w", err)
 	}
 
 	if execStatus == "failed" && retryCount < maxRetries {
 		_, err = so.db.ExecContext(context.Background(), `
-			UPDATE schedule_device_executions SET status = 'pending', next_retry_at = NOW() + INTERVAL '30 seconds'
+			UPDATE schedule_device_executions
+			SET status = 'pending', retry_count = retry_count + 1,
+			    next_retry_at = NOW() + INTERVAL '30 seconds'
 			WHERE id = $1
 		`, execID)
 		if err != nil {
@@ -783,16 +790,14 @@ func (so *ScheduleOrchestrator) ProcessScheduleDeviceResult(result map[string]in
 			zap.String("schedule_id", scheduleID2), zap.Int("retry_count", retryCount))
 	}
 
-	if execStatus == "completed" {
+	if execStatus == "completed" || execStatus == "success" || execStatus == "succeeded" {
 		allCompleted, err := so.checkScheduleCompletion(scheduleID2)
 		if err != nil {
 			so.logger.Warn("check schedule completion", zap.Error(err))
 		} else if allCompleted {
-			so.logger.Info("schedule completed successfully",
-				zap.String("schedule_id", scheduleID2))
+			so.logger.Info("schedule completed successfully", zap.String("schedule_id", scheduleID2))
 		}
 	}
-
 	return nil
 }
 
@@ -800,7 +805,7 @@ func (so *ScheduleOrchestrator) checkScheduleCompletion(scheduleID string) (bool
 	var total, completed, failed int
 	err := so.db.QueryRowContext(context.Background(), `
 		SELECT COUNT(*) as total,
-		       SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
+		       SUM(CASE WHEN status IN ('completed', 'success', 'succeeded') THEN 1 ELSE 0 END) as completed,
 		       SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed
 		FROM schedule_device_executions WHERE schedule_id = $1
 	`, scheduleID).Scan(&total, &completed, &failed)
@@ -825,8 +830,6 @@ func (so *ScheduleOrchestrator) checkScheduleCompletion(scheduleID string) (bool
 			return true, nil
 		}
 
-		// Recurring schedules: reset to active with new next_run_at
-		// One-shot "now" schedules: mark as completed
 		switch scheduleType {
 		case "hourly", "daily", "weekly", "monthly":
 			nextRunAt := calculateNextRun(scheduleType, scheduleParams)
@@ -850,7 +853,6 @@ func (so *ScheduleOrchestrator) checkScheduleCompletion(scheduleID string) (bool
 		}
 		return true, nil
 	}
-
 	return false, nil
 }
 
@@ -862,7 +864,6 @@ func (so *ScheduleOrchestrator) ResumeSchedule(scheduleID string) error {
 	if err != nil {
 		return fmt.Errorf("schedule not found: %w", err)
 	}
-
 	if status != "paused" {
 		return fmt.Errorf("schedule must be paused to resume")
 	}
@@ -874,7 +875,6 @@ func (so *ScheduleOrchestrator) ResumeSchedule(scheduleID string) error {
 	if err != nil {
 		return fmt.Errorf("update schedule status: %w", err)
 	}
-
 	_, err = so.db.ExecContext(context.Background(), `
 		UPDATE schedule_device_executions SET status = 'pending'
 		WHERE schedule_id = $1 AND status = 'paused'
@@ -882,7 +882,6 @@ func (so *ScheduleOrchestrator) ResumeSchedule(scheduleID string) error {
 	if err != nil {
 		return fmt.Errorf("resume device executions: %w", err)
 	}
-
 	return nil
 }
 
@@ -894,7 +893,6 @@ func (so *ScheduleOrchestrator) PauseSchedule(scheduleID string) error {
 	if err != nil {
 		return fmt.Errorf("schedule not found: %w", err)
 	}
-
 	if status != "active" {
 		return fmt.Errorf("schedule must be active to pause")
 	}
@@ -906,7 +904,6 @@ func (so *ScheduleOrchestrator) PauseSchedule(scheduleID string) error {
 	if err != nil {
 		return fmt.Errorf("update schedule status: %w", err)
 	}
-
 	_, err = so.db.ExecContext(context.Background(), `
 		UPDATE schedule_device_executions SET status = 'paused'
 		WHERE schedule_id = $1 AND status IN ('pending', 'running')
@@ -914,6 +911,5 @@ func (so *ScheduleOrchestrator) PauseSchedule(scheduleID string) error {
 	if err != nil {
 		return fmt.Errorf("pause device executions: %w", err)
 	}
-
 	return nil
 }
