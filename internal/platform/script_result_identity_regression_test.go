@@ -8,11 +8,11 @@ import (
 
 func TestParseScriptResultSubject(t *testing.T) {
 	tests := []struct {
-		name            string
-		subject         string
-		wantTenant      string
-		wantAgent       string
-		wantAuthorized  bool
+		name           string
+		subject        string
+		wantTenant     string
+		wantAgent      string
+		wantAuthorized bool
 	}{
 		{name: "valid", subject: "tenant.tenant-a.agent.agent-a.script.result", wantTenant: "tenant-a", wantAgent: "agent-a", wantAuthorized: true},
 		{name: "wrong kind", subject: "tenant.tenant-a.agent.agent-a.software.result"},
