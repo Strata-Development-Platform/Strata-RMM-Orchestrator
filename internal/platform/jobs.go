@@ -709,6 +709,14 @@ func (so *ScheduleOrchestrator) ExecuteScheduleDevice(ctx context.Context, sched
 	return nil
 }
 
+func isScheduleExecutionFailure(status string) bool {
+	return status == "failed" || status == "timeout"
+}
+
+func isScheduleExecutionTerminal(status string) bool {
+	return isScheduleExecutionFailure(status) || status == "completed" || status == "success" || status == "succeeded"
+}
+
 func (so *ScheduleOrchestrator) ProcessScheduleDeviceResult(result map[string]interface{}) error {
 	execID, ok := result["execution_id"].(string)
 	if !ok || execID == "" {
@@ -728,7 +736,7 @@ func (so *ScheduleOrchestrator) ProcessScheduleDeviceResult(result map[string]in
 		           exit_code = $4, duration_ms = $5, completed_at = $6,
 		           last_retry_at = CASE WHEN $7 THEN NOW() ELSE last_retry_at END
 		WHERE id = $8
-	`, status, stdout, stderr, exitCode, durationMs, now, status == "failed", execID)
+	`, status, stdout, stderr, exitCode, durationMs, now, isScheduleExecutionFailure(status), execID)
 	if err != nil {
 		return fmt.Errorf("update execution: %w", err)
 	}
@@ -771,7 +779,7 @@ func (so *ScheduleOrchestrator) ProcessScheduleDeviceResult(result map[string]in
 		return fmt.Errorf("get execution status: %w", err)
 	}
 
-	if execStatus == "failed" && retryCount < maxRetries {
+	if isScheduleExecutionFailure(execStatus) && retryCount < maxRetries {
 		_, err = so.db.ExecContext(context.Background(), `
 			UPDATE schedule_device_executions
 			SET status = 'pending', retry_count = retry_count + 1,
@@ -784,18 +792,18 @@ func (so *ScheduleOrchestrator) ProcessScheduleDeviceResult(result map[string]in
 		return nil
 	}
 
-	if execStatus == "failed" && retryCount >= maxRetries {
+	if isScheduleExecutionFailure(execStatus) && retryCount >= maxRetries {
 		so.logger.Info("schedule device execution max retries reached",
 			zap.String("exec_id", execID), zap.String("device_id", deviceID),
 			zap.String("schedule_id", scheduleID2), zap.Int("retry_count", retryCount))
 	}
 
-	if execStatus == "completed" || execStatus == "success" || execStatus == "succeeded" {
+	if isScheduleExecutionTerminal(execStatus) {
 		allCompleted, err := so.checkScheduleCompletion(scheduleID2)
 		if err != nil {
 			so.logger.Warn("check schedule completion", zap.Error(err))
 		} else if allCompleted {
-			so.logger.Info("schedule completed successfully", zap.String("schedule_id", scheduleID2))
+			so.logger.Info("schedule completed", zap.String("schedule_id", scheduleID2))
 		}
 	}
 	return nil
@@ -806,7 +814,7 @@ func (so *ScheduleOrchestrator) checkScheduleCompletion(scheduleID string) (bool
 	err := so.db.QueryRowContext(context.Background(), `
 		SELECT COUNT(*) as total,
 		       SUM(CASE WHEN status IN ('completed', 'success', 'succeeded') THEN 1 ELSE 0 END) as completed,
-		       SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed
+		       SUM(CASE WHEN status IN ('failed', 'timeout') THEN 1 ELSE 0 END) as failed
 		FROM schedule_device_executions WHERE schedule_id = $1
 	`, scheduleID).Scan(&total, &completed, &failed)
 	if err != nil {
