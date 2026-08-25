@@ -58,3 +58,26 @@ func TestDeleteScriptRequiresOwningTenantAndDetectsNoop(t *testing.T) {
 		t.Fatal("DELETE script handler must not retain an unscoped script-id-only delete")
 	}
 }
+
+func TestGetExecutionBindsDetailLookupToAuthorizedTenant(t *testing.T) {
+	source, err := os.ReadFile("script_handlers.go")
+	if err != nil {
+		t.Fatalf("read script_handlers.go: %v", err)
+	}
+	handler := isolateScriptHandler(t, string(source), "handleGetExecution", "handleScriptResultNATS")
+
+	for _, required := range []string{
+		`tenantID := r.PathValue("tenantID")`,
+		"FROM script_executions WHERE id = $1 AND tenant_id = $2",
+		"execID, tenantID",
+		"http.StatusNotFound",
+	} {
+		if !strings.Contains(handler, required) {
+			t.Fatalf("GET execution handler is missing tenant-bound detail lookup contract %q", required)
+		}
+	}
+
+	if strings.Contains(handler, "FROM script_executions WHERE id = $1\n") {
+		t.Fatal("GET execution handler must not retain an execution-id-only lookup")
+	}
+}
