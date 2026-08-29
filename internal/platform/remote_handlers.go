@@ -226,6 +226,7 @@ func (s *APIServer) handleStartInteractiveSession(w http.ResponseWriter, r *http
 		return
 	}
 	sessionID := uuid.New().String()
+	s.bindRemoteSession(sessionID, remoteSessionBinding{TenantID: tenantID, DeviceID: req.DeviceID, AgentID: agentID})
 
 	cmdPayload, _ := json.Marshal(map[string]interface{}{
 		"type":       "remote_start",
@@ -238,10 +239,12 @@ func (s *APIServer) handleStartInteractiveSession(w http.ResponseWriter, r *http
 
 	subject := fmt.Sprintf("tenant.%s.cmd.%s", tenantID, agentID)
 	if err := s.nats.Publish(subject, cmdPayload); err != nil {
+		s.deleteRemoteSession(sessionID)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "dispatch failed"})
 		return
 	}
 
+	now := s.remoteSessionTime()
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"session_id":  sessionID,
 		"device_id":   req.DeviceID,
@@ -249,8 +252,8 @@ func (s *APIServer) handleStartInteractiveSession(w http.ResponseWriter, r *http
 		"frame_topic": fmt.Sprintf("tenant.%s.agent.%s.tunnel.%s.frame", tenantID, agentID, sessionID),
 		"input_topic": fmt.Sprintf("tenant.%s.agent.%s.tunnel.%s.input", tenantID, agentID, sessionID),
 		"ctrl_topic":  fmt.Sprintf("tenant.%s.agent.%s.tunnel.%s.ctrl", tenantID, agentID, sessionID),
-		"created_at":  time.Now().UTC().Format(time.RFC3339),
-		"expires_at":  time.Now().Add(s.remoteSessionLifetime()).UTC().Format(time.RFC3339),
+		"created_at":  now.UTC().Format(time.RFC3339),
+		"expires_at":  now.Add(s.remoteSessionLifetime()).UTC().Format(time.RFC3339),
 		"status":      "active",
 	})
 }
@@ -314,6 +317,7 @@ func (s *APIServer) handleStopInteractiveSession(w http.ResponseWriter, r *http.
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "publish failed"})
 		return
 	}
+	s.deleteRemoteSession(sessionID)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"session_id": sessionID,
@@ -327,7 +331,8 @@ func (s *APIServer) handleListInteractiveSessions(w http.ResponseWriter, r *http
 	deviceID := r.URL.Query().Get("device_id")
 
 	bindings := make([]map[string]interface{}, 0)
-	s.mu.RLock()
+	s.mu.Lock()
+	s.cleanupExpiredRemoteSessionsLocked(s.remoteSessionTime())
 	for sessionID, binding := range s.remoteSessions {
 		if binding.TenantID == tenantID && (deviceID == "" || binding.DeviceID == deviceID) {
 			bindings = append(bindings, map[string]interface{}{
@@ -340,7 +345,7 @@ func (s *APIServer) handleListInteractiveSessions(w http.ResponseWriter, r *http
 			})
 		}
 	}
-	s.mu.RUnlock()
+	s.mu.Unlock()
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"sessions": bindings,
@@ -406,7 +411,6 @@ func (s *APIServer) handleStartInteractiveRecording(w http.ResponseWriter, r *ht
 			if err := s.recordingStore.Create(rec); err != nil {
 				s.logger.Error("save recording metadata", zap.Error(err))
 			}
-		}
 	}()
 }
 
