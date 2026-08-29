@@ -190,7 +190,13 @@ func (e *Executor) execute(cmd ScriptCommand) {
 	case exitCode == 0:
 		result.Status = "success"
 	case ctx.Err() == context.DeadlineExceeded:
-		result.Status = "timeout"
+		result.Status = "failed"
+		const timeoutReason = "script execution timed out"
+		if result.Stderr == "" {
+			result.Stderr = timeoutReason
+		} else {
+			result.Stderr = truncateOutput(result.Stderr + "\n" + timeoutReason)
+		}
 	default:
 		result.Status = "failed"
 	}
