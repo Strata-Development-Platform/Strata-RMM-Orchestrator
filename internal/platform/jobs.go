@@ -302,18 +302,23 @@ func (s *APIServer) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "job not found"})
 		return
 	}
-
 	if !s.AuthorizeMSPAccess(w, r, mspID) {
 		return
 	}
-
 	if err := TransitionJob(status, "cancelled"); err != nil {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 		return
 	}
 
-	res, err := db.ExecContext(r.Context(), `
-		UPDATE jobs SET status = 'cancelled', completed_at = NOW(), cancelled_at=NOW(), updated_at = NOW()
+	tx, err := db.BeginTx(r.Context(), nil)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "starting cancellation"})
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	res, err := tx.ExecContext(r.Context(), `
+		UPDATE jobs SET status = 'cancelled', completed_at = NOW(), cancelled_at = NOW(), updated_at = NOW()
 		WHERE id = $1 AND status IN ('pending', 'queued', 'dispatched', 'running')
 	`, jobID)
 	if err != nil {
@@ -330,10 +335,11 @@ func (s *APIServer) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := db.QueryContext(r.Context(), `
-		UPDATE job_targets SET status = 'cancelled', completed_at=NOW(), lease_owner=NULL, lease_expires=NULL
+	rows, err := tx.QueryContext(r.Context(), `
+		UPDATE job_targets
+		SET status = 'cancelled', completed_at = NOW(), lease_owner = NULL, lease_expires = NULL
 		WHERE job_id = $1 AND status IN ('pending', 'queued', 'dispatched', 'running')
-		RETURNING id::text, COALESCE(agent_id,'')
+		RETURNING id::text, COALESCE(agent_id, '')
 	`, jobID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "cancelling job targets"})
@@ -348,27 +354,47 @@ func (s *APIServer) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "reading cancelled targets"})
 			return
 		}
+		if target.agentID == "" {
+			_ = rows.Close()
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "cancellation target missing agent identity"})
+			return
+		}
 		targets = append(targets, target)
 	}
 	rowsErr := rows.Err()
-	if err := rows.Close(); err != nil || rowsErr != nil {
+	if closeErr := rows.Close(); closeErr != nil || rowsErr != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "reading cancelled targets"})
 		return
 	}
+
 	for _, target := range targets {
-		if target.agentID == "" || s.nats == nil {
-			continue
-		}
-		payload, err := json.Marshal(map[string]string{"job_id": jobID, "target_id": target.id})
+		payload, err := json.Marshal(map[string]interface{}{
+			"schema_version": 1,
+			"event_id":       fmt.Sprintf("%s:%s:cancel", jobID, target.id),
+			"job_id":         jobID,
+			"target_id":      target.id,
+			"msp_id":         mspID,
+			"agent_id":       target.agentID,
+			"attempt":        1,
+			"issued_at":      time.Now().UTC().Format(time.RFC3339),
+		})
 		if err != nil {
-			continue
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "encoding cancellation event"})
+			return
 		}
-		subject := fmt.Sprintf("tenant.%s.cmd.%s.cancel", mspID, target.agentID)
-		if err := s.nats.Publish(subject, payload); err != nil {
-			s.logger.Warn("publish job cancellation", zap.String("job_id", jobID), zap.String("target_id", target.id), zap.Error(err))
+		if _, err := tx.ExecContext(r.Context(), `
+			INSERT INTO job_outbox (id, msp_id, aggregate_id, event_type, payload, available_at)
+			VALUES (gen_random_uuid(), $1, $2, 'job.cancel', $3, NOW())
+		`, mspID, jobID, payload); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "creating durable cancellation event"})
+			return
 		}
 	}
 
+	if err := tx.Commit(); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "committing cancellation"})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "cancelled"})
 }
 
