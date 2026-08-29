@@ -411,6 +411,7 @@ func (s *APIServer) handleStartInteractiveRecording(w http.ResponseWriter, r *ht
 			if err := s.recordingStore.Create(rec); err != nil {
 				s.logger.Error("save recording metadata", zap.Error(err))
 			}
+		}
 	}()
 }
 
