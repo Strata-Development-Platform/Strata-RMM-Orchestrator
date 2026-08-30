@@ -21,7 +21,7 @@ func TestJobCancellationCommitsOnlyAfterOutboxPersistence(t *testing.T) {
 	begin := strings.Index(handler, "BeginTx")
 	outbox := strings.Index(handler, "'job.cancel'")
 	commit := strings.Index(handler, "tx.Commit()")
-	if begin < 0 || outbox < 0 || commit < 0 || !(begin < outbox && outbox < commit) {
+	if begin < 0 || outbox < 0 || commit < 0 || begin >= outbox || outbox >= commit {
 		t.Fatal("cancellation must begin a transaction, persist job.cancel intent, then commit")
 	}
 }
