@@ -28,30 +28,30 @@ type requestDBExecutor struct {
 	tx *sql.Tx
 }
 
-type requestTransaction struct {
+type requestDBTransactionLease struct {
 	*sql.Tx
 	borrowed bool
 }
 
-func (d requestDBExecutor) BeginTx(ctx context.Context, opts *sql.TxOptions) (*requestTransaction, error) {
+func (d requestDBExecutor) BeginTx(ctx context.Context, opts *sql.TxOptions) (*requestDBTransactionLease, error) {
 	if d.tx != nil {
-		return &requestTransaction{Tx: d.tx, borrowed: true}, nil
+		return &requestDBTransactionLease{Tx: d.tx, borrowed: true}, nil
 	}
 	tx, err := d.db.BeginTx(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
-	return &requestTransaction{Tx: tx}, nil
+	return &requestDBTransactionLease{Tx: tx}, nil
 }
 
-func (tx *requestTransaction) Commit() error {
+func (tx *requestDBTransactionLease) Commit() error {
 	if tx.borrowed {
 		return nil
 	}
 	return tx.Tx.Commit()
 }
 
-func (tx *requestTransaction) Rollback() error {
+func (tx *requestDBTransactionLease) Rollback() error {
 	if tx.borrowed {
 		return nil
 	}
