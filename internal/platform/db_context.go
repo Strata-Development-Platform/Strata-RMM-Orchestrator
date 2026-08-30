@@ -17,6 +17,47 @@ type dbExecutor interface {
 	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
 }
 
+// requestDBExecutor exposes the request-scoped executor while allowing handlers
+// that own a transaction when called directly to cooperate with the tenant
+// transaction installed by withTenantTransaction. When a tenant transaction is
+// already active, BeginTx borrows it and leaves commit/rollback authority with
+// the outer middleware.
+type requestDBExecutor struct {
+	dbExecutor
+	db *sql.DB
+	tx *sql.Tx
+}
+
+type requestDBTransactionLease struct {
+	*sql.Tx
+	borrowed bool
+}
+
+func (d requestDBExecutor) BeginTx(ctx context.Context, opts *sql.TxOptions) (*requestDBTransactionLease, error) {
+	if d.tx != nil {
+		return &requestDBTransactionLease{Tx: d.tx, borrowed: true}, nil
+	}
+	tx, err := d.db.BeginTx(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	return &requestDBTransactionLease{Tx: tx}, nil
+}
+
+func (tx *requestDBTransactionLease) Commit() error {
+	if tx.borrowed {
+		return nil
+	}
+	return tx.Tx.Commit()
+}
+
+func (tx *requestDBTransactionLease) Rollback() error {
+	if tx.borrowed {
+		return nil
+	}
+	return tx.Tx.Rollback()
+}
+
 type transactionResponse struct {
 	header http.Header
 	body   bytes.Buffer
@@ -52,11 +93,12 @@ func (w *transactionResponse) flushTo(destination http.ResponseWriter) {
 	_, _ = destination.Write(w.body.Bytes())
 }
 
-func (s *APIServer) requestDB(r *http.Request) dbExecutor {
+func (s *APIServer) requestDB(r *http.Request) requestDBExecutor {
 	if tx, ok := r.Context().Value(ctxKeyDBTransaction).(*sql.Tx); ok && tx != nil {
-		return tx
+		return requestDBExecutor{dbExecutor: tx, tx: tx}
 	}
-	return s.db.DB()
+	db := s.db.DB()
+	return requestDBExecutor{dbExecutor: db, db: db}
 }
 
 func (s *APIServer) withTenantTransaction(next http.Handler) http.Handler {

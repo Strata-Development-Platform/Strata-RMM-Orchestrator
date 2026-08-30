@@ -216,8 +216,36 @@ func (d *Dispatcher) processOutbox() {
 		agentID, _ := payload["agent_id"].(string)
 		targetID, _ := payload["target_id"].(string)
 		attempt := intFromJSON(payload["attempt"])
-		if agentID == "" || targetID == "" || attempt < 1 {
-			d.failOutbox(id, fmt.Errorf("missing agent_id, target_id, or attempt"), 1)
+		if agentID == "" || targetID == "" {
+			d.failOutbox(id, fmt.Errorf("missing agent_id or target_id"), 1)
+			continue
+		}
+
+		if eventType == "job.cancel" {
+			subject := fmt.Sprintf("tenant.%s.cmd.%s.cancel", mspID, agentID)
+			if err := d.nc.Publish(subject, []byte(payloadStr)); err != nil {
+				d.failOutbox(id, err, 1)
+				continue
+			}
+			if err := d.nc.FlushTimeout(5 * time.Second); err != nil {
+				d.failOutbox(id, err, 1)
+				continue
+			}
+			if _, err := d.db.DB().Exec(`
+				UPDATE job_outbox
+				SET published_at = NOW(), lease_owner = NULL, lease_expires = NULL, last_error = NULL
+				WHERE id = $1 AND lease_owner = $2
+			`, id, d.workerID); err != nil {
+				d.logger.Error("finalize cancellation outbox publish", zap.String("id", id), zap.Error(err))
+			}
+			continue
+		}
+		if eventType != "job.dispatch" {
+			d.failOutbox(id, fmt.Errorf("unsupported outbox event type %q", eventType), 1)
+			continue
+		}
+		if attempt < 1 {
+			d.failOutbox(id, fmt.Errorf("missing attempt"), 1)
 			continue
 		}
 
@@ -274,7 +302,6 @@ func (d *Dispatcher) processOutbox() {
 			d.logger.Error("finalize outbox publish", zap.String("id", id), zap.Error(err))
 		}
 	}
-
 }
 
 func (d *Dispatcher) expireJobs() {
